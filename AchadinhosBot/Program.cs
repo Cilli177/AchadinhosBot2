@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Net.Http; // 🌐 Necessário para expandir links
 using WTelegram;
 using TL;
+using System.IO;
 
 class Program
 {
@@ -56,7 +57,7 @@ class Program
         string Config(string what)
         {
             // 👇 A MÁGICA: Salva o login numa pasta segura que não apaga na nuvem
-            if (what == "session_pathname") return "/app/data/WTelegram.session";
+            if (what == "session_pathname") return Directory.Exists("/app/data") ? "/app/data/WTelegram.session" : "WTelegram.session";
             
             if (what == "api_id") return api_id.ToString();
             if (what == "api_hash") return api_hash;
