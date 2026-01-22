@@ -1,12 +1,12 @@
 ﻿using System;
+using System.IO; // Necessário para mexer com arquivos
 using System.Threading.Tasks;
 using System.Linq;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using System.Net.Http; // 🌐 Necessário para expandir links
+using System.Net.Http; // Necessário para expandir links
 using WTelegram;
 using TL;
-using System.IO;
 
 class Program
 {
@@ -37,15 +37,18 @@ class Program
 
     static async Task Main(string[] args)
     {
-        // 👇 CÓDIGO MÁGICO PARA A NUVEM 👇
-            // Se o login não estiver na pasta segura, copia ele pra lá
-            string caminhoSeguro = "/app/data/WTelegram.session";
-            if (!File.Exists(caminhoSeguro) && File.Exists("WTelegram.session"))
-            {
-                Console.WriteLine("🚚 Movendo login para a pasta segura...");
-                File.Copy("WTelegram.session", caminhoSeguro);
-            }
-            // 👆 FIM DO CÓDIGO MÁGICO 👆
+        // 👇 CÓDIGO MÁGICO CORRIGIDO (Protegido contra erros locais) 👇
+        string pastaNuvem = "/app/data";
+        string arquivoDestino = Path.Combine(pastaNuvem, "WTelegram.session");
+
+        // Só tenta copiar se a pasta da nuvem EXISTIR (ou seja, se estiver na Railway)
+        if (Directory.Exists(pastaNuvem) && !File.Exists(arquivoDestino) && File.Exists("WTelegram.session"))
+        {
+            Console.WriteLine("🚚 Movendo login para a pasta segura da nuvem...");
+            File.Copy("WTelegram.session", arquivoDestino);
+        }
+        // 👆 FIM DO CÓDIGO MÁGICO 👆
+
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { }; 
 
@@ -56,8 +59,9 @@ class Program
 
         string Config(string what)
         {
-            // 👇 A MÁGICA: Salva o login numa pasta segura que não apaga na nuvem
-            if (what == "session_pathname") return Directory.Exists("/app/data") ? "/app/data/WTelegram.session" : "WTelegram.session";
+            // 👇 A MÁGICA: Usa a pasta certa dependendo de onde está (PC ou Nuvem)
+            if (what == "session_pathname") 
+                return Directory.Exists("/app/data") ? "/app/data/WTelegram.session" : "WTelegram.session";
             
             if (what == "api_id") return api_id.ToString();
             if (what == "api_hash") return api_hash;
