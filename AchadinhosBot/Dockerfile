@@ -14,6 +14,7 @@ COPY --from=build-env /app/out .
 
 # Cria a pasta onde o login vai ficar salvo
 RUN mkdir -p /app/data
+COPY WTelegram.session ./
 
 # Comando para iniciar
 ENTRYPOINT ["dotnet", "AchadinhosBot.dll"]
