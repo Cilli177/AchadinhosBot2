@@ -36,6 +36,15 @@ class Program
 
     static async Task Main(string[] args)
     {
+        // 👇 CÓDIGO MÁGICO PARA A NUVEM 👇
+            // Se o login não estiver na pasta segura, copia ele pra lá
+            string caminhoSeguro = "/app/data/WTelegram.session";
+            if (!File.Exists(caminhoSeguro) && File.Exists("WTelegram.session"))
+            {
+                Console.WriteLine("🚚 Movendo login para a pasta segura...");
+                File.Copy("WTelegram.session", caminhoSeguro);
+            }
+            // 👆 FIM DO CÓDIGO MÁGICO 👆
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { }; 
 
