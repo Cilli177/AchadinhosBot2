@@ -14,8 +14,15 @@ class Program
     static WTelegram.Client? Client;
     static WTelegram.UpdateManager? Manager;
     
-    // HttpClient configurado para seguir redirecionamentos manualmente
-    static readonly HttpClient HttpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+    // Adicionei CookieContainer para guardar "memória" entre redirecionamentos
+    static readonly CookieContainer Cookies = new CookieContainer();
+    static readonly HttpClientHandler Handler = new HttpClientHandler 
+    { 
+        AllowAutoRedirect = false, // Continuamos manuais para ter controle
+        CookieContainer = Cookies,
+        UseCookies = true
+    };
+    static readonly HttpClient HttpClient = new HttpClient(Handler);
 
     // ⚙️ SEUS DADOS
     static int api_id = 31119088;
@@ -37,11 +44,13 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // --- CONFIGURAÇÃO DO NAVEGADOR ---
-        HttpClient.Timeout = TimeSpan.FromSeconds(8);
+        // --- CONFIGURAÇÃO DO NAVEGADOR (DISFARCE COMPLETO) ---
+        HttpClient.Timeout = TimeSpan.FromSeconds(10);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+        HttpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Exclusivo Amazon)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Detetive de HTML)...");
 
         // --- LÓGICA DE LOGIN ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -78,7 +87,6 @@ class Program
                 var user = await Client.LoginUserIfNeeded();
                 Console.WriteLine($"✅ SUCESSO! Logado como: {user.username ?? user.first_name}");
 
-                // --- MAPEAR CANAIS ---
                 Console.WriteLine("⏳ Mapeando canais...");
                 var dialogs = await Client.Messages_GetAllDialogs();
                 dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
@@ -93,7 +101,7 @@ class Program
 
                 Console.WriteLine("---------------------------------------------------");
                 Console.WriteLine($"💰 TAG AMAZON: {AMAZON_TAG}");
-                Console.WriteLine("🛡️ FILTRO ATIVO: Apenas Amazon será postado!");
+                Console.WriteLine("🛡️ FILTRO: Apenas Amazon (com expansão avançada)");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
                 
                 await Task.Delay(-1);
@@ -115,19 +123,16 @@ class Program
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
-                    // --- PASSO 1: PROCESSAR E FILTRAR ---
-                    // Se retornar null, é porque não é Amazon
                     string? novoTexto = await ProcessarMensagemAmazonOnly(msg.message);
 
                     if (novoTexto == null)
                     {
-                        Console.WriteLine("🗑️ IGNORADO: Não é oferta Amazon.");
-                        return; // ⛔ PARA TUDO AQUI
+                        Console.WriteLine("🗑️ IGNORADO: Não é Amazon (ou não consegui expandir).");
+                        return; 
                     }
 
                     novoTexto += "\n\n🔥 Vi no: @ReiDasOfertasVIP";
 
-                    // --- PASSO 2: ENVIAR ---
                     try
                     {
                         if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
@@ -151,7 +156,6 @@ class Program
         }
     }
 
-    // Retorna NULL se não achar link da Amazon
     private static async Task<string?> ProcessarMensagemAmazonOnly(string textoOriginal)
     {
         var regexLink = new Regex(@"https?://[^\s]+");
@@ -166,19 +170,22 @@ class Program
             string urlOriginal = match.Value;
             string urlExpandida = urlOriginal;
 
-            // 1. EXPANDIR SE FOR CURTO
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo {urlOriginal.Substring(0, 15)}... ");
-                urlExpandida = await ExpandirUrl(urlOriginal);
-                Console.WriteLine(urlExpandida == urlOriginal ? "Falhou/Igual ⚠️" : "Sucesso! ✅");
+                // Limita a recursão para não ficar infinito (max 5 pulos)
+                urlExpandida = await ExpandirUrl(urlOriginal, 0); 
+                
+                if (urlExpandida != urlOriginal)
+                    Console.WriteLine("Sucesso! ✅");
+                else
+                    Console.WriteLine("Falhou/Igual ⚠️");
             }
 
-            // 2. VERIFICAR SE É AMAZON
             if (urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to"))
             {
                 string urlComTag = AplicarTagAmazon(urlExpandida);
-                Console.WriteLine("   💰 É AMAZON! Tag aplicada.");
+                Console.WriteLine($"   💰 É AMAZON! Tag aplicada.");
                 
                 if (urlOriginal != urlComTag)
                     textoFinal = textoFinal.Replace(urlOriginal, urlComTag);
@@ -187,11 +194,12 @@ class Program
             }
             else
             {
-                Console.WriteLine($"   ❌ Link de fora ({new Uri(urlExpandida).Host}) ignorado.");
+                // Mostra o host para sabermos onde ele parou (ex: compre.link ou magalu)
+                try { Console.WriteLine($"   ❌ Ignorado: {new Uri(urlExpandida).Host}"); }
+                catch { Console.WriteLine($"   ❌ Ignorado: {urlExpandida}"); }
             }
         }
 
-        // Se NÃO tiver nenhum link Amazon na mensagem inteira, retorna NULL
         return encontrouAmazon ? textoFinal : null;
     }
 
@@ -199,25 +207,65 @@ class Program
     {
         return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
-               url.Contains("a.co");
+               url.Contains("a.co") || url.Contains("is.gd") || url.Contains("tinyurl");
     }
 
-    private static async Task<string> ExpandirUrl(string url)
+    // 👇 A MÁGICA ACONTECE AQUI 👇
+    private static async Task<string> ExpandirUrl(string url, int depth)
     {
+        if (depth > 5) return url; // Evita loop infinito
+
         try
         {
             var response = await HttpClient.GetAsync(url);
+            
+            // 1. Redirecionamento HTTP Padrão (301, 302)
             if (response.StatusCode == HttpStatusCode.Moved || 
                 response.StatusCode == HttpStatusCode.Found ||
                 response.StatusCode == HttpStatusCode.Redirect ||
                 response.StatusCode == HttpStatusCode.TemporaryRedirect) 
             {
                 var location = response.Headers.Location;
-                if (location != null) return await ExpandirUrl(location.ToString());
+                if (location != null) 
+                {
+                    // Converte URI relativa para absoluta se necessário
+                    string nextUrl = location.IsAbsoluteUri ? location.ToString() : new Uri(new Uri(url), location).ToString();
+                    return await ExpandirUrl(nextUrl, depth + 1);
+                }
             }
+            
+            // 2. Se deu 200 OK, verifica se é uma página "fake" de redirecionamento (HTML/JS)
+            if (response.IsSuccessStatusCode)
+            {
+                string html = await response.Content.ReadAsStringAsync();
+                
+                // Procura por <meta http-equiv="refresh" content="0;url=NOVO_LINK">
+                var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
+                if (metaMatch.Success)
+                {
+                    string nextUrl = metaMatch.Groups[1].Value;
+                    // Corrige link se vier relativo ou quebrado
+                    if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
+                    return await ExpandirUrl(nextUrl, depth + 1);
+                }
+
+                // Procura por window.location = 'NOVO_LINK' (JavaScript simples)
+                var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
+                if (jsMatch.Success)
+                {
+                     string nextUrl = jsMatch.Groups[1].Value;
+                     if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
+                     return await ExpandirUrl(nextUrl, depth + 1);
+                }
+            }
+            
+            // Se chegou aqui, é o link final mesmo
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         }
-        catch { return url; }
+        catch
+        {
+            return url;
+        }
     }
 
     private static string AplicarTagAmazon(string url)
