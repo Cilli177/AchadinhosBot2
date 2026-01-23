@@ -12,7 +12,7 @@ COPY --from=build-env /app/out .
 
 # 👇 PREPARAÇÃO PARA SESSÃO EM PRODUÇÃO 👇
 # Copia o arquivo de sessão Base64 se existir
-COPY WTelegram.session.b64 ./ 2>/dev/null || true
+RUN if [ -f "WTelegram.session.b64" ]; then cp WTelegram.session.b64 /app/; fi
 
 USER root
 RUN mkdir -p /tmp && chmod 777 /tmp
