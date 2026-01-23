@@ -12,167 +12,73 @@ class Program
 {
     static WTelegram.Client Client;
     static WTelegram.UpdateManager Manager;
-    static readonly HttpClient HttpClient = new HttpClient(); 
+    static readonly HttpClient HttpClient = new HttpClient();
 
     // ⚙️ SEUS DADOS
     static int api_id = 31119088;
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
-    static string AMAZON_TAG = "reidasofer022-20"; 
-    static long ID_DESTINO = 3632436217; 
+    static string AMAZON_TAG = "reidasofer022-20";
+    static long ID_DESTINO = 3632436217; // Rei das Ofertas VIP
+    static InputPeer PeerDestino;
 
-    static List<long> IDs_FONTES = new List<long>() { 2775581964, 1871121243, 1569488789 };
+    // 📡 FONTES
+    static List<long> IDs_FONTES = new List<long>()
+    {
+        2775581964, // Herói da Promo
+        1871121243, // táBaratasso
+        1569488789  // Ofertas Gamer
+    };
 
     static async Task Main(string[] args)
     {
         Console.Clear();
-        WTelegram.Helpers.Log = (lvl, str) => { }; 
-        HttpClient.Timeout = TimeSpan.FromSeconds(10);
+        WTelegram.Helpers.Log = (lvl, str) => { };
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Direto)...");
+        // --- CONFIGURAÇÃO DO NAVEGADOR (DISFARCE) ---
+        // Timeout de 5 segundos para não travar o robô
+        HttpClient.Timeout = TimeSpan.FromSeconds(5);
+        // Finge ser um navegador Chrome para não tomar bloqueio da Amazon
+        HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-        // 🌐 DETECTA AMBIENTE
-        bool isProduction = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT")) ||
-                           !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HEROKU_APP_NAME")) ||
-                           Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Production";
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Anti-Travamento)...");
 
-        Console.WriteLine($"🔧 Ambiente: {(isProduction ? "PRODUÇÃO (Railway)" : "DESENVOLVIMENTO")}");
-
-        // 👇 PREPARAÇÃO DA SESSÃO 👇
+        // --- LÓGICA DE LOGIN (BASE64/RAILWAY) ---
+        bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
-        bool sessionRestored = false;
         
-        // Se em produção, tenta restaurar a sessão do Base64 (variável de ambiente ou arquivo)
         if (isProduction)
         {
+            Console.WriteLine($"🔧 Ambiente: PRODUÇÃO (Railway)");
             Console.WriteLine("🔍 Procurando arquivo de sessão...");
             
-            var sessionBase64 = Environment.GetEnvironmentVariable("TELEGRAM_SESSION_BASE64");
-            
-            // Se não tem variável, tenta arquivo
-            if (string.IsNullOrEmpty(sessionBase64))
+            // Tenta recuperar do arquivo .b64 que subimos via Git
+            if (File.Exists("WTelegram.session.b64"))
             {
-                if (File.Exists("WTelegram.session.b64"))
+                Console.WriteLine("✅ Arquivo WTelegram.session.b64 encontrado!");
+                try 
                 {
-                    Console.WriteLine("✅ Arquivo WTelegram.session.b64 encontrado!");
-                    sessionBase64 = File.ReadAllText("WTelegram.session.b64").Trim();
+                    var b64 = File.ReadAllText("WTelegram.session.b64");
+                    File.WriteAllBytes(sessionFile, Convert.FromBase64String(b64));
+                    Console.WriteLine($"📦 Sessão restaurada em {sessionFile}!");
                 }
-                else
-                {
-                    Console.WriteLine("⚠️  Arquivo WTelegram.session.b64 NÃO encontrado");
-                }
-            }
-            else
-            {
-                Console.WriteLine("✅ TELEGRAM_SESSION_BASE64 encontrado em variável");
-            }
-            
-            if (!string.IsNullOrEmpty(sessionBase64))
-            {
-                try
-                {
-                    Console.WriteLine("📦 Decodificando e restaurando sessão...");
-                    var sessionBytes = Convert.FromBase64String(sessionBase64);
-                    File.WriteAllBytes(sessionFile, sessionBytes);
-                    Console.WriteLine($"✅ Sessão restaurada! ({sessionBytes.Length} bytes)");
-                    sessionRestored = true;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"⚠️  Erro: {ex.Message}");
-                }
-            }
-        }
-        
-        // Verifica se a sessão existe
-        if (File.Exists(sessionFile))
-        {
-            var info = new FileInfo(sessionFile);
-            Console.WriteLine($"📦 Arquivo de sessão encontrado: {info.Length} bytes");
-            
-            // Sessão muito pequena (<10KB) provavelmente está corrompida
-            // Mas não deletar se foi restaurada agora
-            if (info.Length < 10000 && isProduction && !sessionRestored)
-            {
-                Console.WriteLine("⚠️  Sessão corrompida (" + info.Length + " bytes). Aguardando 30s...");
-                System.Threading.Thread.Sleep(30000); // Espera para evitar FLOOD_WAIT
-                
-                try { File.Delete(sessionFile); }
-                catch { Console.WriteLine("⚠️  Erro ao deletar"); }
+                catch (Exception ex) { Console.WriteLine($"❌ Erro ao restaurar sessão: {ex.Message}"); }
             }
         }
         else
         {
-            Console.WriteLine($"📝 Nenhuma sessão encontrada. Será feito novo login.");
+             Console.WriteLine($"🔧 Ambiente: LOCAL (Dev)");
         }
-        // 👆 FIM DA PREPARAÇÃO 👆
 
         string Config(string what)
         {
             if (what == "session_pathname") return sessionFile;
-            
             if (what == "api_id") return api_id.ToString();
             if (what == "api_hash") return api_hash;
             
-            // 🔧 CONFIGURAÇÃO DE AUTENTICAÇÃO
-            if (what == "phone_number") 
-            { 
-                var phone = Environment.GetEnvironmentVariable("TELEGRAM_PHONE");
-                if (string.IsNullOrEmpty(phone))
-                {
-                    if (isProduction)
-                    {
-                        throw new Exception("❌ TELEGRAM_PHONE não configurado como variável de ambiente!");
-                    }
-                    Console.Write("📱 Celular: "); 
-                    phone = Console.ReadLine() ?? "";
-                }
-                
-                if (!string.IsNullOrEmpty(phone))
-                {
-                    Console.WriteLine($"📱 Usando telefone: {MaskPhone(phone)}");
-                }
-                return phone;
-            }
-            
-            if (what == "verification_code") 
-            { 
-                var code = Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE");
-                if (string.IsNullOrEmpty(code))
-                {
-                    if (isProduction)
-                    {
-                        Console.WriteLine("⚠️  Código de verificação necessário!");
-                        Console.WriteLine("📲 Você recebeu um SMS ou mensagem no Telegram com o código.");
-                        Console.WriteLine("🔧 Se já logou antes, certifique-se que TELEGRAM_SESSION_BASE64 está configurado.");
-                        throw new Exception("Código de verificação não configurado (TELEGRAM_VERIFICATION_CODE)");
-                    }
-                    Console.Write("🔑 Código de verificação: "); 
-                    code = Console.ReadLine() ?? "";
-                }
-                
-                Console.WriteLine($"✅ Usando código de verificação");
-                return code;
-            }
-            
-            if (what == "password") 
-            { 
-                var password = Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD");
-                if (string.IsNullOrEmpty(password))
-                {
-                    if (isProduction)
-                    {
-                        return "";
-                    }
-                    Console.Write("🔒 Senha 2FA (deixe em branco se não tiver): "); 
-                    password = Console.ReadLine() ?? "";
-                }
-                
-                if (!string.IsNullOrEmpty(password))
-                {
-                    Console.WriteLine("✅ Usando senha 2FA");
-                }
-                return password;
-            }
+            // Login automático via variáveis (Railway) ou Console (Local)
+            if (what == "phone_number") return Environment.GetEnvironmentVariable("TELEGRAM_PHONE") ?? Console.ReadLine();
+            if (what == "verification_code") return Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE") ?? Console.ReadLine();
+            if (what == "password") return Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD") ?? Console.ReadLine();
             
             return null;
         }
@@ -185,48 +91,137 @@ class Program
                 Manager = Client.WithUpdateManager(OnUpdate);
                 var user = await Client.LoginUserIfNeeded();
                 Console.WriteLine($"✅ SUCESSO! Logado como: {user.username ?? user.first_name}");
+
+                // --- MAPEAR CANAIS ---
+                Console.WriteLine("⏳ Mapeando canais...");
+                var dialogs = await Client.Messages_GetAllDialogs();
+                dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
+
+                // Busca o canal destino e garante que temos acesso
+                var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
+                if (chatDestino != null)
+                {
+                    PeerDestino = chatDestino.ToInputPeer();
+                    Console.WriteLine($"📢 DESTINO CONFIRMADO: {chatDestino.Title} (ID: {chatDestino.ID})");
+                }
+                else
+                {
+                    Console.WriteLine($"❌ ERRO CRÍTICO: Não encontrei o canal destino ID {ID_DESTINO}. O robô é admin lá?");
+                }
+
                 Console.WriteLine("---------------------------------------------------");
                 Console.WriteLine($"💰 TAG AMAZON: {AMAZON_TAG}");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
-                
-                // Se em desenvolvimento, salva a sessão em Base64 para copiar
-                if (!isProduction)
-                {
-                    var sessionBytes = File.ReadAllBytes(sessionFile);
-                    var sessionBase64 = Convert.ToBase64String(sessionBytes);
-                    Console.WriteLine("\n📋 SESSÃO GERADA (copie para TELEGRAM_SESSION_BASE64 no Railway):");
-                    Console.WriteLine(sessionBase64);
-                }
                 
                 await Task.Delay(-1);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ ERRO FATAL: {ex.Message}");
-            Console.WriteLine($"📋 Stack Trace: {ex.StackTrace}");
-            if (ex.InnerException != null)
-            {
-                Console.WriteLine($"📋 Inner Exception: {ex.InnerException.Message}");
-            }
-            Environment.Exit(1);
+            Console.WriteLine($"❌ ERRO FATAL NO MAIN: {ex.Message}");
         }
-    }
-
-    static string MaskPhone(string phone)
-    {
-        if (phone.Length > 5)
-            return phone.Substring(0, 3) + "***" + phone.Substring(phone.Length - 2);
-        return "***";
     }
 
     private static async Task OnUpdate(Update update)
     {
-        // Lógica de monitoramento (Mantive compacta para caber aqui, funciona igual)
-        if (update is UpdateNewMessage unm && unm.message is Message msg && IDs_FONTES.Contains(msg.peer_id?.ID ?? 0) && !string.IsNullOrEmpty(msg.message))
+        if (PeerDestino == null) return;
+
+        switch (update)
         {
-             Console.WriteLine($"🔍 OFERTA DETECTADA!");
-             // (Aqui viria o restante da lógica de envio que você já tem)
+            case UpdateNewMessage unm when unm.message is Message msg:
+                // Filtra apenas mensagens dos canais fonte que tenham texto
+                if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
+                {
+                    // Ignora mensagens muito curtas ("bom dia", "oi")
+                    if (msg.message.Length < 10) return;
+
+                    Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
+
+                    // --- PASSO 1: PROCESSAR LINK ---
+                    string novoTexto = await ProcessarMensagem(msg.message);
+                    
+                    // Adiciona assinatura
+                    novoTexto += "\n\n🔥 Vi no: @ReiDasOfertasVIP";
+
+                    // --- PASSO 2: ENVIAR ---
+                    try
+                    {
+                        Console.WriteLine("📤 Tentando enviar para o canal...");
+                        
+                        if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
+                        {
+                            // Reutiliza a foto que já está nos servidores do Telegram (mais rápido)
+                            var inputMedia = new InputMediaPhoto
+                            {
+                                id = new InputPhoto
+                                {
+                                    id = photo.id,
+                                    access_hash = photo.access_hash,
+                                    file_reference = photo.file_reference
+                                }
+                            };
+                            await Client.Messages_SendMedia(PeerDestino, inputMedia, novoTexto);
+                            Console.WriteLine("✅ FOTO + TEXTO ENVIADOS!");
+                        }
+                        else
+                        {
+                            await Client.SendMessageAsync(PeerDestino, novoTexto);
+                            Console.WriteLine("✅ APENAS TEXTO ENVIADO!");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"❌ FALHA NO ENVIO: {ex.Message}");
+                    }
+                }
+                break;
         }
+    }
+
+    private static async Task<string> ProcessarMensagem(string textoOriginal)
+    {
+        var regexLink = new Regex(@"https?://[^\s]+");
+        var matches = regexLink.Matches(textoOriginal);
+        string textoFinal = textoOriginal;
+
+        Console.WriteLine($"   🔎 Analisando {matches.Count} links...");
+
+        foreach (Match match in matches)
+        {
+            string urlOriginal = match.Value;
+            string urlProcessada = urlOriginal;
+
+            // Só tenta expandir se for link curto
+            if (urlOriginal.Contains("amzn.to") || urlOriginal.Contains("bit.ly") || urlOriginal.Contains("t.co"))
+            {
+                Console.Write($"   ↳ Expandindo {urlOriginal}... ");
+                try
+                {
+                    // Tenta acessar o link com timeout de 5 segundos
+                    var response = await HttpClient.GetAsync(urlOriginal);
+                    urlProcessada = response.RequestMessage.RequestUri.ToString();
+                    Console.WriteLine("OK! ✅");
+                }
+                catch
+                {
+                    Console.WriteLine("TIMEOUT/ERRO (Mantendo original) ⚠️");
+                }
+            }
+
+            // Se for Amazon, troca a tag
+            if (urlProcessada.Contains("amazon.com.br") || urlProcessada.Contains("amazon.com"))
+            {
+                if (urlProcessada.Contains("tag="))
+                    urlProcessada = Regex.Replace(urlProcessada, @"tag=[^&]+", $"tag={AMAZON_TAG}");
+                else
+                    urlProcessada += (urlProcessada.Contains("?") ? "&" : "?") + $"tag={AMAZON_TAG}";
+                
+                Console.WriteLine("   💰 Tag aplicada!");
+            }
+
+            if (urlOriginal != urlProcessada)
+                textoFinal = textoFinal.Replace(urlOriginal, urlProcessada);
+        }
+        return textoFinal;
     }
 }
