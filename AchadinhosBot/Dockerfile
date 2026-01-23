@@ -9,12 +9,11 @@ RUN dotnet publish -c Release -o out
 FROM mcr.microsoft.com/dotnet/runtime:8.0
 WORKDIR /app
 COPY --from=build-env /app/out .
-COPY WTelegram.session ./
 
-# 👇 A MUDANÇA NUCLEAR 👇
-# Transforma o robô em Super Usuário (Root) para não ter bloqueio
+# 👇 PREPARAÇÃO PARA SESSÃO EM PRODUÇÃO 👇
+# O arquivo WTelegram.session será gerado automaticamente em /tmp/ durante o primeiro login
 USER root
-RUN chmod 777 WTelegram.session
+RUN mkdir -p /tmp && chmod 777 /tmp
 
 # Comando para iniciar
 ENTRYPOINT ["dotnet", "AchadinhosBot.dll"]
