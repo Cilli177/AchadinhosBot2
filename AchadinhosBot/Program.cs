@@ -37,19 +37,48 @@ class Program
 
         Console.WriteLine($"🔧 Ambiente: {(isProduction ? "PRODUÇÃO (Railway)" : "DESENVOLVIMENTO")}");
 
-        // 👇 DIAGNÓSTICO DE ARQUIVO 👇
+        // 👇 PREPARAÇÃO DA SESSÃO 👇
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
         
+        // Se em produção, tenta restaurar a sessão do Base64
+        if (isProduction)
+        {
+            var sessionBase64 = Environment.GetEnvironmentVariable("TELEGRAM_SESSION_BASE64");
+            if (!string.IsNullOrEmpty(sessionBase64))
+            {
+                try
+                {
+                    Console.WriteLine("📦 Restaurando sessão do Base64...");
+                    var sessionBytes = Convert.FromBase64String(sessionBase64);
+                    File.WriteAllBytes(sessionFile, sessionBytes);
+                    Console.WriteLine($"✅ Sessão restaurada com sucesso! ({sessionBytes.Length} bytes)");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠️  Erro ao restaurar sessão: {ex.Message}");
+                }
+            }
+        }
+        
+        // Verifica se a sessão existe
         if (File.Exists(sessionFile))
         {
             var info = new FileInfo(sessionFile);
-            Console.WriteLine($"✅ ARQUIVO DE SESSÃO ENCONTRADO! Tamanho: {info.Length} bytes");
+            Console.WriteLine($"📦 Arquivo de sessão encontrado: {info.Length} bytes");
+            
+            // Sessão muito pequena (<5KB) provavelmente está corrompida
+            if (info.Length < 5000 && isProduction)
+            {
+                Console.WriteLine("⚠️  Sessão parece corrompida. Deletando para novo login...");
+                try { File.Delete(sessionFile); }
+                catch { Console.WriteLine("⚠️  Não foi possível deletar sessão corrompida"); }
+            }
         }
         else
         {
-            Console.WriteLine($"⚠️ AVISO: Arquivo de sessão não encontrado em {sessionFile}");
+            Console.WriteLine($"📝 Nenhuma sessão encontrada. Será feito novo login.");
         }
-        // 👆 FIM DO DIAGNÓSTICO 👆
+        // 👆 FIM DA PREPARAÇÃO 👆
 
         string Config(string what)
         {
@@ -74,21 +103,29 @@ class Program
                 
                 if (!string.IsNullOrEmpty(phone))
                 {
-                    Console.WriteLine($"📱 Celular: {MaskPhone(phone)} (autenticando...)");
+                    Console.WriteLine($"📱 Usando telefone: {MaskPhone(phone)}");
                 }
                 return phone;
             }
             
             if (what == "verification_code") 
             { 
-                if (isProduction)
+                var code = Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE");
+                if (string.IsNullOrEmpty(code))
                 {
-                    Console.WriteLine("❌ ERRO: Código de verificação necessário em produção!");
-                    Console.WriteLine("⚠️  Se recebeu código SMS, a senha pode estar incorreta.");
-                    throw new Exception("Necessário código de verificação. Verifique se a senha 2FA está correta.");
+                    if (isProduction)
+                    {
+                        Console.WriteLine("⚠️  Código de verificação necessário!");
+                        Console.WriteLine("📲 Você recebeu um SMS ou mensagem no Telegram com o código.");
+                        Console.WriteLine("🔧 Se já logou antes, certifique-se que TELEGRAM_SESSION_BASE64 está configurado.");
+                        throw new Exception("Código de verificação não configurado (TELEGRAM_VERIFICATION_CODE)");
+                    }
+                    Console.Write("🔑 Código de verificação: "); 
+                    code = Console.ReadLine() ?? "";
                 }
-                Console.Write("🔑 Código: "); 
-                return Console.ReadLine() ?? ""; 
+                
+                Console.WriteLine($"✅ Usando código de verificação");
+                return code;
             }
             
             if (what == "password") 
@@ -98,11 +135,15 @@ class Program
                 {
                     if (isProduction)
                     {
-                        Console.WriteLine("⚠️  Nenhuma senha 2FA configurada (variável TELEGRAM_PASSWORD)");
                         return "";
                     }
                     Console.Write("🔒 Senha 2FA (deixe em branco se não tiver): "); 
                     password = Console.ReadLine() ?? "";
+                }
+                
+                if (!string.IsNullOrEmpty(password))
+                {
+                    Console.WriteLine("✅ Usando senha 2FA");
                 }
                 return password;
             }
@@ -121,6 +162,15 @@ class Program
                 Console.WriteLine("---------------------------------------------------");
                 Console.WriteLine($"💰 TAG AMAZON: {AMAZON_TAG}");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
+                
+                // Se em desenvolvimento, salva a sessão em Base64 para copiar
+                if (!isProduction)
+                {
+                    var sessionBytes = File.ReadAllBytes(sessionFile);
+                    var sessionBase64 = Convert.ToBase64String(sessionBytes);
+                    Console.WriteLine("\n📋 SESSÃO GERADA (copie para TELEGRAM_SESSION_BASE64 no Railway):");
+                    Console.WriteLine(sessionBase64);
+                }
                 
                 await Task.Delay(-1);
             }
