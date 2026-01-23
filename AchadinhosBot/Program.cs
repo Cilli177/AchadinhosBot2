@@ -30,28 +30,83 @@ class Program
 
         Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Direto)...");
 
+        // 🌐 DETECTA AMBIENTE
+        bool isProduction = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT")) ||
+                           !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HEROKU_APP_NAME")) ||
+                           Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Production";
+
+        Console.WriteLine($"🔧 Ambiente: {(isProduction ? "PRODUÇÃO (Railway)" : "DESENVOLVIMENTO")}");
+
         // 👇 DIAGNÓSTICO DE ARQUIVO 👇
-        if (File.Exists("WTelegram.session"))
+        string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
+        
+        if (File.Exists(sessionFile))
         {
-            var info = new FileInfo("WTelegram.session");
+            var info = new FileInfo(sessionFile);
             Console.WriteLine($"✅ ARQUIVO DE SESSÃO ENCONTRADO! Tamanho: {info.Length} bytes");
         }
         else
         {
-            Console.WriteLine("⚠️ AVISO: Arquivo WTelegram.session não encontrado na pasta raiz.");
+            Console.WriteLine($"⚠️ AVISO: Arquivo de sessão não encontrado em {sessionFile}");
         }
         // 👆 FIM DO DIAGNÓSTICO 👆
 
         string Config(string what)
         {
-            // Simples e Direto: Usa o arquivo na pasta atual
-            if (what == "session_pathname") return "WTelegram.session";
+            if (what == "session_pathname") return sessionFile;
             
             if (what == "api_id") return api_id.ToString();
             if (what == "api_hash") return api_hash;
-            if (what == "phone_number") { Console.Write("📱 Celular: "); return Console.ReadLine() ?? ""; }
-            if (what == "verification_code") { Console.Write("🔑 Código: "); return Console.ReadLine() ?? ""; }
-            if (what == "password") { Console.Write("🔒 Senha 2FA: "); return Console.ReadLine() ?? ""; }
+            
+            // 🔧 CONFIGURAÇÃO DE AUTENTICAÇÃO
+            if (what == "phone_number") 
+            { 
+                var phone = Environment.GetEnvironmentVariable("TELEGRAM_PHONE");
+                if (string.IsNullOrEmpty(phone))
+                {
+                    if (isProduction)
+                    {
+                        throw new Exception("❌ TELEGRAM_PHONE não configurado como variável de ambiente!");
+                    }
+                    Console.Write("📱 Celular: "); 
+                    phone = Console.ReadLine() ?? "";
+                }
+                
+                if (!string.IsNullOrEmpty(phone))
+                {
+                    Console.WriteLine($"📱 Celular: {MaskPhone(phone)} (autenticando...)");
+                }
+                return phone;
+            }
+            
+            if (what == "verification_code") 
+            { 
+                if (isProduction)
+                {
+                    Console.WriteLine("❌ ERRO: Código de verificação necessário em produção!");
+                    Console.WriteLine("⚠️  Se recebeu código SMS, a senha pode estar incorreta.");
+                    throw new Exception("Necessário código de verificação. Verifique se a senha 2FA está correta.");
+                }
+                Console.Write("🔑 Código: "); 
+                return Console.ReadLine() ?? ""; 
+            }
+            
+            if (what == "password") 
+            { 
+                var password = Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD");
+                if (string.IsNullOrEmpty(password))
+                {
+                    if (isProduction)
+                    {
+                        Console.WriteLine("⚠️  Nenhuma senha 2FA configurada (variável TELEGRAM_PASSWORD)");
+                        return "";
+                    }
+                    Console.Write("🔒 Senha 2FA (deixe em branco se não tiver): "); 
+                    password = Console.ReadLine() ?? "";
+                }
+                return password;
+            }
+            
             return null;
         }
 
@@ -73,7 +128,20 @@ class Program
         catch (Exception ex)
         {
             Console.WriteLine($"❌ ERRO FATAL: {ex.Message}");
+            Console.WriteLine($"📋 Stack Trace: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"📋 Inner Exception: {ex.InnerException.Message}");
+            }
+            Environment.Exit(1);
         }
+    }
+
+    static string MaskPhone(string phone)
+    {
+        if (phone.Length > 5)
+            return phone.Substring(0, 3) + "***" + phone.Substring(phone.Length - 2);
+        return "***";
     }
 
     private static async Task OnUpdate(Update update)
