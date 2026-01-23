@@ -14,11 +14,10 @@ class Program
     static WTelegram.Client? Client;
     static WTelegram.UpdateManager? Manager;
     
-    // Adicionei CookieContainer para guardar "memória" entre redirecionamentos
     static readonly CookieContainer Cookies = new CookieContainer();
     static readonly HttpClientHandler Handler = new HttpClientHandler 
     { 
-        AllowAutoRedirect = false, // Continuamos manuais para ter controle
+        AllowAutoRedirect = false,
         CookieContainer = Cookies,
         UseCookies = true
     };
@@ -44,15 +43,15 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // --- CONFIGURAÇÃO DO NAVEGADOR (DISFARCE COMPLETO) ---
-        HttpClient.Timeout = TimeSpan.FromSeconds(10);
+        // Configuração do Navegador
+        HttpClient.Timeout = TimeSpan.FromSeconds(15); // Aumentei um pouco para dar tempo de encurtar
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
         HttpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Detetive de HTML)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Encurtador TinyURL)...");
 
-        // --- LÓGICA DE LOGIN ---
+        // --- LOGIN ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
         
@@ -101,7 +100,7 @@ class Program
 
                 Console.WriteLine("---------------------------------------------------");
                 Console.WriteLine($"💰 TAG AMAZON: {AMAZON_TAG}");
-                Console.WriteLine("🛡️ FILTRO: Apenas Amazon (com expansão avançada)");
+                Console.WriteLine("✂️ ENCURTADOR: Ativado (TinyURL)");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
                 
                 await Task.Delay(-1);
@@ -127,7 +126,7 @@ class Program
 
                     if (novoTexto == null)
                     {
-                        Console.WriteLine("🗑️ IGNORADO: Não é Amazon (ou não consegui expandir).");
+                        Console.WriteLine("🗑️ IGNORADO: Não é Amazon (ou falha).");
                         return; 
                     }
 
@@ -142,12 +141,12 @@ class Program
                                 id = new InputPhoto { id = photo.id, access_hash = photo.access_hash, file_reference = photo.file_reference }
                             };
                             await Client.Messages_SendMedia(PeerDestino, inputMedia, novoTexto, WTelegram.Helpers.RandomLong());
-                            Console.WriteLine("✅ FOTO AMAZON ENVIADA!");
+                            Console.WriteLine("✅ FOTO + LINK CURTO ENVIADOS!");
                         }
                         else
                         {
                             await Client.SendMessageAsync(PeerDestino, novoTexto);
-                            Console.WriteLine("✅ TEXTO AMAZON ENVIADO!");
+                            Console.WriteLine("✅ TEXTO + LINK CURTO ENVIADOS!");
                         }
                     }
                     catch (Exception ex) { Console.WriteLine($"❌ FALHA ENVIO: {ex.Message}"); }
@@ -173,7 +172,6 @@ class Program
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo {urlOriginal.Substring(0, 15)}... ");
-                // Limita a recursão para não ficar infinito (max 5 pulos)
                 urlExpandida = await ExpandirUrl(urlOriginal, 0); 
                 
                 if (urlExpandida != urlOriginal)
@@ -184,23 +182,45 @@ class Program
 
             if (urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to"))
             {
+                // 1. Aplica a Tag
                 string urlComTag = AplicarTagAmazon(urlExpandida);
-                Console.WriteLine($"   💰 É AMAZON! Tag aplicada.");
+                Console.WriteLine($"   💰 Tag aplicada.");
+
+                // 2. Encurta o link já com a tag (Passo Novo!)
+                Console.Write($"   ✂️ Encurtando... ");
+                string urlCurta = await EncurtarTinyUrl(urlComTag);
+                Console.WriteLine($"Feito! ({urlCurta})");
                 
-                if (urlOriginal != urlComTag)
-                    textoFinal = textoFinal.Replace(urlOriginal, urlComTag);
+                // Substitui o link original (feio) pelo curto (bonito)
+                if (urlOriginal != urlCurta)
+                    textoFinal = textoFinal.Replace(urlOriginal, urlCurta);
                 
                 encontrouAmazon = true;
             }
             else
             {
-                // Mostra o host para sabermos onde ele parou (ex: compre.link ou magalu)
                 try { Console.WriteLine($"   ❌ Ignorado: {new Uri(urlExpandida).Host}"); }
                 catch { Console.WriteLine($"   ❌ Ignorado: {urlExpandida}"); }
             }
         }
 
         return encontrouAmazon ? textoFinal : null;
+    }
+
+    // 👇 NOVA FUNÇÃO DE ENCURTAR 👇
+    private static async Task<string> EncurtarTinyUrl(string urlLonga)
+    {
+        try
+        {
+            // A API do TinyURL é simples: você chama a URL e ela devolve o link curto em texto
+            var response = await HttpClient.GetStringAsync($"https://tinyurl.com/api-create.php?url={urlLonga}");
+            return response;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao encurtar: {ex.Message}");
+            return urlLonga; // Se der erro, usa o longo mesmo para garantir a venda
+        }
     }
 
     private static bool IsShortLink(string url)
@@ -210,16 +230,14 @@ class Program
                url.Contains("a.co") || url.Contains("is.gd") || url.Contains("tinyurl");
     }
 
-    // 👇 A MÁGICA ACONTECE AQUI 👇
     private static async Task<string> ExpandirUrl(string url, int depth)
     {
-        if (depth > 5) return url; // Evita loop infinito
+        if (depth > 5) return url;
 
         try
         {
             var response = await HttpClient.GetAsync(url);
             
-            // 1. Redirecionamento HTTP Padrão (301, 302)
             if (response.StatusCode == HttpStatusCode.Moved || 
                 response.StatusCode == HttpStatusCode.Found ||
                 response.StatusCode == HttpStatusCode.Redirect ||
@@ -228,28 +246,23 @@ class Program
                 var location = response.Headers.Location;
                 if (location != null) 
                 {
-                    // Converte URI relativa para absoluta se necessário
                     string nextUrl = location.IsAbsoluteUri ? location.ToString() : new Uri(new Uri(url), location).ToString();
                     return await ExpandirUrl(nextUrl, depth + 1);
                 }
             }
             
-            // 2. Se deu 200 OK, verifica se é uma página "fake" de redirecionamento (HTML/JS)
             if (response.IsSuccessStatusCode)
             {
                 string html = await response.Content.ReadAsStringAsync();
                 
-                // Procura por <meta http-equiv="refresh" content="0;url=NOVO_LINK">
                 var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
                 if (metaMatch.Success)
                 {
                     string nextUrl = metaMatch.Groups[1].Value;
-                    // Corrige link se vier relativo ou quebrado
                     if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
                     return await ExpandirUrl(nextUrl, depth + 1);
                 }
 
-                // Procura por window.location = 'NOVO_LINK' (JavaScript simples)
                 var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
                 if (jsMatch.Success)
                 {
@@ -259,13 +272,9 @@ class Program
                 }
             }
             
-            // Se chegou aqui, é o link final mesmo
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         }
-        catch
-        {
-            return url;
-        }
+        catch { return url; }
     }
 
     private static string AplicarTagAmazon(string url)
