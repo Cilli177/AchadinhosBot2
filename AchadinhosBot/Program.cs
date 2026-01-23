@@ -39,30 +39,46 @@ class Program
 
         // 👇 PREPARAÇÃO DA SESSÃO 👇
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
+        bool sessionRestored = false;
         
         // Se em produção, tenta restaurar a sessão do Base64 (variável de ambiente ou arquivo)
         if (isProduction)
         {
+            Console.WriteLine("🔍 Procurando arquivo de sessão...");
+            
             var sessionBase64 = Environment.GetEnvironmentVariable("TELEGRAM_SESSION_BASE64");
             
             // Se não tem variável, tenta arquivo
-            if (string.IsNullOrEmpty(sessionBase64) && File.Exists("WTelegram.session.b64"))
+            if (string.IsNullOrEmpty(sessionBase64))
             {
-                sessionBase64 = File.ReadAllText("WTelegram.session.b64").Trim();
+                if (File.Exists("WTelegram.session.b64"))
+                {
+                    Console.WriteLine("✅ Arquivo WTelegram.session.b64 encontrado!");
+                    sessionBase64 = File.ReadAllText("WTelegram.session.b64").Trim();
+                }
+                else
+                {
+                    Console.WriteLine("⚠️  Arquivo WTelegram.session.b64 NÃO encontrado");
+                }
+            }
+            else
+            {
+                Console.WriteLine("✅ TELEGRAM_SESSION_BASE64 encontrado em variável");
             }
             
             if (!string.IsNullOrEmpty(sessionBase64))
             {
                 try
                 {
-                    Console.WriteLine("📦 Restaurando sessão do Base64...");
+                    Console.WriteLine("📦 Decodificando e restaurando sessão...");
                     var sessionBytes = Convert.FromBase64String(sessionBase64);
                     File.WriteAllBytes(sessionFile, sessionBytes);
-                    Console.WriteLine($"✅ Sessão restaurada com sucesso! ({sessionBytes.Length} bytes)");
+                    Console.WriteLine($"✅ Sessão restaurada! ({sessionBytes.Length} bytes)");
+                    sessionRestored = true;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"⚠️  Erro ao restaurar sessão: {ex.Message}");
+                    Console.WriteLine($"⚠️  Erro: {ex.Message}");
                 }
             }
         }
@@ -73,12 +89,15 @@ class Program
             var info = new FileInfo(sessionFile);
             Console.WriteLine($"📦 Arquivo de sessão encontrado: {info.Length} bytes");
             
-            // Sessão muito pequena (<5KB) provavelmente está corrompida
-            if (info.Length < 5000 && isProduction)
+            // Sessão muito pequena (<10KB) provavelmente está corrompida
+            // Mas não deletar se foi restaurada agora
+            if (info.Length < 10000 && isProduction && !sessionRestored)
             {
-                Console.WriteLine("⚠️  Sessão parece corrompida. Deletando para novo login...");
+                Console.WriteLine("⚠️  Sessão corrompida (" + info.Length + " bytes). Aguardando 30s...");
+                System.Threading.Thread.Sleep(30000); // Espera para evitar FLOOD_WAIT
+                
                 try { File.Delete(sessionFile); }
-                catch { Console.WriteLine("⚠️  Não foi possível deletar sessão corrompida"); }
+                catch { Console.WriteLine("⚠️  Erro ao deletar"); }
             }
         }
         else
