@@ -9,10 +9,8 @@ RUN dotnet publish -c Release -o out
 FROM mcr.microsoft.com/dotnet/runtime:8.0
 WORKDIR /app
 COPY --from=build-env /app/out .
-
-# 👇 PREPARAÇÃO PARA SESSÃO EM PRODUÇÃO 👇
-# Copia o arquivo de sessão Base64 se existir
-RUN if [ -f "WTelegram.session.b64" ]; then cp WTelegram.session.b64 /app/; fi
+# Copia o arquivo de sessão Base64 se existir no build-env
+COPY --from=build-env /app/WTelegram.session.b64 ./
 
 USER root
 RUN mkdir -p /tmp && chmod 777 /tmp
