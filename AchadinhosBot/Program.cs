@@ -5,22 +5,24 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Net.Http;
+using System.Net;
 using WTelegram;
 using TL;
 
 class Program
 {
-    // Adicionando '?' para permitir nulos temporariamente (resolve os warnings amarelos)
     static WTelegram.Client? Client;
     static WTelegram.UpdateManager? Manager;
-    static readonly HttpClient HttpClient = new HttpClient();
+    
+    // HttpClient configurado para seguir redirecionamentos manualmente
+    static readonly HttpClient HttpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
 
     // ⚙️ SEUS DADOS
     static int api_id = 31119088;
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
     static string AMAZON_TAG = "reidasofer022-20";
-    static long ID_DESTINO = 3632436217; // Rei das Ofertas VIP
-    static InputPeer? PeerDestino; // Pode ser nulo até logar
+    static long ID_DESTINO = 3632436217; 
+    static InputPeer? PeerDestino;
 
     // 📡 FONTES
     static List<long> IDs_FONTES = new List<long>()
@@ -35,36 +37,25 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // --- CONFIGURAÇÃO DO NAVEGADOR (DISFARCE) ---
-        HttpClient.Timeout = TimeSpan.FromSeconds(5);
+        // --- CONFIGURAÇÃO DO NAVEGADOR ---
+        HttpClient.Timeout = TimeSpan.FromSeconds(8);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Anti-Travamento)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Exclusivo Amazon)...");
 
-        // --- LÓGICA DE LOGIN (BASE64/RAILWAY) ---
+        // --- LÓGICA DE LOGIN ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
         
-        if (isProduction)
+        if (isProduction && File.Exists("WTelegram.session.b64"))
         {
-            Console.WriteLine($"🔧 Ambiente: PRODUÇÃO (Railway)");
-            Console.WriteLine("🔍 Procurando arquivo de sessão...");
-            
-            if (File.Exists("WTelegram.session.b64"))
+            try 
             {
-                Console.WriteLine("✅ Arquivo WTelegram.session.b64 encontrado!");
-                try 
-                {
-                    var b64 = File.ReadAllText("WTelegram.session.b64");
-                    File.WriteAllBytes(sessionFile, Convert.FromBase64String(b64));
-                    Console.WriteLine($"📦 Sessão restaurada em {sessionFile}!");
-                }
-                catch (Exception ex) { Console.WriteLine($"❌ Erro ao restaurar sessão: {ex.Message}"); }
+                var b64 = File.ReadAllText("WTelegram.session.b64");
+                File.WriteAllBytes(sessionFile, Convert.FromBase64String(b64));
+                Console.WriteLine($"📦 Sessão restaurada!");
             }
-        }
-        else
-        {
-             Console.WriteLine($"🔧 Ambiente: LOCAL (Dev)");
+            catch (Exception ex) { Console.WriteLine($"❌ Erro sessão: {ex.Message}"); }
         }
 
         string? Config(string what)
@@ -72,11 +63,9 @@ class Program
             if (what == "session_pathname") return sessionFile;
             if (what == "api_id") return api_id.ToString();
             if (what == "api_hash") return api_hash;
-            
             if (what == "phone_number") return Environment.GetEnvironmentVariable("TELEGRAM_PHONE") ?? Console.ReadLine();
             if (what == "verification_code") return Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE") ?? Console.ReadLine();
             if (what == "password") return Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD") ?? Console.ReadLine();
-            
             return null;
         }
 
@@ -98,30 +87,24 @@ class Program
                 if (chatDestino != null)
                 {
                     PeerDestino = chatDestino.ToInputPeer();
-                    Console.WriteLine($"📢 DESTINO CONFIRMADO: {chatDestino.Title} (ID: {chatDestino.ID})");
+                    Console.WriteLine($"📢 DESTINO: {chatDestino.Title}");
                 }
-                else
-                {
-                    Console.WriteLine($"❌ ERRO CRÍTICO: Não encontrei o canal destino ID {ID_DESTINO}. O robô é admin lá?");
-                }
+                else { Console.WriteLine($"❌ ERRO: Canal destino {ID_DESTINO} não encontrado!"); }
 
                 Console.WriteLine("---------------------------------------------------");
                 Console.WriteLine($"💰 TAG AMAZON: {AMAZON_TAG}");
+                Console.WriteLine("🛡️ FILTRO ATIVO: Apenas Amazon será postado!");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
                 
                 await Task.Delay(-1);
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ ERRO FATAL NO MAIN: {ex.Message}");
-        }
+        catch (Exception ex) { Console.WriteLine($"❌ ERRO MAIN: {ex.Message}"); }
     }
 
     private static async Task OnUpdate(Update update)
     {
-        if (PeerDestino == null) return;
-        if (Client == null) return; 
+        if (PeerDestino == null || Client == null) return;
 
         switch (update)
         {
@@ -132,87 +115,119 @@ class Program
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
-                    // --- PASSO 1: PROCESSAR LINK ---
-                    string novoTexto = await ProcessarMensagem(msg.message);
+                    // --- PASSO 1: PROCESSAR E FILTRAR ---
+                    // Se retornar null, é porque não é Amazon
+                    string? novoTexto = await ProcessarMensagemAmazonOnly(msg.message);
+
+                    if (novoTexto == null)
+                    {
+                        Console.WriteLine("🗑️ IGNORADO: Não é oferta Amazon.");
+                        return; // ⛔ PARA TUDO AQUI
+                    }
+
                     novoTexto += "\n\n🔥 Vi no: @ReiDasOfertasVIP";
 
                     // --- PASSO 2: ENVIAR ---
                     try
                     {
-                        Console.WriteLine("📤 Tentando enviar para o canal...");
-                        
                         if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
                         {
                             var inputMedia = new InputMediaPhoto
                             {
-                                id = new InputPhoto
-                                {
-                                    id = photo.id,
-                                    access_hash = photo.access_hash,
-                                    file_reference = photo.file_reference
-                                }
+                                id = new InputPhoto { id = photo.id, access_hash = photo.access_hash, file_reference = photo.file_reference }
                             };
-                            
-                            // 👇 AQUI ESTAVA O ERRO: Adicionei o 'WTelegram.Helpers.RandomLong()' no final
                             await Client.Messages_SendMedia(PeerDestino, inputMedia, novoTexto, WTelegram.Helpers.RandomLong());
-                            Console.WriteLine("✅ FOTO + TEXTO ENVIADOS!");
+                            Console.WriteLine("✅ FOTO AMAZON ENVIADA!");
                         }
                         else
                         {
                             await Client.SendMessageAsync(PeerDestino, novoTexto);
-                            Console.WriteLine("✅ APENAS TEXTO ENVIADO!");
+                            Console.WriteLine("✅ TEXTO AMAZON ENVIADO!");
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"❌ FALHA NO ENVIO: {ex.Message}");
-                    }
+                    catch (Exception ex) { Console.WriteLine($"❌ FALHA ENVIO: {ex.Message}"); }
                 }
                 break;
         }
     }
 
-    private static async Task<string> ProcessarMensagem(string textoOriginal)
+    // Retorna NULL se não achar link da Amazon
+    private static async Task<string?> ProcessarMensagemAmazonOnly(string textoOriginal)
     {
         var regexLink = new Regex(@"https?://[^\s]+");
         var matches = regexLink.Matches(textoOriginal);
         string textoFinal = textoOriginal;
+        bool encontrouAmazon = false;
 
         Console.WriteLine($"   🔎 Analisando {matches.Count} links...");
 
         foreach (Match match in matches)
         {
             string urlOriginal = match.Value;
-            string urlProcessada = urlOriginal;
+            string urlExpandida = urlOriginal;
 
-            if (urlOriginal.Contains("amzn.to") || urlOriginal.Contains("bit.ly") || urlOriginal.Contains("t.co"))
+            // 1. EXPANDIR SE FOR CURTO
+            if (IsShortLink(urlOriginal))
             {
-                Console.Write($"   ↳ Expandindo {urlOriginal}... ");
-                try
-                {
-                    var response = await HttpClient.GetAsync(urlOriginal);
-                    urlProcessada = response.RequestMessage!.RequestUri!.ToString();
-                    Console.WriteLine("OK! ✅");
-                }
-                catch
-                {
-                    Console.WriteLine("TIMEOUT/ERRO (Mantendo original) ⚠️");
-                }
+                Console.Write($"   ↳ Expandindo {urlOriginal.Substring(0, 15)}... ");
+                urlExpandida = await ExpandirUrl(urlOriginal);
+                Console.WriteLine(urlExpandida == urlOriginal ? "Falhou/Igual ⚠️" : "Sucesso! ✅");
             }
 
-            if (urlProcessada.Contains("amazon.com.br") || urlProcessada.Contains("amazon.com"))
+            // 2. VERIFICAR SE É AMAZON
+            if (urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to"))
             {
-                if (urlProcessada.Contains("tag="))
-                    urlProcessada = Regex.Replace(urlProcessada, @"tag=[^&]+", $"tag={AMAZON_TAG}");
-                else
-                    urlProcessada += (urlProcessada.Contains("?") ? "&" : "?") + $"tag={AMAZON_TAG}";
+                string urlComTag = AplicarTagAmazon(urlExpandida);
+                Console.WriteLine("   💰 É AMAZON! Tag aplicada.");
                 
-                Console.WriteLine("   💰 Tag aplicada!");
+                if (urlOriginal != urlComTag)
+                    textoFinal = textoFinal.Replace(urlOriginal, urlComTag);
+                
+                encontrouAmazon = true;
             }
-
-            if (urlOriginal != urlProcessada)
-                textoFinal = textoFinal.Replace(urlOriginal, urlProcessada);
+            else
+            {
+                Console.WriteLine($"   ❌ Link de fora ({new Uri(urlExpandida).Host}) ignorado.");
+            }
         }
-        return textoFinal;
+
+        // Se NÃO tiver nenhum link Amazon na mensagem inteira, retorna NULL
+        return encontrouAmazon ? textoFinal : null;
+    }
+
+    private static bool IsShortLink(string url)
+    {
+        return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
+               url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
+               url.Contains("a.co");
+    }
+
+    private static async Task<string> ExpandirUrl(string url)
+    {
+        try
+        {
+            var response = await HttpClient.GetAsync(url);
+            if (response.StatusCode == HttpStatusCode.Moved || 
+                response.StatusCode == HttpStatusCode.Found ||
+                response.StatusCode == HttpStatusCode.Redirect ||
+                response.StatusCode == HttpStatusCode.TemporaryRedirect) 
+            {
+                var location = response.Headers.Location;
+                if (location != null) return await ExpandirUrl(location.ToString());
+            }
+            return response.RequestMessage?.RequestUri?.ToString() ?? url;
+        }
+        catch { return url; }
+    }
+
+    private static string AplicarTagAmazon(string url)
+    {
+        try 
+        {
+            string limpa = Regex.Replace(url, @"[?&]tag=[^&]+", "");
+            string separador = limpa.Contains("?") ? "&" : "?";
+            return limpa + separador + "tag=" + AMAZON_TAG;
+        }
+        catch { return url; }
     }
 }
