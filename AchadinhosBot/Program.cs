@@ -40,10 +40,17 @@ class Program
         // 👇 PREPARAÇÃO DA SESSÃO 👇
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
         
-        // Se em produção, tenta restaurar a sessão do Base64
+        // Se em produção, tenta restaurar a sessão do Base64 (variável de ambiente ou arquivo)
         if (isProduction)
         {
             var sessionBase64 = Environment.GetEnvironmentVariable("TELEGRAM_SESSION_BASE64");
+            
+            // Se não tem variável, tenta arquivo
+            if (string.IsNullOrEmpty(sessionBase64) && File.Exists("WTelegram.session.b64"))
+            {
+                sessionBase64 = File.ReadAllText("WTelegram.session.b64").Trim();
+            }
+            
             if (!string.IsNullOrEmpty(sessionBase64))
             {
                 try
