@@ -11,7 +11,9 @@ WORKDIR /app
 COPY --from=build-env /app/out .
 
 # 👇 PREPARAÇÃO PARA SESSÃO EM PRODUÇÃO 👇
-# O arquivo WTelegram.session será gerado automaticamente em /tmp/ durante o primeiro login
+# Copia o arquivo de sessão Base64 se existir
+COPY WTelegram.session.b64 ./ 2>/dev/null || true
+
 USER root
 RUN mkdir -p /tmp && chmod 777 /tmp
 
