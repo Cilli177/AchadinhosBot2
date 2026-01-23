@@ -10,8 +10,9 @@ using TL;
 
 class Program
 {
-    static WTelegram.Client Client;
-    static WTelegram.UpdateManager Manager;
+    // Adicionando '?' para permitir nulos temporariamente (resolve os warnings amarelos)
+    static WTelegram.Client? Client;
+    static WTelegram.UpdateManager? Manager;
     static readonly HttpClient HttpClient = new HttpClient();
 
     // ⚙️ SEUS DADOS
@@ -19,7 +20,7 @@ class Program
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
     static string AMAZON_TAG = "reidasofer022-20";
     static long ID_DESTINO = 3632436217; // Rei das Ofertas VIP
-    static InputPeer PeerDestino;
+    static InputPeer? PeerDestino; // Pode ser nulo até logar
 
     // 📡 FONTES
     static List<long> IDs_FONTES = new List<long>()
@@ -35,9 +36,7 @@ class Program
         WTelegram.Helpers.Log = (lvl, str) => { };
 
         // --- CONFIGURAÇÃO DO NAVEGADOR (DISFARCE) ---
-        // Timeout de 5 segundos para não travar o robô
         HttpClient.Timeout = TimeSpan.FromSeconds(5);
-        // Finge ser um navegador Chrome para não tomar bloqueio da Amazon
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
         Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Anti-Travamento)...");
@@ -51,7 +50,6 @@ class Program
             Console.WriteLine($"🔧 Ambiente: PRODUÇÃO (Railway)");
             Console.WriteLine("🔍 Procurando arquivo de sessão...");
             
-            // Tenta recuperar do arquivo .b64 que subimos via Git
             if (File.Exists("WTelegram.session.b64"))
             {
                 Console.WriteLine("✅ Arquivo WTelegram.session.b64 encontrado!");
@@ -69,13 +67,12 @@ class Program
              Console.WriteLine($"🔧 Ambiente: LOCAL (Dev)");
         }
 
-        string Config(string what)
+        string? Config(string what)
         {
             if (what == "session_pathname") return sessionFile;
             if (what == "api_id") return api_id.ToString();
             if (what == "api_hash") return api_hash;
             
-            // Login automático via variáveis (Railway) ou Console (Local)
             if (what == "phone_number") return Environment.GetEnvironmentVariable("TELEGRAM_PHONE") ?? Console.ReadLine();
             if (what == "verification_code") return Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE") ?? Console.ReadLine();
             if (what == "password") return Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD") ?? Console.ReadLine();
@@ -97,7 +94,6 @@ class Program
                 var dialogs = await Client.Messages_GetAllDialogs();
                 dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
 
-                // Busca o canal destino e garante que temos acesso
                 var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
                 if (chatDestino != null)
                 {
@@ -125,22 +121,19 @@ class Program
     private static async Task OnUpdate(Update update)
     {
         if (PeerDestino == null) return;
+        if (Client == null) return; 
 
         switch (update)
         {
             case UpdateNewMessage unm when unm.message is Message msg:
-                // Filtra apenas mensagens dos canais fonte que tenham texto
                 if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
                 {
-                    // Ignora mensagens muito curtas ("bom dia", "oi")
                     if (msg.message.Length < 10) return;
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
                     // --- PASSO 1: PROCESSAR LINK ---
                     string novoTexto = await ProcessarMensagem(msg.message);
-                    
-                    // Adiciona assinatura
                     novoTexto += "\n\n🔥 Vi no: @ReiDasOfertasVIP";
 
                     // --- PASSO 2: ENVIAR ---
@@ -150,7 +143,6 @@ class Program
                         
                         if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
                         {
-                            // Reutiliza a foto que já está nos servidores do Telegram (mais rápido)
                             var inputMedia = new InputMediaPhoto
                             {
                                 id = new InputPhoto
@@ -160,7 +152,9 @@ class Program
                                     file_reference = photo.file_reference
                                 }
                             };
-                            await Client.Messages_SendMedia(PeerDestino, inputMedia, novoTexto);
+                            
+                            // 👇 AQUI ESTAVA O ERRO: Adicionei o 'WTelegram.Helpers.RandomLong()' no final
+                            await Client.Messages_SendMedia(PeerDestino, inputMedia, novoTexto, WTelegram.Helpers.RandomLong());
                             Console.WriteLine("✅ FOTO + TEXTO ENVIADOS!");
                         }
                         else
@@ -191,15 +185,13 @@ class Program
             string urlOriginal = match.Value;
             string urlProcessada = urlOriginal;
 
-            // Só tenta expandir se for link curto
             if (urlOriginal.Contains("amzn.to") || urlOriginal.Contains("bit.ly") || urlOriginal.Contains("t.co"))
             {
                 Console.Write($"   ↳ Expandindo {urlOriginal}... ");
                 try
                 {
-                    // Tenta acessar o link com timeout de 5 segundos
                     var response = await HttpClient.GetAsync(urlOriginal);
-                    urlProcessada = response.RequestMessage.RequestUri.ToString();
+                    urlProcessada = response.RequestMessage!.RequestUri!.ToString();
                     Console.WriteLine("OK! ✅");
                 }
                 catch
@@ -208,7 +200,6 @@ class Program
                 }
             }
 
-            // Se for Amazon, troca a tag
             if (urlProcessada.Contains("amazon.com.br") || urlProcessada.Contains("amazon.com"))
             {
                 if (urlProcessada.Contains("tag="))
