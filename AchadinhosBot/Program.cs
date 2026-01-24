@@ -26,7 +26,14 @@ class Program
     // ⚙️ SEUS DADOS
     static int api_id = 31119088;
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
+    
+    // 🍌 AMAZON
     static string AMAZON_TAG = "reidasofer022-20";
+    
+    // 🤝 MERCADO LIVRE (Extraídos dos seus links)
+    static string ML_MATT_TOOL = "98187057";
+    static string ML_MATT_WORD = "land177";
+
     static long ID_DESTINO = 3632436217; 
     static InputPeer? PeerDestino;
 
@@ -43,13 +50,12 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // Configuração do Navegador
-        HttpClient.Timeout = TimeSpan.FromSeconds(15); // Aumentei um pouco para dar tempo de encurtar
+        HttpClient.Timeout = TimeSpan.FromSeconds(15);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
         HttpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Encurtador TinyURL)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Amazon + Mercado Livre)...");
 
         // --- LOGIN ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -100,7 +106,7 @@ class Program
 
                 Console.WriteLine("---------------------------------------------------");
                 Console.WriteLine($"💰 TAG AMAZON: {AMAZON_TAG}");
-                Console.WriteLine("✂️ ENCURTADOR: Ativado (TinyURL)");
+                Console.WriteLine($"🤝 TAG MELI: {ML_MATT_WORD} (Tool: {ML_MATT_TOOL})");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
                 
                 await Task.Delay(-1);
@@ -122,11 +128,11 @@ class Program
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
-                    string? novoTexto = await ProcessarMensagemAmazonOnly(msg.message);
+                    string? novoTexto = await ProcessarMensagemMultiLoja(msg.message);
 
                     if (novoTexto == null)
                     {
-                        Console.WriteLine("🗑️ IGNORADO: Não é Amazon (ou falha).");
+                        Console.WriteLine("🗑️ IGNORADO: Não é Amazon nem Mercado Livre.");
                         return; 
                     }
 
@@ -141,12 +147,12 @@ class Program
                                 id = new InputPhoto { id = photo.id, access_hash = photo.access_hash, file_reference = photo.file_reference }
                             };
                             await Client.Messages_SendMedia(PeerDestino, inputMedia, novoTexto, WTelegram.Helpers.RandomLong());
-                            Console.WriteLine("✅ FOTO + LINK CURTO ENVIADOS!");
+                            Console.WriteLine("✅ FOTO + LINK ENVIADOS!");
                         }
                         else
                         {
                             await Client.SendMessageAsync(PeerDestino, novoTexto);
-                            Console.WriteLine("✅ TEXTO + LINK CURTO ENVIADOS!");
+                            Console.WriteLine("✅ TEXTO + LINK ENVIADOS!");
                         }
                     }
                     catch (Exception ex) { Console.WriteLine($"❌ FALHA ENVIO: {ex.Message}"); }
@@ -155,12 +161,13 @@ class Program
         }
     }
 
-    private static async Task<string?> ProcessarMensagemAmazonOnly(string textoOriginal)
+    // Processa links da Amazon E do Mercado Livre
+    private static async Task<string?> ProcessarMensagemMultiLoja(string textoOriginal)
     {
         var regexLink = new Regex(@"https?://[^\s]+");
         var matches = regexLink.Matches(textoOriginal);
         string textoFinal = textoOriginal;
-        bool encontrouAmazon = false;
+        bool linkValidoEncontrado = false;
 
         Console.WriteLine($"   🔎 Analisando {matches.Count} links...");
 
@@ -169,57 +176,64 @@ class Program
             string urlOriginal = match.Value;
             string urlExpandida = urlOriginal;
 
+            // 1. Expandir Link Curto
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo {urlOriginal.Substring(0, 15)}... ");
                 urlExpandida = await ExpandirUrl(urlOriginal, 0); 
                 
-                if (urlExpandida != urlOriginal)
-                    Console.WriteLine("Sucesso! ✅");
-                else
-                    Console.WriteLine("Falhou/Igual ⚠️");
+                if (urlExpandida != urlOriginal) Console.WriteLine("Sucesso! ✅");
+                else Console.WriteLine("Falhou/Igual ⚠️");
             }
 
-            if (urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to"))
-            {
-                // 1. Aplica a Tag
-                string urlComTag = AplicarTagAmazon(urlExpandida);
-                Console.WriteLine($"   💰 Tag aplicada.");
+            string urlComTag = urlExpandida;
+            bool ehAmazon = urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to");
+            bool ehMercadoLivre = urlExpandida.Contains("mercadolivre.com") || urlExpandida.Contains("mercadolibre.com");
 
-                // 2. Encurta o link já com a tag (Passo Novo!)
-                Console.Write($"   ✂️ Encurtando... ");
-                string urlCurta = await EncurtarTinyUrl(urlComTag);
-                Console.WriteLine($"Feito! ({urlCurta})");
-                
-                // Substitui o link original (feio) pelo curto (bonito)
-                if (urlOriginal != urlCurta)
-                    textoFinal = textoFinal.Replace(urlOriginal, urlCurta);
-                
-                encontrouAmazon = true;
+            if (ehAmazon)
+            {
+                // --- LÓGICA AMAZON ---
+                urlComTag = AplicarTagAmazon(urlExpandida);
+                Console.WriteLine($"   🍌 AMAZON detectado! Tag aplicada.");
+                linkValidoEncontrado = true;
+            }
+            else if (ehMercadoLivre)
+            {
+                // --- LÓGICA MERCADO LIVRE ---
+                urlComTag = AplicarTagMercadoLivre(urlExpandida);
+                Console.WriteLine($"   🤝 MERCADO LIVRE detectado! Tags aplicadas.");
+                linkValidoEncontrado = true;
             }
             else
             {
                 try { Console.WriteLine($"   ❌ Ignorado: {new Uri(urlExpandida).Host}"); }
                 catch { Console.WriteLine($"   ❌ Ignorado: {urlExpandida}"); }
+                continue; // Pula o encurtamento
             }
+
+            // 3. Encurtar o link (só se for Amazon ou ML)
+            Console.Write($"   ✂️ Encurtando... ");
+            string urlCurta = await EncurtarTinyUrl(urlComTag);
+            Console.WriteLine($"Feito! ({urlCurta})");
+            
+            if (urlOriginal != urlCurta)
+                textoFinal = textoFinal.Replace(urlOriginal, urlCurta);
         }
 
-        return encontrouAmazon ? textoFinal : null;
+        return linkValidoEncontrado ? textoFinal : null;
     }
 
-    // 👇 NOVA FUNÇÃO DE ENCURTAR 👇
     private static async Task<string> EncurtarTinyUrl(string urlLonga)
     {
         try
         {
-            // A API do TinyURL é simples: você chama a URL e ela devolve o link curto em texto
             var response = await HttpClient.GetStringAsync($"https://tinyurl.com/api-create.php?url={urlLonga}");
             return response;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Erro ao encurtar: {ex.Message}");
-            return urlLonga; // Se der erro, usa o longo mesmo para garantir a venda
+            return urlLonga; 
         }
     }
 
@@ -227,7 +241,8 @@ class Program
     {
         return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
-               url.Contains("a.co") || url.Contains("is.gd") || url.Contains("tinyurl");
+               url.Contains("a.co") || url.Contains("is.gd") || url.Contains("tinyurl") ||
+               url.Contains("mercadolivre.com/sec"); // ML curto tbm!
     }
 
     private static async Task<string> ExpandirUrl(string url, int depth)
@@ -239,7 +254,7 @@ class Program
             var response = await HttpClient.GetAsync(url);
             
             if (response.StatusCode == HttpStatusCode.Moved || 
-                response.StatusCode == HttpStatusCode.Found ||
+                response.StatusCode == HttpStatusCode.Found || 
                 response.StatusCode == HttpStatusCode.Redirect ||
                 response.StatusCode == HttpStatusCode.TemporaryRedirect) 
             {
@@ -284,6 +299,22 @@ class Program
             string limpa = Regex.Replace(url, @"[?&]tag=[^&]+", "");
             string separador = limpa.Contains("?") ? "&" : "?";
             return limpa + separador + "tag=" + AMAZON_TAG;
+        }
+        catch { return url; }
+    }
+
+    // 👇 AQUI ESTÁ A MÁGICA DO MERCADO LIVRE 👇
+    private static string AplicarTagMercadoLivre(string url)
+    {
+        try 
+        {
+            // 1. Remove qualquer matt_tool, matt_word, matt_source, gclid antigos
+            string limpa = Regex.Replace(url, @"[?&]matt_[a-z]+=[^&]+", "");
+            limpa = Regex.Replace(limpa, @"[?&]gclid=[^&]+", "");
+            
+            // 2. Adiciona os SEUS códigos
+            string separador = limpa.Contains("?") ? "&" : "?";
+            return limpa + separador + $"matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
         }
         catch { return url; }
     }
