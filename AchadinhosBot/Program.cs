@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Net.Http;
 using System.Net;
-using System.Text; // Necessário para JSON da OpenAI
 using System.Text.Json;
 using WTelegram;
 using TL;
@@ -31,14 +30,13 @@ class Program
     static long ID_DESTINO = 3632436217; 
     static InputPeer? PeerDestino;
 
-    // 🍌 AMAZON & ML
+    // 🍌 AMAZON
     static string AMAZON_TAG = "reidasofer022-20";
+
+    // 🤝 MERCADO LIVRE
     static string ML_MATT_TOOL = "98187057";
     static string ML_MATT_WORD = "land177";
     static string? ML_ACCESS_TOKEN = null;
-
-    // 🧠 OPENAI (IA)
-    static string? OPENAI_KEY = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
 
     // 📡 FONTES
     static List<long> IDs_FONTES = new List<long>()
@@ -54,17 +52,12 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // Headers
+        // Headers Otimizados
         HttpClient.Timeout = TimeSpan.FromSeconds(30);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo IA: Copywriter Ativo)...");
-
-        if (string.IsNullOrEmpty(OPENAI_KEY))
-            Console.WriteLine("⚠️ AVISO: Chave OPENAI_API_KEY não encontrada. A IA não será usada.");
-        else
-            Console.WriteLine("🧠 IA: OpenAI Conectada e Pronta!");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Rápido - Sem IA)...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -80,11 +73,11 @@ class Program
             catch (Exception ex) { Console.WriteLine($"❌ Erro sessão: {ex.Message}"); }
         }
 
-        // --- LOGIN ML ---
+        // --- LOGIN ML (Mantido para futuro uso, mas não bloqueia o robô) ---
         Console.WriteLine("🔐 Autenticando ML...");
         bool mlAtivo = await AtualizarTokenMercadoLivre();
         if (mlAtivo) Console.WriteLine("✅ ML Conectado (Token Ativo)!");
-        else Console.WriteLine("⚠️ ML Token Off (Modo Manual Ativo).");
+        else Console.WriteLine("⚠️ ML Token Off (Seguindo com Link Manual).");
 
         string? Config(string what)
         {
@@ -136,25 +129,20 @@ class Program
             case UpdateNewMessage unm when unm.message is Message msg:
                 if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
                 {
+                    // No laboratório aceita msg curta
                     if (msg.message.Length < 5 && msg.peer_id.ID != 5258197181) return;
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
-                    // 1. Processa Links (Gera o link de afiliado)
-                    var resultadoLinks = await ProcessarLinks(msg.message);
+                    string? novoTexto = await ProcessarMensagemUniversal(msg.message);
 
-                    if (resultadoLinks.LinkAfiliado == null)
+                    if (novoTexto == null)
                     {
                         Console.WriteLine("🗑️ IGNORADO: Sem links válidos.");
                         return; 
                     }
 
-                    // 2. Gera o Texto com IA (Copywriting)
-                    Console.WriteLine("   🧠 IA: Gerando texto persuasivo...");
-                    string textoFinal = await GerarCopyComIA(msg.message, resultadoLinks.LinkAfiliado);
-
-                    // Adiciona rodapé
-                    textoFinal += "\n\n🔥 Vi no: @ReiDasOfertasVIP";
+                    novoTexto += "\n\n🔥 Vi no: @ReiDasOfertasVIP";
 
                     try
                     {
@@ -164,13 +152,13 @@ class Program
                             {
                                 id = new InputPhoto { id = photo.id, access_hash = photo.access_hash, file_reference = photo.file_reference }
                             };
-                            await Client.Messages_SendMedia(PeerDestino, inputMedia, textoFinal, WTelegram.Helpers.RandomLong());
-                            Console.WriteLine("✅ FOTO + LINK + IA ENVIADOS!");
+                            await Client.Messages_SendMedia(PeerDestino, inputMedia, novoTexto, WTelegram.Helpers.RandomLong());
+                            Console.WriteLine("✅ FOTO + LINK ENVIADOS!");
                         }
                         else
                         {
-                            await Client.SendMessageAsync(PeerDestino, textoFinal);
-                            Console.WriteLine("✅ TEXTO + LINK + IA ENVIADOS!");
+                            await Client.SendMessageAsync(PeerDestino, novoTexto);
+                            Console.WriteLine("✅ TEXTO + LINK ENVIADOS!");
                         }
                     }
                     catch (Exception ex) { Console.WriteLine($"❌ FALHA ENVIO: {ex.Message}"); }
@@ -179,14 +167,12 @@ class Program
         }
     }
 
-    // --- ESTRUTURA PARA RETORNAR LINK PROCESSADO ---
-    class ResultadoLink { public string? LinkAfiliado; }
-
-    private static async Task<ResultadoLink> ProcessarLinks(string textoOriginal)
+    private static async Task<string?> ProcessarMensagemUniversal(string textoOriginal)
     {
         var regexLink = new Regex(@"https?://[^\s]+");
         var matches = regexLink.Matches(textoOriginal);
-        var resultado = new ResultadoLink();
+        string textoFinal = textoOriginal;
+        bool linkValidoEncontrado = false;
 
         Console.WriteLine($"   🔎 Analisando {matches.Count} links...");
 
@@ -195,12 +181,16 @@ class Program
             string urlOriginal = match.Value;
             
             if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com") || urlOriginal.Contains("magazineluiza"))
+            {
                 continue;
+            }
 
             string urlExpandida = urlOriginal;
             if (IsShortLink(urlOriginal))
             {
+                Console.Write($"   ↳ Expandindo... ");
                 urlExpandida = await ExpandirUrl(urlOriginal, 0);
+                if (urlExpandida != urlOriginal) Console.WriteLine("OK! ✅"); else Console.WriteLine("Mantido.");
             }
 
             string urlComTag = urlExpandida;
@@ -210,105 +200,49 @@ class Program
             if (ehAmazon)
             {
                 urlComTag = AplicarTagAmazon(urlExpandida);
-                resultado.LinkAfiliado = await EncurtarTinyUrl(urlComTag);
-                return resultado; // Retorna o primeiro link válido encontrado
+                Console.WriteLine($"   🍌 AMAZON: Tag aplicada.");
+                linkValidoEncontrado = true;
             }
             else if (ehMercadoLivre)
             {
+                Console.WriteLine($"   🤝 MERCADO LIVRE: Processando...");
                 string? linkConstruido = await GerarLinkMercadoLivre(urlExpandida);
+                
                 if (linkConstruido != null)
                 {
-                    resultado.LinkAfiliado = await EncurtarTinyUrl(linkConstruido);
-                    return resultado; // Retorna o primeiro link válido encontrado
-                }
-            }
-        }
-        return resultado;
-    }
-
-    // --- 🧠 FUNÇÃO DE INTELIGÊNCIA ARTIFICIAL ---
-    private static async Task<string> GerarCopyComIA(string textoOriginal, string linkAfiliado)
-    {
-        if (string.IsNullOrEmpty(OPENAI_KEY)) 
-        {
-            // Se não tiver chave, devolve o texto original com o link novo substituindo o velho
-            return "🔥 OFERTA ENCONTRADA:\n" + linkAfiliado;
-        }
-
-        try
-        {
-            // Prompt para o ChatGPT
-            var prompt = $@"
-            Atue como um especialista em Copywriting para promoções no Telegram.
-            Seu objetivo é reescrever a oferta abaixo para torná-la irresistível.
-            
-            Regras:
-            1. Use gatilhos de urgência (ex: 'Corre', 'Preço de Erro', 'Histórico').
-            2. Seja breve e direto (máximo 3 linhas de texto).
-            3. Use emojis chamativos (🚨, 🔥, 😱, 📉).
-            4. NÃO coloque o link no texto, eu vou colocar depois.
-            5. Responda APENAS com o texto novo.
-
-            Texto original da oferta:
-            {textoOriginal}";
-
-            var payload = new
-            {
-                model = "gpt-3.5-turbo", // Modelo rápido e barato
-                messages = new[]
-                {
-                    new { role = "user", content = prompt }
-                },
-                temperature = 0.7
-            };
-
-            var jsonPayload = JsonSerializer.Serialize(payload);
-            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-
-            using (var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions"))
-            {
-                request.Headers.Add("Authorization", $"Bearer {OPENAI_KEY}");
-                request.Content = content;
-
-                var response = await HttpClient.SendAsync(request);
-                if (response.IsSuccessStatusCode)
-                {
-                    var responseString = await response.Content.ReadAsStringAsync();
-                    using (JsonDocument doc = JsonDocument.Parse(responseString))
-                    {
-                        string textoGerado = doc.RootElement
-                            .GetProperty("choices")[0]
-                            .GetProperty("message")
-                            .GetProperty("content")
-                            .GetString() ?? "";
-
-                        // Retorna o texto da IA + o Link
-                        return $"{textoGerado.Trim()}\n\n👇 COMPRE AQUI:\n{linkAfiliado}";
-                    }
+                    urlComTag = linkConstruido;
+                    Console.WriteLine($"   🤝 Link Manual Gerado: {urlComTag}");
+                    linkValidoEncontrado = true;
                 }
                 else
                 {
-                    Console.WriteLine($"   ❌ Erro IA: {response.StatusCode}");
-                    // Fallback: texto simples se der erro
-                    return $"🚨 OFERTA DETECTADA!\n\nConfira essa oportunidade:\n{linkAfiliado}";
+                    Console.WriteLine("      ❌ ERRO: ID não encontrado.");
+                    continue; 
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"   ❌ Exceção IA: {ex.Message}");
-            return $"🚨 OFERTA DETECTADA!\n\nConfira essa oportunidade:\n{linkAfiliado}";
-        }
-    }
+            else
+            {
+                continue;
+            }
 
-    // --- FUNÇÕES DE LINKS (Amazon, ML, Encurtador) ---
-    // (Mantidas idênticas à versão estável anterior)
+            Console.Write($"   ✂️ Encurtando... ");
+            string urlCurta = await EncurtarTinyUrl(urlComTag);
+            Console.WriteLine($"Feito! ({urlCurta})");
+            
+            if (urlOriginal != urlCurta)
+                textoFinal = textoFinal.Replace(urlOriginal, urlCurta);
+        }
+
+        return linkValidoEncontrado ? textoFinal : null;
+    }
 
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
     {
         string? itemId = ExtrairIdMlb(urlProduto);
+
         if (itemId == null)
         {
+            Console.WriteLine("      ⚠️ ID não na URL. Escaneando HTML...");
             try 
             {
                 var html = await HttpClient.GetStringAsync(urlProduto);
@@ -323,11 +257,15 @@ class Program
                     if (matchCanonical.Success) itemId = matchCanonical.Groups[1].Value;
                 }
             }
-            catch { }
+            catch (Exception ex) { Console.WriteLine($"      ❌ Erro HTML: {ex.Message}"); }
         }
 
         if (itemId == null) return null;
+
         string idLimpo = itemId.Replace("-", "").ToUpper().Replace("MLB", "");
+        Console.WriteLine($"      💎 ID ENCONTRADO: MLB{idLimpo}");
+
+        // Construtor Manual (Infalível)
         return $"https://produto.mercadolivre.com.br/MLB-{idLimpo}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
     }
 
@@ -340,8 +278,6 @@ class Program
 
     private static async Task<bool> AtualizarTokenMercadoLivre()
     {
-        // Mantido apenas para evitar erros de compilação/futuro uso, 
-        // mas o link manual não depende disso.
         try
         {
             string appId = Environment.GetEnvironmentVariable("ML_APP_ID");
