@@ -18,7 +18,7 @@ class Program
     static readonly CookieContainer Cookies = new CookieContainer();
     static readonly HttpClientHandler Handler = new HttpClientHandler 
     { 
-        AllowAutoRedirect = false,
+        AllowAutoRedirect = false, // Importante: Manual para pegar redirects
         CookieContainer = Cookies,
         UseCookies = true
     };
@@ -51,13 +51,15 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // Configuração de Navegador (Headers melhorados)
-        HttpClient.Timeout = TimeSpan.FromSeconds(20);
+        // Headers de Navegador Real (Chrome)
+        HttpClient.Timeout = TimeSpan.FromSeconds(25);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
-        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8");
         HttpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
+        HttpClient.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
+        HttpClient.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Correção ML + Debug)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Raio-X Deep Scan)...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -178,14 +180,15 @@ class Program
         foreach (Match match in matches)
         {
             string urlOriginal = match.Value;
-            string urlExpandida = urlOriginal;
-
-            // Ignora links conhecidos que não queremos (limpeza de log)
-            if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com"))
+            
+            // Limpeza prévia
+            if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com") || urlOriginal.Contains("magazineluiza"))
             {
                 Console.WriteLine($"   ❌ Ignorado (Loja Excluída): {urlOriginal}");
                 continue;
             }
+
+            string urlExpandida = urlOriginal;
 
             // 1. Expandir Link
             if (IsShortLink(urlOriginal))
@@ -209,7 +212,7 @@ class Program
             else if (ehMercadoLivre)
             {
                 Console.WriteLine($"   🤝 MERCADO LIVRE: Processando...");
-                // Aqui chamamos a função nova que mostra o log do erro
+                // Chama o novo scanner
                 string? linkSocial = await GerarLinkMercadoLivre(urlExpandida);
                 
                 if (linkSocial != null)
@@ -220,7 +223,7 @@ class Program
                 }
                 else
                 {
-                    // Não achou o ID, não posta para não dar erro
+                    Console.WriteLine("      ❌ ERRO FATAL: ID do produto não encontrado nem no HTML.");
                     continue; 
                 }
             }
@@ -242,30 +245,60 @@ class Program
         return linkValidoEncontrado ? textoFinal : null;
     }
 
+    // --- 🔥 AQUI ESTÁ A NOVA INTELIGÊNCIA (SCANNER HTML) ---
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
     {
-        // LOG DE DEBUG: Mostra o link exato que o robô está vendo
-        Console.WriteLine($"      🐛 DEBUG URL ML: {urlProduto}");
+        Console.WriteLine($"      🐛 DEBUG URL: {urlProduto}");
 
-        // Regex melhorado:
-        // 1. IgnoreCase (pega MLB, mlb)
-        // 2. Procura MLB-12345 ou MLB12345
-        var regexMLB = new Regex(@"(MLB-?\d+)", RegexOptions.IgnoreCase); 
-        var match = regexMLB.Match(urlProduto);
+        // 1. Tenta achar ID direto na URL (Modo Rápido)
+        string? itemId = ExtrairIdMlb(urlProduto);
 
-        if (!match.Success) 
+        // 2. Se não achou, ativa o MODO RAIO-X (Baixa o HTML)
+        if (itemId == null)
         {
-            Console.WriteLine("      ❌ ERRO: Não achei 'MLB' no link acima.");
-            return null;
+            Console.WriteLine("      ⚠️ ID não está na URL. Ativando Scanner de HTML...");
+            try 
+            {
+                var html = await HttpClient.GetStringAsync(urlProduto);
+                
+                // Procura padrões conhecidos no HTML do ML
+                // Pattern 1: <meta name="twitter:app:url:iphone" content="mercadolibre://items/MLB12345">
+                var matchMeta = Regex.Match(html, @"mercadolibre://items/(MLB-?\d+)", RegexOptions.IgnoreCase);
+                if (matchMeta.Success) itemId = matchMeta.Groups[1].Value;
+
+                // Pattern 2: "id":"MLB12345" (JSON)
+                if (itemId == null) {
+                    var matchJson = Regex.Match(html, @"""id""\s*:\s*""(MLB-?\d+)""", RegexOptions.IgnoreCase);
+                    if (matchJson.Success) itemId = matchJson.Groups[1].Value;
+                }
+
+                // Pattern 3: Canonical URL
+                if (itemId == null) {
+                    var matchCanonical = Regex.Match(html, @"mercadolivre\.com\.br/.*?/(MLB-?\d+)", RegexOptions.IgnoreCase);
+                    if (matchCanonical.Success) itemId = matchCanonical.Groups[1].Value;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"      ❌ Erro ao ler HTML: {ex.Message}");
+            }
         }
 
-        // Limpa e padroniza o ID
-        string itemId = match.Groups[1].Value.Replace("-", "").ToUpper(); // MLB123456
+        if (itemId == null) return null; // Desiste se nem no HTML achou
 
-        // Gera o link oficial Social
-        string linkSocial = $"https://www.mercadolivre.com.br/social/{ML_MATT_WORD}?matt_tool={ML_MATT_TOOL}&matt_product_id={itemId}";
+        // Limpa o ID e gera o link
+        itemId = itemId.Replace("-", "").ToUpper(); // MLB123456
+        Console.WriteLine($"      💎 ID ENCONTRADO: {itemId}");
 
-        return linkSocial;
+        return $"https://www.mercadolivre.com.br/social/{ML_MATT_WORD}?matt_tool={ML_MATT_TOOL}&matt_product_id={itemId}";
+    }
+
+    // Função auxiliar para Regex simples
+    private static string? ExtrairIdMlb(string texto)
+    {
+        var regex = new Regex(@"(MLB-?\d+)", RegexOptions.IgnoreCase);
+        var match = regex.Match(texto);
+        return match.Success ? match.Groups[1].Value : null;
     }
 
     private static async Task<bool> AtualizarTokenMercadoLivre()
@@ -313,7 +346,8 @@ class Program
     {
         return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
-               url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec");
+               url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec") ||
+               url.Contains("mercadolivre.com.br/social");
     }
 
     private static async Task<string> ExpandirUrl(string url, int depth)
@@ -324,7 +358,6 @@ class Program
         {
             var response = await HttpClient.GetAsync(url);
             
-            // Segue redirects HTTP
             if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399) 
             {
                 var location = response.Headers.Location;
@@ -339,7 +372,6 @@ class Program
             {
                 string html = await response.Content.ReadAsStringAsync();
                 
-                // Meta Refresh
                 var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
                 if (metaMatch.Success)
                 {
@@ -348,7 +380,6 @@ class Program
                     return await ExpandirUrl(nextUrl, depth + 1);
                 }
 
-                // Javascript Location
                 var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
                 if (jsMatch.Success)
                 {
