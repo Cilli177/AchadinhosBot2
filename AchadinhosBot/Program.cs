@@ -52,12 +52,12 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // Headers de Navegador Real
+        // Headers anti-bloqueio
         HttpClient.Timeout = TimeSpan.FromSeconds(25);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Final: Consulta API)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Construtor Direto)...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -73,11 +73,11 @@ class Program
             catch (Exception ex) { Console.WriteLine($"❌ Erro sessão: {ex.Message}"); }
         }
 
-        // --- LOGIN ML ---
+        // --- LOGIN ML (Opcional agora, mas mantido para futuro) ---
         Console.WriteLine("🔐 Autenticando ML...");
         bool mlAtivo = await AtualizarTokenMercadoLivre();
-        if (mlAtivo) Console.WriteLine("✅ ML Conectado com Sucesso!");
-        else Console.WriteLine("⚠️ ML Falhou (Verifique variáveis ou token expirado).");
+        if (mlAtivo) Console.WriteLine("✅ ML Conectado (Token Ativo)!");
+        else Console.WriteLine("⚠️ ML Token Off (Mas vamos gerar link manual).");
 
         string? Config(string what)
         {
@@ -129,7 +129,7 @@ class Program
             case UpdateNewMessage unm when unm.message is Message msg:
                 if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
                 {
-                    // Regra: No laboratório (ID 5258197181) aceita qualquer msg. Nos outros, só msg longa.
+                    // No laboratório, aceita msg curta para teste
                     if (msg.message.Length < 5 && msg.peer_id.ID != 5258197181) return;
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
@@ -209,18 +209,18 @@ class Program
             else if (ehMercadoLivre)
             {
                 Console.WriteLine($"   🤝 MERCADO LIVRE: Processando...");
-                // Nova função que consulta a API
-                string? linkOficial = await GerarLinkMercadoLivre(urlExpandida);
+                // Chama a nova função de construção manual
+                string? linkConstruido = await GerarLinkMercadoLivre(urlExpandida);
                 
-                if (linkOficial != null)
+                if (linkConstruido != null)
                 {
-                    urlComTag = linkOficial;
-                    Console.WriteLine($"   🤝 Link Oficial API: {urlComTag}");
+                    urlComTag = linkConstruido;
+                    Console.WriteLine($"   🤝 Link Manual Gerado: {urlComTag}");
                     linkValidoEncontrado = true;
                 }
                 else
                 {
-                    Console.WriteLine("      ❌ ERRO: Produto não encontrado na API.");
+                    Console.WriteLine("      ❌ ERRO: ID não encontrado no HTML.");
                     continue; 
                 }
             }
@@ -276,47 +276,17 @@ class Program
 
         if (itemId == null) return null;
 
-        // Limpa ID para o formato MLB12345
-        itemId = itemId.Replace("-", "").ToUpper();
-        Console.WriteLine($"      💎 ID ENCONTRADO: {itemId}");
+        // Limpa ID para pegar só os números (Ex: 2833021517)
+        string idLimpo = itemId.Replace("-", "").ToUpper().Replace("MLB", "");
+        Console.WriteLine($"      💎 ID ENCONTRADO: MLB{idLimpo}");
 
-        // 2. CONSULTAR API DO MERCADO LIVRE PARA PEGAR O LINK REAL
-        try 
-        {
-            if (string.IsNullOrEmpty(ML_ACCESS_TOKEN)) await AtualizarTokenMercadoLivre();
+        // 🔥 O PULO DO GATO: CONSTRUÇÃO MANUAL DO LINK
+        // Em vez de pedir pra API, nós montamos o link padrão que funciona sempre.
+        // Formato: produto.mercadolivre.com.br/MLB-{NUMEROS}?matt_tool=...
+        
+        string linkFinal = $"https://produto.mercadolivre.com.br/MLB-{idLimpo}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
 
-            using (var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.mercadolibre.com/items/{itemId}"))
-            {
-                // Envia o Token para ter permissão total
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ML_ACCESS_TOKEN);
-                
-                var response = await HttpClient.SendAsync(request);
-                if (response.IsSuccessStatusCode)
-                {
-                    var json = await response.Content.ReadAsStringAsync();
-                    using (JsonDocument doc = JsonDocument.Parse(json))
-                    {
-                        // Pega o "permalink" (Link oficial do produto)
-                        if (doc.RootElement.TryGetProperty("permalink", out var permalinkProp))
-                        {
-                            string permalink = permalinkProp.GetString();
-                            // Adiciona seus parâmetros de afiliado no link oficial
-                            return $"{permalink}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
-                        }
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"      ❌ Erro API ML ({response.StatusCode}): Item não existe ou erro de conexão.");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"      ❌ Exceção API: {ex.Message}");
-        }
-
-        return null;
+        return linkFinal;
     }
 
     private static string? ExtrairIdMlb(string texto)
@@ -372,7 +342,8 @@ class Program
         return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
                url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec") ||
-               url.Contains("mercadolivre.com.br/social") || url.Contains("lista.mercadolivre.com.br");
+               url.Contains("mercadolivre.com.br/social") || url.Contains("lista.mercadolivre.com.br") ||
+               url.Contains("produto.mercadolivre.com.br");
     }
 
     private static async Task<string> ExpandirUrl(string url, int depth)
