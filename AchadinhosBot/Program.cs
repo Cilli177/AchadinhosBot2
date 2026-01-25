@@ -38,13 +38,13 @@ class Program
     static string ML_MATT_WORD = "land177";
     static string? ML_ACCESS_TOKEN = null;
 
-    // 📡 FONTES (Adicionei o seu BOT TESTE aqui)
+    // 📡 FONTES (Incluindo seu Laboratório 5258197181)
     static List<long> IDs_FONTES = new List<long>()
     {
         2775581964, // Herói da Promo
         1871121243, // táBaratasso
         1569488789, // Ofertas Gamer
-        5258197181  // 🧪 BOT REDIRECIONAMENTO DE LINKS/ TESTE (Seu Laboratório)
+        5258197181  // 🧪 Laboratório de Testes
     };
 
     static async Task Main(string[] args)
@@ -57,7 +57,7 @@ class Program
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Produção + Laboratório)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Correção: Link Lista Direta)...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -112,7 +112,7 @@ class Program
                 else { Console.WriteLine($"❌ ERRO: Canal destino {ID_DESTINO} não encontrado!"); }
 
                 Console.WriteLine("---------------------------------------------------");
-                Console.WriteLine("👀 MONITORANDO OFERTAS (Agora inclusive no Teste)...");
+                Console.WriteLine("👀 MONITORANDO OFERTAS...");
                 
                 await Task.Delay(-1);
             }
@@ -129,7 +129,6 @@ class Program
             case UpdateNewMessage unm when unm.message is Message msg:
                 if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
                 {
-                    // Se for msg do grupo de teste, aceita qualquer tamanho (pra facilitar seu teste)
                     if (msg.message.Length < 5 && msg.peer_id.ID != 5258197181) return;
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
@@ -209,17 +208,18 @@ class Program
             else if (ehMercadoLivre)
             {
                 Console.WriteLine($"   🤝 MERCADO LIVRE: Processando...");
-                string? linkSocial = await GerarLinkMercadoLivre(urlExpandida);
+                // Chama a nova função corrigida
+                string? linkLista = await GerarLinkMercadoLivre(urlExpandida);
                 
-                if (linkSocial != null)
+                if (linkLista != null)
                 {
-                    urlComTag = linkSocial;
-                    Console.WriteLine($"   🤝 Link Social gerado: {urlComTag}");
+                    urlComTag = linkLista;
+                    Console.WriteLine($"   🤝 Link Direto gerado: {urlComTag}");
                     linkValidoEncontrado = true;
                 }
                 else
                 {
-                    Console.WriteLine("      ❌ ERRO: ID não encontrado (nem no HTML).");
+                    Console.WriteLine("      ❌ ERRO: ID não encontrado.");
                     continue; 
                 }
             }
@@ -244,8 +244,10 @@ class Program
     {
         Console.WriteLine($"      🐛 DEBUG URL: {urlProduto}");
 
+        // 1. Tenta achar ID na URL
         string? itemId = ExtrairIdMlb(urlProduto);
 
+        // 2. Se não achou, baixa HTML (Modo Raio-X)
         if (itemId == null)
         {
             Console.WriteLine("      ⚠️ ID não está na URL. Ativando Scanner de HTML...");
@@ -274,10 +276,17 @@ class Program
 
         if (itemId == null) return null;
 
-        itemId = itemId.Replace("-", "").ToUpper(); // MLB123456
-        Console.WriteLine($"      💎 ID ENCONTRADO: {itemId}");
+        // Limpeza do ID (Remove traços, ex: MLB-123 -> MLB123)
+        string idLimpo = itemId.Replace("-", "").ToUpper();
+        string idNumerico = idLimpo.Replace("MLB", "");
 
-        return $"https://www.mercadolivre.com.br/social/{ML_MATT_WORD}?matt_tool={ML_MATT_TOOL}&matt_product_id={itemId}";
+        Console.WriteLine($"      💎 ID ENCONTRADO: {idLimpo}");
+
+        // 🔥 CORREÇÃO AQUI: Usa link de BUSCA (/lista/) em vez de SOCIAL
+        // Isso força o Mercado Livre a abrir o produto sem depender do seu perfil.
+        string linkDireto = $"https://lista.mercadolivre.com.br/MLB-{idNumerico}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
+
+        return linkDireto;
     }
 
     private static string? ExtrairIdMlb(string texto)
@@ -333,7 +342,7 @@ class Program
         return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
                url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec") ||
-               url.Contains("mercadolivre.com.br/social");
+               url.Contains("mercadolivre.com.br/social") || url.Contains("lista.mercadolivre.com.br");
     }
 
     private static async Task<string> ExpandirUrl(string url, int depth)
