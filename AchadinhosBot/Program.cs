@@ -6,8 +6,7 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Net.Http;
 using System.Net;
-using System.Text;
-using System.Text.Json; // Importante para ler o Token do ML
+using System.Text.Json;
 using WTelegram;
 using TL;
 
@@ -25,7 +24,7 @@ class Program
     };
     static readonly HttpClient HttpClient = new HttpClient(Handler);
 
-    // ⚙️ SEUS DADOS TELEGRAM
+    // ⚙️ SEUS DADOS
     static int api_id = 31119088;
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
     static long ID_DESTINO = 3632436217; 
@@ -34,10 +33,10 @@ class Program
     // 🍌 AMAZON
     static string AMAZON_TAG = "reidasofer022-20";
 
-    // 🤝 MERCADO LIVRE (Variáveis e Configs)
+    // 🤝 MERCADO LIVRE
     static string ML_MATT_TOOL = "98187057";
     static string ML_MATT_WORD = "land177";
-    static string? ML_ACCESS_TOKEN = null; // Guardará a chave temporária
+    static string? ML_ACCESS_TOKEN = null;
 
     // 📡 FONTES
     static List<long> IDs_FONTES = new List<long>()
@@ -52,14 +51,15 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // Configuração do Navegador
+        // Configuração de Navegador (Headers melhorados)
         HttpClient.Timeout = TimeSpan.FromSeconds(20);
-        HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+        HttpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão API Oficial Mercado Livre)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Correção ML + Debug)...");
 
-        // --- 1. LOGIN TELEGRAM ---
+        // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
         
@@ -73,11 +73,11 @@ class Program
             catch (Exception ex) { Console.WriteLine($"❌ Erro sessão: {ex.Message}"); }
         }
 
-        // --- 2. PREPARAÇÃO MERCADO LIVRE ---
-        Console.WriteLine("🔐 Testando Autenticação ML...");
+        // --- LOGIN ML ---
+        Console.WriteLine("🔐 Autenticando ML...");
         bool mlAtivo = await AtualizarTokenMercadoLivre();
         if (mlAtivo) Console.WriteLine("✅ ML Conectado com Sucesso!");
-        else Console.WriteLine("⚠️ ML Falhou (Verifique as variáveis no Railway).");
+        else Console.WriteLine("⚠️ ML Falhou (Verifique variáveis ou token expirado).");
 
         string? Config(string what)
         {
@@ -112,8 +112,6 @@ class Program
                 else { Console.WriteLine($"❌ ERRO: Canal destino {ID_DESTINO} não encontrado!"); }
 
                 Console.WriteLine("---------------------------------------------------");
-                Console.WriteLine($"🍌 AMAZON TAG: {AMAZON_TAG}");
-                Console.WriteLine($"🤝 ML SOCIAL: {ML_MATT_WORD}");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
                 
                 await Task.Delay(-1);
@@ -135,7 +133,6 @@ class Program
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
-                    // Processa links (Amazon ou ML)
                     string? novoTexto = await ProcessarMensagemUniversal(msg.message);
 
                     if (novoTexto == null)
@@ -183,12 +180,19 @@ class Program
             string urlOriginal = match.Value;
             string urlExpandida = urlOriginal;
 
-            // 1. Expandir Link (Descobrir destino real)
+            // Ignora links conhecidos que não queremos (limpeza de log)
+            if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com"))
+            {
+                Console.WriteLine($"   ❌ Ignorado (Loja Excluída): {urlOriginal}");
+                continue;
+            }
+
+            // 1. Expandir Link
             if (IsShortLink(urlOriginal))
             {
-                Console.Write($"   ↳ Expandindo {urlOriginal.Substring(0, 15)}... ");
+                Console.Write($"   ↳ Expandindo... ");
                 urlExpandida = await ExpandirUrl(urlOriginal, 0);
-                if (urlExpandida != urlOriginal) Console.WriteLine("Sucesso! ✅");
+                if (urlExpandida != urlOriginal) Console.WriteLine("OK! ✅");
                 else Console.WriteLine("Mantido ⚠️");
             }
 
@@ -198,15 +202,14 @@ class Program
 
             if (ehAmazon)
             {
-                // --- LÓGICA AMAZON ---
                 urlComTag = AplicarTagAmazon(urlExpandida);
                 Console.WriteLine($"   🍌 AMAZON: Tag aplicada.");
                 linkValidoEncontrado = true;
             }
             else if (ehMercadoLivre)
             {
-                // --- LÓGICA MERCADO LIVRE (API/SOCIAL) ---
                 Console.WriteLine($"   🤝 MERCADO LIVRE: Processando...");
+                // Aqui chamamos a função nova que mostra o log do erro
                 string? linkSocial = await GerarLinkMercadoLivre(urlExpandida);
                 
                 if (linkSocial != null)
@@ -217,8 +220,8 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine($"   ❌ Falha ao gerar link ML (Produto não identificado).");
-                    continue; // Pula encurtamento
+                    // Não achou o ID, não posta para não dar erro
+                    continue; 
                 }
             }
             else
@@ -227,7 +230,7 @@ class Program
                 continue;
             }
 
-            // 3. Encurtar (TinyURL)
+            // 3. Encurtar
             Console.Write($"   ✂️ Encurtando... ");
             string urlCurta = await EncurtarTinyUrl(urlComTag);
             Console.WriteLine($"Feito! ({urlCurta})");
@@ -239,33 +242,32 @@ class Program
         return linkValidoEncontrado ? textoFinal : null;
     }
 
-    // --- 🤝 FUNÇÕES MERCADO LIVRE (API OAUTH) ---
-
-    // Gera o link oficial do seu perfil social apontando para o produto
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
     {
-        // 1. Tenta extrair o ID do produto (Ex: MLB12345678)
-        // Padrão: /p/MLB123... ou /MLB-123...
-        var regexMLB = new Regex(@"(MLB-?\d+)"); 
+        // LOG DE DEBUG: Mostra o link exato que o robô está vendo
+        Console.WriteLine($"      🐛 DEBUG URL ML: {urlProduto}");
+
+        // Regex melhorado:
+        // 1. IgnoreCase (pega MLB, mlb)
+        // 2. Procura MLB-12345 ou MLB12345
+        var regexMLB = new Regex(@"(MLB-?\d+)", RegexOptions.IgnoreCase); 
         var match = regexMLB.Match(urlProduto);
 
-        if (!match.Success) return null;
+        if (!match.Success) 
+        {
+            Console.WriteLine("      ❌ ERRO: Não achei 'MLB' no link acima.");
+            return null;
+        }
 
-        // Remove o hífen se tiver (MLB-123 -> MLB123)
-        string itemId = match.Groups[1].Value.Replace("-", "");
+        // Limpa e padroniza o ID
+        string itemId = match.Groups[1].Value.Replace("-", "").ToUpper(); // MLB123456
 
-        // 2. (Opcional) Validar se o item existe via API para não postar erro
-        // Mas para ser rápido, vamos montar o link direto que é garantido funcionar se o item existir.
-        
-        // 3. Constrói o Link Social Deep Link
-        // Esse formato manda o usuário pro seu perfil, mas abre o produto direto
-        // É o formato mais seguro contra bloqueios.
+        // Gera o link oficial Social
         string linkSocial = $"https://www.mercadolivre.com.br/social/{ML_MATT_WORD}?matt_tool={ML_MATT_TOOL}&matt_product_id={itemId}";
 
         return linkSocial;
     }
 
-    // Gerencia o Token de Acesso (Renova a cada 6h automaticamente)
     private static async Task<bool> AtualizarTokenMercadoLivre()
     {
         try
@@ -285,29 +287,17 @@ class Program
             });
 
             var response = await HttpClient.PostAsync("https://api.mercadolibre.com/oauth/token", content);
-            if (!response.IsSuccessStatusCode) 
-            {
-                Console.WriteLine($"Erro Auth ML: {response.StatusCode} - {await response.Content.ReadAsStringAsync()}");
-                return false;
-            }
+            if (!response.IsSuccessStatusCode) return false;
 
             var json = await response.Content.ReadAsStringAsync();
             using (JsonDocument doc = JsonDocument.Parse(json))
             {
                 ML_ACCESS_TOKEN = doc.RootElement.GetProperty("access_token").GetString();
-                // Opcional: Poderíamos salvar o novo refresh_token se ele mudasse, 
-                // mas geralmente o ML aceita o antigo por um tempo.
             }
             return true;
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Exceção Auth ML: {ex.Message}");
-            return false;
-        }
+        catch { return false; }
     }
-
-    // --- 🍌 FUNÇÕES AUXILIARES E AMAZON ---
 
     private static async Task<string> EncurtarTinyUrl(string urlLonga)
     {
@@ -328,16 +318,14 @@ class Program
 
     private static async Task<string> ExpandirUrl(string url, int depth)
     {
-        if (depth > 5) return url;
+        if (depth > 6) return url;
 
         try
         {
             var response = await HttpClient.GetAsync(url);
             
-            if (response.StatusCode == HttpStatusCode.Moved || 
-                response.StatusCode == HttpStatusCode.Found ||
-                response.StatusCode == HttpStatusCode.Redirect ||
-                response.StatusCode == HttpStatusCode.TemporaryRedirect) 
+            // Segue redirects HTTP
+            if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399) 
             {
                 var location = response.Headers.Location;
                 if (location != null) 
@@ -350,6 +338,8 @@ class Program
             if (response.IsSuccessStatusCode)
             {
                 string html = await response.Content.ReadAsStringAsync();
+                
+                // Meta Refresh
                 var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
                 if (metaMatch.Success)
                 {
@@ -357,6 +347,8 @@ class Program
                     if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
                     return await ExpandirUrl(nextUrl, depth + 1);
                 }
+
+                // Javascript Location
                 var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
                 if (jsMatch.Success)
                 {
@@ -365,6 +357,7 @@ class Program
                      return await ExpandirUrl(nextUrl, depth + 1);
                 }
             }
+            
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         }
         catch { return url; }
