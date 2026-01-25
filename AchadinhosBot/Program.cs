@@ -38,13 +38,13 @@ class Program
     static string ML_MATT_WORD = "land177";
     static string? ML_ACCESS_TOKEN = null;
 
-    // 📡 FONTES (Adicione o ID do seu grupo de teste aqui depois que descobrir)
+    // 📡 FONTES (Adicionei o seu BOT TESTE aqui)
     static List<long> IDs_FONTES = new List<long>()
     {
         2775581964, // Herói da Promo
         1871121243, // táBaratasso
-        1569488789  // Ofertas Gamer
-        // COLAR O ID DO SEU GRUPO AQUI DEPOIS (Ex: 123456789)
+        1569488789, // Ofertas Gamer
+        5258197181  // 🧪 BOT REDIRECIONAMENTO DE LINKS/ TESTE (Seu Laboratório)
     };
 
     static async Task Main(string[] args)
@@ -57,7 +57,7 @@ class Program
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Detetive de ID)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Produção + Laboratório)...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -103,15 +103,6 @@ class Program
                 var dialogs = await Client.Messages_GetAllDialogs();
                 dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
 
-                // --- 📋 AQUI ESTÁ A LISTA MÁGICA PARA VOCÊ ACHAR O ID ---
-                Console.WriteLine("\n📋 ================= LISTA DE GRUPOS =================");
-                foreach (var chat in dialogs.chats.Values)
-                {
-                    // Mostra Nome e ID de tudo que for grupo ou canal
-                    Console.WriteLine($"   👉 {chat.Title}  [ ID: {chat.ID} ]");
-                }
-                Console.WriteLine("======================================================\n");
-
                 var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
                 if (chatDestino != null)
                 {
@@ -121,7 +112,7 @@ class Program
                 else { Console.WriteLine($"❌ ERRO: Canal destino {ID_DESTINO} não encontrado!"); }
 
                 Console.WriteLine("---------------------------------------------------");
-                Console.WriteLine("👀 MONITORANDO OFERTAS...");
+                Console.WriteLine("👀 MONITORANDO OFERTAS (Agora inclusive no Teste)...");
                 
                 await Task.Delay(-1);
             }
@@ -138,7 +129,8 @@ class Program
             case UpdateNewMessage unm when unm.message is Message msg:
                 if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
                 {
-                    if (msg.message.Length < 5) return; // Aceita msg curtas no teste
+                    // Se for msg do grupo de teste, aceita qualquer tamanho (pra facilitar seu teste)
+                    if (msg.message.Length < 5 && msg.peer_id.ID != 5258197181) return;
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
@@ -252,10 +244,8 @@ class Program
     {
         Console.WriteLine($"      🐛 DEBUG URL: {urlProduto}");
 
-        // 1. Tenta achar ID na URL
         string? itemId = ExtrairIdMlb(urlProduto);
 
-        // 2. Se não achou, baixa HTML
         if (itemId == null)
         {
             Console.WriteLine("      ⚠️ ID não está na URL. Ativando Scanner de HTML...");
