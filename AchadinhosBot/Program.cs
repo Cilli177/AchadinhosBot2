@@ -52,12 +52,11 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // Headers Otimizados
         HttpClient.Timeout = TimeSpan.FromSeconds(30);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Rápido - Sem IA)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Correção: Links 'divulgador.link')...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -73,11 +72,9 @@ class Program
             catch (Exception ex) { Console.WriteLine($"❌ Erro sessão: {ex.Message}"); }
         }
 
-        // --- LOGIN ML (Mantido para futuro uso, mas não bloqueia o robô) ---
-        Console.WriteLine("🔐 Autenticando ML...");
+        Console.WriteLine("🔐 Autenticando ML (Opcional)...");
         bool mlAtivo = await AtualizarTokenMercadoLivre();
-        if (mlAtivo) Console.WriteLine("✅ ML Conectado (Token Ativo)!");
-        else Console.WriteLine("⚠️ ML Token Off (Seguindo com Link Manual).");
+        if (mlAtivo) Console.WriteLine("✅ ML Conectado!");
 
         string? Config(string what)
         {
@@ -129,7 +126,6 @@ class Program
             case UpdateNewMessage unm when unm.message is Message msg:
                 if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
                 {
-                    // No laboratório aceita msg curta
                     if (msg.message.Length < 5 && msg.peer_id.ID != 5258197181) return;
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
@@ -181,11 +177,11 @@ class Program
             string urlOriginal = match.Value;
             
             if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com") || urlOriginal.Contains("magazineluiza"))
-            {
                 continue;
-            }
 
             string urlExpandida = urlOriginal;
+            
+            // Verifica se é encurtador
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo... ");
@@ -265,7 +261,6 @@ class Program
         string idLimpo = itemId.Replace("-", "").ToUpper().Replace("MLB", "");
         Console.WriteLine($"      💎 ID ENCONTRADO: MLB{idLimpo}");
 
-        // Construtor Manual (Infalível)
         return $"https://produto.mercadolivre.com.br/MLB-{idLimpo}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
     }
 
@@ -310,11 +305,12 @@ class Program
 
     private static bool IsShortLink(string url)
     {
+        // 🚨 AQUI ESTÁ A CORREÇÃO: Adicionei "divulgador.link"
         return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
                url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec") ||
                url.Contains("mercadolivre.com.br/social") || url.Contains("lista.mercadolivre.com.br") ||
-               url.Contains("produto.mercadolivre.com.br");
+               url.Contains("produto.mercadolivre.com.br") || url.Contains("divulgador.link");
     }
 
     private static async Task<string> ExpandirUrl(string url, int depth)
