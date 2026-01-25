@@ -18,7 +18,7 @@ class Program
     static readonly CookieContainer Cookies = new CookieContainer();
     static readonly HttpClientHandler Handler = new HttpClientHandler 
     { 
-        AllowAutoRedirect = false, // Importante: Manual para pegar redirects
+        AllowAutoRedirect = false, 
         CookieContainer = Cookies,
         UseCookies = true
     };
@@ -38,12 +38,13 @@ class Program
     static string ML_MATT_WORD = "land177";
     static string? ML_ACCESS_TOKEN = null;
 
-    // 📡 FONTES
+    // 📡 FONTES (Adicione o ID do seu grupo de teste aqui depois que descobrir)
     static List<long> IDs_FONTES = new List<long>()
     {
         2775581964, // Herói da Promo
         1871121243, // táBaratasso
         1569488789  // Ofertas Gamer
+        // COLAR O ID DO SEU GRUPO AQUI DEPOIS (Ex: 123456789)
     };
 
     static async Task Main(string[] args)
@@ -51,15 +52,12 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        // Headers de Navegador Real (Chrome)
+        // Headers de Navegador Real
         HttpClient.Timeout = TimeSpan.FromSeconds(25);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
-        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8");
-        HttpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
-        HttpClient.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
-        HttpClient.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
+        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão Raio-X Deep Scan)...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Modo Detetive de ID)...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -105,6 +103,15 @@ class Program
                 var dialogs = await Client.Messages_GetAllDialogs();
                 dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
 
+                // --- 📋 AQUI ESTÁ A LISTA MÁGICA PARA VOCÊ ACHAR O ID ---
+                Console.WriteLine("\n📋 ================= LISTA DE GRUPOS =================");
+                foreach (var chat in dialogs.chats.Values)
+                {
+                    // Mostra Nome e ID de tudo que for grupo ou canal
+                    Console.WriteLine($"   👉 {chat.Title}  [ ID: {chat.ID} ]");
+                }
+                Console.WriteLine("======================================================\n");
+
                 var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
                 if (chatDestino != null)
                 {
@@ -131,7 +138,7 @@ class Program
             case UpdateNewMessage unm when unm.message is Message msg:
                 if (msg.peer_id != null && IDs_FONTES.Contains(msg.peer_id.ID) && !string.IsNullOrEmpty(msg.message))
                 {
-                    if (msg.message.Length < 10) return;
+                    if (msg.message.Length < 5) return; // Aceita msg curtas no teste
 
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA (Fonte: {msg.peer_id.ID})");
 
@@ -181,7 +188,6 @@ class Program
         {
             string urlOriginal = match.Value;
             
-            // Limpeza prévia
             if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com") || urlOriginal.Contains("magazineluiza"))
             {
                 Console.WriteLine($"   ❌ Ignorado (Loja Excluída): {urlOriginal}");
@@ -190,7 +196,6 @@ class Program
 
             string urlExpandida = urlOriginal;
 
-            // 1. Expandir Link
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo... ");
@@ -212,7 +217,6 @@ class Program
             else if (ehMercadoLivre)
             {
                 Console.WriteLine($"   🤝 MERCADO LIVRE: Processando...");
-                // Chama o novo scanner
                 string? linkSocial = await GerarLinkMercadoLivre(urlExpandida);
                 
                 if (linkSocial != null)
@@ -223,7 +227,7 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine("      ❌ ERRO FATAL: ID do produto não encontrado nem no HTML.");
+                    Console.WriteLine("      ❌ ERRO: ID não encontrado (nem no HTML).");
                     continue; 
                 }
             }
@@ -233,7 +237,6 @@ class Program
                 continue;
             }
 
-            // 3. Encurtar
             Console.Write($"   ✂️ Encurtando... ");
             string urlCurta = await EncurtarTinyUrl(urlComTag);
             Console.WriteLine($"Feito! ({urlCurta})");
@@ -245,15 +248,14 @@ class Program
         return linkValidoEncontrado ? textoFinal : null;
     }
 
-    // --- 🔥 AQUI ESTÁ A NOVA INTELIGÊNCIA (SCANNER HTML) ---
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
     {
         Console.WriteLine($"      🐛 DEBUG URL: {urlProduto}");
 
-        // 1. Tenta achar ID direto na URL (Modo Rápido)
+        // 1. Tenta achar ID na URL
         string? itemId = ExtrairIdMlb(urlProduto);
 
-        // 2. Se não achou, ativa o MODO RAIO-X (Baixa o HTML)
+        // 2. Se não achou, baixa HTML
         if (itemId == null)
         {
             Console.WriteLine("      ⚠️ ID não está na URL. Ativando Scanner de HTML...");
@@ -261,18 +263,14 @@ class Program
             {
                 var html = await HttpClient.GetStringAsync(urlProduto);
                 
-                // Procura padrões conhecidos no HTML do ML
-                // Pattern 1: <meta name="twitter:app:url:iphone" content="mercadolibre://items/MLB12345">
                 var matchMeta = Regex.Match(html, @"mercadolibre://items/(MLB-?\d+)", RegexOptions.IgnoreCase);
                 if (matchMeta.Success) itemId = matchMeta.Groups[1].Value;
 
-                // Pattern 2: "id":"MLB12345" (JSON)
                 if (itemId == null) {
                     var matchJson = Regex.Match(html, @"""id""\s*:\s*""(MLB-?\d+)""", RegexOptions.IgnoreCase);
                     if (matchJson.Success) itemId = matchJson.Groups[1].Value;
                 }
-
-                // Pattern 3: Canonical URL
+                
                 if (itemId == null) {
                     var matchCanonical = Regex.Match(html, @"mercadolivre\.com\.br/.*?/(MLB-?\d+)", RegexOptions.IgnoreCase);
                     if (matchCanonical.Success) itemId = matchCanonical.Groups[1].Value;
@@ -284,16 +282,14 @@ class Program
             }
         }
 
-        if (itemId == null) return null; // Desiste se nem no HTML achou
+        if (itemId == null) return null;
 
-        // Limpa o ID e gera o link
         itemId = itemId.Replace("-", "").ToUpper(); // MLB123456
         Console.WriteLine($"      💎 ID ENCONTRADO: {itemId}");
 
         return $"https://www.mercadolivre.com.br/social/{ML_MATT_WORD}?matt_tool={ML_MATT_TOOL}&matt_product_id={itemId}";
     }
 
-    // Função auxiliar para Regex simples
     private static string? ExtrairIdMlb(string texto)
     {
         var regex = new Regex(@"(MLB-?\d+)", RegexOptions.IgnoreCase);
