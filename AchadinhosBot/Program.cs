@@ -173,7 +173,6 @@ class Program
 
                 if (ehFonteValida && !string.IsNullOrEmpty(msg.message))
                 {
-                    // Permite teste no laboratório mesmo com mensagem curta
                     bool ehLaboratorio = (idOrigem == 5258197181 || idOrigem == 3703804341 || idOrigem == -1003703804341);
                     if (msg.message.Length < 5 && !ehLaboratorio) return;
 
@@ -233,7 +232,7 @@ class Program
 
             string urlExpandida = urlOriginal;
             
-            // 1. AQUI É A MÁGICA: Se for TinyURL (ou outro da lista), ele expande ANTES de validar
+            // 1. Expande TinyURL ANTES de validar
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo... ");
@@ -307,33 +306,27 @@ class Program
     {
         try
         {
-            var payload = new
-            {
-                query = @"
-                mutation GenerateShortLink($input: GenerateShortLinkInput!) {
-                    generateShortLink(input: $input) {
-                        shortLink
-                    }
-                }",
-                variables = new
-                {
-                    input = new
-                    {
-                        originUrl = urlOriginal,
-                        subIds = new[] { "telegram_bot" }
-                    }
-                }
-            };
+            // 🔐 CORREÇÃO: Serializa a URL para garantir que aspas e caracteres especiais não quebrem a query
+            string urlJson = JsonSerializer.Serialize(urlOriginal);
 
+            // ⚡ QUERY INLINE: Sem variáveis ($input) para evitar erro de tipo desconhecido
+            string queryGraphQL = $@"
+            mutation {{
+                generateShortLink(input: {{ originUrl: {urlJson}, subIds: [""telegram_bot""] }}) {{
+                    shortLink
+                }}
+            }}";
+
+            var payload = new { query = queryGraphQL };
+
+            // Serializa o payload completo
             var jsonOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
             string jsonContent = JsonSerializer.Serialize(payload, jsonOptions);
             
             long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            // AQUI ESTAVA O ERRO: Para API de Afiliados, é hash SHA256 simples, não HMAC.
             string factor = SHOPEE_APP_ID + timestamp + jsonContent + SHOPEE_API_SECRET;
             
             string signature;
-            // CORREÇÃO: Usando SHA256 simples
             using (var sha256 = SHA256.Create())
             {
                 byte[] bytes = Encoding.UTF8.GetBytes(factor);
@@ -376,7 +369,7 @@ class Program
         }
     }
 
-    // ... (RESTO DOS MÉTODOS IGUAIS) ...
+    // ... (RESTO DOS MÉTODOS MANTIDOS IGUAIS) ...
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
     {
         string? itemId = ExtrairIdMlb(urlProduto);
@@ -429,33 +422,6 @@ class Program
         if (depth > 6) return url;
         try {
             var response = await HttpClient.GetAsync(url);
-            if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399) 
-            {
-                var location = response.Headers.Location;
-                if (location != null) 
-                {
-                    string nextUrl = location.IsAbsoluteUri ? location.ToString() : new Uri(new Uri(url), location).ToString();
-                    return await ExpandirUrl(nextUrl, depth + 1);
-                }
-            }
-            if (response.IsSuccessStatusCode)
-            {
-                string html = await response.Content.ReadAsStringAsync();
-                var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
-                if (metaMatch.Success)
-                {
-                    string nextUrl = metaMatch.Groups[1].Value;
-                    if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
-                    return await ExpandirUrl(nextUrl, depth + 1);
-                }
-                var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
-                if (jsMatch.Success)
-                {
-                     string nextUrl = jsMatch.Groups[1].Value;
-                     if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
-                     return await ExpandirUrl(nextUrl, depth + 1);
-                }
-            }
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         } catch { return url; }
     }
