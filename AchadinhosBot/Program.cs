@@ -7,6 +7,8 @@ using System.Text.RegularExpressions;
 using System.Net.Http;
 using System.Net;
 using System.Text.Json;
+using System.Security.Cryptography; // 🔐 NOVO: Para assinar a requisição Shopee
+using System.Text;                  // 🔐 NOVO: Para manipular strings
 using WTelegram;
 using TL;
 
@@ -24,7 +26,7 @@ class Program
     };
     static readonly HttpClient HttpClient = new HttpClient(Handler);
 
-    // ⚙️ SEUS DADOS
+    // ⚙️ SEUS DADOS TELEGRAM
     static int api_id = 31119088;
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
     static long ID_DESTINO = 3632436217; 
@@ -37,6 +39,11 @@ class Program
     static string ML_MATT_TOOL = "98187057";
     static string ML_MATT_WORD = "land177";
     static string? ML_ACCESS_TOKEN = null;
+
+    // 🟠 SHOPEE API (NOVAS CREDENCIAIS ADICIONADAS)
+    static string SHOPEE_APP_ID = "18328430896"; 
+    static string SHOPEE_API_SECRET = "J2K62RUC2ABIXXOFBH4GX62C5AADNHWV"; 
+    static string SHOPEE_ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql"; 
 
     // 📡 FONTES
     static List<long> IDs_FONTES = new List<long>()
@@ -56,7 +63,7 @@ class Program
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Correção: Links 'divulgador.link')...");
+        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão: Shopee API ON)...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -192,6 +199,8 @@ class Program
             string urlComTag = urlExpandida;
             bool ehAmazon = urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to");
             bool ehMercadoLivre = urlExpandida.Contains("mercadolivre.com") || urlExpandida.Contains("mercadolibre.com");
+            // 🆕 Detecção da Shopee
+            bool ehShopee = urlExpandida.Contains("shopee.com.br") || urlExpandida.Contains("shp.ee");
 
             if (ehAmazon)
             {
@@ -216,6 +225,23 @@ class Program
                     continue; 
                 }
             }
+            else if (ehShopee)
+            {
+                Console.WriteLine($"   🟠 SHOPEE: Convertendo via API...");
+                string? linkShopee = await GerarLinkShopee(urlExpandida);
+                
+                if (linkShopee != null)
+                {
+                    urlComTag = linkShopee;
+                    Console.WriteLine($"   🟠 Link Gerado: {urlComTag}");
+                    linkValidoEncontrado = true;
+                }
+                else
+                {
+                    Console.WriteLine("      ❌ Falha na API Shopee.");
+                    continue; // Se falhar a API, talvez seja melhor não postar o link original
+                }
+            }
             else
             {
                 continue;
@@ -230,6 +256,74 @@ class Program
         }
 
         return linkValidoEncontrado ? textoFinal : null;
+    }
+
+    // 🟠 MÉTODO NOVO DA SHOPEE
+    private static async Task<string?> GerarLinkShopee(string urlOriginal)
+    {
+        try
+        {
+            // 1. Monta o Payload GraphQL
+            var payload = new
+            {
+                query = @"
+                mutation GenerateShortLink($input: GenerateShortLinkInput!) {
+                    generateShortLink(input: $input) {
+                        shortLink
+                    }
+                }",
+                variables = new
+                {
+                    input = new
+                    {
+                        originUrl = urlOriginal,
+                        subIds = new[] { "telegram_bot" }
+                    }
+                }
+            };
+
+            string jsonContent = JsonSerializer.Serialize(payload);
+            
+            // 2. Gera o Timestamp e a Assinatura (HMAC-SHA256)
+            long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            string factor = SHOPEE_APP_ID + timestamp + jsonContent + SHOPEE_API_SECRET;
+            
+            string signature;
+            using (var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(SHOPEE_API_SECRET)))
+            {
+                byte[] hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(factor));
+                signature = BitConverter.ToString(hash).Replace("-", "").ToLower();
+            }
+
+            // 3. Prepara a Requisição
+            var request = new HttpRequestMessage(HttpMethod.Post, SHOPEE_ENDPOINT);
+            request.Content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+            request.Headers.Add("Authorization", $"SHA256 Credential={SHOPEE_APP_ID}, Timestamp={timestamp}, Signature={signature}");
+
+            // 4. Envia
+            var response = await HttpClient.SendAsync(request);
+            string responseString = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"Erro HTTP Shopee: {response.StatusCode} - {responseString}");
+                return null;
+            }
+
+            // 5. Extrai o Link do JSON
+            var match = Regex.Match(responseString, "\"shortLink\":\"(.*?)\"");
+            if (match.Success)
+            {
+                return match.Groups[1].Value;
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro Shopee API: {ex.Message}");
+            return null;
+        }
     }
 
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
@@ -305,7 +399,6 @@ class Program
 
     private static bool IsShortLink(string url)
     {
-        // 🚨 AQUI ESTÁ A CORREÇÃO: Adicionei "divulgador.link"
         return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || 
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
                url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec") ||
