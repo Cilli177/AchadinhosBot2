@@ -32,7 +32,7 @@ class Program
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
     
     // 🎯 ID DO GRUPO ATUALIZADO (Supergrupo)
-    static long ID_DESTINO = -1003703804341; 
+    static long ID_DESTINO = 3632436217; 
     
     static InputPeer? PeerDestino;
 
