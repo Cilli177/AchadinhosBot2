@@ -51,7 +51,7 @@ class Program
         2775581964, // Herói da Promo
         1871121243, // táBaratasso
         1569488789, // Ofertas Gamer
-        5258197181  // 🧪 Laboratório
+        -1003703804341  // 🧪 Laboratório
     };
 
     static async Task Main(string[] args)
