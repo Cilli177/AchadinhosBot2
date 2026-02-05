@@ -21,7 +21,7 @@ class Program
     static readonly CookieContainer Cookies = new CookieContainer();
     static readonly HttpClientHandler Handler = new HttpClientHandler 
     { 
-        AllowAutoRedirect = true, // ⚠️ IMPORTANTE: Mudamos para TRUE para seguir redirecionamentos do ML Social
+        AllowAutoRedirect = true, 
         CookieContainer = Cookies,
         UseCookies = true
     };
@@ -47,6 +47,10 @@ class Program
     static string SHOPEE_APP_ID = "18328430896"; 
     static string SHOPEE_API_SECRET = "J2K62RUC2ABIXXOFBH4GX62C5AADNHWV"; 
     static string SHOPEE_ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql"; 
+
+    // 👗 SHEIN (Atualizado)
+    static string SHEIN_ID = "affiliate_koc_6149117215"; // ID técnico do link
+    static string SHEIN_CODE = "M7EU2"; // Código para digitar na busca
 
     // 📡 FONTES (IDs que o robô deve escutar)
     static List<long> IDs_FONTES = new List<long>()
@@ -181,10 +185,12 @@ class Program
 
                     string? novoTexto = await ProcessarMensagemUniversal(msg.message);
 
-                    if (novoTexto == null)
+                    if (novoTexto == null) return;
+
+                    // 2. Adiciona Assinatura e Call to Action da Shein se necessário
+                    if (novoTexto.Contains("shein.com") && !novoTexto.Contains(SHEIN_CODE))
                     {
-                        // ℹ️ LOG DE LINKS IGNORADOS AGORA É FEITO DENTRO DO MÉTODO PARA MOSTRAR A URL
-                        return; 
+                        novoTexto += $"\n\n💎 Digite na busca: **{SHEIN_CODE}**";
                     }
 
                     novoTexto += "\n\n🔥 Vi no: @ReiDasOfertasVIP";
@@ -229,7 +235,6 @@ class Program
             
             if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com") || urlOriginal.Contains("magazineluiza"))
             {
-                 // Ignorados intencionais
                  Console.WriteLine($"   🚫 IGNORADO (Filtro): {urlOriginal}");
                  continue;
             }
@@ -247,6 +252,7 @@ class Program
             bool ehAmazon = urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to");
             bool ehMercadoLivre = urlExpandida.Contains("mercadolivre.com") || urlExpandida.Contains("mercadolibre.com");
             bool ehShopee = urlExpandida.Contains("shopee.com.br") || urlExpandida.Contains("shp.ee");
+            bool ehShein = urlExpandida.Contains("shein.com");
 
             if (ehAmazon)
             {
@@ -288,9 +294,15 @@ class Program
                     continue; 
                 }
             }
+            else if (ehShein)
+            {
+                Console.WriteLine($"   👗 SHEIN: Aplicando tag manual...");
+                urlComTag = AplicarTagShein(urlExpandida);
+                Console.WriteLine($"   👗 Link Gerado: {urlComTag}");
+                linkValidoEncontrado = true;
+            }
             else
             {
-                // ⚠️ AQUI ESTÁ O NOVO LOG DE IGNORADOS COM DOMÍNIO ⚠️
                 try 
                 {
                     var uri = new Uri(urlExpandida);
@@ -314,12 +326,22 @@ class Program
         return linkValidoEncontrado ? textoFinal : null;
     }
 
+    private static string AplicarTagShein(string url)
+    {
+        try 
+        {
+            int indexInterrogacao = url.IndexOf('?');
+            string urlLimpa = indexInterrogacao > 0 ? url.Substring(0, indexInterrogacao) : url;
+            return urlLimpa + "?url_from=" + SHEIN_ID;
+        }
+        catch { return url; }
+    }
+
     private static async Task<string?> GerarLinkShopee(string urlOriginal)
     {
         try
         {
             string urlJson = JsonSerializer.Serialize(urlOriginal);
-            // Query Shopee Inline (Sem subIds)
             string queryGraphQL = $@"
             mutation {{
                 generateShortLink(input: {{ originUrl: {urlJson} }}) {{
@@ -328,7 +350,6 @@ class Program
             }}";
 
             var payload = new { query = queryGraphQL };
-
             var jsonOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
             string jsonContent = JsonSerializer.Serialize(payload, jsonOptions);
             
@@ -368,31 +389,23 @@ class Program
     {
         string? itemId = ExtrairIdMlb(urlProduto);
 
-        // Se não achou na URL, pode ser um link SOCIAL (ex: mercadolivre.com.br/social/...)
         if (itemId == null)
         {
             Console.WriteLine("      ⚠️ ID não na URL. Baixando HTML para procurar...");
             try 
             {
                 var html = await HttpClient.GetStringAsync(urlProduto);
-
-                // 1. Tenta achar ID padrão nos metadados
                 var matchMeta = Regex.Match(html, @"mercadolibre://items/(MLB-?\d+)", RegexOptions.IgnoreCase);
                 if (matchMeta.Success) itemId = matchMeta.Groups[1].Value;
                 
-                // 2. Tenta achar JSON de App
                 if (itemId == null) {
                     var matchJson = Regex.Match(html, @"""id""\s*:\s*""(MLB-?\d+)""", RegexOptions.IgnoreCase);
                     if (matchJson.Success) itemId = matchJson.Groups[1].Value;
                 }
                 
-                // 3. 🚨 NOVA LÓGICA PARA PÁGINAS SOCIAIS 🚨
-                // Procura por qualquer link dentro do HTML que contenha "MLB-" e pega o primeiro.
-                // Isso pega o botão "Ir para o produto" das vitrines.
                 if (itemId == null && urlProduto.Contains("social")) 
                 {
                     Console.WriteLine("      ✨ Analisando Página Social...");
-                    // Procura padrão MLB-XXXXXX ou MLBXXXXXX
                     var matchSocial = Regex.Match(html, @"(MLB-?\d{7,})");
                     if (matchSocial.Success) itemId = matchSocial.Groups[1].Value;
                 }
@@ -444,7 +457,8 @@ class Program
                url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") ||
                url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec") ||
                url.Contains("mercadolivre.com.br/social") || url.Contains("lista.mercadolivre.com.br") ||
-               url.Contains("produto.mercadolivre.com.br") || url.Contains("divulgador.link");
+               url.Contains("produto.mercadolivre.com.br") || url.Contains("divulgador.link") ||
+               url.Contains("onelink.shein.com");
     }
 
     private static async Task<string> ExpandirUrl(string url, int depth)
@@ -461,7 +475,6 @@ class Program
                     return await ExpandirUrl(nextUrl, depth + 1);
                 }
             }
-            // Se o link final for ML Social, queremos retornar o link final (mesmo que seja 200 OK)
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         } catch { return url; }
     }
