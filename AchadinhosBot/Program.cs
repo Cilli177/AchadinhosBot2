@@ -55,7 +55,8 @@ class Program
         1871121243,    // táBaratasso
         1569488789,    // Ofertas Gamer
         5258197181,    // 🧪 Laboratório (Backup)
-        -1003703804341 // 🧪 NOVO LABORATÓRIO (Supergrupo)
+        -1003703804341, // 🧪 NOVO LABORATÓRIO (Supergrupo)
+        3703804341      // 🧪 NOVO LABORATÓRIO (ID Positivo)
     };
 
     static async Task Main(string[] args)
@@ -113,7 +114,6 @@ class Program
 
                 // 1. CONFIGURA DESTINO
                 var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
-                // Fallback para ID negativo/positivo
                 if (chatDestino == null)
                 {
                     long idInvertido = ID_DESTINO > 0 ? (ID_DESTINO * -1) - 1000000000000 : (ID_DESTINO + 1000000000000) * -1;
@@ -125,7 +125,6 @@ class Program
                     PeerDestino = chatDestino.ToInputPeer();
                     NomeDestino = chatDestino.Title;
                     Console.WriteLine($"🎯 DESTINO CONFIRMADO: {NomeDestino} (ID: {chatDestino.ID})");
-                    // Atualiza o ID oficial caso tenha mudado
                     ID_DESTINO = chatDestino.ID; 
                 }
                 else 
@@ -133,29 +132,21 @@ class Program
                     Console.WriteLine($"❌ ERRO CRÍTICO: Canal destino {ID_DESTINO} não encontrado!");
                 }
 
-                // 2. VERIFICA FONTES (NOVIDADE: LISTA NOMES)
+                // 2. VERIFICA FONTES
                 Console.WriteLine("\n🔎 VERIFICANDO FONTES DE MONITORAMENTO:");
                 foreach (var idFonte in IDs_FONTES)
                 {
                     var chatFonte = dialogs.chats.Values.FirstOrDefault(c => c.ID == idFonte);
-                    // Tenta achar com ID "channel" (sem o -100)
                     if (chatFonte == null)
                     {
-                         // Tenta converter Supergrupo (-100...) para ID simples ou vice-versa
                          long idSimples = idFonte;
                          if (idFonte < -1000000000000) idSimples = (idFonte + 1000000000000) * -1;
-                         
                          chatFonte = dialogs.chats.Values.FirstOrDefault(c => c.ID == idSimples);
                     }
 
                     if (chatFonte != null)
                     {
                         Console.WriteLine($"   ✅ MONITORANDO: {chatFonte.Title} (ID: {chatFonte.ID})");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"   ⚠️ AVISO: Fonte {idFonte} NÃO encontrada na lista de diálogos!");
-                        Console.WriteLine($"      Dica: O robô precisa ser membro do canal/grupo para ver.");
                     }
                 }
 
@@ -175,20 +166,17 @@ class Program
         switch (update)
         {
             case UpdateNewMessage unm when unm.message is Message msg:
-                // Verifica se o ID da mensagem está na nossa lista de fontes
-                // Precisamos ser flexíveis com IDs de supergrupos (que podem variar entre ID simples e -100)
                 long idOrigem = msg.peer_id.ID;
                 bool ehFonteValida = IDs_FONTES.Contains(idOrigem) || 
-                                     IDs_FONTES.Contains((idOrigem * -1) - 1000000000000) || // Converte ID simples pra -100
-                                     IDs_FONTES.Contains(idOrigem * -1); // Converte negativo pra positivo
+                                     IDs_FONTES.Contains((idOrigem * -1) - 1000000000000) || 
+                                     IDs_FONTES.Contains(idOrigem * -1);
 
                 if (ehFonteValida && !string.IsNullOrEmpty(msg.message))
                 {
-                    // Ignora msg muito curta, mas permite se for do Laboratório (para testes)
-                    bool ehLaboratorio = (idOrigem == 5258197181 || idOrigem == 1746200253 || idOrigem == 3703804341); // IDs comuns de teste
-                    if (msg.message.Length < 5 && !ehLaboratorio && idOrigem != -1003703804341) return;
+                    // Permite teste no laboratório mesmo com mensagem curta
+                    bool ehLaboratorio = (idOrigem == 5258197181 || idOrigem == 3703804341 || idOrigem == -1003703804341);
+                    if (msg.message.Length < 5 && !ehLaboratorio) return;
 
-                    // PEGA O NOME DA FONTE PARA O LOG
                     string nomeFonte = Manager.Chats.TryGetValue(idOrigem, out var chat) ? chat.Title : $"ID {idOrigem}";
                     Console.WriteLine($"\n⚡ OFERTA DETECTADA EM: {nomeFonte} (ID: {idOrigem})");
 
@@ -204,7 +192,7 @@ class Program
 
                     try
                     {
-                        Console.WriteLine($"   📤 ENVIANDO PARA: {NomeDestino} (ID: {ID_DESTINO})...");
+                        Console.WriteLine($"   📤 ENVIANDO PARA: {NomeDestino}...");
                         
                         if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
                         {
@@ -245,7 +233,7 @@ class Program
 
             string urlExpandida = urlOriginal;
             
-            // Verifica se é encurtador
+            // 1. AQUI É A MÁGICA: Se for TinyURL (ou outro da lista), ele expande ANTES de validar
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo... ");
@@ -341,12 +329,15 @@ class Program
             string jsonContent = JsonSerializer.Serialize(payload, jsonOptions);
             
             long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            // AQUI ESTAVA O ERRO: Para API de Afiliados, é hash SHA256 simples, não HMAC.
             string factor = SHOPEE_APP_ID + timestamp + jsonContent + SHOPEE_API_SECRET;
             
             string signature;
-            using (var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(SHOPEE_API_SECRET)))
+            // CORREÇÃO: Usando SHA256 simples
+            using (var sha256 = SHA256.Create())
             {
-                byte[] hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(factor));
+                byte[] bytes = Encoding.UTF8.GetBytes(factor);
+                byte[] hash = sha256.ComputeHash(bytes);
                 signature = BitConverter.ToString(hash).Replace("-", "").ToLower();
             }
 
@@ -369,6 +360,12 @@ class Program
                 return match.Groups[1].Value;
             }
             
+            if (responseString.Contains("errors"))
+            {
+                Console.WriteLine($"      ⚠️ JSON com erro lógico: {responseString}");
+                return null;
+            }
+            
             Console.WriteLine($"      ⚠️ JSON recebido mas sem shortLink: {responseString}");
             return null;
         }
@@ -379,6 +376,7 @@ class Program
         }
     }
 
+    // ... (RESTO DOS MÉTODOS IGUAIS) ...
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
     {
         string? itemId = ExtrairIdMlb(urlProduto);
@@ -402,7 +400,6 @@ class Program
             string secret = Environment.GetEnvironmentVariable("ML_CLIENT_SECRET");
             string refreshToken = Environment.GetEnvironmentVariable("ML_REFRESH_TOKEN");
             if (string.IsNullOrEmpty(refreshToken)) return false;
-            // ... (código de refresh mantido igual) ...
             return true;
         }
         catch { return false; }
@@ -429,11 +426,36 @@ class Program
 
     private static async Task<string> ExpandirUrl(string url, int depth)
     {
-        // ... (código expandir mantido igual, apenas encurtado aqui para caber na resposta) ...
-        // Use a mesma lógica de expansão do código anterior
         if (depth > 6) return url;
         try {
             var response = await HttpClient.GetAsync(url);
+            if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399) 
+            {
+                var location = response.Headers.Location;
+                if (location != null) 
+                {
+                    string nextUrl = location.IsAbsoluteUri ? location.ToString() : new Uri(new Uri(url), location).ToString();
+                    return await ExpandirUrl(nextUrl, depth + 1);
+                }
+            }
+            if (response.IsSuccessStatusCode)
+            {
+                string html = await response.Content.ReadAsStringAsync();
+                var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
+                if (metaMatch.Success)
+                {
+                    string nextUrl = metaMatch.Groups[1].Value;
+                    if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
+                    return await ExpandirUrl(nextUrl, depth + 1);
+                }
+                var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
+                if (jsMatch.Success)
+                {
+                     string nextUrl = jsMatch.Groups[1].Value;
+                     if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
+                     return await ExpandirUrl(nextUrl, depth + 1);
+                }
+            }
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         } catch { return url; }
     }
