@@ -21,7 +21,7 @@ class Program
     static readonly CookieContainer Cookies = new CookieContainer();
     static readonly HttpClientHandler Handler = new HttpClientHandler 
     { 
-        AllowAutoRedirect = false, 
+        AllowAutoRedirect = true, // ⚠️ IMPORTANTE: Mudamos para TRUE para seguir redirecionamentos do ML Social
         CookieContainer = Cookies,
         UseCookies = true
     };
@@ -66,7 +66,7 @@ class Program
 
         HttpClient.Timeout = TimeSpan.FromSeconds(30);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
-        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
         Console.WriteLine($"🚀 INICIANDO ROBÔ DE OFERTAS...");
 
@@ -183,7 +183,7 @@ class Program
 
                     if (novoTexto == null)
                     {
-                        Console.WriteLine("   🗑️ IGNORADO: Sem links válidos.");
+                        // ℹ️ LOG DE LINKS IGNORADOS AGORA É FEITO DENTRO DO MÉTODO PARA MOSTRAR A URL
                         return; 
                     }
 
@@ -228,11 +228,14 @@ class Program
             string urlOriginal = match.Value;
             
             if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com") || urlOriginal.Contains("magazineluiza"))
-                continue;
+            {
+                 // Ignorados intencionais
+                 Console.WriteLine($"   🚫 IGNORADO (Filtro): {urlOriginal}");
+                 continue;
+            }
 
             string urlExpandida = urlOriginal;
             
-            // 1. Expande TinyURL ANTES de validar
             if (IsShortLink(urlOriginal))
             {
                 Console.Write($"   ↳ Expandindo... ");
@@ -243,7 +246,6 @@ class Program
             string urlComTag = urlExpandida;
             bool ehAmazon = urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to");
             bool ehMercadoLivre = urlExpandida.Contains("mercadolivre.com") || urlExpandida.Contains("mercadolibre.com");
-            // 🆕 SHOPEE
             bool ehShopee = urlExpandida.Contains("shopee.com.br") || urlExpandida.Contains("shp.ee");
 
             if (ehAmazon)
@@ -265,7 +267,7 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine("      ❌ ERRO: ID não encontrado.");
+                    Console.WriteLine("      ❌ ERRO: ID não encontrado no ML.");
                     continue; 
                 }
             }
@@ -288,6 +290,16 @@ class Program
             }
             else
             {
+                // ⚠️ AQUI ESTÁ O NOVO LOG DE IGNORADOS COM DOMÍNIO ⚠️
+                try 
+                {
+                    var uri = new Uri(urlExpandida);
+                    Console.WriteLine($"   🗑️ IGNORADO ({uri.Host}): {urlExpandida}");
+                }
+                catch
+                {
+                    Console.WriteLine($"   🗑️ IGNORADO (Link inválido): {urlExpandida}");
+                }
                 continue;
             }
 
@@ -307,8 +319,7 @@ class Program
         try
         {
             string urlJson = JsonSerializer.Serialize(urlOriginal);
-
-            // ⚡ CORREÇÃO: REMOVIDO "subIds" PARA EVITAR ERRO DE PARÂMETRO
+            // Query Shopee Inline (Sem subIds)
             string queryGraphQL = $@"
             mutation {{
                 generateShortLink(input: {{ originUrl: {urlJson} }}) {{
@@ -339,40 +350,61 @@ class Program
             var response = await HttpClient.SendAsync(request);
             string responseString = await response.Content.ReadAsStringAsync();
 
-            if (!response.IsSuccessStatusCode)
-            {
-                Console.WriteLine($"      🚨 ERRO API SHOPEE ({response.StatusCode}): {responseString}");
-                return null;
-            }
+            if (!response.IsSuccessStatusCode) return null;
 
             var match = Regex.Match(responseString, "\"shortLink\":\"(.*?)\"");
-            if (match.Success)
-            {
-                return match.Groups[1].Value;
-            }
+            if (match.Success) return match.Groups[1].Value;
             
-            if (responseString.Contains("errors"))
-            {
-                Console.WriteLine($"      ⚠️ JSON com erro lógico: {responseString}");
-                return null;
-            }
-            
-            Console.WriteLine($"      ⚠️ JSON recebido mas sem shortLink: {responseString}");
             return null;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"      ❌ ERRO CRÍTICO SHOPEE: {ex.Message}");
+            Console.WriteLine($"      ❌ ERRO SHOPEE: {ex.Message}");
             return null;
         }
     }
 
-    // ... (RESTO DOS MÉTODOS MANTIDOS IGUAIS) ...
     private static async Task<string?> GerarLinkMercadoLivre(string urlProduto)
     {
         string? itemId = ExtrairIdMlb(urlProduto);
+
+        // Se não achou na URL, pode ser um link SOCIAL (ex: mercadolivre.com.br/social/...)
+        if (itemId == null)
+        {
+            Console.WriteLine("      ⚠️ ID não na URL. Baixando HTML para procurar...");
+            try 
+            {
+                var html = await HttpClient.GetStringAsync(urlProduto);
+
+                // 1. Tenta achar ID padrão nos metadados
+                var matchMeta = Regex.Match(html, @"mercadolibre://items/(MLB-?\d+)", RegexOptions.IgnoreCase);
+                if (matchMeta.Success) itemId = matchMeta.Groups[1].Value;
+                
+                // 2. Tenta achar JSON de App
+                if (itemId == null) {
+                    var matchJson = Regex.Match(html, @"""id""\s*:\s*""(MLB-?\d+)""", RegexOptions.IgnoreCase);
+                    if (matchJson.Success) itemId = matchJson.Groups[1].Value;
+                }
+                
+                // 3. 🚨 NOVA LÓGICA PARA PÁGINAS SOCIAIS 🚨
+                // Procura por qualquer link dentro do HTML que contenha "MLB-" e pega o primeiro.
+                // Isso pega o botão "Ir para o produto" das vitrines.
+                if (itemId == null && urlProduto.Contains("social")) 
+                {
+                    Console.WriteLine("      ✨ Analisando Página Social...");
+                    // Procura padrão MLB-XXXXXX ou MLBXXXXXX
+                    var matchSocial = Regex.Match(html, @"(MLB-?\d{7,})");
+                    if (matchSocial.Success) itemId = matchSocial.Groups[1].Value;
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"      ❌ Erro HTML ML: {ex.Message}"); }
+        }
+
         if (itemId == null) return null;
+
         string idLimpo = itemId.Replace("-", "").ToUpper().Replace("MLB", "");
+        Console.WriteLine($"      💎 ID ENCONTRADO: MLB{idLimpo}");
+
         return $"https://produto.mercadolivre.com.br/MLB-{idLimpo}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
     }
 
@@ -429,24 +461,7 @@ class Program
                     return await ExpandirUrl(nextUrl, depth + 1);
                 }
             }
-            if (response.IsSuccessStatusCode)
-            {
-                string html = await response.Content.ReadAsStringAsync();
-                var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
-                if (metaMatch.Success)
-                {
-                    string nextUrl = metaMatch.Groups[1].Value;
-                    if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
-                    return await ExpandirUrl(nextUrl, depth + 1);
-                }
-                var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
-                if (jsMatch.Success)
-                {
-                     string nextUrl = jsMatch.Groups[1].Value;
-                     if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
-                     return await ExpandirUrl(nextUrl, depth + 1);
-                }
-            }
+            // Se o link final for ML Social, queremos retornar o link final (mesmo que seja 200 OK)
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         } catch { return url; }
     }
