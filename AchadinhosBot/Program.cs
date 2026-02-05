@@ -306,20 +306,18 @@ class Program
     {
         try
         {
-            // 🔐 CORREÇÃO: Serializa a URL para garantir que aspas e caracteres especiais não quebrem a query
             string urlJson = JsonSerializer.Serialize(urlOriginal);
 
-            // ⚡ QUERY INLINE: Sem variáveis ($input) para evitar erro de tipo desconhecido
+            // ⚡ CORREÇÃO: REMOVIDO "subIds" PARA EVITAR ERRO DE PARÂMETRO
             string queryGraphQL = $@"
             mutation {{
-                generateShortLink(input: {{ originUrl: {urlJson}, subIds: [""telegram_bot""] }}) {{
+                generateShortLink(input: {{ originUrl: {urlJson} }}) {{
                     shortLink
                 }}
             }}";
 
             var payload = new { query = queryGraphQL };
 
-            // Serializa o payload completo
             var jsonOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
             string jsonContent = JsonSerializer.Serialize(payload, jsonOptions);
             
@@ -422,6 +420,33 @@ class Program
         if (depth > 6) return url;
         try {
             var response = await HttpClient.GetAsync(url);
+            if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399) 
+            {
+                var location = response.Headers.Location;
+                if (location != null) 
+                {
+                    string nextUrl = location.IsAbsoluteUri ? location.ToString() : new Uri(new Uri(url), location).ToString();
+                    return await ExpandirUrl(nextUrl, depth + 1);
+                }
+            }
+            if (response.IsSuccessStatusCode)
+            {
+                string html = await response.Content.ReadAsStringAsync();
+                var metaMatch = Regex.Match(html, @"content=['""]\d+;\s*url=['""]?([^'"" >]+)", RegexOptions.IgnoreCase);
+                if (metaMatch.Success)
+                {
+                    string nextUrl = metaMatch.Groups[1].Value;
+                    if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
+                    return await ExpandirUrl(nextUrl, depth + 1);
+                }
+                var jsMatch = Regex.Match(html, @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]", RegexOptions.IgnoreCase);
+                if (jsMatch.Success)
+                {
+                     string nextUrl = jsMatch.Groups[1].Value;
+                     if (!nextUrl.StartsWith("http")) nextUrl = new Uri(new Uri(url), nextUrl).ToString();
+                     return await ExpandirUrl(nextUrl, depth + 1);
+                }
+            }
             return response.RequestMessage?.RequestUri?.ToString() ?? url;
         } catch { return url; }
     }
