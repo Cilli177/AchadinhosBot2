@@ -7,8 +7,9 @@ using System.Text.RegularExpressions;
 using System.Net.Http;
 using System.Net;
 using System.Text.Json;
-using System.Security.Cryptography; // 🔐 NOVO: Para assinar a requisição Shopee
-using System.Text;                  // 🔐 NOVO: Para manipular strings
+using System.Text.Encodings.Web; // 🆕 Para JSON limpo
+using System.Security.Cryptography;
+using System.Text;
 using WTelegram;
 using TL;
 
@@ -29,7 +30,10 @@ class Program
     // ⚙️ SEUS DADOS TELEGRAM
     static int api_id = 31119088;
     static string api_hash = "62988e712c3f839bb1a5ea094d33d047";
-    static long ID_DESTINO = 3632436217; 
+    
+    // 🎯 ID DO GRUPO ATUALIZADO (Supergrupo)
+    static long ID_DESTINO = -1003703804341; 
+    
     static InputPeer? PeerDestino;
 
     // 🍌 AMAZON
@@ -40,7 +44,7 @@ class Program
     static string ML_MATT_WORD = "land177";
     static string? ML_ACCESS_TOKEN = null;
 
-    // 🟠 SHOPEE API (NOVAS CREDENCIAIS ADICIONADAS)
+    // 🟠 SHOPEE API (COM DEBUG DETETIVE)
     static string SHOPEE_APP_ID = "18328430896"; 
     static string SHOPEE_API_SECRET = "J2K62RUC2ABIXXOFBH4GX62C5AADNHWV"; 
     static string SHOPEE_ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql"; 
@@ -61,9 +65,9 @@ class Program
 
         HttpClient.Timeout = TimeSpan.FromSeconds(30);
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
-        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+        HttpClient.DefaultRequestHeaders.Accept.ParseAdd("application/json"); 
 
-        Console.WriteLine("🚀 INICIANDO ROBÔ (Versão: Shopee API ON)...");
+        Console.WriteLine($"🚀 INICIANDO ROBÔ (Destino: {ID_DESTINO})...");
 
         // --- LOGIN TELEGRAM ---
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
@@ -107,13 +111,26 @@ class Program
                 var dialogs = await Client.Messages_GetAllDialogs();
                 dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
 
+                // Procura pelo ID Exato do Supergrupo
                 var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
+                
+                // Fallback: Se não achar pelo ID negativo, tenta pelo positivo (ID base)
+                if (chatDestino == null)
+                {
+                    long idBase = ID_DESTINO * -1 - 1000000000000; // Tenta reverter a lógica do ID -100
+                    chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == idBase || c.ID == (ID_DESTINO * -1));
+                }
+
                 if (chatDestino != null)
                 {
                     PeerDestino = chatDestino.ToInputPeer();
-                    Console.WriteLine($"📢 DESTINO: {chatDestino.Title}");
+                    Console.WriteLine($"📢 DESTINO CONFIRMADO: {chatDestino.Title} (ID: {chatDestino.ID})");
                 }
-                else { Console.WriteLine($"❌ ERRO: Canal destino {ID_DESTINO} não encontrado!"); }
+                else 
+                { 
+                    Console.WriteLine($"❌ ERRO CRÍTICO: Canal destino {ID_DESTINO} não encontrado na lista de dialogs!");
+                    Console.WriteLine("   Dica: Mande uma mensagem 'oi' no grupo para ele aparecer no topo da lista.");
+                }
 
                 Console.WriteLine("---------------------------------------------------");
                 Console.WriteLine("👀 MONITORANDO OFERTAS...");
@@ -199,7 +216,7 @@ class Program
             string urlComTag = urlExpandida;
             bool ehAmazon = urlExpandida.Contains("amazon.com") || urlExpandida.Contains("amzn.to");
             bool ehMercadoLivre = urlExpandida.Contains("mercadolivre.com") || urlExpandida.Contains("mercadolibre.com");
-            // 🆕 Detecção da Shopee
+            // 🆕 SHOPEE
             bool ehShopee = urlExpandida.Contains("shopee.com.br") || urlExpandida.Contains("shp.ee");
 
             if (ehAmazon)
@@ -238,8 +255,8 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine("      ❌ Falha na API Shopee.");
-                    continue; // Se falhar a API, talvez seja melhor não postar o link original
+                    Console.WriteLine("      ❌ Falha Shopee. Mantendo original (fallback).");
+                    continue; 
                 }
             }
             else
@@ -258,12 +275,11 @@ class Program
         return linkValidoEncontrado ? textoFinal : null;
     }
 
-    // 🟠 MÉTODO NOVO DA SHOPEE
+    // 🟠 MÉTODO SHOPEE COM LOGS DE ERRO
     private static async Task<string?> GerarLinkShopee(string urlOriginal)
     {
         try
         {
-            // 1. Monta o Payload GraphQL
             var payload = new
             {
                 query = @"
@@ -282,9 +298,10 @@ class Program
                 }
             };
 
-            string jsonContent = JsonSerializer.Serialize(payload);
+            // ⚠️ USO DE OPÇÕES JSON PARA EVITAR ESCAPE DE CARACTERES
+            var jsonOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+            string jsonContent = JsonSerializer.Serialize(payload, jsonOptions);
             
-            // 2. Gera o Timestamp e a Assinatura (HMAC-SHA256)
             long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             string factor = SHOPEE_APP_ID + timestamp + jsonContent + SHOPEE_API_SECRET;
             
@@ -295,33 +312,32 @@ class Program
                 signature = BitConverter.ToString(hash).Replace("-", "").ToLower();
             }
 
-            // 3. Prepara a Requisição
             var request = new HttpRequestMessage(HttpMethod.Post, SHOPEE_ENDPOINT);
             request.Content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
             request.Headers.Add("Authorization", $"SHA256 Credential={SHOPEE_APP_ID}, Timestamp={timestamp}, Signature={signature}");
 
-            // 4. Envia
             var response = await HttpClient.SendAsync(request);
             string responseString = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
-                Console.WriteLine($"Erro HTTP Shopee: {response.StatusCode} - {responseString}");
+                // 🚨 LOG DE ERRO EXPLÍCITO
+                Console.WriteLine($"      🚨 ERRO API SHOPEE ({response.StatusCode}): {responseString}");
                 return null;
             }
 
-            // 5. Extrai o Link do JSON
             var match = Regex.Match(responseString, "\"shortLink\":\"(.*?)\"");
             if (match.Success)
             {
                 return match.Groups[1].Value;
             }
             
+            Console.WriteLine($"      ⚠️ JSON recebido mas sem shortLink: {responseString}");
             return null;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Erro Shopee API: {ex.Message}");
+            Console.WriteLine($"      ❌ ERRO CRÍTICO SHOPEE: {ex.Message}");
             return null;
         }
     }
