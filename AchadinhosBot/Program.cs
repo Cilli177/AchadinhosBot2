@@ -66,7 +66,7 @@ class Program
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine($"🚀 INICIANDO SISTEMA COM ANALYTICS 2.0 📊...");
+        Console.WriteLine($"🚀 INICIANDO SISTEMA COM RASTREIO DE GRUPOS 🕵️‍♂️...");
 
         _ = Task.Run(IniciarServidorWeb);
         Console.WriteLine($"🌍 API WEB INICIADA!");
@@ -120,7 +120,8 @@ class Program
 
                 if (!string.IsNullOrEmpty(text))
                 {
-                    string? linkConvertido = await ProcessarMensagemUniversal(text, "WhatsApp/API");
+                    // 🕵️‍♂️ RASTREIO: Identifica que veio do WhatsApp/API
+                    string? linkConvertido = await ProcessarMensagemUniversal(text, "📱 WhatsApp / API");
 
                     if (linkConvertido != null)
                     {
@@ -194,7 +195,11 @@ class Program
                 return;
             }
 
-            string? linkConvertido = await ProcessarMensagemUniversal(textoUsuario, "Bot Telegram");
+            string nomeUsuario = "Anônimo";
+            if (chat.TryGetProperty("first_name", out var fn)) nomeUsuario = fn.GetString() ?? "Anônimo";
+
+            // 🕵️‍♂️ RASTREIO: Identifica o nome do usuário que mandou no bot
+            string? linkConvertido = await ProcessarMensagemUniversal(textoUsuario, $"🤖 Bot: {nomeUsuario}");
 
             if (linkConvertido != null)
             {
@@ -219,11 +224,10 @@ class Program
     }
 
     // ==================================================================================
-    // 🕵️ USERBOT
+    // 🕵️ USERBOT (COM RASTREIO DE NOME DE GRUPO)
     // ==================================================================================
     private static async Task IniciarUserbotEspiao()
     {
-        // 🛠️ CONFIGURAÇÃO DE SESSÃO E VARIÁVEIS (CORRIGIDO)
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
         
@@ -235,7 +239,6 @@ class Program
 
         await AtualizarTokenMercadoLivre();
 
-        // 👇 AQUI ESTAVA O ERRO: RESTAUREI O MAPEAMENTO CORRETO DAS VARIÁVEIS
         string? Config(string what)
         {
             if (what == "session_pathname") return sessionFile;
@@ -258,7 +261,6 @@ class Program
                 var dialogs = await Client.Messages_GetAllDialogs();
                 dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
 
-                // Configura Destino VIP
                 var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
                 if (chatDestino != null) { PeerDestino = chatDestino.ToInputPeer(); ID_DESTINO = chatDestino.ID; }
                 else
@@ -268,7 +270,6 @@ class Program
                    if (chatDestino != null) { PeerDestino = chatDestino.ToInputPeer(); ID_DESTINO = chatDestino.ID; }
                 }
 
-                // 📊 CONFIGURA CANAL DE LOGS
                 if (ID_LOGS != 0)
                 {
                     var chatLogs = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_LOGS);
@@ -299,15 +300,28 @@ class Program
         {
             case UpdateNewMessage unm when unm.message is Message msg:
                 long idOrigem = msg.peer_id.ID;
-                Console.WriteLine($"MSG DE: {idOrigem} | CHAT: {Manager.Chats.GetValueOrDefault(idOrigem)?.Title}");
-
+                
                 bool ehFonteValida = IDs_FONTES.Contains(idOrigem) || IDs_FONTES.Contains((idOrigem * -1) - 1000000000000) || IDs_FONTES.Contains(idOrigem * -1);
 
                 if (ehFonteValida && !string.IsNullOrEmpty(msg.message))
                 {
                     if (msg.message.Length < 5 && idOrigem != 3703804341) return;
 
-                    string? novoTexto = await ProcessarMensagemUniversal(msg.message, "Espião (Auto)");
+                    // 🕵️‍♂️ RASTREIO: PEGA O NOME DO GRUPO
+                    string nomeGrupo = "Desconhecido";
+                    if (Manager.Chats.TryGetValue(idOrigem, out var chatInfo))
+                    {
+                        nomeGrupo = chatInfo.Title;
+                    }
+                    else if (Manager.Chats.TryGetValue((idOrigem * -1) - 1000000000000, out var chatInfo2))
+                    {
+                        nomeGrupo = chatInfo2.Title;
+                    }
+
+                    // Monta a string de origem para o Log
+                    string origemLog = $"📢 {nomeGrupo}";
+
+                    string? novoTexto = await ProcessarMensagemUniversal(msg.message, origemLog);
 
                     if (novoTexto == null) return;
 
@@ -334,7 +348,7 @@ class Program
     }
 
     // ==================================================================================
-    // 🧠 CÉREBRO + LOGS ANALYTICS 2.0
+    // 🧠 CÉREBRO + LOGS ANALYTICS
     // ==================================================================================
     private static async Task<string?> ProcessarMensagemUniversal(string textoOriginal, string origem)
     {
