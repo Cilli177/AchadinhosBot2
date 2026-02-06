@@ -15,6 +15,10 @@ using TL;
 
 class Program
 {
+    // 🔐 SEGURANÇA DA API (NOVO)
+    // Essa é a senha que você vai colocar no n8n
+    static string API_ACCESS_KEY = "reidasofertas-secret-key-2026"; 
+
     // --- TELEGRAM USER (ESPIÃO) ---
     static WTelegram.Client? Client;
     static WTelegram.UpdateManager? Manager;
@@ -59,35 +63,35 @@ class Program
         Console.Clear();
         WTelegram.Helpers.Log = (lvl, str) => { };
 
-        HttpClient.Timeout = TimeSpan.FromSeconds(30);
+        // Timeout aumentado para evitar conflito com Long Polling
+        HttpClient.Timeout = TimeSpan.FromMinutes(2);
+        
         HttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         HttpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-        Console.WriteLine($"🚀 INICIANDO SISTEMA SUPREMO (API + BOT + USERBOT)...");
+        Console.WriteLine($"🚀 INICIANDO SISTEMA BLINDADO 🛡️...");
 
-        // 1. INICIA A API WEB (PARA N8N/WHATSAPP)
+        // 1. INICIA A API WEB
         _ = Task.Run(IniciarServidorWeb);
-        Console.WriteLine($"🌍 API WEB INICIADA EM BACKGROUND!");
+        Console.WriteLine($"🌍 API WEB (SEGURA) INICIADA EM BACKGROUND!");
 
-        // 2. INICIA O BOT TELEGRAM (EM PARALELO)
+        // 2. INICIA O BOT TELEGRAM
         _ = Task.Run(BotPollingLoop);
         Console.WriteLine($"🤖 BOT TELEGRAM INICIADO EM BACKGROUND!");
 
-        // 3. INICIA O USERBOT (ESPIÃO)
+        // 3. INICIA O USERBOT
         await IniciarUserbotEspiao();
     }
 
     // ==================================================================================
-    // 🌍 LÓGICA DA API WEB (PARA O N8N)
+    // 🌍 LÓGICA DA API WEB (AGORA COM SENHA)
     // ==================================================================================
     static async Task IniciarServidorWeb()
     {
         try 
         {
-            // O Railway define a porta na variável de ambiente PORT. Se não tiver, usa 8080.
             string port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
             var listener = new HttpListener();
-            // Escuta em todos os IPs na porta definida
             listener.Prefixes.Add($"http://*:{port}/"); 
             listener.Start();
             Console.WriteLine($"🌍 SERVIDOR HTTP OUVINDO NA PORTA {port}");
@@ -97,7 +101,7 @@ class Program
                 try
                 {
                     var context = await listener.GetContextAsync();
-                    _ = Task.Run(() => ProcessarRequestWeb(context)); // Processa sem travar o loop
+                    _ = Task.Run(() => ProcessarRequestWeb(context)); 
                 }
                 catch (Exception ex)
                 {
@@ -108,7 +112,6 @@ class Program
         catch (Exception ex)
         {
             Console.WriteLine($"❌ FALHA CRÍTICA AO INICIAR SERVIDOR WEB: {ex.Message}");
-            Console.WriteLine("   Dica: Se rodar local, execute como Admin ou use porta 8080.");
         }
     }
 
@@ -119,7 +122,20 @@ class Program
             var request = context.Request;
             var response = context.Response;
 
-            // Endpoint: /converter?text=LINK
+            // 🛑 GATEKEEPER: VERIFICA A SENHA (API KEY)
+            // Se não tiver o header x-api-key ou se a senha estiver errada, rejeita.
+            string? clientKey = request.Headers["x-api-key"];
+            if (string.IsNullOrEmpty(clientKey) || clientKey != API_ACCESS_KEY)
+            {
+                Console.WriteLine($"⛔ ACESSO NEGADO: Tentativa sem chave válida (IP: {request.RemoteEndPoint})");
+                response.StatusCode = 403; // Forbidden
+                byte[] errorBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { error = "Acesso Negado. Chave de API invalida." }));
+                response.ContentType = "application/json";
+                await response.OutputStream.WriteAsync(errorBytes, 0, errorBytes.Length);
+                response.Close();
+                return;
+            }
+
             if (request.Url.AbsolutePath == "/converter")
             {
                 string text = request.QueryString["text"];
@@ -132,12 +148,11 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine($"🌍 API RECEBEU: {text}");
+                    Console.WriteLine($"🌍 API RECEBEU (AUTENTICADO): {text}");
                     string? linkConvertido = await ProcessarMensagemUniversal(text);
 
                     if (linkConvertido != null)
                     {
-                        // Formata bonitinho igual no Telegram
                         if (linkConvertido.Contains("shein.com") && !linkConvertido.Contains(SHEIN_CODE))
                             linkConvertido += $"\n\n💎 Código Shein: {SHEIN_CODE}";
 
@@ -147,7 +162,7 @@ class Program
                     else
                     {
                         responseString = JsonSerializer.Serialize(new { success = false, message = "Nenhum link suportado encontrado." });
-                        response.StatusCode = 200; // Retorna 200 mas com success false
+                        response.StatusCode = 200; 
                     }
                 }
 
@@ -159,8 +174,7 @@ class Program
             }
             else
             {
-                // Health Check (Útil pro Railway saber que está vivo)
-                byte[] buffer = Encoding.UTF8.GetBytes("Robo Online 🤖");
+                byte[] buffer = Encoding.UTF8.GetBytes("Robo Online e Seguro 🛡️");
                 response.StatusCode = 200;
                 await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
                 response.Close();
@@ -175,7 +189,7 @@ class Program
     }
 
     // ==================================================================================
-    // 🤖 LÓGICA DO BOT TELEGRAM (ATENDENTE)
+    // 🤖 LÓGICA DO BOT TELEGRAM
     // ==================================================================================
     private static async Task BotPollingLoop()
     {
@@ -278,7 +292,7 @@ class Program
     }
 
     // ==================================================================================
-    // 🕵️ LÓGICA DO USERBOT (ESPIÃO DE CANAIS)
+    // 🕵️ LÓGICA DO USERBOT
     // ==================================================================================
     private static async Task IniciarUserbotEspiao()
     {
@@ -391,7 +405,7 @@ class Program
     }
 
     // ==================================================================================
-    // 🧠 CÉREBRO COMPARTILHADO (PROCESSADOR DE LINKS)
+    // 🧠 CÉREBRO COMPARTILHADO
     // ==================================================================================
     private static async Task<string?> ProcessarMensagemUniversal(string textoOriginal)
     {
@@ -434,13 +448,6 @@ class Program
 
         return linkValidoEncontrado ? textoFinal : null;
     }
-
-    // ... (MÉTODOS AUXILIARES DEVEM FICAR AQUI: GerarLinkShopee, AplicarTagShein, etc.
-    // ... (Copie os mesmos métodos que já estavam funcionando na versão anterior)
-    
-    // MÉTODOS MANTIDOS (Para economizar espaço, certifique-se de que eles estão aqui no arquivo final):
-    // AplicarTagShein, GerarLinkShopee, GerarLinkMercadoLivre, ExtrairIdMlb, AtualizarTokenMercadoLivre, EncurtarTinyUrl, IsShortLink, ExpandirUrl, AplicarTagAmazon.
-    // Se precisar que eu reenvie o arquivo COM esses métodos explicítos, me avise, mas é só manter o que já tinha.
 
     private static string AplicarTagShein(string url)
     {
@@ -501,7 +508,7 @@ class Program
     }
 
     private static string? ExtrairIdMlb(string texto) { var regex = new Regex(@"(MLB-?\d+)", RegexOptions.IgnoreCase); var match = regex.Match(texto); return match.Success ? match.Groups[1].Value : null; }
-    private static async Task<bool> AtualizarTokenMercadoLivre() { try { string appId = Environment.GetEnvironmentVariable("ML_APP_ID"); string secret = Environment.GetEnvironmentVariable("ML_CLIENT_SECRET"); string refreshToken = Environment.GetEnvironmentVariable("ML_REFRESH_TOKEN"); if (string.IsNullOrEmpty(refreshToken)) return false; return true; } catch { return false; } }
+    private static async Task<bool> AtualizarTokenMercadoLivre() { try { string appId = Environment.GetEnvironmentVariable("ML_APP_ID"); string secret = Environment.GetEnvironmentVariable("ML_CLIENT_SECRET"); string refreshToken = Environment.GetEnvironmentVariable("ML_REFRESH_TOKEN"); if (string.IsNullOrEmpty(refreshToken)) return false; var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("grant_type", "refresh_token"), new KeyValuePair<string, string>("client_id", appId), new KeyValuePair<string, string>("client_secret", secret), new KeyValuePair<string, string>("refresh_token", refreshToken) }); var response = await HttpClient.PostAsync("https://api.mercadolibre.com/oauth/token", content); return response.IsSuccessStatusCode; } catch { return false; } }
     private static async Task<string> EncurtarTinyUrl(string urlLonga) { try { var response = await HttpClient.GetStringAsync($"https://tinyurl.com/api-create.php?url={urlLonga}"); return response; } catch { return urlLonga; } }
     private static bool IsShortLink(string url) { return url.Contains("amzn.to") || url.Contains("bit.ly") || url.Contains("t.co") || url.Contains("compre.link") || url.Contains("oferta.one") || url.Contains("shope.ee") || url.Contains("a.co") || url.Contains("tinyurl") || url.Contains("mercadolivre.com/sec") || url.Contains("mercadolivre.com.br/social") || url.Contains("lista.mercadolivre.com.br") || url.Contains("produto.mercadolivre.com.br") || url.Contains("divulgador.link") || url.Contains("onelink.shein.com"); }
     private static async Task<string> ExpandirUrl(string url, int depth) { if (depth > 6) return url; try { var response = await HttpClient.GetAsync(url); if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399) { var location = response.Headers.Location; if (location != null) { string nextUrl = location.IsAbsoluteUri ? location.ToString() : new Uri(new Uri(url), location).ToString(); return await ExpandirUrl(nextUrl, depth + 1); } } return response.RequestMessage?.RequestUri?.ToString() ?? url; } catch { return url; } }
