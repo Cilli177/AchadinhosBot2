@@ -10,7 +10,7 @@ using System.Text.Json;
 using System.Text.Encodings.Web; 
 using System.Security.Cryptography;
 using System.Text;
-using System.Diagnostics; // ⏱️ Necessário para o cronômetro
+using System.Diagnostics; 
 using WTelegram;
 using TL;
 
@@ -19,7 +19,7 @@ class Program
     // 🔐 SEGURANÇA
     static string API_ACCESS_KEY = "reidasofertas-secret-key-2026"; 
 
-    // 📊 ID DO CANAL DE LOGS (JÁ PREENCHIDO)
+    // 📊 ID DO CANAL DE LOGS
     static long ID_LOGS = -1003807256386; 
 
     // --- TELEGRAM ---
@@ -223,18 +223,33 @@ class Program
     // ==================================================================================
     private static async Task IniciarUserbotEspiao()
     {
+        // 🛠️ CONFIGURAÇÃO DE SESSÃO E VARIÁVEIS (CORRIGIDO)
         bool isProduction = Environment.GetEnvironmentVariable("RAILWAY_ENVIRONMENT") != null;
         string sessionFile = isProduction ? "/tmp/WTelegram.session" : "WTelegram.session";
-        if (isProduction && File.Exists("WTelegram.session.b64")) try { File.WriteAllBytes(sessionFile, Convert.FromBase64String(File.ReadAllText("WTelegram.session.b64"))); } catch { }
+        
+        if (isProduction && File.Exists("WTelegram.session.b64"))
+        {
+            try { File.WriteAllBytes(sessionFile, Convert.FromBase64String(File.ReadAllText("WTelegram.session.b64"))); }
+            catch { }
+        }
 
         await AtualizarTokenMercadoLivre();
 
+        // 👇 AQUI ESTAVA O ERRO: RESTAUREI O MAPEAMENTO CORRETO DAS VARIÁVEIS
+        string? Config(string what)
+        {
+            if (what == "session_pathname") return sessionFile;
+            if (what == "api_id") return api_id.ToString();
+            if (what == "api_hash") return api_hash;
+            if (what == "phone_number") return Environment.GetEnvironmentVariable("TELEGRAM_PHONE") ?? Console.ReadLine();
+            if (what == "verification_code") return Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE") ?? Console.ReadLine();
+            if (what == "password") return Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD") ?? Console.ReadLine();
+            return null;
+        }
+
         try
         {
-            Client = new WTelegram.Client(what => what == "session_pathname" ? sessionFile : 
-                                                  what == "api_id" ? api_id.ToString() : 
-                                                  what == "api_hash" ? api_hash : 
-                                                  Environment.GetEnvironmentVariable(what.ToUpper())); // Fallback para ENV
+            Client = new WTelegram.Client(Config);
             await using (Client)
             {
                 Manager = Client.WithUpdateManager(OnUserbotUpdate);
@@ -243,11 +258,11 @@ class Program
                 var dialogs = await Client.Messages_GetAllDialogs();
                 dialogs.CollectUsersChats(Manager.Users, Manager.Chats);
 
+                // Configura Destino VIP
                 var chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == ID_DESTINO);
                 if (chatDestino != null) { PeerDestino = chatDestino.ToInputPeer(); ID_DESTINO = chatDestino.ID; }
                 else
                 {
-                   // Fallback para encontrar destino por ID negativo
                    long idInvertido = ID_DESTINO > 0 ? (ID_DESTINO * -1) - 1000000000000 : (ID_DESTINO + 1000000000000) * -1;
                    chatDestino = dialogs.chats.Values.FirstOrDefault(c => c.ID == idInvertido || c.ID == (ID_DESTINO * -1));
                    if (chatDestino != null) { PeerDestino = chatDestino.ToInputPeer(); ID_DESTINO = chatDestino.ID; }
@@ -267,10 +282,6 @@ class Program
                         PeerLogs = chatLogs.ToInputPeer(); 
                         Console.WriteLine($"📊 LOGS ATIVOS: {chatLogs.Title}");
                     }
-                    else
-                    {
-                        Console.WriteLine($"❌ CANAL DE LOGS {ID_LOGS} NÃO ENCONTRADO NA LISTA DE CHATS!");
-                    }
                 }
 
                 Console.WriteLine("👀 MONITORANDO...");
@@ -288,6 +299,8 @@ class Program
         {
             case UpdateNewMessage unm when unm.message is Message msg:
                 long idOrigem = msg.peer_id.ID;
+                Console.WriteLine($"MSG DE: {idOrigem} | CHAT: {Manager.Chats.GetValueOrDefault(idOrigem)?.Title}");
+
                 bool ehFonteValida = IDs_FONTES.Contains(idOrigem) || IDs_FONTES.Contains((idOrigem * -1) - 1000000000000) || IDs_FONTES.Contains(idOrigem * -1);
 
                 if (ehFonteValida && !string.IsNullOrEmpty(msg.message))
@@ -325,7 +338,7 @@ class Program
     // ==================================================================================
     private static async Task<string?> ProcessarMensagemUniversal(string textoOriginal, string origem)
     {
-        var sw = Stopwatch.StartNew(); // ⏱️ INICIA O CRONÔMETRO
+        var sw = Stopwatch.StartNew(); 
 
         var regexLink = new Regex(@"https?://[^\s]+");
         var matches = regexLink.Matches(textoOriginal);
@@ -373,7 +386,7 @@ class Program
             string urlCurta = await EncurtarTinyUrl(urlComTag);
             if (urlOriginal != urlCurta) textoFinal = textoFinal.Replace(urlOriginal, urlCurta);
 
-            sw.Stop(); // ⏱️ PARA O CRONÔMETRO
+            sw.Stop(); 
 
             if (linkValidoEncontrado)
             {
@@ -384,7 +397,6 @@ class Program
         return linkValidoEncontrado ? textoFinal : null;
     }
 
-    // 📊 LOG ANALYTICS 2.0
     private static async Task LogarConversao(string origem, string loja, string icone, string original, string final, long ms)
     {
         try 
@@ -408,9 +420,9 @@ class Program
     }
 
     // MÉTODOS AUXILIARES
-    private static string AplicarTagShein(string url) { try { int i = url.IndexOf('?'); string u = i > 0 ? url.Substring(0, i) : url; return u + "?url_from=" + SHEIN_ID; } catch { return url; } }
-    private static async Task<string?> GerarLinkShopee(string url) { try { string json = JsonSerializer.Serialize(new { query = $@"mutation {{ generateShortLink(input: {{ originUrl: {JsonSerializer.Serialize(url)} }}) {{ shortLink }} }}" }); string ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); string sig; using (var sha = SHA256.Create()) sig = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(SHOPEE_APP_ID + ts + json + SHOPEE_API_SECRET))).Replace("-", "").ToLower(); var req = new HttpRequestMessage(HttpMethod.Post, SHOPEE_ENDPOINT) { Content = new StringContent(json, Encoding.UTF8, "application/json") }; req.Headers.Add("Authorization", $"SHA256 Credential={SHOPEE_APP_ID}, Timestamp={ts}, Signature={sig}"); var res = await HttpClient.SendAsync(req); var m = Regex.Match(await res.Content.ReadAsStringAsync(), "\"shortLink\":\"(.*?)\""); return m.Success ? m.Groups[1].Value : null; } catch { return null; } }
-    private static async Task<string?> GerarLinkMercadoLivre(string url) { string? id = ExtrairIdMlb(url); if(id == null) { try { var h = await HttpClient.GetStringAsync(url); var m = Regex.Match(h, @"mercadolibre://items/(MLB-?\d+)"); if(m.Success) id = m.Groups[1].Value; if(id==null && url.Contains("social")) { m = Regex.Match(h, @"(MLB-?\d{7,})"); if(m.Success) id=m.Groups[1].Value; } } catch {} } if(id==null) return null; return $"https://produto.mercadolivre.com.br/MLB-{id.Replace("-","").ToUpper().Replace("MLB","")}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}"; }
+    private static string AplicarTagShein(string u) { try { int i = u.IndexOf('?'); string r = i > 0 ? u.Substring(0, i) : u; return r + "?url_from=" + SHEIN_ID; } catch { return u; } }
+    private static async Task<string?> GerarLinkShopee(string u) { try { string j = JsonSerializer.Serialize(new { query = $@"mutation {{ generateShortLink(input: {{ originUrl: {JsonSerializer.Serialize(u)} }}) {{ shortLink }} }}" }); string ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); string sig; using (var sha = SHA256.Create()) sig = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(SHOPEE_APP_ID + ts + j + SHOPEE_API_SECRET))).Replace("-", "").ToLower(); var req = new HttpRequestMessage(HttpMethod.Post, SHOPEE_ENDPOINT) { Content = new StringContent(j, Encoding.UTF8, "application/json") }; req.Headers.Add("Authorization", $"SHA256 Credential={SHOPEE_APP_ID}, Timestamp={ts}, Signature={sig}"); var res = await HttpClient.SendAsync(req); var m = Regex.Match(await res.Content.ReadAsStringAsync(), "\"shortLink\":\"(.*?)\""); return m.Success ? m.Groups[1].Value : null; } catch { return null; } }
+    private static async Task<string?> GerarLinkMercadoLivre(string u) { string? id = ExtrairIdMlb(u); if(id == null) { try { var h = await HttpClient.GetStringAsync(u); var m = Regex.Match(h, @"mercadolibre://items/(MLB-?\d+)"); if(m.Success) id = m.Groups[1].Value; if(id==null && u.Contains("social")) { m = Regex.Match(h, @"(MLB-?\d{7,})"); if(m.Success) id=m.Groups[1].Value; } } catch {} } if(id==null) return null; return $"https://produto.mercadolivre.com.br/MLB-{id.Replace("-","").ToUpper().Replace("MLB","")}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}"; }
     private static string? ExtrairIdMlb(string t) { var m = Regex.Match(t, @"(MLB-?\d+)", RegexOptions.IgnoreCase); return m.Success ? m.Groups[1].Value : null; }
     private static async Task<bool> AtualizarTokenMercadoLivre() { try { string r = Environment.GetEnvironmentVariable("ML_REFRESH_TOKEN"); if(string.IsNullOrEmpty(r)) return false; var c = new FormUrlEncodedContent(new[] { new KeyValuePair<string,string>("grant_type","refresh_token"), new KeyValuePair<string,string>("client_id", Environment.GetEnvironmentVariable("ML_APP_ID")), new KeyValuePair<string,string>("client_secret", Environment.GetEnvironmentVariable("ML_CLIENT_SECRET")), new KeyValuePair<string,string>("refresh_token", r) }); return (await HttpClient.PostAsync("https://api.mercadolibre.com/oauth/token", c)).IsSuccessStatusCode; } catch { return false; } }
     private static async Task<string> EncurtarTinyUrl(string u) { try { return await HttpClient.GetStringAsync($"https://tinyurl.com/api-create.php?url={u}"); } catch { return u; } }
