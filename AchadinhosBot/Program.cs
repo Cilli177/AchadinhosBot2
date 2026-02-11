@@ -435,12 +435,48 @@ class Program
 
     // MÉTODOS AUXILIARES
     private static string AplicarTagShein(string u) { try { int i = u.IndexOf('?'); string r = i > 0 ? u.Substring(0, i) : u; return r + "?url_from=" + SHEIN_ID; } catch { return u; } }
+    
     private static async Task<string?> GerarLinkShopee(string u) { try { string j = JsonSerializer.Serialize(new { query = $@"mutation {{ generateShortLink(input: {{ originUrl: {JsonSerializer.Serialize(u)} }}) {{ shortLink }} }}" }); string ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); string sig; using (var sha = SHA256.Create()) sig = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(SHOPEE_APP_ID + ts + j + SHOPEE_API_SECRET))).Replace("-", "").ToLower(); var req = new HttpRequestMessage(HttpMethod.Post, SHOPEE_ENDPOINT) { Content = new StringContent(j, Encoding.UTF8, "application/json") }; req.Headers.Add("Authorization", $"SHA256 Credential={SHOPEE_APP_ID}, Timestamp={ts}, Signature={sig}"); var res = await HttpClient.SendAsync(req); var m = Regex.Match(await res.Content.ReadAsStringAsync(), "\"shortLink\":\"(.*?)\""); return m.Success ? m.Groups[1].Value : null; } catch { return null; } }
-    private static async Task<string?> GerarLinkMercadoLivre(string u) { string? id = ExtrairIdMlb(u); if(id == null) { try { var h = await HttpClient.GetStringAsync(u); var m = Regex.Match(h, @"mercadolibre://items/(MLB-?\d+)"); if(m.Success) id = m.Groups[1].Value; if(id==null && u.Contains("social")) { m = Regex.Match(h, @"(MLB-?\d{7,})"); if(m.Success) id=m.Groups[1].Value; } } catch {} } if(id==null) return null; return $"https://produto.mercadolivre.com.br/MLB-{id.Replace("-","").ToUpper().Replace("MLB","")}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}"; }
+    
+    // --- CORREÇÃO APLICADA AQUI PARA LINKS SOCIAL/VITRINE ---
+    private static async Task<string?> GerarLinkMercadoLivre(string u) 
+    { 
+        // 1. Verifica se é link social/loja/perfil e apenas "carimba" a afiliação
+        if (u.Contains("/social/") || u.Contains("/loja/") || u.Contains("/perfil/"))
+        {
+            string urlLimpa = Regex.Replace(u, @"[?&]matt_tool=[^&]+", "");
+            urlLimpa = Regex.Replace(urlLimpa, @"[?&]matt_word=[^&]+", "");
+            string separador = urlLimpa.Contains("?") ? "&" : "?";
+            return $"{urlLimpa}{separador}matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}";
+        }
+
+        // 2. Se não for social, tenta a lógica padrão de produto
+        string? id = ExtrairIdMlb(u); 
+        if(id == null) 
+        { 
+            try 
+            { 
+                var h = await HttpClient.GetStringAsync(u); 
+                var m = Regex.Match(h, @"mercadolibre://items/(MLB-?\d+)"); 
+                if(m.Success) id = m.Groups[1].Value; 
+            } 
+            catch {} 
+        } 
+        
+        if(id == null) return null; 
+        
+        return $"https://produto.mercadolivre.com.br/MLB-{id.Replace("-","").ToUpper().Replace("MLB","")}?matt_tool={ML_MATT_TOOL}&matt_word={ML_MATT_WORD}"; 
+    }
+
     private static string? ExtrairIdMlb(string t) { var m = Regex.Match(t, @"(MLB-?\d+)", RegexOptions.IgnoreCase); return m.Success ? m.Groups[1].Value : null; }
+    
     private static async Task<bool> AtualizarTokenMercadoLivre() { try { string r = Environment.GetEnvironmentVariable("ML_REFRESH_TOKEN"); if(string.IsNullOrEmpty(r)) return false; var c = new FormUrlEncodedContent(new[] { new KeyValuePair<string,string>("grant_type","refresh_token"), new KeyValuePair<string,string>("client_id", Environment.GetEnvironmentVariable("ML_APP_ID")), new KeyValuePair<string,string>("client_secret", Environment.GetEnvironmentVariable("ML_CLIENT_SECRET")), new KeyValuePair<string,string>("refresh_token", r) }); return (await HttpClient.PostAsync("https://api.mercadolibre.com/oauth/token", c)).IsSuccessStatusCode; } catch { return false; } }
+    
     private static async Task<string> EncurtarTinyUrl(string u) { try { return await HttpClient.GetStringAsync($"https://tinyurl.com/api-create.php?url={u}"); } catch { return u; } }
+    
     private static bool IsShortLink(string u) { return u.Contains("amzn.to") || u.Contains("bit.ly") || u.Contains("t.co") || u.Contains("compre.link") || u.Contains("oferta.one") || u.Contains("shope.ee") || u.Contains("a.co") || u.Contains("tinyurl") || u.Contains("mercadolivre.com") || u.Contains("shein.com") || u.Contains("divulgador.link"); }
+    
     private static async Task<string> ExpandirUrl(string u, int d) { if(d>6) return u; try { var r = await HttpClient.GetAsync(u); if((int)r.StatusCode>=300 && (int)r.StatusCode<=399 && r.Headers.Location!=null) return await ExpandirUrl(r.Headers.Location.IsAbsoluteUri ? r.Headers.Location.ToString() : new Uri(new Uri(u), r.Headers.Location).ToString(), d+1); return r.RequestMessage?.RequestUri?.ToString() ?? u; } catch { return u; } }
+    
     private static string AplicarTagAmazon(string u) { try { string l = Regex.Replace(u, @"[?&]tag=[^&]+", ""); return l + (l.Contains("?")?"&":"?") + "tag=" + AMAZON_TAG; } catch { return u; } }
 }
