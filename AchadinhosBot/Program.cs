@@ -361,11 +361,16 @@ class Program
 
         foreach (Match match in matches)
         {
-            string urlOriginal = match.Value;
+            // --- CORREÇÃO 1: Limpeza agressiva de aspas, crases, pontos e vírgulas no final do link ---
+            string urlOriginal = match.Value.TrimEnd('.', ',', ';', ':', ')', ']', '}', '"', '\'', '`');
+            
             if (urlOriginal.Contains("tidd.ly") || urlOriginal.Contains("natura.com") || urlOriginal.Contains("magazineluiza")) continue;
 
             string urlExpandida = urlOriginal;
             if (IsShortLink(urlOriginal)) urlExpandida = await ExpandirUrl(urlOriginal, 0);
+
+            // Garante que a urlExpandida também esteja limpa caso tenha vindo de redirecionamento sujo
+            urlExpandida = urlExpandida.TrimEnd('.', ',', ';', ':', ')', ']', '}', '"', '\'', '`');
 
             string urlComTag = urlExpandida;
             string lojaDetectada = "Desconhecida";
@@ -398,7 +403,8 @@ class Program
             else continue;
 
             string urlCurta = await EncurtarTinyUrl(urlComTag);
-            if (urlOriginal != urlCurta) textoFinal = textoFinal.Replace(urlOriginal, urlCurta);
+            // Substitui a URL original (com possíveis sujeiras de pontuação) pela nova URL limpa e curta
+            if (match.Value != urlCurta) textoFinal = textoFinal.Replace(match.Value, urlCurta);
 
             sw.Stop(); 
 
@@ -438,7 +444,7 @@ class Program
     
     private static async Task<string?> GerarLinkShopee(string u) { try { string j = JsonSerializer.Serialize(new { query = $@"mutation {{ generateShortLink(input: {{ originUrl: {JsonSerializer.Serialize(u)} }}) {{ shortLink }} }}" }); string ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); string sig; using (var sha = SHA256.Create()) sig = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(SHOPEE_APP_ID + ts + j + SHOPEE_API_SECRET))).Replace("-", "").ToLower(); var req = new HttpRequestMessage(HttpMethod.Post, SHOPEE_ENDPOINT) { Content = new StringContent(j, Encoding.UTF8, "application/json") }; req.Headers.Add("Authorization", $"SHA256 Credential={SHOPEE_APP_ID}, Timestamp={ts}, Signature={sig}"); var res = await HttpClient.SendAsync(req); var m = Regex.Match(await res.Content.ReadAsStringAsync(), "\"shortLink\":\"(.*?)\""); return m.Success ? m.Groups[1].Value : null; } catch { return null; } }
     
-    // --- CORREÇÃO APLICADA AQUI PARA LINKS SOCIAL/VITRINE ---
+    // --- CORREÇÃO 2: Proteção contra links Social/Vitrine ---
     private static async Task<string?> GerarLinkMercadoLivre(string u) 
     { 
         // 1. Verifica se é link social/loja/perfil e apenas "carimba" a afiliação
