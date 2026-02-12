@@ -93,6 +93,7 @@ builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 builder.Services.AddSingleton<IWhatsAppGateway, EvolutionWhatsAppGateway>();
 builder.Services.AddSingleton<ITelegramGateway, TelegramBotApiGateway>();
+builder.Services.AddHostedService<TelegramBotPollingService>();
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<IIdempotencyStore, MemoryIdempotencyStore>();
 builder.Services.AddSingleton<LoginAttemptStore>();

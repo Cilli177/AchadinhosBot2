@@ -37,12 +37,14 @@ public sealed partial class MessageProcessor : IMessageProcessor
         {
             sb.Append(input, lastIndex, match.Index - lastIndex);
 
-            var cleanedUrl = match.Value.TrimEnd('.', ',', ';', ':', ')', ']', '}', '"', '\'', '`');
+            var cleanedUrl = CleanUrl(match.Value, out var prefix, out var suffix);
             var convertedUrl = await _affiliateLinkService.ConvertAsync(cleanedUrl, cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(convertedUrl))
             {
+                sb.Append(prefix);
                 sb.Append(convertedUrl);
+                sb.Append(suffix);
                 converted++;
             }
             else
@@ -61,4 +63,35 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlRegex();
+
+    private static string CleanUrl(string raw, out string prefix, out string suffix)
+    {
+        prefix = string.Empty;
+        suffix = string.Empty;
+
+        var start = 0;
+        var end = raw.Length - 1;
+
+        while (start <= end && IsTrimChar(raw[start]))
+        {
+            prefix += raw[start];
+            start++;
+        }
+
+        while (end >= start && IsTrimChar(raw[end]))
+        {
+            suffix = raw[end] + suffix;
+            end--;
+        }
+
+        if (start > end)
+        {
+            return raw;
+        }
+
+        return raw[start..(end + 1)];
+    }
+
+    private static bool IsTrimChar(char c)
+        => c is '"' or '\'' or '`' or '.' or ',' or ';' or ':' or ')' or ']' or '}' or '!' or '?';
 }

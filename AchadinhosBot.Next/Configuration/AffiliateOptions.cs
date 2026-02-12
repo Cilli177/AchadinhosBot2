@@ -11,4 +11,12 @@ public sealed class AffiliateOptions
     public string SheinId { get; init; } = string.Empty;
 
     public string SheinCode { get; init; } = string.Empty;
+
+    public string MercadoLivreMattTool { get; init; } = string.Empty;
+
+    public string MercadoLivreMattWord { get; init; } = string.Empty;
+
+    public string ShopeeAppId { get; init; } = string.Empty;
+
+    public string ShopeeSecret { get; init; } = string.Empty;
 }

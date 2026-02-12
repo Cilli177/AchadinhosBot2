@@ -37,6 +37,15 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             var client = _httpClientFactory.CreateClient("evolution");
             client.BaseAddress = new Uri(_options.BaseUrl);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+            // Some Evolution setups require api key in a custom header.
+            if (!client.DefaultRequestHeaders.Contains("apikey"))
+            {
+                client.DefaultRequestHeaders.Add("apikey", _options.ApiKey);
+            }
+            if (!client.DefaultRequestHeaders.Contains("x-api-key"))
+            {
+                client.DefaultRequestHeaders.Add("x-api-key", _options.ApiKey);
+            }
 
             _logger.LogInformation("Conectando Evolution API em {BaseUrl} com instância {InstanceName}", _options.BaseUrl, _options.InstanceName);
 
