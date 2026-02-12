@@ -17,22 +17,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
-// Carregar variáveis do arquivo .env
-LoadEnvFile();
-
 var builder = WebApplication.CreateBuilder(args);
-
-// Adicionar suporte a variáveis de ambiente com __ mapping
-builder.Configuration.AddEnvironmentVariables();
-
-// Debug: mostrar valores carregados
-var telegramToken = builder.Configuration["Telegram:BotToken"] ?? Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN") ?? "NOT SET";
-var evolutionUrl = builder.Configuration["Evolution:BaseUrl"] ?? Environment.GetEnvironmentVariable("EVOLUTION_BASE_URL") ?? "NOT SET";
-var evolutionKey = builder.Configuration["Evolution:ApiKey"] ?? Environment.GetEnvironmentVariable("EVOLUTION_API_KEY") ?? "NOT SET";
-
-Console.WriteLine($"[CONFIG] Telegram BotToken: {(string.IsNullOrEmpty(telegramToken) || telegramToken == "NOT SET" ? "❌ NÃO CONFIGURADO" : "✓ Carregado")}");
-Console.WriteLine($"[CONFIG] Evolution URL: {evolutionUrl}");
-Console.WriteLine($"[CONFIG] Evolution Key: {(string.IsNullOrEmpty(evolutionKey) || evolutionKey == "NOT SET" ? "❌ NÃO CONFIGURADO" : "✓ Carregado")}");
 
 builder.Services
     .AddOptions<WebhookOptions>()
@@ -388,36 +373,6 @@ static bool VerifyWebhookSignature(HttpRequest request, string body, string? sec
     var provided = signatureHeader.ToString().Trim().ToLowerInvariant();
 
     return expectedHex == provided;
-}
-
-static void LoadEnvFile()
-{
-    // Tentar encontrar .env em múltiplos locais
-    var possiblePaths = new[]
-    {
-        Path.Combine(AppContext.BaseDirectory, ".env"),
-        Path.Combine(Directory.GetCurrentDirectory(), ".env"),
-        Path.Combine(AppContext.BaseDirectory, "../.env"),
-        Path.Combine(Directory.GetCurrentDirectory(), "../.env"),
-    };
-
-    var envFile = possiblePaths.FirstOrDefault(File.Exists);
-    if (envFile == null) return;
-
-    Console.WriteLine($"[ENV] Carregando variáveis de: {Path.GetFullPath(envFile)}");
-
-    foreach (var line in File.ReadAllLines(envFile))
-    {
-        if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
-        
-        var parts = line.Split('=', 2);
-        if (parts.Length == 2)
-        {
-            var key = parts[0].Trim();
-            var value = parts[1].Trim();
-            Environment.SetEnvironmentVariable(key, value);
-        }
-    }
 }
 
 internal sealed record LoginRequest(string Username, string Password);
