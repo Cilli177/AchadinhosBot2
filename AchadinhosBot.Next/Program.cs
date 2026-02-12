@@ -103,7 +103,12 @@ var webhookOptions = app.Services.GetRequiredService<IOptions<WebhookOptions>>()
 app.Urls.Clear();
 app.Urls.Add($"http://0.0.0.0:{webhookOptions.Port}");
 
-app.UseDefaultFiles();
+// Ajuste para abrir dashboard.html quando acessar "/"
+var defaultFilesOptions = new DefaultFilesOptions();
+defaultFilesOptions.DefaultFileNames.Clear();
+defaultFilesOptions.DefaultFileNames.Add("dashboard.html");
+
+app.UseDefaultFiles(defaultFilesOptions);
 app.UseStaticFiles();
 app.UseRateLimiter();
 app.UseAuthentication();
