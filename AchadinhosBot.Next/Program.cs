@@ -22,6 +22,18 @@ LoadEnvFile();
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Adicionar suporte a variáveis de ambiente com __ mapping
+builder.Configuration.AddEnvironmentVariables();
+
+// Debug: mostrar valores carregados
+var telegramToken = builder.Configuration["Telegram:BotToken"] ?? Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN") ?? "NOT SET";
+var evolutionUrl = builder.Configuration["Evolution:BaseUrl"] ?? Environment.GetEnvironmentVariable("EVOLUTION_BASE_URL") ?? "NOT SET";
+var evolutionKey = builder.Configuration["Evolution:ApiKey"] ?? Environment.GetEnvironmentVariable("EVOLUTION_API_KEY") ?? "NOT SET";
+
+Console.WriteLine($"[CONFIG] Telegram BotToken: {(string.IsNullOrEmpty(telegramToken) || telegramToken == "NOT SET" ? "❌ NÃO CONFIGURADO" : "✓ Carregado")}");
+Console.WriteLine($"[CONFIG] Evolution URL: {evolutionUrl}");
+Console.WriteLine($"[CONFIG] Evolution Key: {(string.IsNullOrEmpty(evolutionKey) || evolutionKey == "NOT SET" ? "❌ NÃO CONFIGURADO" : "✓ Carregado")}");
+
 builder.Services
     .AddOptions<WebhookOptions>()
     .Bind(builder.Configuration.GetSection("Webhook"))
