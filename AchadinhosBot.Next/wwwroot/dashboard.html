@@ -228,21 +228,39 @@ async function saveSettings(){
 }
 
 async function connectTelegram(){
-  await api('/api/integrations/telegram/connect', 'POST', {});
+  try {
+    const r = await api('/api/integrations/telegram/connect', 'POST', {});
+    document.getElementById('telegramStatus').textContent = r.success 
+      ? `Conectado (${r.username || 'Bot'})`
+      : `Erro: ${r.message || 'Falha desconhecida'}`;
+    document.getElementById('telegramStatus').className = 'status ' + (r.success ? 'ok' : 'bad');
+  } catch (e) {
+    document.getElementById('telegramStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+    document.getElementById('telegramStatus').className = 'status bad';
+  }
   await loadSettings();
 }
 
 async function connectWhatsApp(){
-  const r = await api('/api/integrations/whatsapp/connect', 'POST', {});
-  const img = document.getElementById('qrImage');
-  const hint = document.getElementById('qrHint');
+  try {
+    const r = await api('/api/integrations/whatsapp/connect', 'POST', {});
+    const img = document.getElementById('qrImage');
+    const hint = document.getElementById('qrHint');
 
-  if (r.qrCodeBase64) {
-    img.src = `data:image/png;base64,${r.qrCodeBase64}`;
-    img.classList.remove('hidden');
-    hint.classList.remove('hidden');
+    if (r.success && r.qrCodeBase64) {
+      img.src = `data:image/png;base64,${r.qrCodeBase64}`;
+      img.classList.remove('hidden');
+      hint.classList.remove('hidden');
+      document.getElementById('whatsappStatus').textContent = 'QR Code gerado - escaneie com WhatsApp';
+      document.getElementById('whatsappStatus').className = 'status warn';
+    } else {
+      document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao gerar QR'}`;
+      document.getElementById('whatsappStatus').className = 'status bad';
+    }
+  } catch (e) {
+    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+    document.getElementById('whatsappStatus').className = 'status bad';
   }
-
   await loadSettings();
 }
 
