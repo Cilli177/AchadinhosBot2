@@ -32,6 +32,37 @@ dotnet run --project AchadinhosBot.Next/AchadinhosBot.Next.csproj
 Acesse:
 - `http://localhost:8081/`
 
+## Rodar no GitHub Codespaces
+No terminal do Codespace, execute na raiz do repositório:
+
+```bash
+# 1) Restaurar dependências e validar build
+DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet restore AchadinhosBot2.sln
+DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet build AchadinhosBot2.sln -c Release
+
+# 2) Subir a API localmente
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project AchadinhosBot.Next/AchadinhosBot.Next.csproj --urls http://0.0.0.0:8081
+```
+
+Depois, na aba **Ports** do Codespaces, deixe a porta `8081` como pública (ou org/private, conforme necessidade) e abra no navegador.
+
+### Comandos rápidos de verificação no Codespaces
+```bash
+# Healthcheck
+curl http://127.0.0.1:8081/health
+
+# Ver usuário autenticado (sem login deve retornar 401)
+curl -i http://127.0.0.1:8081/auth/me
+```
+
+### Alternativa com Docker Compose no Codespaces
+```bash
+cp AchadinhosBot.Next/.env.example AchadinhosBot.Next/.env
+# Preencha as variáveis obrigatórias em AchadinhosBot.Next/.env (hashes/senhas/tokens)
+docker compose up -d --build
+curl http://127.0.0.1:8081/health
+```
+
 ## Rodar via Docker Compose
 1. Copie o arquivo de exemplo:
 ```bash
