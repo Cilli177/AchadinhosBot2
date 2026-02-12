@@ -17,6 +17,9 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
+// Carregar variáveis do arquivo .env
+LoadEnvFile();
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
@@ -373,6 +376,36 @@ static bool VerifyWebhookSignature(HttpRequest request, string body, string? sec
     var provided = signatureHeader.ToString().Trim().ToLowerInvariant();
 
     return expectedHex == provided;
+}
+
+static void LoadEnvFile()
+{
+    // Tentar encontrar .env em múltiplos locais
+    var possiblePaths = new[]
+    {
+        Path.Combine(AppContext.BaseDirectory, ".env"),
+        Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+        Path.Combine(AppContext.BaseDirectory, "../.env"),
+        Path.Combine(Directory.GetCurrentDirectory(), "../.env"),
+    };
+
+    var envFile = possiblePaths.FirstOrDefault(File.Exists);
+    if (envFile == null) return;
+
+    Console.WriteLine($"[ENV] Carregando variáveis de: {Path.GetFullPath(envFile)}");
+
+    foreach (var line in File.ReadAllLines(envFile))
+    {
+        if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
+        
+        var parts = line.Split('=', 2);
+        if (parts.Length == 2)
+        {
+            var key = parts[0].Trim();
+            var value = parts[1].Trim();
+            Environment.SetEnvironmentVariable(key, value);
+        }
+    }
 }
 
 internal sealed record LoginRequest(string Username, string Password);

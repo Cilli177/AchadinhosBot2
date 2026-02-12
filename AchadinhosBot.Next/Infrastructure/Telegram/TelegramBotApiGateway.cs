@@ -21,29 +21,47 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
     public async Task<TelegramConnectResult> ConnectAsync(CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.BotToken))
-            return new TelegramConnectResult(false, null, "BotToken não configurado");
+        {
+            _logger.LogWarning("Telegram BotToken não configurado");
+            return new TelegramConnectResult(false, null, "BotToken não configurado - verifique variável TELEGRAM_BOT_TOKEN no .env");
+        }
 
         try
         {
+            _logger.LogInformation("Validando Telegram Bot Token");
             var client = _factory.CreateClient("default");
             var res = await client.GetAsync($"https://api.telegram.org/bot{_options.BotToken}/getMe", cancellationToken);
             var body = await res.Content.ReadAsStringAsync(cancellationToken);
 
             if (!res.IsSuccessStatusCode)
-                return new TelegramConnectResult(false, null, $"Falha getMe: {res.StatusCode}");
+            {
+                var msg = $"Falha getMe: {res.StatusCode} - {body}";
+                _logger.LogWarning(msg);
+                return new TelegramConnectResult(false, null, msg);
+            }
 
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             if (!root.TryGetProperty("ok", out var okNode) || !okNode.GetBoolean())
-                return new TelegramConnectResult(false, null, "Token inválido");
+            {
+                _logger.LogWarning("Token Telegram inválido ou expirado");
+                return new TelegramConnectResult(false, null, "Token inválido ou expirado");
+            }
 
             var username = root.GetProperty("result").GetProperty("username").GetString();
+            _logger.LogInformation("Telegram Bot conectado: @{Username}", username);
             return new TelegramConnectResult(true, username, "Telegram conectado com sucesso");
+        }
+        catch (HttpRequestException hexc)
+        {
+            var msg = $"Erro de conexão Telegram API: {hexc.Message}";
+            _logger.LogError(hexc, msg);
+            return new TelegramConnectResult(false, null, msg);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro ao conectar Telegram Bot API");
-            return new TelegramConnectResult(false, null, "Erro ao conectar Telegram");
+            return new TelegramConnectResult(false, null, $"Erro: {ex.Message}");
         }
     }
 }

@@ -27,9 +27,18 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
     {
         try
         {
+            // Validar configurações
+            if (string.IsNullOrWhiteSpace(_options.BaseUrl))
+                return new WhatsAppConnectResult(false, null, "Evolution BaseUrl não configurada");
+            
+            if (string.IsNullOrWhiteSpace(_options.ApiKey))
+                return new WhatsAppConnectResult(false, null, "Evolution ApiKey não configurada");
+
             var client = _httpClientFactory.CreateClient("evolution");
             client.BaseAddress = new Uri(_options.BaseUrl);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+
+            _logger.LogInformation("Conectando Evolution API em {BaseUrl} com instância {InstanceName}", _options.BaseUrl, _options.InstanceName);
 
             // 1) Garante instância
             var instancePayload = JsonSerializer.Serialize(new
@@ -56,16 +65,31 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
 
             if (!qrResponse.IsSuccessStatusCode)
             {
-                return new WhatsAppConnectResult(false, null, $"Falha ao obter QR: {qrResponse.StatusCode}");
+                var msg = $"Falha ao obter QR: {qrResponse.StatusCode} - {qrBody}";
+                _logger.LogError(msg);
+                return new WhatsAppConnectResult(false, null, msg);
             }
 
             string? qrBase64 = ExtractQrCode(qrBody);
+            if (string.IsNullOrWhiteSpace(qrBase64))
+            {
+                _logger.LogWarning("QR code não encontrado na resposta: {Body}", qrBody);
+                return new WhatsAppConnectResult(false, null, "QR code não gerado - Evolution pode estar indisponível");
+            }
+
+            _logger.LogInformation("QR code gerado com sucesso");
             return new WhatsAppConnectResult(true, qrBase64, "QR code gerado com sucesso.");
+        }
+        catch (HttpRequestException hexc)
+        {
+            var msg = $"Erro de conexão com Evolution API ({_options.BaseUrl}): {hexc.Message}";
+            _logger.LogError(hexc, msg);
+            return new WhatsAppConnectResult(false, null, msg);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro ao conectar com Evolution API");
-            return new WhatsAppConnectResult(false, null, "Erro ao conectar na Evolution API.");
+            return new WhatsAppConnectResult(false, null, $"Erro: {ex.Message}");
         }
     }
 
