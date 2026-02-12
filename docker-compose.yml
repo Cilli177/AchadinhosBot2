@@ -1,0 +1,35 @@
+version: "3.9"
+services:
+  achadinhos-next:
+    build:
+      context: .
+      dockerfile: AchadinhosBot.Next/Dockerfile
+    container_name: achadinhos-next
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    env_file:
+      - AchadinhosBot.Next/.env
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      Webhook__Port: ${WEBHOOK_PORT:-8081}
+      Webhook__ApiKey: ${WEBHOOK_API_KEY:-dev-local-key}
+      Auth__Users__0__Username: ${AUTH_ADMIN_USERNAME:-admin}
+      Auth__Users__0__PasswordHash: ${AUTH_ADMIN_PASSWORD_HASH}
+      Auth__Users__0__Role: admin
+      Auth__Users__1__Username: ${AUTH_OPERATOR_USERNAME:-operator}
+      Auth__Users__1__PasswordHash: ${AUTH_OPERATOR_PASSWORD_HASH}
+      Auth__Users__1__Role: operator
+      Evolution__BaseUrl: ${EVOLUTION_BASE_URL:-http://evolution:8080}
+      Evolution__ApiKey: ${EVOLUTION_API_KEY}
+      Evolution__InstanceName: ${EVOLUTION_INSTANCE_NAME:-achadinhos-next}
+      Evolution__WebhookSecret: ${EVOLUTION_WEBHOOK_SECRET}
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
+      Affiliate__AmazonTag: ${AMAZON_TAG:-seu-tag-20}
+      Affiliate__SheinId: ${SHEIN_ID:-affiliate_id}
+      Affiliate__SheinCode: ${SHEIN_CODE:-CODIGO}
+    volumes:
+      - achadinhos_data:/app/data
+
+volumes:
+  achadinhos_data:

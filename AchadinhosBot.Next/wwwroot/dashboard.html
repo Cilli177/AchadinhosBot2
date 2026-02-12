@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AchadinhosBot.Next - Painel</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background:#0b1220; color:#e7ecf4; }
+    .container { max-width: 1120px; margin: 0 auto; padding: 20px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
+    .card { background:#111a2e; border:1px solid #24314d; border-radius:12px; padding:16px; }
+    h1,h2 { margin-top:0; }
+    label { display:block; margin:8px 0 4px; font-size:14px; }
+    input, textarea { width:100%; box-sizing:border-box; padding:10px; border-radius:8px; border:1px solid #30405f; background:#0d1629; color:#e7ecf4; }
+    button { margin-top:10px; padding:10px 14px; border:0; border-radius:8px; background:#2c7df0; color:#fff; cursor:pointer; }
+    button.secondary { background:#415a86; }
+    button.danger { background:#b33939; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+    .status { font-size:13px; opacity:.9; }
+    .ok { color:#58d68d; }
+    .warn { color:#f4d03f; }
+    .bad { color:#ff7675; }
+    .muted { color:#a9b4c8; font-size:13px; }
+    pre { background:#0d1629; border:1px solid #30405f; padding:10px; border-radius:8px; overflow:auto; }
+    .hidden { display:none; }
+    img.qr { max-width: 220px; background: #fff; padding: 8px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>AchadinhosBot.Next — Painel de Operação</h1>
+    <p class="muted">Staging com autenticação, auditoria e integrações nativas.</p>
+
+    <section id="loginCard" class="card">
+      <h2>Acesso ao painel</h2>
+      <label>Usuário</label>
+      <input id="username" placeholder="admin" />
+      <label>Senha</label>
+      <input id="password" type="password" placeholder="••••••••" />
+      <button onclick="login()">Entrar</button>
+      <p id="loginStatus" class="status warn">Não autenticado</p>
+    </section>
+
+    <section id="panel" class="hidden">
+      <div class="card" style="margin-top:16px;">
+        <div class="row" style="justify-content: space-between;">
+          <h2>Sessão</h2>
+          <button class="danger" onclick="logout()">Sair</button>
+        </div>
+        <p id="sessionInfo" class="status ok"></p>
+      </div>
+
+      <div class="grid" style="margin-top:16px;">
+        <section class="card">
+          <h2>Telegram (Bot API)</h2>
+          <button onclick="connectTelegram()">Validar conexão Telegram</button>
+          <p id="telegramStatus" class="status warn">Não conectado</p>
+        </section>
+
+        <section class="card">
+          <h2>WhatsApp (Evolution API)</h2>
+          <button onclick="connectWhatsApp()">Conectar e gerar QR</button>
+          <p id="whatsappStatus" class="status warn">Não conectado</p>
+          <img id="qrImage" class="qr hidden" alt="QR code WhatsApp" />
+          <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Respostas Automáticas</h2>
+        <p class="muted">Formato: uma regra por linha no padrão <code>gatilho => resposta</code>.</p>
+        <textarea id="rules" rows="7"></textarea>
+
+        <div class="row">
+          <label><input type="checkbox" id="autoConvert" /> Converter links automaticamente</label>
+        </div>
+        <div class="row">
+          <label><input type="checkbox" id="autoSend" /> Enviar automaticamente para canal destino</label>
+        </div>
+
+        <label>Canal de destino</label>
+        <input id="destinationChannel" placeholder="@MeuCanalAfiliado" />
+
+        <button id="saveBtn" onclick="saveSettings()">Salvar Configurações</button>
+        <button class="secondary" onclick="loadSettings()">Recarregar</button>
+        <p id="saveStatus" class="status"></p>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Playground</h2>
+        <label>Mensagem para simular</label>
+        <textarea id="playgroundText" rows="4" placeholder="Cole uma mensagem com links aqui"></textarea>
+        <button onclick="runPlayground()">Simular</button>
+        <pre id="playgroundResult"></pre>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Debug (JSON)</h2>
+        <pre id="debug"></pre>
+      </section>
+    </section>
+  </div>
+
+<script>
+let currentRole = null;
+
+async function api(url, method='GET', body=null){
+  const res = await fetch(url, {
+    method,
+    credentials: 'include',
+    headers: {'content-type':'application/json'},
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw { status: res.status, data };
+  return data;
+}
+
+function showAuthState(authenticated, username='', role=''){
+  document.getElementById('loginCard').classList.toggle('hidden', authenticated);
+  document.getElementById('panel').classList.toggle('hidden', !authenticated);
+  if (authenticated) {
+    currentRole = role;
+    document.getElementById('sessionInfo').textContent = `Autenticado como ${username} (${role})`;
+    document.getElementById('saveBtn').disabled = role !== 'admin';
+  }
+}
+
+async function checkSession(){
+  try {
+    const me = await api('/auth/me');
+    showAuthState(true, me.username || 'admin', me.role || 'operator');
+    await loadSettings();
+  } catch {
+    showAuthState(false);
+  }
+}
+
+async function login(){
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+
+  try {
+    const r = await api('/auth/login', 'POST', { username, password });
+    document.getElementById('loginStatus').textContent = r.success ? 'Login efetuado.' : 'Falha no login';
+    document.getElementById('loginStatus').className = 'status ok';
+    await checkSession();
+  } catch (e) {
+    const msg = e?.status === 423 ? 'Conta bloqueada temporariamente' : 'Credenciais inválidas';
+    document.getElementById('loginStatus').textContent = msg;
+    document.getElementById('loginStatus').className = 'status bad';
+  }
+}
+
+async function logout(){
+  await api('/auth/logout', 'POST', {});
+  showAuthState(false);
+}
+
+function renderSettings(s){
+  document.getElementById('telegramStatus').textContent = s.integrations.telegram.connected
+    ? `Conectado (${s.integrations.telegram.identifier || 'sem id'})`
+    : 'Não conectado';
+  document.getElementById('telegramStatus').className = 'status ' + (s.integrations.telegram.connected ? 'ok':'warn');
+
+  document.getElementById('whatsappStatus').textContent = s.integrations.whatsApp.connected
+    ? `Conectado (${s.integrations.whatsApp.identifier || 'sem id'})`
+    : 'Não conectado';
+  document.getElementById('whatsappStatus').className = 'status ' + (s.integrations.whatsApp.connected ? 'ok':'warn');
+
+  document.getElementById('rules').value = (s.autoReplies || [])
+    .map(r => `${r.trigger} => ${r.responseTemplate}`)
+    .join('\n');
+
+  document.getElementById('autoConvert').checked = !!s.linkAutomation.autoConvertIncomingLinks;
+  document.getElementById('autoSend').checked = !!s.linkAutomation.autoSendToDestinationChannel;
+  document.getElementById('destinationChannel').value = s.linkAutomation.destinationChannel || '';
+
+  document.getElementById('debug').textContent = JSON.stringify(s, null, 2);
+}
+
+async function loadSettings(){
+  const s = await api('/api/settings');
+  renderSettings(s);
+}
+
+function parseRules(text){
+  return text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map((line, idx) => {
+      const parts = line.split('=>');
+      const trigger = (parts[0] || '').trim();
+      const response = (parts.slice(1).join('=>') || '').trim();
+      return {
+        id: crypto.randomUUID(),
+        name: `Regra ${idx+1}`,
+        trigger,
+        responseTemplate: response,
+        enabled: true
+      }
+    })
+    .filter(r => r.trigger && r.responseTemplate);
+}
+
+async function saveSettings(){
+  if (currentRole !== 'admin') return;
+
+  const existing = await api('/api/settings');
+  existing.autoReplies = parseRules(document.getElementById('rules').value);
+  existing.linkAutomation.autoConvertIncomingLinks = document.getElementById('autoConvert').checked;
+  existing.linkAutomation.autoSendToDestinationChannel = document.getElementById('autoSend').checked;
+  existing.linkAutomation.destinationChannel = document.getElementById('destinationChannel').value;
+
+  try {
+    const r = await api('/api/settings', 'PUT', existing);
+    document.getElementById('saveStatus').textContent = r.success ? 'Configurações salvas com sucesso.' : 'Falha ao salvar.';
+    document.getElementById('saveStatus').className = 'status ' + (r.success ? 'ok' : 'bad');
+  } catch (e) {
+    document.getElementById('saveStatus').textContent = e?.data?.errors?.join(' | ') || 'Erro de validação';
+    document.getElementById('saveStatus').className = 'status bad';
+  }
+
+  await loadSettings();
+}
+
+async function connectTelegram(){
+  await api('/api/integrations/telegram/connect', 'POST', {});
+  await loadSettings();
+}
+
+async function connectWhatsApp(){
+  const r = await api('/api/integrations/whatsapp/connect', 'POST', {});
+  const img = document.getElementById('qrImage');
+  const hint = document.getElementById('qrHint');
+
+  if (r.qrCodeBase64) {
+    img.src = `data:image/png;base64,${r.qrCodeBase64}`;
+    img.classList.remove('hidden');
+    hint.classList.remove('hidden');
+  }
+
+  await loadSettings();
+}
+
+async function runPlayground(){
+  const text = document.getElementById('playgroundText').value;
+  const result = await api('/api/playground/preview', 'POST', { text });
+  document.getElementById('playgroundResult').textContent = JSON.stringify(result, null, 2);
+}
+
+checkSession();
+</script>
+</body>
+</html>

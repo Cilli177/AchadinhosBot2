@@ -1,0 +1,106 @@
+# AchadinhosBot.Next (sandbox de refatoração)
+
+Projeto **isolado** para validar arquitetura sem impactar produção.
+
+## Status atual (P0 + P1 + P2 iniciais)
+
+### P0
+- Minimal API + autenticação por cookie.
+- Senhas com hash PBKDF2 (`pbkdf2$iterations$salt$hash`).
+- Rate limit no endpoint de login e lockout após falhas consecutivas.
+- Auditoria de ações sensíveis em `data/audit.log`.
+
+### P1
+- Integração WhatsApp via Evolution API (`/api/integrations/whatsapp/connect`).
+- Webhook Evolution (`/webhooks/evolution`) com validação de assinatura HMAC (`x-signature`) e idempotência.
+- Integração Telegram Bot API (`/api/integrations/telegram/connect`) com validação `getMe`.
+
+### P2
+- RBAC básico (`admin` e `operator`).
+- Validação de regras automáticas (gatilho duplicado/campos obrigatórios).
+- Playground de simulação (`/api/playground/preview`).
+- Versionamento de configurações em `data/versions/`.
+
+### Extra
+- Healthcheck para deploy: `GET /health`.
+
+## Rodar local (sem Docker)
+```bash
+dotnet run --project AchadinhosBot.Next/AchadinhosBot.Next.csproj
+```
+
+Acesse:
+- `http://localhost:8081/`
+
+## Rodar via Docker Compose
+1. Copie o arquivo de exemplo:
+```bash
+cp AchadinhosBot.Next/.env.example AchadinhosBot.Next/.env
+```
+2. Suba os containers:
+```bash
+docker compose up -d --build
+```
+3. Abra:
+- `http://localhost:8081/`
+4. Verifique health:
+```bash
+curl http://localhost:8081/health
+```
+
+## Usuários de desenvolvimento
+`appsettings.Development.json` contém:
+- `admin / admin123`
+- `operator / operator123`
+
+## Endpoints
+### Auth
+- `POST /auth/login` (rate-limited)
+- `POST /auth/logout`
+- `GET /auth/me`
+
+### Conversão
+- `POST /converter` (header `x-api-key`)
+
+### Webhook
+- `POST /webhooks/evolution` (`x-signature` = HMAC SHA256 hex sobre body)
+
+### API autenticada
+- `GET /api/settings` (admin e operator)
+- `PUT /api/settings` (admin)
+- `POST /api/integrations/whatsapp/connect` (admin)
+- `POST /api/integrations/telegram/connect` (admin)
+- `POST /api/playground/preview` (admin e operator)
+
+## Variáveis de ambiente principais
+- `Webhook__Port`
+- `Webhook__ApiKey`
+- `Auth__Users__0__Username`
+- `Auth__Users__0__PasswordHash`
+- `Auth__Users__0__Role`
+- `Evolution__BaseUrl`
+- `Evolution__ApiKey`
+- `Evolution__InstanceName`
+- `Evolution__WebhookSecret`
+- `Telegram__BotToken`
+
+## Hospedagem gratuita (recomendação prática)
+
+### Melhor equilíbrio grátis hoje
+1. **Render Free** (rápido, simples, mas pode dormir)
+2. **Koyeb Free** (bom para container)
+3. **Oracle Cloud Free Tier (VM ARM)** (mais estável se você quer rodar 24/7 sem sleep, porém setup mais manual)
+
+### Minha recomendação direta
+- Para **teste rápido**: Render ou Koyeb.
+- Para **manter no ar sem depender de créditos do Railway**: Oracle Free Tier com Docker Compose.
+
+## Próximos passos sugeridos
+- Persistir idempotência em Redis (não só memória).
+- Substituir `CookieSecurePolicy.SameAsRequest` por `Always` em produção com HTTPS.
+- Enriquecer auditoria com correlation-id.
+- Adicionar testes automatizados de contrato para webhook e auth.
+
+
+## Guia completo Oracle Cloud
+- Veja o passo a passo detalhado em `ORACLE_CLOUD_DEPLOY.md`.
