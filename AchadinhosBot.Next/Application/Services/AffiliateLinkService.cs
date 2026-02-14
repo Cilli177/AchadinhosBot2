@@ -534,7 +534,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private static string? ExtractMercadoLivreId(string text)
     {
-        var match = Regex.Match(text, @"MLB-?(\\d{6,})", RegexOptions.IgnoreCase);
+        var match = Regex.Match(text, @"MLB-?(\d{6,})", RegexOptions.IgnoreCase);
         return match.Success ? match.Groups[1].Value : null;
     }
 
