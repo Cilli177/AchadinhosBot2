@@ -1,35 +1,338 @@
-<!doctype html>
+﻿??<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AchadinhosBot.Next - Painel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; background:#0b1220; color:#e7ecf4; }
-    .container { max-width: 1120px; margin: 0 auto; padding: 20px; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
-    .card { background:#111a2e; border:1px solid #24314d; border-radius:12px; padding:16px; }
-    h1,h2 { margin-top:0; }
-    label { display:block; margin:8px 0 4px; font-size:14px; }
-    input, textarea { width:100%; box-sizing:border-box; padding:10px; border-radius:8px; border:1px solid #30405f; background:#0d1629; color:#e7ecf4; }
-    button { margin-top:10px; padding:10px 14px; border:0; border-radius:8px; background:#2c7df0; color:#fff; cursor:pointer; }
-    button.secondary { background:#415a86; }
-    button.danger { background:#b33939; }
-    .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+    :root {
+      --bg: #0b0f1a;
+      --bg-2: #0f1626;
+      --panel: #121a2e;
+      --panel-2: #151f36;
+      --border: #263656;
+      --text: #e8eefc;
+      --muted: #9fb0d3;
+      --accent: #3fb8ff;
+      --accent-2: #54f0c2;
+      --warn: #f4c451;
+      --bad: #ff6b6b;
+      --ok: #4ee19c;
+    }
+    body[data-theme="light"] {
+      --bg: #f3f6fb;
+      --bg-2: #e9eef7;
+      --panel: #ffffff;
+      --panel-2: #f6f8fc;
+      --border: #d7e0ef;
+      --text: #1b2440;
+      --muted: #5a6b8f;
+      --accent: #2c7df0;
+      --accent-2: #24c08a;
+      --warn: #f0b73e;
+      --bad: #e15050;
+      --ok: #1f9e6c;
+    }
+
+    body {
+      font-family: "Space Grotesk", system-ui, sans-serif;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 8% -12%, rgba(63,184,255,0.25) 0%, transparent 60%),
+        radial-gradient(800px 420px at 92% -20%, rgba(84,240,194,0.2) 0%, transparent 60%),
+        linear-gradient(135deg, var(--bg) 0%, #0b1324 100%);
+    }
+
+    .layout { display:flex; min-height: 100vh; }
+    .sidebar {
+      width: 230px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 20px 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .sidebar h3 { margin: 0 0 12px; font-size: 16px; }
+    .sidebar .nav {
+      display:flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .sidebar .nav button {
+      margin-top:0;
+      background: linear-gradient(135deg, #25385f, #1c2a47);
+      border: 1px solid #2c3f65;
+      color:#cfe2ff;
+      text-align: left;
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+    }
+    .sidebar .nav button.active {
+      background: linear-gradient(135deg, var(--accent), #3579f6);
+      border-color: transparent;
+      color:#fff;
+    }
+    .badge-dot {
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #5d1f2a;
+      color: #f7c6c6;
+      padding: 0 6px;
+    }
+    .content { flex: 1; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 28px 20px 60px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:18px; }
+    .card {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(160deg, rgba(21,31,54,0.98), rgba(16,24,41,0.98));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 8px 24px rgba(2, 8, 20, 0.35);
+    }
+    .card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(120px 80px at 10% -10%, rgba(63,184,255,0.12), transparent 60%);
+      pointer-events: none;
+    }
+
+    h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: -0.4px; }
+    h2 { margin-top: 0; font-size: 18px; letter-spacing: 0.1px; }
+    label { display:block; margin:10px 0 6px; font-size:13px; color: var(--muted); }
+
+    input, textarea, select {
+      width:100%;
+      box-sizing:border-box;
+      padding:12px;
+      border-radius:10px;
+      border:1px solid #2c3f65;
+      background: #0f172a;
+      color: var(--text);
+      outline: none;
+    }
+    input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(63,184,255,0.2); }
+
+    button {
+      margin-top:10px;
+      padding:10px 14px;
+      border:0;
+      border-radius:10px;
+      background: linear-gradient(135deg, var(--accent), #3579f6);
+      color:#fff;
+      cursor:pointer;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      transition: transform .08s ease, filter .2s ease;
+    }
+    button:hover { filter: brightness(1.05); }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: .6; cursor: not-allowed; filter: none; }
+    button.secondary { background: linear-gradient(135deg, #354b78, #24385f); }
+    button.danger { background: linear-gradient(135deg, #b33939, #922f2f); }
+
+    .row { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    .row > * { flex: 1 1 auto; }
     .status { font-size:13px; opacity:.9; }
-    .ok { color:#58d68d; }
-    .warn { color:#f4d03f; }
-    .bad { color:#ff7675; }
-    .muted { color:#a9b4c8; font-size:13px; }
-    pre { background:#0d1629; border:1px solid #30405f; padding:10px; border-radius:8px; overflow:auto; }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 26px;
+      flex: 0 0 auto;
+    }
+    .switch input { display:none; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #7a2e3a;
+      transition: .2s;
+      border-radius: 999px;
+      border: 1px solid #5d1f2a;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      bottom: 2px;
+      background: #fff;
+      transition: .2s;
+      border-radius: 50%;
+    }
+    .switch input:checked + .slider {
+      background: #1f9e6c;
+      border-color: #1f5d3f;
+    }
+    .switch input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .muted { color: var(--muted); font-size:13px; }
+    pre {
+      background:#0f172a;
+      border:1px solid #2c3f65;
+      padding:12px;
+      border-radius:10px;
+      overflow:auto;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 12px;
+    }
     .hidden { display:none; }
     img.qr { max-width: 220px; background: #fff; padding: 8px; border-radius: 8px; }
+
+    .hero {
+      display:flex;
+      gap:20px;
+      align-items:center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .hero .stats {
+      display:flex;
+      gap:10px;
+      flex-wrap: wrap;
+    }
+    .stat {
+      background: linear-gradient(135deg, rgba(63,184,255,0.15), rgba(53,121,246,0.1));
+      border: 1px solid #2c3f65;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .hero .meta {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .pill {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid #2a3b63;
+      background:#0f172a;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .theme-toggle {
+      width: 100%;
+      margin-top: 14px;
+      background: linear-gradient(135deg, #2a3b63, #1f2e4d);
+      border: 1px solid #2c3f65;
+      color: #cfe2ff;
+    }
+
+    .table-wrap { overflow:auto; border:1px solid var(--border); border-radius:12px; background: var(--panel-2); }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { padding:9px 10px; border-bottom:1px solid #253555; vertical-align:top; }
+    th { text-align:left; background:#0f172a; position:sticky; top:0; z-index: 1; }
+    td small { color: var(--muted); }
+
+    .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; }
+    .badge.ok { background:#1f5d3f; color:#c6f6d5; }
+    .badge.bad { background:#5d1f2a; color:#f7c6c6; }
+    .badge.warn { background:#5a4a1b; color:#ffe6a7; }
+    .badge.muted { background:#1f2b46; color:#b6c4e6; }
+    .log-thumbs { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+    .log-thumbs img { width:56px; height:56px; object-fit:cover; border-radius:6px; border:1px solid #2a2f3a; }
+    .chip {
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid #2a3b63;
+      background:#0f172a;
+      font-size:12px;
+      color: var(--muted);
+    }
+    .chip.ok { border-color:#1f5d3f; color:#c6f6d5; }
+    .chip.warn { border-color:#5a4a1b; color:#ffe6a7; }
+    .chip.bad { border-color:#5d1f2a; color:#f7c6c6; }
+    .copy-btn { background:#24385f; border:0; color:#dbe7ff; padding:4px 8px; border-radius:8px; cursor:pointer; font-size:12px; }
+    .copy-btn:hover { background:#2e4570; }
+    .alert { background:#3a1f28; border:1px solid #7a2e3a; color:#f7c6c6; padding:8px 10px; border-radius:10px; margin-top:8px; }
+    tr.invalid { background:#2a1520; }
+    .chat-list { display:flex; flex-direction:column; gap:8px; margin-top:8px; max-height: 280px; overflow:auto; padding-right: 4px; }
+    .chat-item { display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid #2c3f65; border-radius:12px; background: linear-gradient(135deg, rgba(15,23,42,0.95), rgba(18,26,46,0.95)); }
+    .chat-item input { margin:0; width:16px; height:16px; accent-color: var(--accent); }
+    .chat-title { font-weight:600; }
+    .chat-meta { color: var(--muted); font-size:12px; }
+
+    @media (max-width: 900px) {
+      .layout { flex-direction: column; }
+      .sidebar { width: 100%; height: auto; position: relative; border-right: 0; border-bottom: 1px solid var(--border); }
+    }
+    @media (max-width: 720px) {
+      .hero { flex-direction: column; align-items: flex-start; }
+      .row { flex-direction: column; align-items: stretch; }
+    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>AchadinhosBot.Next — Painel de Operação</h1>
-    <p class="muted">Staging com autenticação, auditoria e integrações nativas.</p>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>Painel</h3>
+      <div class="nav">
+        <button data-tab="connections" onclick="showSection('connections')">Conexões</button>
+        <button data-tab="ops" onclick="showSection('ops')">Operação</button>
+        <button data-tab="route" onclick="showSection('route')">Telegram -> WhatsApp</button>
+        <button data-tab="linkresponder" onclick="showSection('linkresponder')">Resposta de link</button>
+        <button data-tab="instagram" onclick="showSection('instagram')">Instagram</button>
+        <button data-tab="instagram-publish" onclick="showSection('instagram-publish')">Instagram Publicar</button>
+        <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>
+        <button data-tab="logs" onclick="showSection('logs')">
+          Logs
+          <span id="logsBadge" class="badge-dot hidden">0</span>
+        </button>
+        <button data-tab="playground" onclick="showSection('playground')">Playground</button>
+        <button data-tab="debug" onclick="showSection('debug')">Debug</button>
+      </div>
+      <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()">Alternar tema</button>
+    </aside>
+    <main class="content">
+      <div class="container">
+    <div class="hero">
+      <div>
+        <h1>AchadinhosBot.Next — Painel de Operação</h1>
+        <p class="meta">Automação, integrações e repasse de ofertas em tempo real.</p>
+        <div class="stats">
+          <div class="stat">Status: <span id="statStatus">Online</span></div>
+          <div class="stat">Userbot: <span id="statUserbot">Conectando...</span></div>
+          <div class="stat">Últimos logs: <span id="statLogs">0</span></div>
+        </div>
+      </div>
+      <div class="stats">
+        <span id="chipTelegramBot" class="chip warn">Telegram Bot: Não conectado</span>
+        <span id="chipUserbot" class="chip warn">Telegram Userbot: Conectando...</span>
+        <span id="chipWhatsApp" class="chip warn">WhatsApp: Não conectado</span>
+      </div>
+      <div class="pill">Ambiente: Development</div>
+    </div>
 
     <section id="loginCard" class="card">
       <h2>Acesso ao painel</h2>
@@ -50,32 +353,533 @@
         <p id="sessionInfo" class="status ok"></p>
       </div>
 
+      <div id="section-connections" class="hidden">
       <div class="grid" style="margin-top:16px;">
         <section class="card">
           <h2>Telegram (Bot API)</h2>
-          <button onclick="connectTelegram()">Validar conexão Telegram</button>
-          <p id="telegramStatus" class="status warn">Não conectado</p>
+          <p class="muted">Valide o token e o status do bot oficial.</p>
+          <div class="row">
+            <button id="btnTelegramConnect" onclick="connectTelegram()">Testar conexão</button>
+            <span id="telegramStatus" class="status warn">Não conectado</span>
+          </div>
         </section>
 
         <section class="card">
           <h2>WhatsApp (Evolution API)</h2>
-          <button onclick="connectWhatsApp()">Conectar e gerar QR</button>
+          <label>Instance Name</label>
+          <input id="waInstanceName" placeholder="ZapOfertas" />
+          <button id="btnWhatsAppConnect" onclick="connectWhatsApp()">Conectar e gerar QR</button>
+          <button class="secondary" onclick="createWhatsAppInstance()">Criar nova instância</button>
+          <div class="row">
+            <span id="waForwardStatus" class="status warn">Repasse inativo</span>
+            <label class="switch"><input type="checkbox" id="waForwardEnabled" /><span class="slider"></span></label>
+            <span class="muted">Repasse ativo</span>
+          </div>
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="waFromMeOnly" /><span class="slider"></span></label>
+            <span class="muted">Processar apenas mensagens enviadas por mim</span>
+          </div>
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="waSendMedia" /><span class="slider"></span></label>
+            <span class="muted">Enviar imagens (WhatsApp)</span>
+          </div>
+          <label>Rodapé (texto extra)</label>
+          <input id="waFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="waAppendShein" /><span class="slider"></span></label>
+            <span class="muted">Anexar código Shein</span>
+          </div>
           <p id="whatsappStatus" class="status warn">Não conectado</p>
           <img id="qrImage" class="qr hidden" alt="QR code WhatsApp" />
           <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>
         </section>
       </div>
+      </div>
 
+      <div id="section-ops">
+      <section class="card" style="margin-top:16px;">
+        <div class="row" style="justify-content: space-between;">
+          <h2>Saúde dos Mensageiros</h2>
+          <span class="status muted">Monitoramento rápido</span>
+        </div>
+        <p class="muted">Status rápido das integrações e da última mídia capturada.</p>
+        <div class="row">
+          <span id="healthTelegramBot" class="badge warn">Telegram Bot</span>
+          <span id="healthUserbot" class="badge warn">Telegram Userbot</span>
+          <span id="healthWhatsApp" class="badge warn">WhatsApp</span>
+        </div>
+        <p class="muted">Mídia: <span id="healthMedia" class="badge muted">Sem dados</span></p>
+        <p class="muted">Última mídia: <span id="healthMediaDetail">-</span></p>
+      </section>
+      <div class="grid" style="margin-top:16px;">
+        <section class="card">
+          <h2>Telegram Userbot (WTelegram)</h2>
+          <p class="muted">Monitora grupos com sua conta pessoal e repassa para o destino.</p>
+          <div class="row">
+            <span id="userbotStatus" class="status warn">Aguardando conexão</span>
+            <label class="switch"><input type="checkbox" id="userbotEnabled" /><span class="slider"></span></label>
+            <span class="muted">Repasse ativo</span>
+          </div>
+          <div class="row">
+            <button onclick="refreshUserbotChats()">Atualizar grupos</button>
+            <button class="secondary" onclick="loadUserbotChats()">Recarregar</button>
+          </div>
+          <label>Destino (ID do grupo/canal)</label>
+          <input id="userbotDestinationId" placeholder="-1003612784929" />
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="userbotAppendShein" /><span class="slider"></span></label>
+            <span class="muted">Anexar código Shein</span>
+          </div>
+          <label>Rodapé (texto extra)</label>
+          <input id="userbotFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+          <div class="row">
+            <input id="userbotSearch" placeholder="Buscar grupo por nome ou ID" />
+            <span class="muted">Selecionados: <strong id="userbotSelectedCount">0</strong></span>
+          </div>
+          <div class="row">
+            <button class="secondary" onclick="selectAllUserbotChats()">Selecionar todos</button>
+            <button class="secondary" onclick="clearUserbotSelection()">Limpar seleção</button>
+            <button class="secondary" onclick="showAllUserbotChats()">Mostrar todos</button>
+            <button class="secondary" onclick="saveUserbotSelection()">Salvar seleção</button>
+          </div>
+          <p id="userbotSaveStatus" class="status muted"></p>
+          <div id="userbotSelectedChips" class="muted"></div>
+          <label>IDs manuais (um por linha ou separado por vírgula)</label>
+          <textarea id="userbotManualIds" rows="4" placeholder="-100123...\n-100456..."></textarea>
+          <p class="muted">Selecione os grupos de origem para escutar.</p>
+          <div id="userbotChats" class="muted">Nenhum grupo carregado.</div>
+        </section>
+
+                <section class="card">
+          <h2>WhatsApp Grupos (Origem)</h2>
+          <p class="muted">Selecione de quais grupos o bot deve capturar ofertas.</p>
+          <div class="row">
+            <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>
+            <button class="secondary" onclick="loadWhatsAppGroups()">Recarregar</button>
+          </div>
+          <div class="row">
+            <input id="waSourceSearch" placeholder="Buscar grupo por nome ou ID" />
+            <span class="muted">Selecionados: <strong id="waSourceSelectedCount">0</strong></span>
+          </div>
+          <div class="row">
+            <button class="secondary" onclick="selectAllWhatsAppSourceGroups()">Selecionar todos</button>
+            <button class="secondary" onclick="clearWhatsAppSourceSelection()">Limpar seleção</button>
+            <button class="secondary" onclick="showAllWhatsAppSourceGroups()">Mostrar todos</button>
+            <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>
+          </div>
+          <p id="waSourceSaveStatus" class="status muted"></p>
+          <div id="waSourceSelectedChips" class="muted"></div>
+          <label>IDs manuais (um por linha ou separado por vírgula)</label>
+          <textarea id="waManualSourceIds" rows="3" placeholder="1203630@g.us"></textarea>
+          <div id="waSourceGroups" class="muted">Nenhum grupo carregado.</div>
+        </section>
+
+        <section class="card">
+          <h2>WhatsApp Grupos (Destino)</h2>
+          <p class="muted">Selecione para onde as ofertas convertidas serão enviadas.</p>
+          <div class="row">
+            <input id="waDestSearch" placeholder="Buscar grupo por nome ou ID" />
+            <span class="muted">Selecionados: <strong id="waSelectedCount">0</strong></span>
+          </div>
+          <div class="row">
+            <button class="secondary" onclick="selectAllWhatsAppGroups()">Selecionar todos</button>
+            <button class="secondary" onclick="clearWhatsAppSelection()">Limpar seleção</button>
+            <button class="secondary" onclick="showAllWhatsAppGroups()">Mostrar todos</button>
+            <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>
+          </div>
+          <p id="waSaveStatus" class="status muted"></p>
+          <div id="waSelectedChips" class="muted"></div>
+          <label>IDs manuais (um por linha ou separado por vírgula)</label>
+          <textarea id="waManualIds" rows="3" placeholder="1203630@g.us"></textarea>
+          <div id="waGroups" class="muted">Nenhum grupo carregado.</div>
+        </section>
+
+      </div>
+
+      </div>
+
+      <div id="section-linkresponder" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Resposta de Links (Gatilho)</h2>
+        <p class="muted">Quando alguém envia um link, o bot responde com o link afiliado.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="responderEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar resposta</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="responderWhatsApp" /><span class="slider"></span></label>
+          <span class="muted">WhatsApp</span>
+          <label class="switch"><input type="checkbox" id="responderTelegramBot" /><span class="slider"></span></label>
+          <span class="muted">Telegram Bot</span>
+          <label class="switch"><input type="checkbox" id="responderTelegramUserbot" /><span class="slider"></span></label>
+          <span class="muted">Telegram Userbot</span>
+        </div>
+
+        <div class="grid" style="margin-top:12px;">
+          <section class="card">
+            <h3>Origem WhatsApp</h3>
+            <div class="row">
+              <label class="switch"><input type="checkbox" id="responderWaPrivate" /><span class="slider"></span></label>
+              <span class="muted">Privado</span>
+              <label class="switch"><input type="checkbox" id="responderWaGroups" /><span class="slider"></span></label>
+              <span class="muted">Grupos</span>
+            </div>
+            <label>IDs permitidos (opcional)</label>
+            <textarea id="responderWaIds" rows="3" placeholder="551199999@s.whatsapp.net&#10;1203630@g.us"></textarea>
+          </section>
+
+          <section class="card">
+            <h3>Origem Telegram</h3>
+            <div class="row">
+              <label class="switch"><input type="checkbox" id="responderTgPrivate" /><span class="slider"></span></label>
+              <span class="muted">Privado</span>
+              <label class="switch"><input type="checkbox" id="responderTgGroups" /><span class="slider"></span></label>
+              <span class="muted">Grupos</span>
+            </div>
+            <label>IDs permitidos (opcional)</label>
+            <textarea id="responderTgIds" rows="3" placeholder="123456789&#10;-100123..."></textarea>
+          </section>
+        </div>
+
+        <div class="grid" style="margin-top:12px;">
+          <section class="card">
+            <h3>Resposta</h3>
+            <label>Template (use {link} ou {text})</label>
+            <textarea id="responderTemplate" rows="3" placeholder="Link convertido:&#10;{link}"></textarea>
+            <label>Quando não converter (apenas privado)</label>
+            <input id="responderFailTemplate" placeholder="Link não suportado." />
+          </section>
+          <section class="card">
+            <h3>Extras</h3>
+            <div class="row">
+              <label class="switch"><input type="checkbox" id="responderAppendShein" /><span class="slider"></span></label>
+              <span class="muted">Anexar código Shein</span>
+            </div>
+            <div class="row">
+              <label class="switch"><input type="checkbox" id="responderTracking" /><span class="slider"></span></label>
+              <span class="muted">Ativar tracking de cliques</span>
+            </div>
+            <label>Rodapé (texto extra)</label>
+            <input id="responderFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+          </section>
+        </div>
+
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveLinkResponder()">Salvar gatilho</button>
+          <span id="responderSaveStatus" class="status muted"></span>
+        </div>
+      </section>
+      <section class="card" style="margin-top:16px;">
+        <h2>Logs de Resposta</h2>
+        <div class="row">
+          <input id="responderLogSearch" placeholder="Buscar por URL ou ID" />
+          <button onclick="loadResponderLogs()">Carregar</button>
+        </div>
+        <div class="table-wrap" style="margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Origem</th>
+                <th>Tipo</th>
+                <th>Status</th>
+                <th>URL Original</th>
+                <th>URL Convertido</th>
+                <th>Cliques</th>
+              </tr>
+            </thead>
+            <tbody id="responderLogBody"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="card" style="margin-top:16px;">
+        <h2>Clicks (Resposta)</h2>
+        <div class="row">
+          <input id="responderClickSearch" placeholder="Buscar por URL ou ID" />
+          <button onclick="loadResponderClicks()">Carregar</button>
+          <button class="secondary" onclick="clearResponderClicks()">Limpar logs</button>
+        </div>
+        <div class="table-wrap" style="margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>ID</th>
+                <th>URL de destino</th>
+              </tr>
+            </thead>
+            <tbody id="responderClickBody"></tbody>
+          </table>
+        </div>
+      </section>
+      </div>
+
+      <div id="section-route" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Rota Telegram -> WhatsApp</h2>
+        <p class="muted">Escolha grupos de origem no Telegram e destinos no WhatsApp para envio direto.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="tgWaEnabled" /><span class="slider"></span></label>
+          <span class="muted">Rota ativa</span>
+        </div>
+        <div class="row">
+          <button class="secondary" onclick="saveTelegramToWhatsAppRoute()">Salvar rota</button>
+          <span id="tgWaSaveStatus" class="status muted"></span>
+        </div>
+
+        <div class="grid" style="margin-top:12px;">
+          <section class="card">
+            <h3>Origem (Telegram)</h3>
+            <div class="row">
+              <input id="tgWaSourceSearch" placeholder="Buscar grupo por nome ou ID" />
+              <span class="muted">Selecionados: <strong id="tgWaSourceCount">0</strong></span>
+            </div>
+            <div class="row">
+              <button class="secondary" onclick="selectAllTgWaSource()">Selecionar todos</button>
+              <button class="secondary" onclick="clearTgWaSource()">Limpar seleção</button>
+              <button class="secondary" onclick="showAllTgWaSource()">Mostrar todos</button>
+            </div>
+            <div id="tgWaSourceChips" class="muted"></div>
+            <label>IDs manuais (um por linha ou separado por vírgula)</label>
+            <textarea id="tgWaSourceManual" rows="3" placeholder="-100123...\n-100456..."></textarea>
+            <div id="tgWaSourceList" class="muted">Nenhum grupo carregado.</div>
+          </section>
+
+          <section class="card">
+            <h3>Destino (WhatsApp)</h3>
+            <div class="row">
+              <input id="tgWaDestSearch" placeholder="Buscar grupo por nome ou ID" />
+              <span class="muted">Selecionados: <strong id="tgWaDestCount">0</strong></span>
+            </div>
+            <div class="row">
+              <button class="secondary" onclick="selectAllTgWaDest()">Selecionar todos</button>
+              <button class="secondary" onclick="clearTgWaDest()">Limpar seleção</button>
+              <button class="secondary" onclick="showAllTgWaDest()">Mostrar todos</button>
+            </div>
+            <div id="tgWaDestChips" class="muted"></div>
+            <label>IDs manuais (um por linha ou separado por vírgula)</label>
+            <textarea id="tgWaDestManual" rows="3" placeholder="1203630@g.us"></textarea>
+            <div id="tgWaDestList" class="muted">Nenhum grupo carregado.</div>
+          </section>
+        </div>
+      </section>
+      </div>
+
+      <div id="section-instagram" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Postagens para Instagram</h2>
+        <p class="muted">Gatilhos: criar postagem, postar, insta. Se enviar <code>postar &lt;produto&gt;</code> ele gera direto.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="instaEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar Instagram</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="instaAllowWhatsApp" /><span class="slider"></span></label>
+          <span class="muted">WhatsApp</span>
+          <label class="switch"><input type="checkbox" id="instaAllowTelegramBot" /><span class="slider"></span></label>
+          <span class="muted">Telegram Bot</span>
+          <label class="switch"><input type="checkbox" id="instaAllowTelegramUserbot" /><span class="slider"></span></label>
+          <span class="muted">Telegram Userbot</span>
+        </div>
+        <div class="grid" style="margin-top:12px;">
+          <section class="card">
+            <h3>WhatsApp</h3>
+            <div class="row">
+              <label class="switch"><input type="checkbox" id="instaWaPrivate" /><span class="slider"></span></label>
+              <span class="muted">Privado</span>
+              <label class="switch"><input type="checkbox" id="instaWaGroups" /><span class="slider"></span></label>
+              <span class="muted">Grupos</span>
+            </div>
+            <label>IDs permitidos (opcional)</label>
+            <textarea id="instaWaIds" rows="2" placeholder="1203630@g.us&#10;1203631@g.us"></textarea>
+            <div class="muted">Se preencher, apenas esses destinos ativam o gatilho.</div>
+          </section>
+          <section class="card">
+            <h3>Telegram</h3>
+            <div class="row">
+              <label class="switch"><input type="checkbox" id="instaTgPrivate" /><span class="slider"></span></label>
+              <span class="muted">Privado</span>
+              <label class="switch"><input type="checkbox" id="instaTgGroups" /><span class="slider"></span></label>
+              <span class="muted">Grupos</span>
+            </div>
+            <label>IDs permitidos (opcional)</label>
+            <textarea id="instaTgIds" rows="2" placeholder="-100123&#10;-100456"></textarea>
+            <div class="muted">Se preencher, apenas esses destinos ativam o gatilho.</div>
+          </section>
+        </div>
+        <label>Contexto da oferta</label>
+        <select id="instaContextMode">
+          <option value="Off">Desativado</option>
+          <option value="Suggestion">Sugestão rápida</option>
+          <option value="ExtraPost">Post extra</option>
+        </select>
+        <label>IA (OpenAI)</label>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="instaUseAi" /><span class="slider"></span></label>
+          <span class="muted">Usar IA para gerar legendas</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="instaUltraPrompt" /><span class="slider"></span></label>
+          <span class="muted">Ultra premium (high ticket)</span>
+          <label class="switch"><input type="checkbox" id="instaShortName" /><span class="slider"></span></label>
+          <span class="muted">Encurtar nome do produto</span>
+          <label class="switch"><input type="checkbox" id="instaBenefits" /><span class="slider"></span></label>
+          <span class="muted">Adicionar bullets de benefícios</span>
+          <label class="switch"><input type="checkbox" id="instaImageDownload" /><span class="slider"></span></label>
+          <span class="muted">Baixar imagens do link</span>
+        </div>
+        <label>Estilo do prompt</label>
+        <select id="instaPromptPreset" onchange="applyInstaPromptPreset()">
+          <option value="profissional">Profissional (afiliados)</option>
+          <option value="premium">Premium (profissional)</option>
+          <option value="agressivo">Agressivo (urgência/venda)</option>
+          <option value="minimalista">Minimalista (clean)</option>
+          <option value="custom">Personalizado</option>
+        </select>
+        <label>Provedor de IA</label>
+        <select id="instaAiProvider">
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini</option>
+          <option value="both">OpenAI + Gemini</option>
+        </select>
+        <section class="card">
+          <h3>OpenAI</h3>
+          <input id="openaiApiKey" type="password" placeholder="Chave OpenAI (sk-...)" />
+          <div class="row">
+            <input id="openaiModel" placeholder="Modelo (ex: gpt-4o-mini)" />
+            <input id="openaiTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura (0-2)" />
+            <input id="openaiMaxTokens" type="number" step="1" min="100" max="2000" placeholder="Max output tokens" />
+          </div>
+        </section>
+        <section class="card">
+          <h3>Gemini</h3>
+          <input id="geminiApiKey" type="password" placeholder="Chave Gemini (AIza...)" />
+          <div class="row">
+            <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />
+          </div>
+        </section>
+        <label>Variações de legenda</label>
+        <input id="instaVariations" type="number" min="1" max="5" step="1" placeholder="2" />
+        <label>Prompt IA (editável)</label>
+        <textarea id="instaPrompt" rows="8" placeholder="Use {{format}} e os placeholders: {{input}}, {{link}}, {{context}}, {{footer}}, {{images}}, {{title}}, {{description}}"></textarea>
+        <section class="card" style="margin-top:12px;">
+          <h3>Teste de IA</h3>
+          <label>Entrada para teste</label>
+          <textarea id="instaTestInput" rows="3" placeholder="Cole o nome do produto e/ou link"></textarea>
+          <label>Contexto (opcional)</label>
+          <textarea id="instaTestContext" rows="3" placeholder="Texto da oferta para ajudar a IA"></textarea>
+          <button class="secondary" onclick="runInstaAiTest()">Testar IA</button>
+          <pre id="instaTestResult"></pre>
+        </section>
+        <section class="card" style="margin-top:12px;">
+          <h3>Logs IA</h3>
+          <div class="row">
+            <input id="instaAiLogSearch" placeholder="Buscar por provedor, erro, modelo..." />
+            <button class="secondary" onclick="loadInstaAiLogs()">Atualizar</button>
+            <button class="secondary" onclick="clearInstaAiLogs()">Limpar</button>
+          </div>
+          <div id="instaAiLogs" class="log-table"></div>
+        </section>
+        <label>Gatilhos (um por linha)</label>
+        <textarea id="instaTriggers" rows="3" placeholder="criar postagem&#10;postar&#10;insta"></textarea>
+        <label>Rodapé (opcional)</label>
+        <input id="instaFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveInstagramSettings()">Salvar Instagram</button>
+          <span id="instaSaveStatus" class="status muted"></span>
+        </div>
+      </section>
+      </div>
+
+      <div id="section-instagram-publish" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Instagram - Publicar e Comentarios</h2>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igPubEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar publicacao Instagram</span>
+        </div>
+        <label>Access Token</label>
+        <input id="igPubToken" type="password" placeholder="Token do Meta Graph API" />
+        <label>Instagram User ID</label>
+        <input id="igPubUserId" placeholder="ID da conta do Instagram (business)" />
+        <label>Graph Base URL</label>
+        <input id="igPubBaseUrl" placeholder="https://graph.facebook.com/v19.0" />
+        <label>Webhook Verify Token</label>
+        <input id="igPubVerifyToken" placeholder="Token para validação do webhook" />
+        <label>Template resposta (com {link} e {keyword})</label>
+        <input id="igPubReplyTemplate" placeholder="Aqui esta o link: {link}" />
+        <label>Template quando nao houver match</label>
+        <input id="igPubReplyNoMatch" placeholder="Comente a palavra correta para receber o link." />
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveInstagramPublishSettings()">Salvar configuracoes</button>
+          <button onclick="testInstagramPublish()">Testar conexao</button>
+          <span id="igPubSaveStatus" class="status muted"></span>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h3>Novo post</h3>
+        <label>Produto</label>
+        <input id="igDraftProduct" placeholder="Nome do produto" />
+        <label>Legenda</label>
+        <textarea id="igDraftCaption" rows="5" placeholder="Legenda pronta para o Instagram"></textarea>
+        <label>Hashtags</label>
+        <textarea id="igDraftHashtags" rows="2" placeholder="#ofertas #achadinhos"></textarea>
+        <label>URLs de imagens (uma por linha)</label>
+        <textarea id="igDraftImages" rows="3" placeholder="https://..."></textarea>
+        <label>CTAs (uma por linha: PALAVRA => link)</label>
+        <textarea id="igDraftCtas" rows="3" placeholder="OLED => https://...\nSOM => https://..."></textarea>
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveInstagramDraft(false)">Salvar rascunho</button>
+          <button onclick="saveInstagramDraft(true)">Publicar agora</button>
+          <span id="igDraftStatus" class="status muted"></span>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h3>Fila de posts</h3>
+        <div class="row">
+          <button class="secondary" onclick="loadInstagramDrafts()">Atualizar</button>
+        </div>
+        <div id="igDraftList" class="log-table"></div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h3>Comentarios pendentes</h3>
+        <div class="row">
+          <button class="secondary" onclick="loadInstagramComments()">Atualizar</button>
+        </div>
+        <div id="igCommentList" class="log-table"></div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h3>Logs Instagram</h3>
+        <div class="row">
+          <input id="igPubLogSearch" placeholder="Buscar por erro, media, draft..." />
+          <button class="secondary" onclick="loadInstagramPublishLogs()">Atualizar</button>
+          <button class="secondary" onclick="clearInstagramPublishLogs()">Limpar</button>
+        </div>
+        <div id="igPubLogs" class="log-table"></div>
+      </section>
+      </div>
+
+      <div id="section-autoreplies" class="hidden">
       <section class="card" style="margin-top:16px;">
         <h2>Respostas Automáticas</h2>
         <p class="muted">Formato: uma regra por linha no padrão <code>gatilho => resposta</code>.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="autoRepliesEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar respostas automáticas</span>
+        </div>
         <textarea id="rules" rows="7"></textarea>
 
         <div class="row">
-          <label><input type="checkbox" id="autoConvert" /> Converter links automaticamente</label>
+          <label class="switch"><input type="checkbox" id="autoConvert" /><span class="slider"></span></label>
+          <span class="muted">Converter links automaticamente</span>
         </div>
         <div class="row">
-          <label><input type="checkbox" id="autoSend" /> Enviar automaticamente para canal destino</label>
+          <label class="switch"><input type="checkbox" id="autoSend" /><span class="slider"></span></label>
+          <span class="muted">Enviar automaticamente para canal destino</span>
         </div>
 
         <label>Canal de destino</label>
@@ -85,7 +889,90 @@
         <button class="secondary" onclick="loadSettings()">Recarregar</button>
         <p id="saveStatus" class="status"></p>
       </section>
+      </div>
 
+      <div id="section-logs" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Log de Mídia</h2>
+        <p class="muted">Mostra se a imagem foi capturada e enviada (ou o motivo da falha).</p>
+        <div id="mediaAlert" class="alert hidden"></div>
+        <div class="row">
+          <button onclick="loadMediaFailures()">Carregar falhas</button>
+          <button class="secondary" onclick="clearMediaFailures()">Limpar falhas</button>
+        </div>
+        <div class="table-wrap" style="margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Origem</th>
+                <th>Destino</th>
+                <th>Status</th>
+                <th>Motivo</th>
+                <th>Detalhe</th>
+                <th>Ação</th>
+              </tr>
+            </thead>
+            <tbody id="mediaTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Logs de Conversão</h2>
+        <div class="row">
+          <select id="logStore">
+            <option value="">Todas as lojas</option>
+            <option>Amazon</option>
+            <option>Mercado Livre</option>
+            <option>Shopee</option>
+            <option>Shein</option>
+            <option>Unknown</option>
+          </select>
+          <select id="logSuccess">
+            <option value="">Todos</option>
+            <option value="true">Sucesso</option>
+            <option value="false">Falha</option>
+          </select>
+          <input id="logSearch" placeholder="Buscar por URL, origem ou ID" />
+          <select id="logLimit">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="500">500</option>
+          </select>
+          <button onclick="loadConversionLogs()">Carregar</button>
+          <button class="secondary" onclick="clearConversionLogs()">Limpar logs</button>
+        </div>
+        <p id="logStatus" class="status muted">Sem dados ainda.</p>
+        <div id="logAlert" class="alert hidden"></div>
+        <div class="table-wrap" style="margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Data/Hora</th>
+                <th>Loja</th>
+                <th>Status</th>
+                <th>Mídia</th>
+                <th>Cliques</th>
+                <th>Validação</th>
+                <th>Correção</th>
+                <th>Erro</th>
+                <th>Origem/Destino</th>
+                <th>URL Original</th>
+                <th>URL Convertido</th>
+                <th>Ações</th>
+                <th>Tempo (ms)</th>
+              </tr>
+            </thead>
+            <tbody id="logTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+      </div>
+
+      <div id="section-playground" class="hidden">
       <section class="card" style="margin-top:16px;">
         <h2>Playground</h2>
         <label>Mensagem para simular</label>
@@ -93,16 +980,22 @@
         <button onclick="runPlayground()">Simular</button>
         <pre id="playgroundResult"></pre>
       </section>
+      </div>
 
+      <div id="section-debug" class="hidden">
       <section class="card" style="margin-top:16px;">
         <h2>Debug (JSON)</h2>
         <pre id="debug"></pre>
       </section>
+      </div>
     </section>
+      </div>
+    </main>
   </div>
 
 <script>
 let currentRole = null;
+let logsAutoTimer = null;
 
 async function api(url, method='GET', body=null){
   const res = await fetch(url, {
@@ -125,7 +1018,194 @@ function showAuthState(authenticated, username='', role=''){
     currentRole = role;
     document.getElementById('sessionInfo').textContent = `Autenticado como ${username} (${role})`;
     document.getElementById('saveBtn').disabled = role !== 'admin';
+    showSection('ops');
   }
+}
+
+function showSection(name){
+  const sections = ['ops','connections','route','linkresponder','instagram','instagram-publish','autoreplies','logs','playground','debug'];
+  sections.forEach(s => {
+    const el = document.getElementById(`section-${s}`);
+    if (el) el.classList.toggle('hidden', s !== name);
+  });
+  document.querySelectorAll('.nav button').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-tab') === name);
+  });
+  if (name === 'logs') {
+    startLogsAutoRefresh();
+  } else {
+    stopLogsAutoRefresh();
+  }
+  if (name === 'linkresponder') {
+    loadResponderLogs();
+    loadResponderClicks();
+  }
+  if (name === 'instagram') {
+    loadInstaAiLogs();
+  }
+  if (name === 'instagram-publish') {
+    loadInstagramDrafts();
+    loadInstagramComments();
+    loadInstagramPublishLogs();
+  }
+}
+
+function formatTs(ts){
+  if (!ts) return '-';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString();
+}
+
+function escapeHtml(text){
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function shortId(text){
+  const s = String(text || '');
+  if (s.length <= 18) return s;
+  return `${s.slice(0, 6)}…${s.slice(-6)}`;
+}
+
+function renderSourceBadge(source){
+  const s = String(source || '-');
+  const map = {
+    AutoReply: 'ok',
+    WhatsAppResponder: 'warn',
+    TelegramResponder: 'ok',
+    TelegramUserbotResponder: 'warn'
+  };
+  const cls = map[s] || 'muted';
+  return `<span class="badge ${cls}">${escapeHtml(s)}</span>`;
+}
+
+function loadTheme(){
+  const saved = localStorage.getItem('theme') || 'dark';
+  document.body.setAttribute('data-theme', saved);
+}
+
+function toggleTheme(){
+  const current = document.body.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.body.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+}
+
+function setButtonBusy(idOrEl, busy, label){
+  const btn = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+  if (!btn) return;
+  if (busy) {
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = label || 'Processando...';
+    btn.disabled = true;
+  } else {
+    btn.textContent = btn.dataset.originalText || btn.textContent;
+    btn.disabled = false;
+  }
+}
+
+function getInstaPromptPresetTemplates(){
+  return {
+    profissional: `Atue como um Copywriter Especialista em Marketing de Afiliados e Social Media Manager.\n\nObjetivo: Criar um post para Instagram (Legenda e Roteiro de Stories) focado em atrair novos seguidores atraves de um \"achadinho\" irresistivel e converter vendas imediatas.\n\nPersona do Publico: Brasileiros que buscam custo-beneficio, amam tecnologia/casa organizada e confiam em recomendacoes de especialistas em promocoes (estilo \"Rei das Ofertas\").\n\nDiretrizes de Escrita:\n\nGancho (Hook): Comece com uma frase que ataque uma dor ou desejo imediato.\n\nCorpo: Use bullet points para destacar 3 beneficios principais (linguagem simples, sem \"technobabble\").\n\nLinguagem: Natural, amigavel, brasileira e persuasiva. Evite palavras muito formais.\n\nGatilhos Mentais: Use Escassez (estoque voa), Curadoria (eu selecionei o melhor) e Facilidade (link direto).\n\nCTA (Chamada para Acao): Direcione o seguidor para comentar uma palavra-chave para receber o link ou clicar na Bio.\n\nEstrutura de Entrega:\n\nLegenda do Post: (Gancho + Beneficios + CTA).\n\nRoteiro de 3 Stories: (1: O problema/curiosidade, 2: A solucao/demonstracao, 3: Oferta + Link).\n\nSugestao de 3 Hashtags estrategicas.\n\nDados do Produto:\n{{format}}\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\n\nRodape (se houver): {{footer}}`,
+    premium: `Voce e um copywriter premium de afiliados no Brasil.\nCrie um post MUITO profissional, persuasivo e humano.\nEvite genericidade e repeticoes. Use beneficios reais.\nCrie legendas CLARAMENTE diferentes entre si.\nNao invente preco ou specs.\n\n{{format}}\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\n\nRodape (se houver): {{footer}}`,
+    agressivo: `Voce e um copywriter focado em conversao e urgencia.\nCrie um post de afiliados com CTA forte e claro.\nUse tom direto, gatilhos de urgencia e escassez sem inventar preco.\nCrie legendas CLARAMENTE diferentes entre si.\n\n{{format}}\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\n\nRodape (se houver): {{footer}}`,
+    minimalista: `Voce e um copywriter minimalista.\nCrie um post curto, elegante e objetivo.\nPoucos emojis, foco no beneficio principal.\nCrie legendas CLARAMENTE diferentes entre si.\n\n{{format}}\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\n\nRodape (se houver): {{footer}}`
+  };
+}
+
+function downloadInstaImages(encoded){
+  try {
+    const urls = JSON.parse(decodeURIComponent(encoded));
+    if (!Array.isArray(urls) || urls.length === 0) return;
+    urls.forEach(u => window.open(u, '_blank'));
+  } catch {}
+}
+
+async function copyInstaImages(encoded){
+  try {
+    const urls = JSON.parse(decodeURIComponent(encoded));
+    if (!Array.isArray(urls) || urls.length === 0) return;
+    await navigator.clipboard.writeText(urls.join('\n'));
+  } catch {}
+}
+
+function applyInstaPromptPreset(){
+  const preset = document.getElementById('instaPromptPreset')?.value || 'premium';
+  const textarea = document.getElementById('instaPrompt');
+  if (!textarea) return;
+  if (preset === 'custom') return;
+  const templates = getInstaPromptPresetTemplates();
+  textarea.value = templates[preset] || templates.premium;
+}
+
+async function runInstaAiTest(){
+  const result = document.getElementById('instaTestResult');
+  if (result) result.textContent = 'Testando...';
+  const input = document.getElementById('instaTestInput')?.value || '';
+  const context = document.getElementById('instaTestContext')?.value || '';
+  try {
+    const payload = { input, context };
+    const data = await api('/api/instagram/test', 'POST', payload);
+    if (result) result.textContent = data?.text || 'Sem resposta.';
+  } catch (e) {
+    if (result) result.textContent = e?.data?.error || e?.message || 'Erro no teste.';
+  }
+}
+
+async function loadInstaAiLogs(){
+  const target = document.getElementById('instaAiLogs');
+  if (target) target.textContent = 'Carregando...';
+  const q = document.getElementById('instaAiLogSearch')?.value || '';
+  try {
+    const data = await api('/api/logs/instagram-ai' + (q ? ('?q=' + encodeURIComponent(q)) : ''), 'GET');
+    const items = data.items || [];
+    if (!target) return;
+    if (items.length === 0) {
+      target.innerHTML = '<div class="muted">Nenhum log.</div>';
+      return;
+    }
+    const rows = items.map(i => {
+      const status = i.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERRO</span>';
+      const urls = Array.isArray(i.imageUrls) ? i.imageUrls : [];
+      const encoded = encodeURIComponent(JSON.stringify(urls));
+      const imageActions = urls.length > 0
+        ? `<div class="log-actions">
+             <button class="secondary" onclick="downloadInstaImages('${encoded}')">Baixar imagens</button>
+             <button class="secondary" onclick="copyInstaImages('${encoded}')">Copiar URLs</button>
+           </div>`
+        : '';
+      const thumbs = urls.length > 0
+        ? `<div class="log-thumbs">${urls.map(u => `<img src="${escapeHtml(u)}" alt="img" />`).join('')}</div>`
+        : '';
+          return `
+        <div class="log-row">
+          <div class="log-time">${escapeHtml(formatTs(i.timestamp))}</div>
+          <div class="log-store">${escapeHtml(i.provider)} / ${escapeHtml(i.model || '-') } ${status}</div>
+          <div class="log-msg">
+            <div><strong>Entrada:</strong> ${escapeHtml(i.inputSnippet || '-')}</div>
+            <div><strong>Erro:</strong> ${escapeHtml(i.error || '-')}</div>
+            <div><strong>Vars:</strong> ${escapeHtml(String(i.variations || 0))} | <strong>Imagens:</strong> ${escapeHtml(String(i.imageCount || 0))} | <strong>Score:</strong> ${escapeHtml(String(i.qualityScore || 0))} | <strong>Ms:</strong> ${escapeHtml(String(i.durationMs || 0))}</div>
+            <div><strong>Notas:</strong> ${escapeHtml(i.qualityNotes || '-')}</div>
+            ${imageActions}
+            ${thumbs}
+          </div>
+        </div>`;
+    }).join('');
+    target.innerHTML = rows;
+  } catch (e) {
+    if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar logs.';
+  }
+}
+
+async function clearInstaAiLogs(){
+  if (currentRole !== 'admin') return;
+  await api('/api/logs/instagram-ai/clear', 'POST', {});
+  await loadInstaAiLogs();
 }
 
 async function checkSession(){
@@ -159,7 +1239,22 @@ async function logout(){
   showAuthState(false);
 }
 
+function setChipStatus(id, text, state){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = `chip ${state}`;
+}
+
+function setHealthBadge(id, text, state){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = `badge ${state}`;
+}
+
 function renderSettings(s){
+  window.__settingsCache = s;
   document.getElementById('telegramStatus').textContent = s.integrations.telegram.connected
     ? `Conectado (${s.integrations.telegram.identifier || 'sem id'})`
     : 'Não conectado';
@@ -170,20 +1265,274 @@ function renderSettings(s){
     : 'Não conectado';
   document.getElementById('whatsappStatus').className = 'status ' + (s.integrations.whatsApp.connected ? 'ok':'warn');
 
+  setChipStatus('chipTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot: Conectado' : 'Telegram Bot: Offline', s.integrations.telegram.connected ? 'ok' : 'warn');
+  setChipStatus('chipWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp: Conectado' : 'WhatsApp: Offline', s.integrations.whatsApp.connected ? 'ok' : 'warn');
+  setChipStatus('chipUserbot', 'Telegram Userbot: Conectando...', 'warn');
+  setHealthBadge('healthTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot OK' : 'Telegram Bot Offline', s.integrations.telegram.connected ? 'ok' : 'bad');
+  setHealthBadge('healthWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp OK' : 'WhatsApp Offline', s.integrations.whatsApp.connected ? 'ok' : 'bad');
+
   document.getElementById('rules').value = (s.autoReplies || [])
     .map(r => `${r.trigger} => ${r.responseTemplate}`)
     .join('\n');
+  const autoRepliesEnabled = document.getElementById('autoRepliesEnabled');
+  if (autoRepliesEnabled) autoRepliesEnabled.checked = s.autoRepliesSettings?.enabled ?? true;
 
   document.getElementById('autoConvert').checked = !!s.linkAutomation.autoConvertIncomingLinks;
   document.getElementById('autoSend').checked = !!s.linkAutomation.autoSendToDestinationChannel;
   document.getElementById('destinationChannel').value = s.linkAutomation.destinationChannel || '';
+  document.getElementById('userbotEnabled').checked = !!s.telegramForwarding?.enabled;
+  document.getElementById('userbotDestinationId').value = s.telegramForwarding?.destinationChatId || '';
+  document.getElementById('userbotAppendShein').checked = !!s.telegramForwarding?.appendSheinCode;
+  document.getElementById('userbotFooter').value = s.telegramForwarding?.footerText || '';
+  document.getElementById('waForwardEnabled').checked = !!s.whatsAppForwarding?.enabled;
+  document.getElementById('waFromMeOnly').checked = s.whatsAppForwarding?.processFromMeOnly ?? true;
+  const waSendMedia = document.getElementById('waSendMedia');
+  if (waSendMedia) waSendMedia.checked = s.whatsAppForwarding?.sendMediaEnabled ?? true;
+  document.getElementById('waFooter').value = s.whatsAppForwarding?.footerText || '';
+  document.getElementById('waAppendShein').checked = s.whatsAppForwarding?.appendSheinCode ?? true;
+  if (s.whatsAppForwarding?.instanceName) {
+    document.getElementById('waInstanceName').value = s.whatsAppForwarding.instanceName;
+  }
+  const responder = s.linkResponder || {};
+  const responderEnabled = document.getElementById('responderEnabled');
+  if (responderEnabled) responderEnabled.checked = !!responder.enabled;
+  const responderWhatsApp = document.getElementById('responderWhatsApp');
+  if (responderWhatsApp) responderWhatsApp.checked = responder.allowWhatsApp ?? true;
+  const responderTelegramBot = document.getElementById('responderTelegramBot');
+  if (responderTelegramBot) responderTelegramBot.checked = !!responder.allowTelegramBot;
+  const responderTelegramUserbot = document.getElementById('responderTelegramUserbot');
+  if (responderTelegramUserbot) responderTelegramUserbot.checked = !!responder.allowTelegramUserbot;
+  const responderWaPrivate = document.getElementById('responderWaPrivate');
+  if (responderWaPrivate) responderWaPrivate.checked = responder.whatsAppAllowPrivate ?? true;
+  const responderWaGroups = document.getElementById('responderWaGroups');
+  if (responderWaGroups) responderWaGroups.checked = !!responder.whatsAppAllowGroups;
+  const responderTgPrivate = document.getElementById('responderTgPrivate');
+  if (responderTgPrivate) responderTgPrivate.checked = responder.telegramAllowPrivate ?? true;
+  const responderTgGroups = document.getElementById('responderTgGroups');
+  if (responderTgGroups) responderTgGroups.checked = !!responder.telegramAllowGroups;
+  const responderWaIds = document.getElementById('responderWaIds');
+  if (responderWaIds) responderWaIds.value = (responder.whatsAppChatIds || []).join('\n');
+  const responderTgIds = document.getElementById('responderTgIds');
+  if (responderTgIds) responderTgIds.value = (responder.telegramChatIds || []).join('\n');
+  const responderTemplate = document.getElementById('responderTemplate');
+  if (responderTemplate) responderTemplate.value = responder.replyTemplate || '';
+  const responderFailTemplate = document.getElementById('responderFailTemplate');
+  if (responderFailTemplate) responderFailTemplate.value = responder.replyOnFailure || '';
+  const responderAppendShein = document.getElementById('responderAppendShein');
+  if (responderAppendShein) responderAppendShein.checked = responder.appendSheinCode ?? true;
+  const responderTracking = document.getElementById('responderTracking');
+  if (responderTracking) responderTracking.checked = responder.trackingEnabled ?? true;
+  const responderFooter = document.getElementById('responderFooter');
+  if (responderFooter) responderFooter.value = responder.footerText || '';
+  const insta = s.instagramPosts || {};
+  const instaEnabled = document.getElementById('instaEnabled');
+  if (instaEnabled) instaEnabled.checked = insta.enabled ?? true;
+  const instaAllowWhatsApp = document.getElementById('instaAllowWhatsApp');
+  if (instaAllowWhatsApp) instaAllowWhatsApp.checked = insta.allowWhatsApp ?? true;
+  const instaAllowTelegramBot = document.getElementById('instaAllowTelegramBot');
+  if (instaAllowTelegramBot) instaAllowTelegramBot.checked = !!insta.allowTelegramBot;
+  const instaAllowTelegramUserbot = document.getElementById('instaAllowTelegramUserbot');
+  if (instaAllowTelegramUserbot) instaAllowTelegramUserbot.checked = !!insta.allowTelegramUserbot;
+  const instaWaPrivate = document.getElementById('instaWaPrivate');
+  if (instaWaPrivate) instaWaPrivate.checked = insta.whatsAppAllowPrivate ?? true;
+  const instaWaGroups = document.getElementById('instaWaGroups');
+  if (instaWaGroups) instaWaGroups.checked = insta.whatsAppAllowGroups ?? false;
+  const instaWaIds = document.getElementById('instaWaIds');
+  if (instaWaIds) instaWaIds.value = (insta.whatsAppChatIds || []).join('\n');
+  const instaTgPrivate = document.getElementById('instaTgPrivate');
+  if (instaTgPrivate) instaTgPrivate.checked = insta.telegramAllowPrivate ?? true;
+  const instaTgGroups = document.getElementById('instaTgGroups');
+  if (instaTgGroups) instaTgGroups.checked = insta.telegramAllowGroups ?? true;
+  const instaTgIds = document.getElementById('instaTgIds');
+  if (instaTgIds) instaTgIds.value = (insta.telegramChatIds || []).join('\n');
+  const instaContextMode = document.getElementById('instaContextMode');
+  if (instaContextMode) {
+    let mode = 'Off';
+    if (typeof insta.offerContextMode === 'number') {
+      mode = insta.offerContextMode === 1 ? 'Suggestion' : insta.offerContextMode === 2 ? 'ExtraPost' : 'Off';
+    } else if (typeof insta.offerContextMode === 'string') {
+      mode = insta.offerContextMode;
+    } else if (insta.useOfferContext) {
+      mode = 'ExtraPost';
+    }
+    instaContextMode.value = mode;
+  }
+  const instaTriggers = document.getElementById('instaTriggers');
+  if (instaTriggers) instaTriggers.value = (insta.triggers || []).join('\n');
+  const instaFooter = document.getElementById('instaFooter');
+  if (instaFooter) instaFooter.value = insta.footerText || '';
+
+  const instaUseAi = document.getElementById('instaUseAi');
+  if (instaUseAi) instaUseAi.checked = !!insta.useAi;
+  const openai = s.openAI || {};
+  const openaiKey = document.getElementById('openaiApiKey');
+  if (openaiKey) openaiKey.value = openai.apiKey ? '********' : '';
+  const openaiModel = document.getElementById('openaiModel');
+  if (openaiModel) openaiModel.value = openai.model || 'gpt-4o-mini';
+  const openaiTemp = document.getElementById('openaiTemp');
+  if (openaiTemp) openaiTemp.value = (openai.temperature ?? 0.7);
+  const openaiMaxTokens = document.getElementById('openaiMaxTokens');
+  if (openaiMaxTokens) openaiMaxTokens.value = (openai.maxOutputTokens ?? 700);
+  const instaPrompt = document.getElementById('instaPrompt');
+  if (instaPrompt) {
+    instaPrompt.value = insta.promptTemplate || '';
+    if (!instaPrompt.value) {
+      const preset = (insta.promptPreset || 'premium');
+      const templates = getInstaPromptPresetTemplates();
+      if (templates[preset]) {
+        instaPrompt.value = templates[preset];
+      }
+    }
+  }
+  const instaPreset = document.getElementById('instaPromptPreset');
+  if (instaPreset) instaPreset.value = insta.promptPreset || 'premium';
+  const instaVariations = document.getElementById('instaVariations');
+  if (instaVariations) instaVariations.value = insta.variationsCount ?? 2;
+  const instaAiProvider = document.getElementById('instaAiProvider');
+  if (instaAiProvider) instaAiProvider.value = insta.aiProvider || 'openai';
+  const instaUltraPrompt = document.getElementById('instaUltraPrompt');
+  if (instaUltraPrompt) instaUltraPrompt.checked = !!insta.useUltraPrompt;
+  const instaShortName = document.getElementById('instaShortName');
+  if (instaShortName) instaShortName.checked = !!insta.useShortProductName;
+  const instaBenefits = document.getElementById('instaBenefits');
+  if (instaBenefits) instaBenefits.checked = !!insta.useBenefitBullets;
+  const instaImageDownload = document.getElementById('instaImageDownload');
+  if (instaImageDownload) instaImageDownload.checked = !!insta.useImageDownload;
+
+  const gemini = s.gemini || {};
+  const geminiKey = document.getElementById('geminiApiKey');
+  if (geminiKey) geminiKey.value = gemini.apiKey ? '********' : '';
+  const geminiModel = document.getElementById('geminiModel');
+  if (geminiModel) geminiModel.value = gemini.model || 'gemini-2.5-flash';
+  const igPub = s.instagramPublish || {};
+  const igPubEnabled = document.getElementById('igPubEnabled');
+  if (igPubEnabled) igPubEnabled.checked = igPub.enabled ?? true;
+  const igPubToken = document.getElementById('igPubToken');
+  if (igPubToken) igPubToken.value = igPub.accessToken ? '********' : '';
+  const igPubUserId = document.getElementById('igPubUserId');
+  if (igPubUserId) igPubUserId.value = igPub.instagramUserId || '';
+  const igPubBaseUrl = document.getElementById('igPubBaseUrl');
+  if (igPubBaseUrl) igPubBaseUrl.value = igPub.graphBaseUrl || 'https://graph.facebook.com/v19.0';
+  const igPubVerify = document.getElementById('igPubVerifyToken');
+  if (igPubVerify) igPubVerify.value = igPub.verifyToken || '';
+  const igPubReplyTemplate = document.getElementById('igPubReplyTemplate');
+  if (igPubReplyTemplate) igPubReplyTemplate.value = igPub.replyTemplate || 'Aqui esta o link: {link}';
+  const igPubReplyNoMatch = document.getElementById('igPubReplyNoMatch');
+  if (igPubReplyNoMatch) igPubReplyNoMatch.value = igPub.replyNoMatchTemplate || 'Comente a palavra correta para receber o link.';
+  const tgWaEnabled = document.getElementById('tgWaEnabled');
+  if (tgWaEnabled) tgWaEnabled.checked = !!s.telegramToWhatsApp?.enabled;
+  document.getElementById('waForwardEnabled').onchange = scheduleWhatsAppSave;
+  document.getElementById('waFromMeOnly').onchange = scheduleWhatsAppSave;
+  if (waSendMedia) waSendMedia.onchange = scheduleWhatsAppSave;
+  document.getElementById('waAppendShein').onchange = scheduleWhatsAppSave;
+  document.getElementById('waFooter').onchange = scheduleWhatsAppSave;
+  document.getElementById('waInstanceName').onchange = scheduleWhatsAppSave;
+  const waStatus = document.getElementById('waForwardStatus');
+  if (waStatus) {
+    waStatus.textContent = s.whatsAppForwarding?.enabled ? 'Repasse ativo' : 'Repasse inativo';
+    waStatus.className = 'status ' + (s.whatsAppForwarding?.enabled ? 'ok' : 'warn');
+  }
+  const sourceStatus = document.getElementById('waSourceSaveStatus');
+  if (sourceStatus && s.whatsAppForwarding?.sourceChatIds) {
+    sourceStatus.textContent = `Origem: ${s.whatsAppForwarding.sourceChatIds.length} grupo(s)`;
+    sourceStatus.className = 'status muted';
+  }
 
   document.getElementById('debug').textContent = JSON.stringify(s, null, 2);
+  document.getElementById('statStatus').textContent = 'Online';
 }
 
 async function loadSettings(){
   const s = await api('/api/settings');
   renderSettings(s);
+  await loadUserbotChats();
+  await loadWhatsAppGroups();
+  renderTelegramToWhatsAppRoute();
+  await loadConversionLogs();
+  await loadMediaFailures();
+}
+
+function renderResponderLogs(items){
+  const tbody = document.getElementById('responderLogBody');
+  if (!tbody) return;
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem dados.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr>
+      <td>${formatTs(i.timestamp)}</td>
+      <td title="${escapeHtml(i.originChatRef || i.originChatId || '-')}">${shortId(i.originChatRef || i.originChatId || '-')}</td>
+      <td>${renderSourceBadge(i.source || '-')}</td>
+      <td>${i.success ? 'OK' : 'Falha'}</td>
+      <td>${escapeHtml(i.originalUrl || '')}</td>
+      <td>${escapeHtml(i.convertedUrl || '')}</td>
+      <td>${i.clicks ?? 0}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadResponderLogs(){
+  const q = document.getElementById('responderLogSearch')?.value || '';
+  const res = await api(`/api/logs/conversions?limit=200&q=${encodeURIComponent(q)}`);
+  const clicksRes = await api(`/api/logs/clicks?limit=500&q=${encodeURIComponent(q)}`);
+  const clickMap = new Map();
+  (clicksRes.items || []).forEach(c => {
+    const key = c.trackingId;
+    if (!key) return;
+    clickMap.set(key, (clickMap.get(key) || 0) + 1);
+  });
+  const items = (res.items || []).filter(i =>
+    ['AutoReply','WhatsAppResponder','TelegramResponder','TelegramUserbotResponder'].includes(i.source)
+  ).map(i => {
+    const trackingIds = i.trackingIds || [];
+    const clicks = trackingIds.reduce((sum, id) => sum + (clickMap.get(id) || 0), 0);
+    return { ...i, clicks };
+  });
+  renderResponderLogs(items);
+}
+
+function renderResponderClicks(items){
+  const tbody = document.getElementById('responderClickBody');
+  if (!tbody) return;
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted">Sem dados.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr>
+      <td>${formatTs(i.timestamp)}</td>
+      <td>${i.trackingId}</td>
+      <td>${escapeHtml(i.targetUrl || '')}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadResponderClicks(){
+  const q = document.getElementById('responderClickSearch')?.value || '';
+  const res = await api(`/api/logs/clicks?limit=200&q=${encodeURIComponent(q)}`);
+  renderResponderClicks(res.items || []);
+}
+
+async function clearResponderClicks(){
+  await api('/api/logs/clicks/clear', 'POST', {});
+  await loadResponderClicks();
+}
+
+function startLogsAutoRefresh(){
+  if (logsAutoTimer) return;
+  loadConversionLogs();
+  loadMediaFailures();
+  logsAutoTimer = setInterval(() => {
+    loadConversionLogs();
+    loadMediaFailures();
+  }, 15000);
+}
+
+function stopLogsAutoRefresh(){
+  if (!logsAutoTimer) return;
+  clearInterval(logsAutoTimer);
+  logsAutoTimer = null;
 }
 
 function parseRules(text){
@@ -206,53 +1555,476 @@ function parseRules(text){
     .filter(r => r.trigger && r.responseTemplate);
 }
 
+function parseManualIds(){
+  const text = document.getElementById('userbotManualIds').value || '';
+  const parts = text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
+  const ids = [];
+  for (const p of parts) {
+    const num = Number(p);
+    if (!Number.isNaN(num) && Number.isFinite(num)) ids.push(num);
+  }
+  return ids;
+}
+
+function parseManualIdsById(id){
+  const text = document.getElementById(id)?.value || '';
+  const parts = text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
+  const ids = [];
+  for (const p of parts) {
+    const num = Number(p);
+    if (!Number.isNaN(num) && Number.isFinite(num)) ids.push(num);
+  }
+  return ids;
+}
+
+function parseWhatsAppManualIds(id){
+  const text = document.getElementById(id)?.value || '';
+  return text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
+}
+
 async function saveSettings(){
   if (currentRole !== 'admin') return;
 
   const existing = await api('/api/settings');
   existing.autoReplies = parseRules(document.getElementById('rules').value);
+  existing.autoRepliesSettings = existing.autoRepliesSettings || {};
+  existing.autoRepliesSettings.enabled = document.getElementById('autoRepliesEnabled')?.checked ?? true;
   existing.linkAutomation.autoConvertIncomingLinks = document.getElementById('autoConvert').checked;
   existing.linkAutomation.autoSendToDestinationChannel = document.getElementById('autoSend').checked;
   existing.linkAutomation.destinationChannel = document.getElementById('destinationChannel').value;
+  existing.telegramForwarding = existing.telegramForwarding || {};
+  existing.telegramForwarding.enabled = document.getElementById('userbotEnabled').checked;
+  existing.telegramForwarding.destinationChatId = Number(document.getElementById('userbotDestinationId').value || 0);
+  existing.telegramForwarding.appendSheinCode = document.getElementById('userbotAppendShein').checked;
+  existing.telegramForwarding.footerText = document.getElementById('userbotFooter').value || '';
 
-  try {
-    const r = await api('/api/settings', 'PUT', existing);
-    document.getElementById('saveStatus').textContent = r.success ? 'Configurações salvas com sucesso.' : 'Falha ao salvar.';
-    document.getElementById('saveStatus').className = 'status ' + (r.success ? 'ok' : 'bad');
-  } catch (e) {
-    document.getElementById('saveStatus').textContent = e?.data?.errors?.join(' | ') || 'Erro de validação';
+  existing.whatsAppForwarding = existing.whatsAppForwarding || {};
+  existing.whatsAppForwarding.enabled = document.getElementById('waForwardEnabled').checked;
+  existing.whatsAppForwarding.processFromMeOnly = document.getElementById('waFromMeOnly').checked;
+  existing.whatsAppForwarding.footerText = document.getElementById('waFooter').value || '';
+  existing.whatsAppForwarding.appendSheinCode = document.getElementById('waAppendShein').checked;
+  const waSendMedia = document.getElementById('waSendMedia');
+  if (waSendMedia) existing.whatsAppForwarding.sendMediaEnabled = waSendMedia.checked;
+
+  const selected = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked"))
+    .map(el => Number(el.value));
+  const manual = parseManualIds();
+  const merged = Array.from(new Set([...selected, ...manual]));
+  existing.telegramForwarding.sourceChatIds = merged;
+
+  const result = await api('/api/settings', 'PUT', existing);
+  if (result.errors && result.errors.length) {
+    document.getElementById('saveStatus').textContent = result.errors.join(' | ');
     document.getElementById('saveStatus').className = 'status bad';
+  } else {
+    document.getElementById('saveStatus').textContent = 'Configurações salvas.';
+    document.getElementById('saveStatus').className = 'status ok';
   }
-
   await loadSettings();
 }
 
-async function connectTelegram(){
+async function saveTelegramToWhatsAppRoute(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('tgWaSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando rota...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.telegramToWhatsApp = existing.telegramToWhatsApp || {};
+  existing.telegramToWhatsApp.enabled = document.getElementById('tgWaEnabled')?.checked ?? false;
+
+  const srcSelected = Array.from((window.__tgWaSelection?.source || new Set()).values()).map(Number);
+  const srcManual = parseManualIdsById('tgWaSourceManual');
+  existing.telegramToWhatsApp.sourceChatIds = Array.from(new Set([...srcSelected, ...srcManual]));
+
+  const destSelected = Array.from((window.__tgWaSelection?.dest || new Set()).values());
+  const destManual = parseWhatsAppManualIds('tgWaDestManual');
+  existing.telegramToWhatsApp.destinationGroupIds = Array.from(new Set([...destSelected, ...destManual]));
+
   try {
-    const r = await api('/api/integrations/telegram/connect', 'POST', {});
-    document.getElementById('telegramStatus').textContent = r.success 
-      ? `Conectado (${r.username || 'Bot'})`
-      : `Erro: ${r.message || 'Falha desconhecida'}`;
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Rota salva.';
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = e.data?.errors ? e.data.errors.join(' | ') : 'Erro ao salvar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function saveLinkResponder(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('responderSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.linkResponder = existing.linkResponder || {};
+  existing.linkResponder.enabled = document.getElementById('responderEnabled')?.checked ?? false;
+  existing.linkResponder.allowWhatsApp = document.getElementById('responderWhatsApp')?.checked ?? true;
+  existing.linkResponder.allowTelegramBot = document.getElementById('responderTelegramBot')?.checked ?? false;
+  existing.linkResponder.allowTelegramUserbot = document.getElementById('responderTelegramUserbot')?.checked ?? false;
+  existing.linkResponder.whatsAppAllowPrivate = document.getElementById('responderWaPrivate')?.checked ?? true;
+  existing.linkResponder.whatsAppAllowGroups = document.getElementById('responderWaGroups')?.checked ?? false;
+  existing.linkResponder.telegramAllowPrivate = document.getElementById('responderTgPrivate')?.checked ?? true;
+  existing.linkResponder.telegramAllowGroups = document.getElementById('responderTgGroups')?.checked ?? false;
+  existing.linkResponder.whatsAppChatIds = parseWhatsAppManualIds('responderWaIds');
+  existing.linkResponder.telegramChatIds = parseManualIdsById('responderTgIds');
+  existing.linkResponder.replyTemplate = document.getElementById('responderTemplate')?.value || '';
+  existing.linkResponder.replyOnFailure = document.getElementById('responderFailTemplate')?.value || '';
+  existing.linkResponder.appendSheinCode = document.getElementById('responderAppendShein')?.checked ?? true;
+  existing.linkResponder.trackingEnabled = document.getElementById('responderTracking')?.checked ?? true;
+  existing.linkResponder.footerText = document.getElementById('responderFooter')?.value || '';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Gatilho salvo.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function saveInstagramSettings(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('instaSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.instagramPosts = existing.instagramPosts || {};
+  existing.instagramPosts.enabled = document.getElementById('instaEnabled')?.checked ?? true;
+  existing.instagramPosts.allowWhatsApp = document.getElementById('instaAllowWhatsApp')?.checked ?? true;
+  existing.instagramPosts.allowTelegramBot = document.getElementById('instaAllowTelegramBot')?.checked ?? false;
+  existing.instagramPosts.allowTelegramUserbot = document.getElementById('instaAllowTelegramUserbot')?.checked ?? false;
+  existing.instagramPosts.whatsAppAllowPrivate = document.getElementById('instaWaPrivate')?.checked ?? true;
+  existing.instagramPosts.whatsAppAllowGroups = document.getElementById('instaWaGroups')?.checked ?? false;
+  existing.instagramPosts.whatsAppChatIds = parseWhatsAppManualIds('instaWaIds');
+  existing.instagramPosts.telegramAllowPrivate = document.getElementById('instaTgPrivate')?.checked ?? true;
+  existing.instagramPosts.telegramAllowGroups = document.getElementById('instaTgGroups')?.checked ?? true;
+  existing.instagramPosts.telegramChatIds = parseManualIdsById('instaTgIds');
+  const instaContextMode = document.getElementById('instaContextMode')?.value || 'Off';
+  const instaContextMap = { Off: 0, Suggestion: 1, ExtraPost: 2 };
+  existing.instagramPosts.offerContextMode = instaContextMap[instaContextMode] ?? 0;
+  existing.instagramPosts.useOfferContext = instaContextMode === 'ExtraPost';
+  existing.instagramPosts.useAi = document.getElementById('instaUseAi')?.checked ?? false;
+  existing.instagramPosts.useUltraPrompt = document.getElementById('instaUltraPrompt')?.checked ?? false;
+  existing.instagramPosts.useShortProductName = document.getElementById('instaShortName')?.checked ?? false;
+  existing.instagramPosts.useBenefitBullets = document.getElementById('instaBenefits')?.checked ?? false;
+  existing.instagramPosts.useImageDownload = document.getElementById('instaImageDownload')?.checked ?? false;
+  existing.instagramPosts.variationsCount = parseInt(document.getElementById('instaVariations')?.value || '2', 10);
+  existing.instagramPosts.promptPreset = document.getElementById('instaPromptPreset')?.value || 'premium';
+  existing.instagramPosts.aiProvider = document.getElementById('instaAiProvider')?.value || 'openai';
+  existing.instagramPosts.triggers = parseLines('instaTriggers');
+  existing.instagramPosts.footerText = document.getElementById('instaFooter')?.value || '';
+  existing.instagramPosts.promptTemplate = document.getElementById('instaPrompt')?.value || '';
+
+  existing.openAI = existing.openAI || {};
+  existing.openAI.apiKey = document.getElementById('openaiApiKey')?.value || '';
+  existing.openAI.model = document.getElementById('openaiModel')?.value || 'gpt-4o-mini';
+  existing.openAI.temperature = parseFloat(document.getElementById('openaiTemp')?.value || '0.7');
+  existing.openAI.maxOutputTokens = parseInt(document.getElementById('openaiMaxTokens')?.value || '700', 10);
+
+  existing.gemini = existing.gemini || {};
+  existing.gemini.apiKey = document.getElementById('geminiApiKey')?.value || '';
+  existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Instagram salvo.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function saveInstagramPublishSettings(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('igPubSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.instagramPublish = existing.instagramPublish || {};
+  existing.instagramPublish.enabled = document.getElementById('igPubEnabled')?.checked ?? true;
+  existing.instagramPublish.accessToken = document.getElementById('igPubToken')?.value || '';
+  existing.instagramPublish.instagramUserId = document.getElementById('igPubUserId')?.value || '';
+  existing.instagramPublish.graphBaseUrl = document.getElementById('igPubBaseUrl')?.value || 'https://graph.facebook.com/v19.0';
+  existing.instagramPublish.verifyToken = document.getElementById('igPubVerifyToken')?.value || '';
+  existing.instagramPublish.replyTemplate = document.getElementById('igPubReplyTemplate')?.value || 'Aqui esta o link: {link}';
+  existing.instagramPublish.replyNoMatchTemplate = document.getElementById('igPubReplyNoMatch')?.value || 'Comente a palavra correta para receber o link.';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Configuracoes salvas.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function testInstagramPublish(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('igPubSaveStatus');
+  if (status) {
+    status.textContent = 'Testando...';
+    status.className = 'status warn';
+  }
+  try {
+    await api('/api/instagram/publish/test', 'POST', {});
+    if (status) {
+      status.textContent = 'Conexao OK.';
+      status.className = 'status ok';
+    }
+    await loadInstagramPublishLogs();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Falha no teste.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+function parseCtas(text){
+  const lines = (text || '').split(/\n/).map(l => l.trim()).filter(Boolean);
+  const ctas = [];
+  for (const line of lines) {
+    const parts = line.split('=>').map(p => p.trim());
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      ctas.push({ keyword: parts[0], link: parts.slice(1).join('=>') });
+    }
+  }
+  return ctas;
+}
+
+async function saveInstagramDraft(publishNow){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('igDraftStatus');
+  if (status) {
+    status.textContent = publishNow ? 'Publicando...' : 'Salvando...';
+    status.className = 'status warn';
+  }
+  const payload = {
+    productName: document.getElementById('igDraftProduct')?.value || '',
+    caption: document.getElementById('igDraftCaption')?.value || '',
+    hashtags: document.getElementById('igDraftHashtags')?.value || '',
+    imageUrls: (document.getElementById('igDraftImages')?.value || '').split(/\n/).map(l => l.trim()).filter(Boolean),
+    ctas: parseCtas(document.getElementById('igDraftCtas')?.value || '')
+  };
+  try {
+    const res = await api('/api/instagram/publish/drafts', 'POST', payload);
+    if (publishNow && res.id) {
+      await publishInstagramDraft(res.id);
+    }
+    if (status) {
+      status.textContent = publishNow ? 'Publicado.' : 'Rascunho salvo.';
+      status.className = 'status ok';
+    }
+    await loadInstagramDrafts();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function loadInstagramDrafts(){
+  const target = document.getElementById('igDraftList');
+  if (target) target.textContent = 'Carregando...';
+  try {
+    const data = await api('/api/instagram/publish/drafts', 'GET');
+    const items = data.items || [];
+    if (!target) return;
+    if (items.length === 0) {
+      target.innerHTML = '<div class="muted">Nenhum rascunho.</div>';
+      return;
+    }
+    const rows = items.map(d => `
+      <div class="log-row">
+        <div class="log-time">${escapeHtml(formatTs(d.createdAt))}</div>
+        <div class="log-store">${escapeHtml(d.productName || 'Post')}</div>
+        <div class="log-msg">
+          <div><strong>Status:</strong> ${escapeHtml(d.status || '-')}</div>
+          <div><strong>Imagens:</strong> ${escapeHtml(String((d.imageUrls || []).length))}</div>
+          <div><strong>CTA:</strong> ${escapeHtml(String((d.ctas || []).length))}</div>
+          <div class="row">
+            <button class="secondary" onclick="publishInstagramDraft('${d.id}')">Publicar</button>
+          </div>
+          ${d.error ? `<div class="status bad">Erro: ${escapeHtml(d.error)}</div>` : ''}
+        </div>
+      </div>
+    `).join('');
+    target.innerHTML = rows;
+  } catch (e) {
+    if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar.';
+  }
+}
+
+async function publishInstagramDraft(id){
+  try {
+    await api(`/api/instagram/publish/drafts/${id}/publish`, 'POST', {});
+    await loadInstagramDrafts();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function loadInstagramComments(){
+  const target = document.getElementById('igCommentList');
+  if (target) target.textContent = 'Carregando...';
+  try {
+    const data = await api('/api/instagram/comments/pending', 'GET');
+    const items = data.items || [];
+    if (!target) return;
+    if (items.length === 0) {
+      target.innerHTML = '<div class="muted">Nenhum comentario pendente.</div>';
+      return;
+    }
+    const rows = items.map(c => `
+      <div class="log-row">
+        <div class="log-time">${escapeHtml(formatTs(c.timestamp))}</div>
+        <div class="log-store">${escapeHtml(c.from || 'usuario')}</div>
+        <div class="log-msg">
+          <div><strong>Comentario:</strong> ${escapeHtml(c.text || '')}</div>
+          <textarea id="igReply_${c.id}" rows="2">${escapeHtml(c.suggestedReply || '')}</textarea>
+          <div class="row">
+            <button onclick="approveInstagramComment('${c.id}')">Aprovar</button>
+            <button class="secondary" onclick="rejectInstagramComment('${c.id}')">Rejeitar</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+    target.innerHTML = rows;
+  } catch (e) {
+    if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar.';
+  }
+}
+
+async function approveInstagramComment(id){
+  const message = document.getElementById(`igReply_${id}`)?.value || '';
+  await api(`/api/instagram/comments/${id}/approve`, 'POST', { message });
+  await loadInstagramComments();
+}
+
+async function rejectInstagramComment(id){
+  await api(`/api/instagram/comments/${id}/reject`, 'POST', {});
+  await loadInstagramComments();
+}
+
+async function loadInstagramPublishLogs(){
+  const target = document.getElementById('igPubLogs');
+  if (target) target.textContent = 'Carregando...';
+  const q = document.getElementById('igPubLogSearch')?.value || '';
+  try {
+    const data = await api('/api/logs/instagram-publish' + (q ? ('?q=' + encodeURIComponent(q)) : ''), 'GET');
+    const items = data.items || [];
+    if (!target) return;
+    if (items.length === 0) {
+      target.innerHTML = '<div class="muted">Nenhum log.</div>';
+      return;
+    }
+    const rows = items.map(i => `
+      <div class="log-row">
+        <div class="log-time">${escapeHtml(formatTs(i.timestamp))}</div>
+        <div class="log-store">${escapeHtml(i.action || '-')} ${i.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERRO</span>'}</div>
+        <div class="log-msg">
+          <div><strong>Draft:</strong> ${escapeHtml(i.draftId || '-')}</div>
+          <div><strong>Media:</strong> ${escapeHtml(i.mediaId || '-')}</div>
+          <div><strong>Erro:</strong> ${escapeHtml(i.error || '-')}</div>
+          <div><strong>Detalhes:</strong> ${escapeHtml(i.details || '-')}</div>
+          ${i.mediaId ? `<div class="row"><button class="secondary" onclick="checkInstagramStatus('${i.mediaId}')">Verificar status</button></div>` : ''}
+        </div>
+      </div>
+    `).join('');
+    target.innerHTML = rows;
+  } catch (e) {
+    if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar.';
+  }
+}
+
+async function clearInstagramPublishLogs(){
+  if (currentRole !== 'admin') return;
+  await api('/api/logs/instagram-publish/clear', 'POST', {});
+  await loadInstagramPublishLogs();
+}
+
+async function checkInstagramStatus(mediaId){
+  if (!mediaId) return;
+  try {
+    const res = await api(`/api/instagram/publish/status/${mediaId}`, 'GET');
+    const data = res?.data ? JSON.stringify(res.data, null, 2) : res?.data;
+    alert(data || 'Status OK');
+    await loadInstagramPublishLogs();
+  } catch (e) {
+    alert(e?.data?.error || e?.message || 'Falha ao consultar status.');
+  }
+}
+
+function parseLines(id){
+  const text = document.getElementById(id)?.value || '';
+  return text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+}
+
+async function connectTelegram(){
+  setButtonBusy('btnTelegramConnect', true, 'Validando...');
+  try {
+    const r = await api('/api/telegram/connect', 'POST', {});
+    document.getElementById('telegramStatus').textContent = r.success
+      ? `Conectado (${r.username || 'ok'})`
+      : `Erro: ${r.message || 'Falha na conexão'}`;
     document.getElementById('telegramStatus').className = 'status ' + (r.success ? 'ok' : 'bad');
   } catch (e) {
     document.getElementById('telegramStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
     document.getElementById('telegramStatus').className = 'status bad';
   }
   await loadSettings();
+  setButtonBusy('btnTelegramConnect', false);
 }
 
 async function connectWhatsApp(){
+  setButtonBusy('btnWhatsAppConnect', true, 'Gerando QR...');
   try {
-    const r = await api('/api/integrations/whatsapp/connect', 'POST', {});
-    const img = document.getElementById('qrImage');
-    const hint = document.getElementById('qrHint');
-
-    if (r.success && r.qrCodeBase64) {
-      img.src = `data:image/png;base64,${r.qrCodeBase64}`;
-      img.classList.remove('hidden');
-      hint.classList.remove('hidden');
-      document.getElementById('whatsappStatus').textContent = 'QR Code gerado - escaneie com WhatsApp';
+    const instanceName = document.getElementById('waInstanceName').value || null;
+    const r = await api('/api/integrations/whatsapp/connect', 'POST', { instanceName });
+    if (r.qrCode) {
+      document.getElementById('qrImage').src = r.qrCode;
+      document.getElementById('qrImage').classList.remove('hidden');
+      document.getElementById('qrHint').classList.remove('hidden');
+      document.getElementById('whatsappStatus').textContent = 'QR gerado. Aguardando leitura...';
       document.getElementById('whatsappStatus').className = 'status warn';
+    } else if (r.success) {
+      document.getElementById('whatsappStatus').textContent = r.message || 'Instância já conectada.';
+      document.getElementById('whatsappStatus').className = 'status ok';
     } else {
       document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao gerar QR'}`;
       document.getElementById('whatsappStatus').className = 'status bad';
@@ -261,7 +2033,36 @@ async function connectWhatsApp(){
     document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
     document.getElementById('whatsappStatus').className = 'status bad';
   }
-  await loadSettings();
+  setButtonBusy('btnWhatsAppConnect', false);
+  setTimeout(loadSettings, 4000);
+}
+
+async function createWhatsAppInstance(){
+  const instanceName = document.getElementById('waInstanceName').value || '';
+  if (!instanceName.trim()) {
+    document.getElementById('whatsappStatus').textContent = 'Informe o Instance Name.';
+    document.getElementById('whatsappStatus').className = 'status bad';
+    return;
+  }
+  try {
+    const r = await api('/api/integrations/whatsapp/instance', 'POST', { instanceName });
+    if (r.qrCode) {
+      document.getElementById('qrImage').src = r.qrCode;
+      document.getElementById('qrImage').classList.remove('hidden');
+      document.getElementById('qrHint').classList.remove('hidden');
+      document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada. QR gerado.';
+      document.getElementById('whatsappStatus').className = 'status warn';
+    } else if (r.success) {
+      document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada com sucesso.';
+      document.getElementById('whatsappStatus').className = 'status ok';
+    } else {
+      document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao criar instância'}`;
+      document.getElementById('whatsappStatus').className = 'status bad';
+    }
+  } catch (e) {
+    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+    document.getElementById('whatsappStatus').className = 'status bad';
+  }
 }
 
 async function runPlayground(){
@@ -270,7 +2071,887 @@ async function runPlayground(){
   document.getElementById('playgroundResult').textContent = JSON.stringify(result, null, 2);
 }
 
+function renderUserbotChats(payload, settings){
+  const container = document.getElementById('userbotChats');
+  const status = document.getElementById('userbotStatus');
+  const search = document.getElementById('userbotSearch');
+  const selectedCount = document.getElementById('userbotSelectedCount');
+  const chips = document.getElementById('userbotSelectedChips');
+  if (!payload || !payload.chats) {
+    container.textContent = 'Nenhum grupo carregado.';
+    status.textContent = 'Userbot indisponível';
+    status.className = 'status bad';
+    setChipStatus('chipUserbot', 'Telegram Userbot: Indisponível', 'bad');
+    setHealthBadge('healthUserbot', 'Userbot Indisponível', 'bad');
+    return;
+  }
+
+  status.textContent = payload.ready ? `Conectado (${payload.chats.length} chats)` : 'Conectando...';
+  status.className = 'status ' + (payload.ready ? 'ok' : 'warn');
+  setChipStatus('chipUserbot', payload.ready ? 'Telegram Userbot: Conectado' : 'Telegram Userbot: Conectando...', payload.ready ? 'ok' : 'warn');
+  setHealthBadge('healthUserbot', payload.ready ? 'Userbot OK' : 'Userbot Conectando', payload.ready ? 'ok' : 'warn');
+  const statUserbot = document.getElementById('statUserbot');
+  if (statUserbot) statUserbot.textContent = payload.ready ? 'Online' : 'Conectando...';
+
+  if (payload.chats.length === 0) {
+    container.textContent = 'Nenhum grupo carregado.';
+    return;
+  }
+
+  const sourceIds = (settings?.telegramForwarding?.sourceChatIds || []).map(Number);
+  const selected = new Set(sourceIds);
+  const availableIds = new Set(payload.chats.map(c => Number(c.id)));
+  const manualOnly = sourceIds.filter(id => !availableIds.has(id));
+  document.getElementById('userbotManualIds').value = manualOnly.join('\n');
+
+  const filteredChats = (query) => {
+    const q = (query || '').toLowerCase().trim();
+    return payload.chats.filter(c => {
+      if (!q) return true;
+      return (c.title || '').toLowerCase().includes(q) || String(c.id).includes(q);
+    });
+  };
+
+  const renderList = (list) => {
+    container.innerHTML = `<div class="chat-list">` + list.map(c => `
+      <label class="chat-item">
+        <input type="checkbox" data-userbot-chat="1" value="${c.id}" ${selected.has(c.id) ? 'checked' : ''} />
+        <div>
+          <div class="chat-title">${c.title}</div>
+          <div class="chat-meta">${c.type} | ${c.id}</div>
+        </div>
+      </label>
+  `).join('') + `</div>`;
+    const count = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked")).length;
+    if (selectedCount) selectedCount.textContent = count.toString();
+    container.onchange = () => {
+      const updated = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked")).length;
+      if (selectedCount) selectedCount.textContent = updated.toString();
+      renderSelectedChips();
+      scheduleUserbotSave();
+    };
+    renderSelectedChips();
+  };
+
+  renderList(filteredChats(search?.value));
+  if (search) {
+    search.oninput = () => renderList(filteredChats(search.value));
+  }
+}
+
+function renderSelectedChips(){
+  const chips = document.getElementById('userbotSelectedChips');
+  if (!chips) return;
+  const selected = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked"))
+    .map(el => el.value);
+  chips.innerHTML = selected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+}
+
+function selectAllUserbotChats(){
+  document.querySelectorAll("input[data-userbot-chat=\"1\"]").forEach(el => el.checked = true);
+  renderSelectedChips();
+  scheduleUserbotSave();
+}
+
+function clearUserbotSelection(){
+  document.querySelectorAll("input[data-userbot-chat=\"1\"]").forEach(el => el.checked = false);
+  renderSelectedChips();
+  scheduleUserbotSave();
+}
+
+let userbotSaveTimer = null;
+function scheduleUserbotSave(){
+  if (userbotSaveTimer) clearTimeout(userbotSaveTimer);
+  userbotSaveTimer = setTimeout(() => saveUserbotSelection(), 400);
+}
+
+async function saveUserbotSelection(){
+  if (currentRole !== 'admin') {
+    const el = document.getElementById('userbotSaveStatus');
+    if (el) {
+      el.textContent = 'Permissão insuficiente para salvar.';
+      el.className = 'status bad';
+    }
+    return;
+  }
+
+  const el = document.getElementById('userbotSaveStatus');
+  if (el) {
+    el.textContent = 'Salvando seleção...';
+    el.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.telegramForwarding = existing.telegramForwarding || {};
+  existing.telegramForwarding.enabled = document.getElementById('userbotEnabled').checked;
+  existing.telegramForwarding.destinationChatId = Number(document.getElementById('userbotDestinationId').value || 0);
+  existing.telegramForwarding.appendSheinCode = document.getElementById('userbotAppendShein').checked;
+  existing.telegramForwarding.footerText = document.getElementById('userbotFooter').value || '';
+  const selected = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked"))
+    .map(el => Number(el.value));
+  const manual = parseManualIds();
+  existing.telegramForwarding.sourceChatIds = Array.from(new Set([...selected, ...manual]));
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (el) {
+      el.textContent = 'Seleção salva.';
+      el.className = 'status ok';
+    }
+  } catch (e) {
+    if (el) {
+      el.textContent = e.data?.errors ? e.data.errors.join(' | ') : 'Erro ao salvar.';
+      el.className = 'status bad';
+    }
+  }
+}
+
+async function loadUserbotChats(){
+  try {
+    const [payload, settings] = await Promise.all([api('/api/telegram/userbot/chats'), api('/api/settings')]);
+    window.__userbotPayload = payload;
+    renderUserbotChats(payload, settings);
+    renderTelegramToWhatsAppRoute();
+    document.getElementById('statUserbot').textContent = payload.ready ? 'Conectado' : 'Conectando...';
+  } catch (e) {
+    document.getElementById('userbotStatus').textContent = 'Erro ao carregar userbot';
+    document.getElementById('userbotStatus').className = 'status bad';
+    document.getElementById('statUserbot').textContent = 'Erro';
+  }
+}
+
+async function refreshUserbotChats(){
+  try {
+    const payload = await api('/api/telegram/userbot/refresh', 'POST', {});
+    const settings = await api('/api/settings');
+    window.__userbotPayload = payload;
+    renderUserbotChats(payload, settings);
+    renderTelegramToWhatsAppRoute();
+  } catch (e) {
+    document.getElementById('userbotStatus').textContent = 'Erro ao atualizar grupos';
+    document.getElementById('userbotStatus').className = 'status bad';
+  }
+}
+
+function showAllUserbotChats(){
+  const search = document.getElementById('userbotSearch');
+  if (search) search.value = '';
+  if (window.__userbotPayload && window.__settingsCache) {
+    renderUserbotChats(window.__userbotPayload, window.__settingsCache);
+  } else {
+    loadUserbotChats();
+  }
+}
+
+function renderWhatsAppGroups(payload, settings){
+  const sourceSet = new Set((settings?.whatsAppForwarding?.sourceChatIds || []).map(String));
+  const destSet = new Set((settings?.whatsAppForwarding?.destinationGroupIds || []).map(String));
+
+  window.__waSelection = window.__waSelection || { source: new Set(), dest: new Set() };
+  window.__waSelection.source = sourceSet;
+  window.__waSelection.dest = destSet;
+
+  renderWhatsAppList({
+    containerId: 'waSourceGroups',
+    searchId: 'waSourceSearch',
+    selectedCountId: 'waSourceSelectedCount',
+    selectedChipsId: 'waSourceSelectedChips',
+    checkboxAttr: 'data-wa-source',
+    manualIdsId: 'waManualSourceIds',
+    selectedSet: window.__waSelection.source
+  }, payload);
+
+  renderWhatsAppList({
+    containerId: 'waGroups',
+    searchId: 'waDestSearch',
+    selectedCountId: 'waSelectedCount',
+    selectedChipsId: 'waSelectedChips',
+    checkboxAttr: 'data-wa-group',
+    manualIdsId: 'waManualIds',
+    selectedSet: window.__waSelection.dest
+  }, payload);
+}
+
+function renderTelegramToWhatsAppRoute(){
+  const settings = window.__settingsCache;
+  if (!settings) return;
+  const sourceIds = (settings.telegramToWhatsApp?.sourceChatIds || []).map(String);
+  const destIds = (settings.telegramToWhatsApp?.destinationGroupIds || []).map(String);
+  window.__tgWaSelection = {
+    source: new Set(sourceIds),
+    dest: new Set(destIds)
+  };
+  renderTgWaSourceList();
+  renderTgWaDestList();
+}
+
+function renderTgWaSourceList(){
+  const container = document.getElementById('tgWaSourceList');
+  const search = document.getElementById('tgWaSourceSearch');
+  const countEl = document.getElementById('tgWaSourceCount');
+  const chips = document.getElementById('tgWaSourceChips');
+  const manualEl = document.getElementById('tgWaSourceManual');
+  const payload = window.__userbotPayload;
+  const selected = window.__tgWaSelection?.source || new Set();
+
+  if (!payload || !payload.chats) {
+    if (manualEl) manualEl.value = Array.from(selected.values()).join('\n');
+    if (countEl) countEl.textContent = selected.size.toString();
+    if (chips) chips.innerHTML = Array.from(selected.values()).map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+    if (container) container.textContent = 'Nenhum grupo carregado.';
+    return;
+  }
+
+  const availableIds = new Set(payload.chats.map(c => String(c.id)));
+  const manualOnly = Array.from(selected.values()).filter(id => !availableIds.has(id));
+  if (manualEl) manualEl.value = manualOnly.join('\n');
+
+  const filtered = (query) => {
+    const q = (query || '').toLowerCase().trim();
+    return payload.chats.filter(c => {
+      if (!q) return true;
+      return (c.title || '').toLowerCase().includes(q) || String(c.id).includes(q);
+    });
+  };
+
+  const renderList = (list) => {
+    container.innerHTML = `<div class="chat-list">` + list.map(c => `
+      <label class="chat-item">
+        <input type="checkbox" data-tgwa-source="1" value="${c.id}" ${selected.has(String(c.id)) ? 'checked' : ''} />
+        <div>
+          <div class="chat-title">${c.title}</div>
+          <div class="chat-meta">${c.type} | ${c.id}</div>
+        </div>
+      </label>
+    `).join('') + `</div>`;
+    if (countEl) countEl.textContent = selected.size.toString();
+    container.onchange = (ev) => {
+      const target = ev.target;
+      if (!target || !target.matches('input[data-tgwa-source="1"]')) return;
+      const value = String(target.value);
+      if (target.checked) selected.add(value);
+      else selected.delete(value);
+      if (countEl) countEl.textContent = selected.size.toString();
+      renderTgWaChips();
+    };
+    renderTgWaChips();
+  };
+
+  renderList(filtered(search?.value));
+  if (search) {
+    search.oninput = () => renderList(filtered(search.value));
+  }
+}
+
+function renderTgWaDestList(){
+  const container = document.getElementById('tgWaDestList');
+  const search = document.getElementById('tgWaDestSearch');
+  const countEl = document.getElementById('tgWaDestCount');
+  const chips = document.getElementById('tgWaDestChips');
+  const manualEl = document.getElementById('tgWaDestManual');
+  const payload = window.__waPayload;
+  const selected = window.__tgWaSelection?.dest || new Set();
+
+  if (!payload || !payload.groups) {
+    if (manualEl) manualEl.value = Array.from(selected.values()).join('\n');
+    if (countEl) countEl.textContent = selected.size.toString();
+    if (chips) chips.innerHTML = Array.from(selected.values()).map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+    if (container) container.textContent = 'Nenhum grupo carregado.';
+    return;
+  }
+
+  const availableIds = new Set(payload.groups.map(g => String(g.id)));
+  const manualOnly = Array.from(selected.values()).filter(id => !availableIds.has(id));
+  if (manualEl) manualEl.value = manualOnly.join('\n');
+
+  const filtered = (query) => {
+    const q = (query || '').toLowerCase().trim();
+    return payload.groups.filter(g => {
+      if (!q) return true;
+      return (g.name || '').toLowerCase().includes(q) || String(g.id).includes(q);
+    });
+  };
+
+  const renderList = (list) => {
+    container.innerHTML = `<div class="chat-list">` + list.map(g => `
+      <label class="chat-item">
+        <input type="checkbox" data-tgwa-dest="1" value="${g.id}" ${selected.has(String(g.id)) ? 'checked' : ''} />
+        <div>
+          <div class="chat-title">${g.name}</div>
+          <div class="chat-meta">${g.type || 'group'} | ${g.id}</div>
+        </div>
+      </label>
+    `).join('') + `</div>`;
+    if (countEl) countEl.textContent = selected.size.toString();
+    container.onchange = (ev) => {
+      const target = ev.target;
+      if (!target || !target.matches('input[data-tgwa-dest="1"]')) return;
+      const value = String(target.value);
+      if (target.checked) selected.add(value);
+      else selected.delete(value);
+      if (countEl) countEl.textContent = selected.size.toString();
+      renderTgWaChips();
+    };
+    renderTgWaChips();
+  };
+
+  renderList(filtered(search?.value));
+  if (search) {
+    search.oninput = () => renderList(filtered(search.value));
+  }
+}
+
+function renderTgWaChips(){
+  const src = document.getElementById('tgWaSourceChips');
+  const dest = document.getElementById('tgWaDestChips');
+  const srcSelected = Array.from((window.__tgWaSelection?.source || new Set()).values());
+  const destSelected = Array.from((window.__tgWaSelection?.dest || new Set()).values());
+  if (src) src.innerHTML = srcSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+  if (dest) dest.innerHTML = destSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+}
+
+function selectAllTgWaSource(){
+  const set = window.__tgWaSelection?.source;
+  const payload = window.__userbotPayload;
+  if (!set || !payload || !payload.chats) return;
+  payload.chats.forEach(c => set.add(String(c.id)));
+  renderTgWaSourceList();
+}
+
+function clearTgWaSource(){
+  const set = window.__tgWaSelection?.source;
+  if (set) set.clear();
+  renderTgWaSourceList();
+}
+
+function showAllTgWaSource(){
+  const search = document.getElementById('tgWaSourceSearch');
+  if (search) search.value = '';
+  renderTgWaSourceList();
+}
+
+function selectAllTgWaDest(){
+  const set = window.__tgWaSelection?.dest;
+  const payload = window.__waPayload;
+  if (!set || !payload || !payload.groups) return;
+  payload.groups.forEach(g => set.add(String(g.id)));
+  renderTgWaDestList();
+}
+
+function clearTgWaDest(){
+  const set = window.__tgWaSelection?.dest;
+  if (set) set.clear();
+  renderTgWaDestList();
+}
+
+function showAllTgWaDest(){
+  const search = document.getElementById('tgWaDestSearch');
+  if (search) search.value = '';
+  renderTgWaDestList();
+}
+
+function renderWhatsAppList(config, payload){
+  const container = document.getElementById(config.containerId);
+  const search = document.getElementById(config.searchId);
+  const selectedCount = document.getElementById(config.selectedCountId);
+  const manualEl = document.getElementById(config.manualIdsId);
+  const selectedSet = config.selectedSet || new Set();
+  const selectedIds = Array.from(selectedSet);
+  const chipsEl = document.getElementById(config.selectedChipsId);
+  const baseSelected = selectedIds;
+  if (!payload || !payload.groups || payload.groups.length === 0) {
+    if (manualEl) manualEl.value = baseSelected.join('\n');
+    if (selectedCount) selectedCount.textContent = baseSelected.length.toString();
+    if (chipsEl) chipsEl.innerHTML = baseSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+    container.textContent = 'Nenhum grupo carregado.';
+    return;
+  }
+
+  const selected = selectedSet;
+  const availableIds = new Set(payload.groups.map(g => String(g.id)));
+  const manualOnly = baseSelected.filter(id => !availableIds.has(id));
+  if (manualEl) manualEl.value = manualOnly.join('\n');
+
+  const filteredGroups = (query) => {
+    const q = (query || '').toLowerCase().trim();
+    return payload.groups.filter(g => {
+      if (!q) return true;
+      return (g.name || '').toLowerCase().includes(q) || String(g.id).includes(q);
+    });
+  };
+
+  const renderList = (list) => {
+    container.innerHTML = `<div class="chat-list">` + list.map(g => `
+      <label class="chat-item">
+        <input type="checkbox" ${config.checkboxAttr}="1" value="${g.id}" ${selected.has(String(g.id)) ? 'checked' : ''} />
+        <div>
+          <div class="chat-title">${g.name}</div>
+          <div class="chat-meta">${g.type || 'group'} | ${g.id}</div>
+        </div>
+      </label>
+    `).join('') + `</div>`;
+    if (selectedCount) selectedCount.textContent = selected.size.toString();
+    container.onchange = (ev) => {
+      const target = ev.target;
+      if (!target || !target.matches(`input[${config.checkboxAttr}="1"]`)) return;
+      const value = String(target.value);
+      if (target.checked) selected.add(value);
+      else selected.delete(value);
+      if (selectedCount) selectedCount.textContent = selected.size.toString();
+      renderWhatsAppChips();
+      scheduleWhatsAppSave();
+    };
+    renderWhatsAppChips();
+  };
+
+  renderList(filteredGroups(search?.value));
+  if (search) {
+    search.oninput = () => renderList(filteredGroups(search.value));
+  }
+}
+
+function renderWhatsAppChips(){
+  const destChips = document.getElementById('waSelectedChips');
+  const sourceChips = document.getElementById('waSourceSelectedChips');
+  const destSelected = Array.from((window.__waSelection?.dest || new Set()).values());
+  const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
+  if (destChips) destChips.innerHTML = destSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+  if (sourceChips) sourceChips.innerHTML = sourceSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+}
+
+function selectAllWhatsAppGroups(){
+  const set = window.__waSelection?.dest;
+  if (set) {
+    document.querySelectorAll("input[data-wa-group=\"1\"]").forEach(el => {
+      el.checked = true;
+      set.add(String(el.value));
+    });
+  }
+  renderWhatsAppChips();
+  scheduleWhatsAppSave();
+}
+
+function clearWhatsAppSelection(){
+  const set = window.__waSelection?.dest;
+  if (set) set.clear();
+  document.querySelectorAll("input[data-wa-group=\"1\"]").forEach(el => el.checked = false);
+  renderWhatsAppChips();
+  scheduleWhatsAppSave();
+}
+
+function selectAllWhatsAppSourceGroups(){
+  const set = window.__waSelection?.source;
+  if (set) {
+    document.querySelectorAll("input[data-wa-source=\"1\"]").forEach(el => {
+      el.checked = true;
+      set.add(String(el.value));
+    });
+  }
+  renderWhatsAppChips();
+  scheduleWhatsAppSave();
+}
+
+function clearWhatsAppSourceSelection(){
+  const set = window.__waSelection?.source;
+  if (set) set.clear();
+  document.querySelectorAll("input[data-wa-source=\"1\"]").forEach(el => el.checked = false);
+  renderWhatsAppChips();
+  scheduleWhatsAppSave();
+}
+
+let waSaveTimer = null;
+function scheduleWhatsAppSave(){
+  if (waSaveTimer) clearTimeout(waSaveTimer);
+  waSaveTimer = setTimeout(() => saveWhatsAppSelection(), 400);
+}
+
+async function saveWhatsAppSelection(){
+  if (currentRole !== 'admin') {
+    const el = document.getElementById('waSaveStatus');
+    if (el) {
+      el.textContent = 'Permissao insuficiente para salvar.';
+      el.className = 'status bad';
+    }
+    return;
+  }
+
+  const el = document.getElementById('waSaveStatus');
+  if (el) {
+    el.textContent = 'Salvando selecao...';
+    el.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.whatsAppForwarding = existing.whatsAppForwarding || {};
+  existing.whatsAppForwarding.enabled = document.getElementById('waForwardEnabled').checked;
+  existing.whatsAppForwarding.processFromMeOnly = document.getElementById('waFromMeOnly').checked;
+  existing.whatsAppForwarding.footerText = document.getElementById('waFooter').value || '';
+  existing.whatsAppForwarding.appendSheinCode = document.getElementById('waAppendShein').checked;
+  const waSendMedia = document.getElementById('waSendMedia');
+  if (waSendMedia) existing.whatsAppForwarding.sendMediaEnabled = waSendMedia.checked;
+
+  const selected = Array.from((window.__waSelection?.dest || new Set()).values());
+  const manual = parseWhatsAppManualIds('waManualIds');
+  existing.whatsAppForwarding.destinationGroupIds = Array.from(new Set([...selected, ...manual]));
+  const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
+  const sourceManual = parseWhatsAppManualIds('waManualSourceIds');
+  existing.whatsAppForwarding.sourceChatIds = Array.from(new Set([...sourceSelected, ...sourceManual]));
+  existing.whatsAppForwarding.instanceName = (document.getElementById('waInstanceName').value || '').trim() || null;
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (el) {
+      el.textContent = 'Selecao salva.';
+      el.className = 'status ok';
+    }
+    const sourceEl = document.getElementById('waSourceSaveStatus');
+    if (sourceEl) {
+      sourceEl.textContent = 'Selecao salva.';
+      sourceEl.className = 'status ok';
+    }
+  } catch (e) {
+    if (el) {
+      el.textContent = e.data?.errors ? e.data.errors.join(' | ') : 'Erro ao salvar.';
+      el.className = 'status bad';
+    }
+    const sourceEl = document.getElementById('waSourceSaveStatus');
+    if (sourceEl) {
+      sourceEl.textContent = e.data?.errors ? e.data.errors.join(' | ') : 'Erro ao salvar.';
+      sourceEl.className = 'status bad';
+    }
+  }
+}
+
+async function loadWhatsAppGroups(){
+  try {
+    const instanceName = document.getElementById('waInstanceName').value || null;
+    const [payload, settings] = await Promise.all([
+      api('/api/whatsapp/groups' + (instanceName ? ('?instanceName=' + encodeURIComponent(instanceName)) : '')),
+      api('/api/settings')
+    ]);
+    window.__waPayload = payload;
+    renderWhatsAppGroups(payload, settings);
+    renderTelegramToWhatsAppRoute();
+  } catch (e) {
+    let settings = null;
+    try {
+      settings = await api('/api/settings');
+    } catch {}
+    if (settings) {
+      renderWhatsAppGroups({ groups: [] }, settings);
+    }
+    const container = document.getElementById('waGroups');
+    const sourceContainer = document.getElementById('waSourceGroups');
+    if (container) container.textContent = 'Erro ao carregar grupos. Selecao salva mantida.';
+    if (sourceContainer) sourceContainer.textContent = 'Erro ao carregar grupos. Selecao salva mantida.';
+  }
+}
+
+async function refreshWhatsAppGroups(){
+  await loadWhatsAppGroups();
+}
+
+function showAllWhatsAppGroups(){
+  const search = document.getElementById('waDestSearch');
+  if (search) search.value = '';
+  if (window.__waPayload && window.__settingsCache) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache);
+  } else {
+    loadWhatsAppGroups();
+  }
+}
+
+function showAllWhatsAppSourceGroups(){
+  const search = document.getElementById('waSourceSearch');
+  if (search) search.value = '';
+  if (window.__waPayload && window.__settingsCache) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache);
+  } else {
+    loadWhatsAppGroups();
+  }
+}
+
+function normalizeDestRef(dest){
+  return (dest || '').replace(/\s+/g, '');
+}
+
+function buildMediaIndex(items){
+  const index = {};
+  if (!items) return index;
+  items.forEach(item => {
+    const origin = item.originChatId ?? '';
+    const dest = normalizeDestRef(item.destinationChatRef || '');
+    const key = `${origin}|${dest}`;
+    if (!index[key]) index[key] = [];
+    index[key].push(item);
+  });
+  Object.keys(index).forEach(key => {
+    index[key].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  });
+  return index;
+}
+
+function getMediaStatusForLog(log){
+  if (!window.__mediaIndex) return null;
+  const origin = log.originChatId ?? '';
+  const dest = normalizeDestRef(log.destinationChatRef || '');
+  const key = `${origin}|${dest}`;
+  const candidates = window.__mediaIndex[key] || window.__mediaIndex[`${origin}|`];
+  if (!candidates || candidates.length === 0 || !log.timestamp) return null;
+  const target = new Date(log.timestamp).getTime();
+  const windowMs = 10 * 60 * 1000;
+  let best = null;
+  let bestDelta = Number.MAX_SAFE_INTEGER;
+  for (const entry of candidates) {
+    if (!entry.timestamp) continue;
+    const ts = new Date(entry.timestamp).getTime();
+    const delta = Math.abs(ts - target);
+    if (delta <= windowMs && delta < bestDelta) {
+      best = entry;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
+function formatMediaBadge(media){
+  if (!media) return '<span class="badge muted">-</span>';
+  if (media.reason === 'media_disabled_text_only') return '<span class="badge warn">Desativado</span>';
+  if (media.reason === 'media_missing_text_only') return '<span class="badge warn">Sem mídia</span>';
+  return media.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">Falha</span>';
+}
+
+function renderConversionLogs(items){
+  const tbody = document.getElementById('logTableBody');
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="14" class="muted">Nenhum log encontrado.</td></tr>';
+    return;
+  }
+
+  window.__lastConversionLogs = items;
+  tbody.innerHTML = items.map(item => {
+    const when = item.timestamp ? new Date(item.timestamp).toLocaleString() : '-';
+    const status = item.success ? '<span class="badge ok">Sucesso</span>' : '<span class="badge bad">Falha</span>';
+    const clicks = (item.clicks ?? '-') === 0 ? '0' : (item.clicks ?? '-');
+    const validationOk = item.isAffiliated !== false;
+    const validationBadge = validationOk
+      ? '<span class="badge ok">OK</span>'
+      : '<span class="badge bad">Invalido</span>';
+    const correctionApplied = !!item.affiliateCorrected;
+    const correctionBadge = correctionApplied
+      ? '<span class="badge warn">Corrigido</span>'
+      : '<span class="badge muted">-</span>';
+    const correctionNote = item.affiliateCorrectionNote || '';
+    const errorText = item.error || item.validationError || '';
+    const errorBadge = errorText
+      ? `<button class="secondary log-error" data-error="${encodeURIComponent(errorText)}">Ver erro</button>`
+      : '<span class="muted">-</span>';
+    const origin = item.originChatRef || item.originChatId || '-';
+    const dest = item.destinationChatRef || item.destinationChatId || '-';
+    const originDest = `${origin} -> ${dest}`;
+    const rowClass = validationOk ? '' : 'invalid';
+    const original = item.originalUrl || '-';
+    const converted = item.convertedUrl || '-';
+    const mediaInfo = getMediaStatusForLog(item);
+    const mediaBadge = formatMediaBadge(mediaInfo);
+    const mediaDetail = mediaInfo?.reason || '-';
+    return `
+      <tr class="${rowClass}">
+        <td><small>${item.id || '-'}</small></td>
+        <td>${when}</td>
+        <td>${item.store || '-'}</td>
+        <td>${status}</td>
+        <td>${mediaBadge}<div class="muted"><small>${mediaDetail}</small></div></td>
+        <td>${clicks}</td>
+        <td>${validationBadge}</td>
+        <td>${correctionBadge}<div class="muted"><small>${correctionNote || '-'}</small></div></td>
+        <td>${errorBadge}</td>
+        <td><small>${originDest}</small></td>
+        <td><small>${original}</small></td>
+        <td><small>${converted}</small></td>
+        <td>
+          <button class="copy-btn" data-copy="${encodeURIComponent(original)}">Copiar original</button>
+          <button class="copy-btn" data-copy="${encodeURIComponent(converted)}">Copiar convertido</button>
+        </td>
+        <td>${item.elapsedMs ?? '-'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.log-error').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      const err = decodeURIComponent(ev.currentTarget.getAttribute('data-error') || '');
+      if (err) alert(err);
+    });
+  });
+
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      const val = decodeURIComponent(ev.currentTarget.getAttribute('data-copy') || '');
+      if (!val || val === '-') return;
+      try {
+        await navigator.clipboard.writeText(val);
+      } catch {
+        const area = document.createElement('textarea');
+        area.value = val;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        document.body.removeChild(area);
+      }
+    });
+  });
+}
+
+async function loadConversionLogs(){
+  try {
+    const store = document.getElementById('logStore').value;
+    const q = document.getElementById('logSearch').value;
+    const limit = document.getElementById('logLimit').value || '200';
+    const successFilter = document.getElementById('logSuccess').value;
+    const params = new URLSearchParams();
+    if (store) params.set('store', store);
+    if (q) params.set('q', q);
+    if (limit) params.set('limit', limit);
+    const payload = await api('/api/logs/conversions?' + params.toString());
+    let items = payload.items || [];
+    if (successFilter !== '') {
+      const expected = successFilter === 'true';
+      items = items.filter(i => !!i.success === expected);
+    }
+    const invalid = items.filter(i => i.isAffiliated === false);
+    const corrected = items.filter(i => i.affiliateCorrected);
+    document.getElementById('logStatus').textContent = `Exibindo ${items.length} registros.`;
+    const alert = document.getElementById('logAlert');
+    if (invalid.length > 0 || corrected.length > 0) {
+      const parts = [];
+      if (invalid.length > 0) parts.push(`Atenção: ${invalid.length} link(s) inválido(s) sem afiliado.`);
+      if (corrected.length > 0) parts.push(`Correções aplicadas: ${corrected.length}.`);
+      alert.textContent = parts.join(' ');
+      alert.classList.remove('hidden');
+    } else {
+      alert.textContent = '';
+      alert.classList.add('hidden');
+    }
+    const statLogs = document.getElementById('statLogs');
+    if (statLogs) statLogs.textContent = items.length.toString();
+    const badge = document.getElementById('logsBadge');
+    if (badge) {
+      if (invalid.length > 0) {
+        badge.textContent = invalid.length.toString();
+        badge.classList.remove('hidden');
+      } else {
+        badge.textContent = '0';
+        badge.classList.add('hidden');
+      }
+    }
+    renderConversionLogs(items);
+  } catch (e) {
+    document.getElementById('logStatus').textContent = 'Erro ao carregar logs.';
+  }
+}
+
+async function loadMediaFailures(){
+  try {
+    const payload = await api('/api/logs/media?limit=50');
+    const items = payload.items || [];
+    window.__mediaLogCache = items;
+    window.__mediaIndex = buildMediaIndex(items);
+    const alert = document.getElementById('mediaAlert');
+    const tbody = document.getElementById('mediaTableBody');
+    if (!tbody) return;
+    if (alert) {
+      if (items.length === 0) {
+        alert.textContent = '';
+        alert.classList.add('hidden');
+      } else {
+        const latest = items[0];
+        alert.textContent = `Log de mídia: ${items.length}. Última: ${new Date(latest.timestamp).toLocaleString()} (${latest.destinationChatRef || '-'})`;
+        alert.classList.remove('hidden');
+      }
+    }
+    const healthMedia = document.getElementById('healthMedia');
+    const healthMediaDetail = document.getElementById('healthMediaDetail');
+    if (healthMedia) {
+      if (items.length === 0) {
+        healthMedia.textContent = 'Sem dados';
+        healthMedia.className = 'badge muted';
+        if (healthMediaDetail) healthMediaDetail.textContent = '-';
+      } else {
+        const latest = items[0];
+        healthMedia.textContent = latest.success ? 'OK' : 'Falha';
+        healthMedia.className = 'badge ' + (latest.success ? 'ok' : 'bad');
+        if (healthMediaDetail) {
+          healthMediaDetail.textContent = `${latest.reason || '-'} | ${latest.detail || '-'}`;
+        }
+      }
+    }
+    if (tbody) {
+      if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="muted">Nenhum registro recente.</td></tr>';
+      } else {
+        tbody.innerHTML = items.map(item => {
+          const when = item.timestamp ? new Date(item.timestamp).toLocaleString() : '-';
+          const origin = item.originChatId || '-';
+          const dest = item.destinationChatRef || '-';
+          const reason = item.reason || '-';
+          const detail = item.detail || '-';
+          const status = item.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">Falha</span>';
+          const line = `${when} | ${origin} -> ${dest} | ${item.success ? 'OK' : 'Falha'} | ${reason} | ${detail}`;
+          return `
+            <tr>
+              <td>${when}</td>
+              <td><small>${origin}</small></td>
+              <td><small>${dest}</small></td>
+              <td>${status}</td>
+              <td>${reason}</td>
+              <td><small>${detail}</small></td>
+              <td><button class="copy-btn copy-media" data-copy="${encodeURIComponent(line)}">Copiar linha</button></td>
+            </tr>
+          `;
+        }).join('');
+        document.querySelectorAll('.copy-media').forEach(btn => {
+          btn.addEventListener('click', async (ev) => {
+            const val = decodeURIComponent(ev.currentTarget.getAttribute('data-copy') || '');
+            if (!val) return;
+            try {
+              await navigator.clipboard.writeText(val);
+            } catch {
+              const area = document.createElement('textarea');
+              area.value = val;
+              document.body.appendChild(area);
+              area.select();
+              document.execCommand('copy');
+              document.body.removeChild(area);
+            }
+          });
+        });
+      }
+    }
+    if (window.__lastConversionLogs) {
+      renderConversionLogs(window.__lastConversionLogs);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function clearConversionLogs(){
+  await api('/api/logs/conversions/clear', 'POST', {});
+  await loadConversionLogs();
+}
+
+async function clearMediaFailures(){
+  await api('/api/logs/media/clear', 'POST', {});
+  await loadMediaFailures();
+}
+
+loadTheme();
 checkSession();
 </script>
 </body>
 </html>
+
+
+
+

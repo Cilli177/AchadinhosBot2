@@ -14,4 +14,7 @@ public sealed class EvolutionOptions
     public string InstanceName { get; init; } = "achadinhos-next";
 
     public string? WebhookSecret { get; init; }
+    public string? GroupsEndpoint { get; init; }
+    public string? SendTextEndpoint { get; init; }
+    public string? SendImageEndpoint { get; init; }
 }

@@ -98,6 +98,14 @@ public sealed class WebhookServerService : BackgroundService
             if (path == "/api/settings" && method == HttpMethod.Get.Method)
             {
                 var settings = await _settingsStore.GetAsync(ct);
+                if (!string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
+                {
+                    settings.OpenAI.ApiKey = "********";
+                }
+                if (!string.IsNullOrWhiteSpace(settings.Gemini?.ApiKey))
+                {
+                    settings.Gemini.ApiKey = "********";
+                }
                 await WriteJsonAsync(context.Response, settings, ct);
                 return;
             }
@@ -110,6 +118,33 @@ public sealed class WebhookServerService : BackgroundService
                     context.Response.StatusCode = 400;
                     await WriteJsonAsync(context.Response, new { success = false, error = "json inválido" }, ct);
                     return;
+                }
+
+                var current = await _settingsStore.GetAsync(ct);
+                if (payload.OpenAI is null)
+                {
+                    payload.OpenAI = current.OpenAI ?? new OpenAISettings();
+                }
+                else
+                {
+                    var key = payload.OpenAI.ApiKey;
+                    if (string.IsNullOrWhiteSpace(key) || key == "********")
+                    {
+                        payload.OpenAI.ApiKey = current.OpenAI?.ApiKey;
+                    }
+                }
+
+                if (payload.Gemini is null)
+                {
+                    payload.Gemini = current.Gemini ?? new GeminiSettings();
+                }
+                else
+                {
+                    var key = payload.Gemini.ApiKey;
+                    if (string.IsNullOrWhiteSpace(key) || key == "********")
+                    {
+                        payload.Gemini.ApiKey = current.Gemini?.ApiKey;
+                    }
                 }
 
                 await _settingsStore.SaveAsync(payload, ct);

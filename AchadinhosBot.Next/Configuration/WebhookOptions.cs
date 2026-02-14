@@ -9,4 +9,6 @@ public sealed class WebhookOptions
 
     [Required]
     public string ApiKey { get; init; } = string.Empty;
+
+    public string? PublicBaseUrl { get; init; }
 }
