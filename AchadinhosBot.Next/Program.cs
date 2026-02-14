@@ -601,6 +601,9 @@ app.MapPost("/webhook/instagram", async (
     IInstagramPublishStore publishStore,
     IInstagramCommentStore commentStore,
     IInstagramPublishLogStore publishLogStore,
+    IHttpClientFactory httpClientFactory,
+    IIdempotencyStore idempotency,
+    ILogger<Program> logger,
     CancellationToken ct) =>
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
@@ -608,20 +611,95 @@ app.MapPost("/webhook/instagram", async (
 
     var settings = await store.GetAsync(ct);
     var publishSettings = settings.InstagramPublish ?? new InstagramPublishSettings();
-    var pending = await commentStore.ListPendingAsync(ct);
 
     foreach (var comment in ExtractInstagramComments(body))
     {
-        if (pending.Any(x => x.CommentId == comment.CommentId)) continue;
+        if (!string.IsNullOrWhiteSpace(comment.CommentId))
+        {
+            var key = $"ig-comment:{comment.CommentId}";
+            if (!idempotency.TryBegin(key, TimeSpan.FromDays(7)))
+            {
+                continue;
+            }
+        }
+
         var draft = await FindDraftByMediaIdAsync(publishStore, comment.MediaId, ct);
-        comment.SuggestedReply = BuildSuggestedReply(draft, publishSettings, comment.Text);
+        var cta = ResolveInstagramCtaReply(draft, publishSettings, comment.Text);
+        comment.SuggestedReply = cta.Reply;
+        comment.MatchedKeyword = cta.Keyword;
+        comment.MatchedLink = cta.Link;
+
+        var autoReplyAllowed = publishSettings.AutoReplyEnabled &&
+                               !string.IsNullOrWhiteSpace(cta.Reply) &&
+                               (!publishSettings.AutoReplyOnlyOnKeywordMatch || cta.HasKeywordMatch);
+
+        if (autoReplyAllowed)
+        {
+            if (string.IsNullOrWhiteSpace(publishSettings.AccessToken) || publishSettings.AccessToken == "********")
+            {
+                comment.DmStatus = "skipped";
+                comment.DmError = "Access token nao configurado para auto reply.";
+                logger.LogWarning("Instagram auto-reply ignorado: access token ausente.");
+            }
+            else
+            {
+                var replied = await ReplyToInstagramCommentAsync(
+                    httpClientFactory,
+                    publishSettings.GraphBaseUrl,
+                    comment.CommentId,
+                    cta.Reply,
+                    publishSettings.AccessToken!,
+                    ct);
+
+                if (replied)
+                {
+                    comment.Status = "approved";
+                    comment.ApprovedReply = cta.Reply;
+                    await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                    {
+                        Action = "comment_reply_auto",
+                        Success = true,
+                        MediaId = comment.MediaId,
+                        Details = $"CommentId={comment.CommentId},Keyword={cta.Keyword}"
+                    }, ct);
+
+                    if (publishSettings.AutoDmEnabled && cta.HasKeywordMatch)
+                    {
+                        var dmMessage = BuildInstagramDmMessage(publishSettings, comment, cta);
+                        var dmResult = await SendInstagramAutoDmAsync(httpClientFactory, publishSettings, comment, dmMessage, ct);
+                        comment.DmStatus = dmResult.Success ? "sent" : "failed";
+                        comment.DmError = dmResult.Error;
+                        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                        {
+                            Action = "comment_dm_auto",
+                            Success = dmResult.Success,
+                            MediaId = comment.MediaId,
+                            Error = dmResult.Success ? null : dmResult.Error,
+                            Details = $"CommentId={comment.CommentId},Provider={dmResult.Provider},Keyword={cta.Keyword}"
+                        }, ct);
+                    }
+                }
+                else
+                {
+                    await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                    {
+                        Action = "comment_reply_auto",
+                        Success = false,
+                        MediaId = comment.MediaId,
+                        Error = "Falha ao responder comentario automaticamente.",
+                        Details = $"CommentId={comment.CommentId},Keyword={cta.Keyword}"
+                    }, ct);
+                }
+            }
+        }
+
         await commentStore.AddAsync(comment, ct);
         await publishLogStore.AppendAsync(new InstagramPublishLogEntry
         {
             Action = "comment_received",
             Success = true,
             MediaId = comment.MediaId,
-            Details = $"CommentId={comment.CommentId}"
+            Details = $"CommentId={comment.CommentId},AutoReply={autoReplyAllowed},AutoDm={publishSettings.AutoDmEnabled}"
         }, ct);
     }
 
@@ -644,6 +722,10 @@ api.MapGet("/settings", async (ISettingsStore store, CancellationToken ct) =>
     if (!string.IsNullOrWhiteSpace(settings.InstagramPublish?.AccessToken))
     {
         settings.InstagramPublish.AccessToken = "********";
+    }
+    if (!string.IsNullOrWhiteSpace(settings.InstagramPublish?.ManyChatApiKey))
+    {
+        settings.InstagramPublish.ManyChatApiKey = "********";
     }
     return Results.Ok(settings);
 });
@@ -698,6 +780,12 @@ api.MapPut("/settings", async (
         if (string.IsNullOrWhiteSpace(key) || key == "********")
         {
             payload.InstagramPublish.AccessToken = current.InstagramPublish?.AccessToken;
+        }
+
+        var manyChatKey = payload.InstagramPublish.ManyChatApiKey;
+        if (string.IsNullOrWhiteSpace(manyChatKey) || manyChatKey == "********")
+        {
+            payload.InstagramPublish.ManyChatApiKey = current.InstagramPublish?.ManyChatApiKey;
         }
     }
 
@@ -1583,7 +1671,8 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             }
 
             var instaSettings = settings.InstagramPosts ?? new InstagramPostSettings();
-            var input = command.Argument.Trim();
+            var parsedCreate = ParseInstagramCreateInput(command.Argument);
+            var input = parsedCreate.Input;
             var postText = await instagramComposer.BuildAsync(input, null, instaSettings, ct);
             var (caption, hashtags) = ExtractInstagramCaptionAndHashtags(postText);
             if (string.IsNullOrWhiteSpace(caption))
@@ -1611,11 +1700,18 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var ctas = new List<InstagramCtaOption>();
             if (!string.IsNullOrWhiteSpace(link))
             {
-                ctas.Add(new InstagramCtaOption
+                var keywords = parsedCreate.CtaKeywords.Count > 0
+                    ? parsedCreate.CtaKeywords
+                    : BuildDefaultCtaKeywords(BuildInstagramDraftProductName(input, postText));
+
+                foreach (var keyword in keywords.Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    Keyword = "link",
-                    Link = link
-                });
+                    ctas.Add(new InstagramCtaOption
+                    {
+                        Keyword = keyword,
+                        Link = link
+                    });
+                }
             }
 
             var draft = new InstagramPublishDraft
@@ -1639,7 +1735,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
             var responses = new List<string>
             {
-                $"Rascunho criado: {draft.Id}\nProduto: {draft.ProductName}\nImagens: {draft.ImageUrls.Count}\nComandos: /ig revisar {shortId} | /ig confirmar {shortId}",
+                $"Rascunho criado: {draft.Id}\nProduto: {draft.ProductName}\nImagens: {draft.ImageUrls.Count}\nCTAs: {(draft.Ctas.Count == 0 ? "nenhum" : string.Join(", ", draft.Ctas.Select(c => c.Keyword)))}\nComandos: /ig revisar {shortId} | /ig confirmar {shortId}",
                 $"Legenda:\n{draft.Caption}"
             };
             if (!string.IsNullOrWhiteSpace(draft.Hashtags))
@@ -1744,7 +1840,7 @@ static string BuildInstagramCommandHelp()
     return string.Join('\n', new[]
     {
         "Comandos Instagram via WhatsApp:",
-        "/ig criar <produto ou link>",
+        "/ig criar <produto ou link> cta=palavra1,palavra2",
         "/ig revisar <id|ultimo>",
         "/ig confirmar <id|ultimo>"
     });
@@ -1796,6 +1892,52 @@ static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)
     }
 
     return sb.ToString().Trim();
+}
+
+static InstagramCreateInput ParseInstagramCreateInput(string raw)
+{
+    var input = raw?.Trim() ?? string.Empty;
+    var keywords = new List<string>();
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return new InstagramCreateInput(string.Empty, keywords);
+    }
+
+    var match = Regex.Match(input, @"\s+cta\s*[:=]\s*(?<keywords>.+)$", RegexOptions.IgnoreCase);
+    if (match.Success && match.Groups["keywords"].Success)
+    {
+        var value = match.Groups["keywords"].Value.Trim();
+        input = input[..match.Index].Trim();
+        keywords = value
+            .Split([',', ';', '|'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(10)
+            .ToList();
+    }
+
+    return new InstagramCreateInput(input, keywords);
+}
+
+static List<string> BuildDefaultCtaKeywords(string productName)
+{
+    var list = new List<string> { "link" };
+    if (string.IsNullOrWhiteSpace(productName))
+    {
+        return list;
+    }
+
+    var normalized = Regex.Replace(productName, @"[^\w\s]", " ");
+    var parts = normalized
+        .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(x => x.Trim().ToLowerInvariant())
+        .Where(x => x.Length >= 3)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Take(3);
+
+    list.AddRange(parts);
+    return list.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 }
 
 static string BuildInstagramDraftProductName(string input, string postText)
@@ -2559,9 +2701,11 @@ static IEnumerable<InstagramCommentPending> ExtractInstagramComments(string json
                 mediaId = string.IsNullOrWhiteSpace(mediaId) ? GetString(value, "media_id") ?? string.Empty : mediaId;
 
                 var from = string.Empty;
+                var fromId = string.Empty;
                 if (value.TryGetProperty("from", out var fromNode))
                 {
                     from = GetString(fromNode, "username", "name") ?? string.Empty;
+                    fromId = GetString(fromNode, "id") ?? string.Empty;
                 }
 
                 if (!string.IsNullOrWhiteSpace(commentId))
@@ -2571,7 +2715,8 @@ static IEnumerable<InstagramCommentPending> ExtractInstagramComments(string json
                         CommentId = commentId,
                         MediaId = mediaId,
                         Text = text,
-                        From = from
+                        From = from,
+                        FromId = string.IsNullOrWhiteSpace(fromId) ? null : fromId
                     });
                 }
             }
@@ -2588,12 +2733,12 @@ static async Task<InstagramPublishDraft?> FindDraftByMediaIdAsync(IInstagramPubl
     return items.FirstOrDefault(x => string.Equals(x.MediaId, mediaId, StringComparison.OrdinalIgnoreCase));
 }
 
-static string BuildSuggestedReply(InstagramPublishDraft? draft, InstagramPublishSettings settings, string commentText)
+static InstagramCtaResolution ResolveInstagramCtaReply(InstagramPublishDraft? draft, InstagramPublishSettings settings, string commentText)
 {
     var defaultReply = settings.ReplyNoMatchTemplate ?? string.Empty;
     if (draft is null || draft.Ctas.Count == 0)
     {
-        return defaultReply;
+        return new InstagramCtaResolution(defaultReply, false, null, null);
     }
 
     var text = commentText ?? string.Empty;
@@ -2602,14 +2747,164 @@ static string BuildSuggestedReply(InstagramPublishDraft? draft, InstagramPublish
     {
         match = draft.Ctas[0];
     }
+
     if (match is null)
     {
-        return defaultReply;
+        return new InstagramCtaResolution(defaultReply, false, null, null);
     }
 
     var template = settings.ReplyTemplate ?? "Aqui esta o link: {link}";
-    return template.Replace("{link}", match.Link ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-                   .Replace("{keyword}", match.Keyword ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    var reply = template.Replace("{link}", match.Link ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                        .Replace("{keyword}", match.Keyword ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+    return new InstagramCtaResolution(reply, true, match.Keyword, match.Link);
+}
+
+static string BuildInstagramDmMessage(InstagramPublishSettings settings, InstagramCommentPending comment, InstagramCtaResolution cta)
+{
+    var template = settings.DmTemplate;
+    if (string.IsNullOrWhiteSpace(template))
+    {
+        template = "Oi {name}! Aqui esta seu link: {link}";
+    }
+
+    return template.Replace("{link}", cta.Link ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                   .Replace("{keyword}", cta.Keyword ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                   .Replace("{name}", comment.From ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                   .Replace("{comment}", comment.Text ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+}
+
+static async Task<InstagramDmSendResult> SendInstagramAutoDmAsync(
+    IHttpClientFactory httpClientFactory,
+    InstagramPublishSettings settings,
+    InstagramCommentPending comment,
+    string message,
+    CancellationToken ct)
+{
+    var provider = (settings.DmProvider ?? "meta").Trim().ToLowerInvariant();
+    if (provider == "manychat")
+    {
+        return await SendManyChatDmAsync(httpClientFactory, settings, comment, message, ct);
+    }
+
+    var metaResult = await SendMetaInstagramDmAsync(httpClientFactory, settings, comment, message, ct);
+    if (metaResult.Success)
+    {
+        return metaResult;
+    }
+
+    if (settings.DmFallbackToManyChatOnError)
+    {
+        var manyChatResult = await SendManyChatDmAsync(httpClientFactory, settings, comment, message, ct);
+        if (manyChatResult.Success)
+        {
+            return new InstagramDmSendResult(true, manyChatResult.Provider, null);
+        }
+
+        var combinedError = string.Join(" | ", new[] { metaResult.Error, manyChatResult.Error }.Where(x => !string.IsNullOrWhiteSpace(x)));
+        return new InstagramDmSendResult(false, "meta+manychat", combinedError);
+    }
+
+    return metaResult;
+}
+
+static async Task<InstagramDmSendResult> SendMetaInstagramDmAsync(
+    IHttpClientFactory httpClientFactory,
+    InstagramPublishSettings settings,
+    InstagramCommentPending comment,
+    string message,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(comment.FromId))
+    {
+        return new InstagramDmSendResult(false, "meta", "Comment sem from.id para envio de DM.");
+    }
+    if (string.IsNullOrWhiteSpace(settings.AccessToken) || settings.AccessToken == "********")
+    {
+        return new InstagramDmSendResult(false, "meta", "Access token nao configurado.");
+    }
+    if (string.IsNullOrWhiteSpace(settings.InstagramUserId))
+    {
+        return new InstagramDmSendResult(false, "meta", "Instagram user id nao configurado.");
+    }
+
+    var client = httpClientFactory.CreateClient("default");
+    var baseUrl = string.IsNullOrWhiteSpace(settings.GraphBaseUrl) ? "https://graph.facebook.com/v19.0" : settings.GraphBaseUrl.TrimEnd('/');
+    var url = $"{baseUrl}/{settings.InstagramUserId}/messages";
+    var data = new Dictionary<string, string>
+    {
+        ["recipient"] = $"{{\"id\":\"{comment.FromId}\"}}",
+        ["message"] = $"{{\"text\":\"{EscapeJsonValue(message)}\"}}",
+        ["access_token"] = settings.AccessToken!
+    };
+
+    using var response = await client.PostAsync(url, new FormUrlEncodedContent(data), ct);
+    var body = await response.Content.ReadAsStringAsync(ct);
+    if (response.IsSuccessStatusCode)
+    {
+        return new InstagramDmSendResult(true, "meta", null);
+    }
+
+    var graphError = ExtractGraphError(body);
+    return new InstagramDmSendResult(false, "meta", string.IsNullOrWhiteSpace(graphError) ? body : graphError);
+}
+
+static async Task<InstagramDmSendResult> SendManyChatDmAsync(
+    IHttpClientFactory httpClientFactory,
+    InstagramPublishSettings settings,
+    InstagramCommentPending comment,
+    string message,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(settings.ManyChatWebhookUrl))
+    {
+        return new InstagramDmSendResult(false, "manychat", "ManyChat webhook URL nao configurada.");
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient("default");
+        using var req = new HttpRequestMessage(HttpMethod.Post, settings.ManyChatWebhookUrl);
+        if (!string.IsNullOrWhiteSpace(settings.ManyChatApiKey) && settings.ManyChatApiKey != "********")
+        {
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ManyChatApiKey);
+        }
+
+        var payload = new
+        {
+            channel = "instagram",
+            eventName = "cta_dm",
+            from = comment.From,
+            fromId = comment.FromId,
+            commentId = comment.CommentId,
+            mediaId = comment.MediaId,
+            keyword = comment.MatchedKeyword,
+            link = comment.MatchedLink,
+            message
+        };
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var response = await client.SendAsync(req, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (response.IsSuccessStatusCode)
+        {
+            return new InstagramDmSendResult(true, "manychat", null);
+        }
+
+        return new InstagramDmSendResult(false, "manychat", $"{(int)response.StatusCode} {response.ReasonPhrase}: {body}");
+    }
+    catch (Exception ex)
+    {
+        return new InstagramDmSendResult(false, "manychat", ex.Message);
+    }
+}
+
+static string EscapeJsonValue(string value)
+{
+    return (value ?? string.Empty)
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("\"", "\\\"", StringComparison.Ordinal)
+        .Replace("\r", "\\r", StringComparison.Ordinal)
+        .Replace("\n", "\\n", StringComparison.Ordinal);
 }
 
 internal sealed record LoginRequest(string Username, string Password);
@@ -2618,7 +2913,10 @@ internal sealed record PlaygroundRequest(string Text);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
 internal sealed record WhatsAppIncomingMessage(string ChatId, string Text, bool FromMe, string? InstanceName, string? MessageId);
 internal sealed record InstagramWhatsAppCommand(string Action, string? Argument);
+internal sealed record InstagramCreateInput(string Input, List<string> CtaKeywords);
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);
+internal sealed record InstagramCtaResolution(string Reply, bool HasKeywordMatch, string? Keyword, string? Link);
+internal sealed record InstagramDmSendResult(bool Success, string Provider, string? Error);
 internal sealed record InstagramDraftRequest(
     string ProductName,
     string Caption,

@@ -810,6 +810,33 @@
         <input id="igPubReplyTemplate" placeholder="Aqui esta o link: {link}" />
         <label>Template quando nao houver match</label>
         <input id="igPubReplyNoMatch" placeholder="Comente a palavra correta para receber o link." />
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igPubAutoReplyEnabled" /><span class="slider"></span></label>
+          <span class="muted">Responder comentarios automaticamente</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igPubAutoReplyOnlyKeyword" /><span class="slider"></span></label>
+          <span class="muted">Somente quando palavra-chave bater</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igPubAutoDmEnabled" /><span class="slider"></span></label>
+          <span class="muted">Enviar DM automatica para CTA</span>
+        </div>
+        <label>Provedor DM</label>
+        <select id="igPubDmProvider">
+          <option value="meta">Meta Graph API</option>
+          <option value="manychat">ManyChat Webhook</option>
+        </select>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igPubDmFallbackManyChat" /><span class="slider"></span></label>
+          <span class="muted">Fallback para ManyChat quando Meta falhar</span>
+        </div>
+        <label>Template DM (usa {link}, {keyword}, {name}, {comment})</label>
+        <textarea id="igPubDmTemplate" rows="3" placeholder="Oi {name}! Aqui esta seu link: {link}"></textarea>
+        <label>ManyChat Webhook URL</label>
+        <input id="igPubManyChatWebhookUrl" placeholder="https://api.manychat.com/... ou webhook do fluxo" />
+        <label>ManyChat API Key (opcional)</label>
+        <input id="igPubManyChatApiKey" type="password" placeholder="Bearer token da integracao ManyChat" />
         <div class="row" style="margin-top:12px;">
           <button class="secondary" onclick="saveInstagramPublishSettings()">Salvar configuracoes</button>
           <button onclick="testInstagramPublish()">Testar conexao</button>
@@ -1419,6 +1446,22 @@ function renderSettings(s){
   if (igPubReplyTemplate) igPubReplyTemplate.value = igPub.replyTemplate || 'Aqui esta o link: {link}';
   const igPubReplyNoMatch = document.getElementById('igPubReplyNoMatch');
   if (igPubReplyNoMatch) igPubReplyNoMatch.value = igPub.replyNoMatchTemplate || 'Comente a palavra correta para receber o link.';
+  const igPubAutoReplyEnabled = document.getElementById('igPubAutoReplyEnabled');
+  if (igPubAutoReplyEnabled) igPubAutoReplyEnabled.checked = igPub.autoReplyEnabled ?? true;
+  const igPubAutoReplyOnlyKeyword = document.getElementById('igPubAutoReplyOnlyKeyword');
+  if (igPubAutoReplyOnlyKeyword) igPubAutoReplyOnlyKeyword.checked = igPub.autoReplyOnlyOnKeywordMatch ?? true;
+  const igPubAutoDmEnabled = document.getElementById('igPubAutoDmEnabled');
+  if (igPubAutoDmEnabled) igPubAutoDmEnabled.checked = !!igPub.autoDmEnabled;
+  const igPubDmProvider = document.getElementById('igPubDmProvider');
+  if (igPubDmProvider) igPubDmProvider.value = igPub.dmProvider || 'meta';
+  const igPubDmFallbackManyChat = document.getElementById('igPubDmFallbackManyChat');
+  if (igPubDmFallbackManyChat) igPubDmFallbackManyChat.checked = igPub.dmFallbackToManyChatOnError ?? true;
+  const igPubDmTemplate = document.getElementById('igPubDmTemplate');
+  if (igPubDmTemplate) igPubDmTemplate.value = igPub.dmTemplate || 'Oi {name}! Aqui esta seu link: {link}';
+  const igPubManyChatWebhookUrl = document.getElementById('igPubManyChatWebhookUrl');
+  if (igPubManyChatWebhookUrl) igPubManyChatWebhookUrl.value = igPub.manyChatWebhookUrl || '';
+  const igPubManyChatApiKey = document.getElementById('igPubManyChatApiKey');
+  if (igPubManyChatApiKey) igPubManyChatApiKey.value = igPub.manyChatApiKey ? '********' : '';
   const tgWaEnabled = document.getElementById('tgWaEnabled');
   if (tgWaEnabled) tgWaEnabled.checked = !!s.telegramToWhatsApp?.enabled;
   document.getElementById('waForwardEnabled').onchange = scheduleWhatsAppSave;
@@ -1776,6 +1819,14 @@ async function saveInstagramPublishSettings(){
   existing.instagramPublish.verifyToken = document.getElementById('igPubVerifyToken')?.value || '';
   existing.instagramPublish.replyTemplate = document.getElementById('igPubReplyTemplate')?.value || 'Aqui esta o link: {link}';
   existing.instagramPublish.replyNoMatchTemplate = document.getElementById('igPubReplyNoMatch')?.value || 'Comente a palavra correta para receber o link.';
+  existing.instagramPublish.autoReplyEnabled = document.getElementById('igPubAutoReplyEnabled')?.checked ?? true;
+  existing.instagramPublish.autoReplyOnlyOnKeywordMatch = document.getElementById('igPubAutoReplyOnlyKeyword')?.checked ?? true;
+  existing.instagramPublish.autoDmEnabled = document.getElementById('igPubAutoDmEnabled')?.checked ?? false;
+  existing.instagramPublish.dmProvider = document.getElementById('igPubDmProvider')?.value || 'meta';
+  existing.instagramPublish.dmFallbackToManyChatOnError = document.getElementById('igPubDmFallbackManyChat')?.checked ?? true;
+  existing.instagramPublish.dmTemplate = document.getElementById('igPubDmTemplate')?.value || 'Oi {name}! Aqui esta seu link: {link}';
+  existing.instagramPublish.manyChatWebhookUrl = document.getElementById('igPubManyChatWebhookUrl')?.value || '';
+  existing.instagramPublish.manyChatApiKey = document.getElementById('igPubManyChatApiKey')?.value || '';
 
   try {
     await api('/api/settings', 'PUT', existing);

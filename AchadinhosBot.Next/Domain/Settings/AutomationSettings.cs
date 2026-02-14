@@ -154,8 +154,16 @@ public sealed class InstagramPublishSettings
     public string? AccessToken { get; set; }
     public string? InstagramUserId { get; set; }
     public string? VerifyToken { get; set; }
+    public bool AutoReplyEnabled { get; set; } = true;
+    public bool AutoReplyOnlyOnKeywordMatch { get; set; } = true;
     public string ReplyTemplate { get; set; } = "Aqui esta o link: {link}";
     public string ReplyNoMatchTemplate { get; set; } = "Comente a palavra correta para receber o link.";
+    public bool AutoDmEnabled { get; set; }
+    public string DmProvider { get; set; } = "meta";
+    public bool DmFallbackToManyChatOnError { get; set; } = true;
+    public string DmTemplate { get; set; } = "Oi {name}! Aqui esta seu link: {link}";
+    public string? ManyChatWebhookUrl { get; set; }
+    public string? ManyChatApiKey { get; set; }
 }
 
 public enum InstagramOfferContextMode
