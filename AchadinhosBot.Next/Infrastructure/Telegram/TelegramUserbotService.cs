@@ -116,33 +116,73 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             };
         }
 
-        try
+        var retryCount = 0;
+        while (!stoppingToken.IsCancellationRequested)
         {
-            _client = new Client(Config);
-            await using (_client)
+            try
             {
-                _manager = _client.WithUpdateManager(OnUserbotUpdate);
-                await _client.LoginUserIfNeeded();
-                _selfUserId = _client.User?.id;
-                _ready = true;
-                _logger.LogInformation("TelegramUserbot conectado. UserId={UserId}. Session={SessionPath}", _selfUserId, sessionPath);
+                _client = new Client(Config);
+                await using (_client)
+                {
+                    _manager = _client.WithUpdateManager(OnUserbotUpdate);
+                    await _client.LoginUserIfNeeded();
+                    _selfUserId = _client.User?.id;
+                    _ready = true;
+                    retryCount = 0;
+                    _logger.LogInformation("TelegramUserbot conectado. UserId={UserId}. Session={SessionPath}", _selfUserId, sessionPath);
 
-                await RefreshDialogsAsync(stoppingToken);
-                await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+                    await RefreshDialogsAsync(stoppingToken);
+                    await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogInformation("TelegramUserbotService cancelado.");
+                break;
+            }
+            catch (Exception ex)
+            {
+                retryCount++;
+                var isBadMsg = IsBadMsgSessionOrClockError(ex);
+                var delay = GetRetryDelay(retryCount);
+                _logger.LogError(ex, "Falha no TelegramUserbotService. Tentativa={Attempt}, RetryEm={DelaySeconds}s", retryCount, delay.TotalSeconds);
+
+                if (isBadMsg)
+                {
+                    _logger.LogWarning(
+                        "TelegramUserbot retornou BadMsg/BadServerSalt. Normalmente indica sessao inconsistente ou horario do Windows fora de sincronia. " +
+                        "Verifique relogio/NTP e, se necessario, recrie o arquivo WTelegram.session.");
+                }
+
+                try
+                {
+                    await Task.Delay(delay, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+            finally
+            {
+                _ready = false;
+                _manager = null;
+                _client = null;
             }
         }
-        catch (OperationCanceledException)
-        {
-            _logger.LogInformation("TelegramUserbotService cancelado.");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Falha no TelegramUserbotService.");
-        }
-        finally
-        {
-            _ready = false;
-        }
+    }
+
+    private static bool IsBadMsgSessionOrClockError(Exception ex)
+    {
+        var dump = ex.ToString();
+        return dump.Contains("BadMsgNotification", StringComparison.OrdinalIgnoreCase)
+               || dump.Contains("BadServerSalt", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static TimeSpan GetRetryDelay(int retryCount)
+    {
+        var seconds = Math.Min(60, Math.Max(5, retryCount * 5));
+        return TimeSpan.FromSeconds(seconds);
     }
 
     public async Task<IReadOnlyList<TelegramUserbotChat>> GetDialogsAsync(CancellationToken cancellationToken)
