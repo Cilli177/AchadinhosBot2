@@ -327,6 +327,7 @@ app.MapPost("/webhook/bot-conversor", async (
     InstagramConversationStore instagramStore,
     InstagramLinkMetaService instagramMeta,
     InstagramImageDownloadService instagramImages,
+    IIdempotencyStore idempotency,
     IOptions<AffiliateOptions> affiliate,
     IOptions<WebhookOptions> webhookOptions,
     IHttpClientFactory httpClientFactory,
@@ -357,6 +358,15 @@ app.MapPost("/webhook/bot-conversor", async (
     var responderProcessed = 0;
     foreach (var msg in messages)
     {
+        if (!string.IsNullOrWhiteSpace(msg.MessageId))
+        {
+            var waEventKey = $"wa-msg:{msg.InstanceName ?? "default"}:{msg.ChatId}:{msg.MessageId}";
+            if (!idempotency.TryBegin(waEventKey, TimeSpan.FromHours(6)))
+            {
+                continue;
+            }
+        }
+
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
         if (TryParseInstagramWhatsAppCommand(msg.Text, out var igCommand))
@@ -391,7 +401,8 @@ app.MapPost("/webhook/bot-conversor", async (
             continue;
         }
 
-        if (!IsInstagramBotResponse(msg.Text) &&
+        if (!msg.FromMe &&
+            !IsInstagramBotResponse(msg.Text) &&
             instaSettings.Enabled &&
             instaSettings.AllowWhatsApp &&
             IsInstagramAllowed(instaSettings, msg.ChatId))
@@ -1311,14 +1322,16 @@ static List<WhatsAppIncomingMessage> ExtractEvolutionMessages(string body)
 
 static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, out WhatsAppIncomingMessage msg)
 {
-    msg = new WhatsAppIncomingMessage(string.Empty, string.Empty, false, instanceName);
+    msg = new WhatsAppIncomingMessage(string.Empty, string.Empty, false, instanceName, null);
 
     var chatId = string.Empty;
+    var messageId = string.Empty;
     var fromMe = false;
 
     if (node.TryGetProperty("key", out var key))
     {
         chatId = GetString(key, "remoteJid") ?? string.Empty;
+        messageId = GetString(key, "id") ?? string.Empty;
         fromMe = GetBool(key, "fromMe");
     }
 
@@ -1338,7 +1351,7 @@ static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, o
         return false;
     }
 
-    msg = new WhatsAppIncomingMessage(chatId, text, fromMe, instanceName);
+    msg = new WhatsAppIncomingMessage(chatId, text, fromMe, instanceName, string.IsNullOrWhiteSpace(messageId) ? null : messageId);
     return true;
 }
 
@@ -1401,7 +1414,7 @@ static bool IsInstagramTrigger(string text, List<string> triggers)
     foreach (var trigger in triggers)
     {
         if (string.IsNullOrWhiteSpace(trigger)) continue;
-        if (normalized.Contains(trigger, StringComparison.OrdinalIgnoreCase))
+        if (normalized.StartsWith(trigger.Trim(), StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -2085,10 +2098,10 @@ static bool TryGetInstagramInlineProduct(string text, List<string> triggers, out
     foreach (var trigger in triggers)
     {
         if (string.IsNullOrWhiteSpace(trigger)) continue;
-        var idx = normalized.IndexOf(trigger, StringComparison.OrdinalIgnoreCase);
-        if (idx < 0) continue;
+        var trimmedTrigger = trigger.Trim();
+        if (!normalized.StartsWith(trimmedTrigger, StringComparison.OrdinalIgnoreCase)) continue;
 
-        var remaining = normalized.Remove(idx, trigger.Length).Trim();
+        var remaining = normalized[trimmedTrigger.Length..].Trim();
         remaining = remaining.Trim('-', ':', '—', '–');
         if (!string.IsNullOrWhiteSpace(remaining))
         {
@@ -2603,7 +2616,7 @@ internal sealed record LoginRequest(string Username, string Password);
 internal sealed record ConvertRequest(string Text, string? Source);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
-internal sealed record WhatsAppIncomingMessage(string ChatId, string Text, bool FromMe, string? InstanceName);
+internal sealed record WhatsAppIncomingMessage(string ChatId, string Text, bool FromMe, string? InstanceName, string? MessageId);
 internal sealed record InstagramWhatsAppCommand(string Action, string? Argument);
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);
 internal sealed record InstagramDraftRequest(
