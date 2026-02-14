@@ -322,11 +322,14 @@ app.MapPost("/webhook/bot-conversor", async (
     IConversionLogStore conversionLogStore,
     ILinkTrackingStore linkTrackingStore,
     IInstagramPostComposer instagramComposer,
+    IInstagramPublishStore instagramPublishStore,
+    IInstagramPublishLogStore instagramPublishLogStore,
     InstagramConversationStore instagramStore,
     InstagramLinkMetaService instagramMeta,
     InstagramImageDownloadService instagramImages,
     IOptions<AffiliateOptions> affiliate,
     IOptions<WebhookOptions> webhookOptions,
+    IHttpClientFactory httpClientFactory,
     ILogger<Program> logger,
     CancellationToken ct) =>
 {
@@ -354,7 +357,40 @@ app.MapPost("/webhook/bot-conversor", async (
     var responderProcessed = 0;
     foreach (var msg in messages)
     {
+        var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
+        if (TryParseInstagramWhatsAppCommand(msg.Text, out var igCommand))
+        {
+            if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
+            {
+                await gateway.SendTextAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.", ct);
+                continue;
+            }
+
+            var commandResponses = await ExecuteInstagramWhatsAppCommandAsync(
+                igCommand,
+                msg.ChatId,
+                settings,
+                instagramComposer,
+                instagramPublishStore,
+                instagramPublishLogStore,
+                instagramMeta,
+                httpClientFactory,
+                mediaStore,
+                webhookOptions.Value.PublicBaseUrl,
+                ct);
+
+            foreach (var response in commandResponses)
+            {
+                foreach (var chunk in SplitLongMessage(response, 3000))
+                {
+                    await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
+                }
+            }
+
+            continue;
+        }
+
         if (!IsInstagramBotResponse(msg.Text) &&
             instaSettings.Enabled &&
             instaSettings.AllowWhatsApp &&
@@ -364,7 +400,6 @@ app.MapPost("/webhook/bot-conversor", async (
             if (instagramStore.TryConsume(instaKey, out var convo))
             {
                 var post = await instagramComposer.BuildAsync(msg.Text, convo.Context, instaSettings, ct);
-                var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
                 foreach (var chunk in SplitInstagramMessages(post))
                 {
                     await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
@@ -378,7 +413,6 @@ app.MapPost("/webhook/bot-conversor", async (
                 if (TryGetInstagramInlineProduct(msg.Text, instaSettings.Triggers, out var inlineProduct))
                 {
                     var post = await instagramComposer.BuildAsync(inlineProduct, null, instaSettings, ct);
-                    var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
                     foreach (var chunk in SplitInstagramMessages(post))
                     {
                         await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
@@ -388,7 +422,6 @@ app.MapPost("/webhook/bot-conversor", async (
                 else
                 {
                     instagramStore.SetPending(instaKey, msg.Text);
-                    var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
                     await gateway.SendTextAsync(responderInstance, msg.ChatId, "Qual produto? Envie o nome ou o link.", ct);
                 }
                 continue;
@@ -398,7 +431,6 @@ app.MapPost("/webhook/bot-conversor", async (
         var autoReply = GetAutoReply(settings, msg.Text);
         if (!msg.FromMe && !string.IsNullOrWhiteSpace(autoReply))
         {
-            var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
             var tracked = await ApplyTrackingAsync(autoReply, linkTrackingStore, webhookOptions.Value.PublicBaseUrl, responder.TrackingEnabled, ct);
             await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
             _ = conversionLogStore.AppendAsync(new ConversionLogEntry
@@ -446,7 +478,6 @@ app.MapPost("/webhook/bot-conversor", async (
 
                 var tracked = await ApplyTrackingAsync(replyText, linkTrackingStore, webhookOptions.Value.PublicBaseUrl, responder.TrackingEnabled, ct);
 
-                var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
                 await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
                 _ = conversionLogStore.AppendAsync(new ConversionLogEntry
                 {
@@ -463,7 +494,6 @@ app.MapPost("/webhook/bot-conversor", async (
             }
             else if (!IsWhatsAppGroupChat(msg.ChatId) && !string.IsNullOrWhiteSpace(responder.ReplyOnFailure))
             {
-                var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
                 await gateway.SendTextAsync(responderInstance, msg.ChatId, responder.ReplyOnFailure, ct);
                 responderProcessed++;
             }
@@ -808,84 +838,19 @@ api.MapPost("/instagram/publish/drafts/{id}/publish", async (
     CancellationToken ct) =>
 {
     var settings = await store.GetAsync(ct);
-    var publishSettings = settings.InstagramPublish ?? new InstagramPublishSettings();
-    if (!publishSettings.Enabled)
-    {
-        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
-        {
-            Action = "publish",
-            Success = false,
-            DraftId = id,
-            Error = "Publicacao Instagram desativada."
-        }, ct);
-        return Results.BadRequest(new { error = "Publicacao Instagram desativada." });
-    }
-    if (string.IsNullOrWhiteSpace(publishSettings.AccessToken) || publishSettings.AccessToken == "********")
-    {
-        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
-        {
-            Action = "publish",
-            Success = false,
-            DraftId = id,
-            Error = "Access token nao configurado."
-        }, ct);
-        return Results.BadRequest(new { error = "Access token nao configurado." });
-    }
-    if (string.IsNullOrWhiteSpace(publishSettings.InstagramUserId))
-    {
-        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
-        {
-            Action = "publish",
-            Success = false,
-            DraftId = id,
-            Error = "Instagram user id nao configurado."
-        }, ct);
-        return Results.BadRequest(new { error = "Instagram user id nao configurado." });
-    }
-
-    var draft = await publishStore.GetAsync(id, ct);
-    if (draft is null)
-    {
-        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
-        {
-            Action = "publish",
-            Success = false,
-            DraftId = id,
-            Error = "Rascunho nao encontrado."
-        }, ct);
-        return Results.NotFound();
-    }
-
-    var caption = BuildInstagramCaption(draft.Caption, draft.Hashtags);
-    var normalized = await NormalizeInstagramImagesAsync(httpClientFactory, mediaStore, webhookOptions.Value.PublicBaseUrl, draft.ImageUrls, ct);
-    if (normalized.Count > 0)
-    {
-        draft.ImageUrls = normalized;
-    }
-    var (ok, mediaId, error) = await PublishToInstagramAsync(
+    var publishResult = await PublishInstagramDraftAsync(
+        id,
+        settings.InstagramPublish ?? new InstagramPublishSettings(),
+        publishStore,
+        publishLogStore,
         httpClientFactory,
-        publishSettings.GraphBaseUrl,
-        publishSettings.InstagramUserId!,
-        publishSettings.AccessToken!,
-        draft.ImageUrls,
-        caption,
+        mediaStore,
+        webhookOptions.Value.PublicBaseUrl,
         ct);
 
-    draft.Status = ok ? "published" : "failed";
-    draft.MediaId = mediaId;
-    draft.Error = ok ? null : error;
-    await publishStore.UpdateAsync(draft, ct);
-    await publishLogStore.AppendAsync(new InstagramPublishLogEntry
-    {
-        Action = "publish",
-        Success = ok,
-        DraftId = draft.Id,
-        MediaId = mediaId,
-        Error = ok ? null : error,
-        Details = ok ? "Publicado com sucesso" : "Falha ao publicar"
-    }, ct);
-
-    return Results.Ok(new { success = ok, mediaId, error });
+    return Results.Json(
+        new { success = publishResult.Success, mediaId = publishResult.MediaId, error = publishResult.Error },
+        statusCode: publishResult.StatusCode);
 }).RequireAuthorization("AdminOnly");
 
 api.MapPost("/instagram/publish/test", async (
@@ -1444,6 +1409,55 @@ static bool IsInstagramTrigger(string text, List<string> triggers)
     return false;
 }
 
+static bool TryParseInstagramWhatsAppCommand(string text, out InstagramWhatsAppCommand command)
+{
+    command = new InstagramWhatsAppCommand("unknown", null);
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return false;
+    }
+
+    var trimmed = text.Trim();
+    string payload;
+    if (trimmed.StartsWith("/ig", StringComparison.OrdinalIgnoreCase))
+    {
+        payload = trimmed[3..].Trim();
+    }
+    else if (trimmed.StartsWith("ig ", StringComparison.OrdinalIgnoreCase))
+    {
+        payload = trimmed[2..].Trim();
+    }
+    else
+    {
+        return false;
+    }
+
+    if (string.IsNullOrWhiteSpace(payload))
+    {
+        command = new InstagramWhatsAppCommand("help", null);
+        return true;
+    }
+
+    var parts = payload.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    var action = parts[0].Trim().ToLowerInvariant();
+    var argument = parts.Length > 1 ? parts[1].Trim() : null;
+
+    command = action switch
+    {
+        "criar" => new InstagramWhatsAppCommand("create", argument),
+        "novo" => new InstagramWhatsAppCommand("create", argument),
+        "revisar" => new InstagramWhatsAppCommand("review", argument),
+        "status" => new InstagramWhatsAppCommand("review", argument),
+        "confirmar" => new InstagramWhatsAppCommand("confirm", argument),
+        "publicar" => new InstagramWhatsAppCommand("confirm", argument),
+        "ajuda" => new InstagramWhatsAppCommand("help", argument),
+        "help" => new InstagramWhatsAppCommand("help", argument),
+        _ => new InstagramWhatsAppCommand("unknown", payload)
+    };
+
+    return true;
+}
+
 static IEnumerable<string> SplitInstagramMessages(string text)
 {
     if (string.IsNullOrWhiteSpace(text))
@@ -1476,6 +1490,393 @@ static IEnumerable<string> SplitInstagramMessages(string text)
             yield return chunk;
         }
     }
+}
+
+static IEnumerable<string> SplitLongMessage(string text, int maxLength)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        yield break;
+    }
+
+    var normalized = text.Replace("\r", string.Empty);
+    if (normalized.Length <= maxLength)
+    {
+        yield return normalized;
+        yield break;
+    }
+
+    var lines = normalized.Split('\n');
+    var current = new StringBuilder();
+
+    foreach (var raw in lines)
+    {
+        var line = raw ?? string.Empty;
+        if (line.Length > maxLength)
+        {
+            if (current.Length > 0)
+            {
+                yield return current.ToString().TrimEnd();
+                current.Clear();
+            }
+
+            for (var i = 0; i < line.Length; i += maxLength)
+            {
+                var size = Math.Min(maxLength, line.Length - i);
+                yield return line.Substring(i, size);
+            }
+
+            continue;
+        }
+
+        if (current.Length + line.Length + 1 > maxLength)
+        {
+            yield return current.ToString().TrimEnd();
+            current.Clear();
+        }
+
+        current.AppendLine(line);
+    }
+
+    if (current.Length > 0)
+    {
+        yield return current.ToString().TrimEnd();
+    }
+}
+
+static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
+    InstagramWhatsAppCommand command,
+    string chatId,
+    AutomationSettings settings,
+    IInstagramPostComposer instagramComposer,
+    IInstagramPublishStore publishStore,
+    IInstagramPublishLogStore publishLogStore,
+    InstagramLinkMetaService instagramMeta,
+    IHttpClientFactory httpClientFactory,
+    IMediaStore mediaStore,
+    string? publicBaseUrl,
+    CancellationToken ct)
+{
+    switch (command.Action)
+    {
+        case "help":
+            return new[] { BuildInstagramCommandHelp() };
+
+        case "create":
+        {
+            if (string.IsNullOrWhiteSpace(command.Argument))
+            {
+                return new[] { "Uso: /ig criar <produto ou link>" };
+            }
+
+            var instaSettings = settings.InstagramPosts ?? new InstagramPostSettings();
+            var input = command.Argument.Trim();
+            var postText = await instagramComposer.BuildAsync(input, null, instaSettings, ct);
+            var (caption, hashtags) = ExtractInstagramCaptionAndHashtags(postText);
+            if (string.IsNullOrWhiteSpace(caption))
+            {
+                caption = postText.Trim();
+            }
+
+            if (caption.Length > 2200)
+            {
+                caption = caption[..2200].TrimEnd() + "...";
+            }
+
+            var link = ExtractFirstUrl(input) ?? ExtractLinkFromPost(postText);
+            var imageUrls = new List<string>();
+            if (!string.IsNullOrWhiteSpace(link))
+            {
+                var meta = await instagramMeta.GetMetaAsync(link, ct);
+                imageUrls = meta.Images
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(10)
+                    .ToList();
+            }
+
+            var ctas = new List<InstagramCtaOption>();
+            if (!string.IsNullOrWhiteSpace(link))
+            {
+                ctas.Add(new InstagramCtaOption
+                {
+                    Keyword = "link",
+                    Link = link
+                });
+            }
+
+            var draft = new InstagramPublishDraft
+            {
+                ProductName = BuildInstagramDraftProductName(input, postText),
+                Caption = caption,
+                Hashtags = hashtags,
+                ImageUrls = imageUrls,
+                Ctas = ctas
+            };
+
+            await publishStore.SaveAsync(draft, ct);
+            await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+            {
+                Action = "wa_command_draft_create",
+                Success = true,
+                DraftId = draft.Id,
+                Details = $"Chat={chatId},Images={draft.ImageUrls.Count},Ctas={draft.Ctas.Count}"
+            }, ct);
+
+            var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
+            var responses = new List<string>
+            {
+                $"Rascunho criado: {draft.Id}\nProduto: {draft.ProductName}\nImagens: {draft.ImageUrls.Count}\nComandos: /ig revisar {shortId} | /ig confirmar {shortId}",
+                $"Legenda:\n{draft.Caption}"
+            };
+            if (!string.IsNullOrWhiteSpace(draft.Hashtags))
+            {
+                responses.Add($"Hashtags:\n{draft.Hashtags}");
+            }
+
+            return responses;
+        }
+
+        case "review":
+        {
+            var (draft, error) = await ResolveInstagramDraftAsync(publishStore, command.Argument, ct);
+            if (draft is null)
+            {
+                return new[] { error ?? "Rascunho nao encontrado." };
+            }
+
+            return new[] { BuildInstagramDraftReviewMessage(draft) };
+        }
+
+        case "confirm":
+        {
+            var (draft, error) = await ResolveInstagramDraftAsync(publishStore, command.Argument, ct);
+            if (draft is null)
+            {
+                return new[] { error ?? "Rascunho nao encontrado." };
+            }
+
+            var publishResult = await PublishInstagramDraftAsync(
+                draft.Id,
+                settings.InstagramPublish ?? new InstagramPublishSettings(),
+                publishStore,
+                publishLogStore,
+                httpClientFactory,
+                mediaStore,
+                publicBaseUrl,
+                ct);
+
+            if (publishResult.Success)
+            {
+                return new[] { $"Publicado com sucesso.\nDraft: {draft.Id}\nMediaId: {publishResult.MediaId}" };
+            }
+
+            if (publishResult.StatusCode == StatusCodes.Status404NotFound)
+            {
+                return new[] { "Rascunho nao encontrado." };
+            }
+
+            return new[] { $"Falha ao publicar.\nDraft: {draft.Id}\nErro: {publishResult.Error ?? "erro desconhecido"}" };
+        }
+
+        default:
+            return new[] { "Comando /ig desconhecido.\n" + BuildInstagramCommandHelp() };
+    }
+}
+
+static async Task<(InstagramPublishDraft? Draft, string? Error)> ResolveInstagramDraftAsync(
+    IInstagramPublishStore publishStore,
+    string? idOrAlias,
+    CancellationToken ct)
+{
+    var items = await publishStore.ListAsync(ct);
+    if (items.Count == 0)
+    {
+        return (null, "Nenhum rascunho encontrado.");
+    }
+
+    var key = idOrAlias?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(key) || string.Equals(key, "ultimo", StringComparison.OrdinalIgnoreCase))
+    {
+        var latest = items.OrderByDescending(x => x.CreatedAt).FirstOrDefault();
+        return latest is null ? (null, "Nenhum rascunho encontrado.") : (latest, null);
+    }
+
+    var exact = items.FirstOrDefault(x => string.Equals(x.Id, key, StringComparison.OrdinalIgnoreCase));
+    if (exact is not null)
+    {
+        return (exact, null);
+    }
+
+    var byPrefix = items
+        .Where(x => x.Id.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(x => x.CreatedAt)
+        .ToList();
+
+    if (byPrefix.Count == 1)
+    {
+        return (byPrefix[0], null);
+    }
+
+    if (byPrefix.Count > 1)
+    {
+        return (null, "ID parcial ambiguo. Envie mais caracteres do draft.");
+    }
+
+    return (null, $"Rascunho '{key}' nao encontrado.");
+}
+
+static string BuildInstagramCommandHelp()
+{
+    return string.Join('\n', new[]
+    {
+        "Comandos Instagram via WhatsApp:",
+        "/ig criar <produto ou link>",
+        "/ig revisar <id|ultimo>",
+        "/ig confirmar <id|ultimo>"
+    });
+}
+
+static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine($"Draft: {draft.Id}");
+    sb.AppendLine($"Status: {draft.Status}");
+    sb.AppendLine($"Criado em: {draft.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC");
+    if (!string.IsNullOrWhiteSpace(draft.ProductName))
+    {
+        sb.AppendLine($"Produto: {draft.ProductName}");
+    }
+    sb.AppendLine($"Imagens: {draft.ImageUrls.Count}");
+    if (!string.IsNullOrWhiteSpace(draft.MediaId))
+    {
+        sb.AppendLine($"MediaId: {draft.MediaId}");
+    }
+    if (!string.IsNullOrWhiteSpace(draft.Error))
+    {
+        sb.AppendLine($"Erro: {draft.Error}");
+    }
+
+    sb.AppendLine();
+    sb.AppendLine("Legenda:");
+    sb.AppendLine(draft.Caption ?? string.Empty);
+
+    if (!string.IsNullOrWhiteSpace(draft.Hashtags))
+    {
+        sb.AppendLine();
+        sb.AppendLine("Hashtags:");
+        sb.AppendLine(draft.Hashtags);
+    }
+
+    if (draft.ImageUrls.Count > 0)
+    {
+        sb.AppendLine();
+        sb.AppendLine("Primeiras imagens:");
+        foreach (var url in draft.ImageUrls.Take(3))
+        {
+            sb.AppendLine(url);
+        }
+        if (draft.ImageUrls.Count > 3)
+        {
+            sb.AppendLine($"... +{draft.ImageUrls.Count - 3} imagens");
+        }
+    }
+
+    return sb.ToString().Trim();
+}
+
+static string BuildInstagramDraftProductName(string input, string postText)
+{
+    var cleaned = Regex.Replace(input ?? string.Empty, @"https?://\S+", string.Empty, RegexOptions.IgnoreCase).Trim();
+    if (!string.IsNullOrWhiteSpace(cleaned))
+    {
+        return cleaned.Length <= 120 ? cleaned : cleaned[..120].TrimEnd();
+    }
+
+    var productLine = postText.Replace("\r", string.Empty)
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .FirstOrDefault(x => x.StartsWith("Produto:", StringComparison.OrdinalIgnoreCase));
+    if (!string.IsNullOrWhiteSpace(productLine))
+    {
+        return productLine["Produto:".Length..].Trim();
+    }
+
+    return "Produto Instagram";
+}
+
+static (string Caption, string Hashtags) ExtractInstagramCaptionAndHashtags(string postText)
+{
+    if (string.IsNullOrWhiteSpace(postText))
+    {
+        return (string.Empty, string.Empty);
+    }
+
+    var lines = postText.Replace("\r", string.Empty).Split('\n');
+    var caption = ExtractInstagramSection(lines, line => Regex.IsMatch(line.Trim(), @"^Legenda\s+1\b", RegexOptions.IgnoreCase));
+    if (string.IsNullOrWhiteSpace(caption))
+    {
+        caption = ExtractInstagramSection(lines, line => Regex.IsMatch(line.Trim(), @"^Legenda\s+\d+\b", RegexOptions.IgnoreCase));
+    }
+
+    var hashtags = ExtractInstagramSection(lines, line => line.Trim().StartsWith("Hashtags sugeridas", StringComparison.OrdinalIgnoreCase));
+
+    if (string.IsNullOrWhiteSpace(caption))
+    {
+        caption = string.Join('\n', lines
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Where(x => !x.StartsWith("POST PARA INSTAGRAM", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !x.StartsWith("Produto:", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !x.StartsWith("Link afiliado:", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !IsInstagramSectionHeader(x))
+            .Take(10));
+    }
+
+    if (string.IsNullOrWhiteSpace(hashtags))
+    {
+        hashtags = string.Join(' ', Regex.Matches(postText, @"#\w+", RegexOptions.CultureInvariant)
+            .Select(m => m.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(20));
+    }
+
+    return (caption.Trim(), hashtags.Trim());
+}
+
+static string ExtractInstagramSection(string[] lines, Func<string, bool> isHeader)
+{
+    var headerIndex = Array.FindIndex(lines, line => isHeader(line ?? string.Empty));
+    if (headerIndex < 0)
+    {
+        return string.Empty;
+    }
+
+    var sb = new StringBuilder();
+    for (var i = headerIndex + 1; i < lines.Length; i++)
+    {
+        var line = (lines[i] ?? string.Empty).Trim();
+        if (IsInstagramSectionHeader(line))
+        {
+            break;
+        }
+
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            if (sb.Length > 0 && sb[^1] != '\n')
+            {
+                sb.AppendLine();
+            }
+            continue;
+        }
+
+        if (sb.Length > 0 && sb[^1] != '\n')
+        {
+            sb.AppendLine();
+        }
+        sb.Append(line);
+    }
+
+    return sb.ToString().Trim();
 }
 
 static async Task SendInstagramImagesIfAnyAsync(
@@ -1655,8 +2056,7 @@ static bool IsInstagramSectionHeader(string line)
 {
     if (string.IsNullOrWhiteSpace(line)) return false;
     var t = line.Trim();
-    return t.StartsWith("Legenda 1", StringComparison.OrdinalIgnoreCase)
-           || t.StartsWith("Legenda 2", StringComparison.OrdinalIgnoreCase)
+    return Regex.IsMatch(t, @"^Legenda\s+\d+\b", RegexOptions.IgnoreCase)
            || t.StartsWith("Hashtags sugeridas", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Sugestões de imagem", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Sugestoes de imagem", StringComparison.OrdinalIgnoreCase)
@@ -1852,6 +2252,102 @@ static bool GetBool(JsonElement node, string name)
     }
 
     return false;
+}
+
+static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
+    string id,
+    InstagramPublishSettings publishSettings,
+    IInstagramPublishStore publishStore,
+    IInstagramPublishLogStore publishLogStore,
+    IHttpClientFactory httpClientFactory,
+    IMediaStore mediaStore,
+    string? publicBaseUrl,
+    CancellationToken ct)
+{
+    if (!publishSettings.Enabled)
+    {
+        const string error = "Publicacao Instagram desativada.";
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "publish",
+            Success = false,
+            DraftId = id,
+            Error = error
+        }, ct);
+        return new InstagramPublishExecutionResult(false, StatusCodes.Status400BadRequest, null, error, id);
+    }
+
+    if (string.IsNullOrWhiteSpace(publishSettings.AccessToken) || publishSettings.AccessToken == "********")
+    {
+        const string error = "Access token nao configurado.";
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "publish",
+            Success = false,
+            DraftId = id,
+            Error = error
+        }, ct);
+        return new InstagramPublishExecutionResult(false, StatusCodes.Status400BadRequest, null, error, id);
+    }
+
+    if (string.IsNullOrWhiteSpace(publishSettings.InstagramUserId))
+    {
+        const string error = "Instagram user id nao configurado.";
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "publish",
+            Success = false,
+            DraftId = id,
+            Error = error
+        }, ct);
+        return new InstagramPublishExecutionResult(false, StatusCodes.Status400BadRequest, null, error, id);
+    }
+
+    var draft = await publishStore.GetAsync(id, ct);
+    if (draft is null)
+    {
+        const string error = "Rascunho nao encontrado.";
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "publish",
+            Success = false,
+            DraftId = id,
+            Error = error
+        }, ct);
+        return new InstagramPublishExecutionResult(false, StatusCodes.Status404NotFound, null, error, id);
+    }
+
+    var caption = BuildInstagramCaption(draft.Caption, draft.Hashtags);
+    var normalized = await NormalizeInstagramImagesAsync(httpClientFactory, mediaStore, publicBaseUrl, draft.ImageUrls, ct);
+    if (normalized.Count > 0)
+    {
+        draft.ImageUrls = normalized;
+    }
+
+    var (ok, mediaId, errorMessage) = await PublishToInstagramAsync(
+        httpClientFactory,
+        publishSettings.GraphBaseUrl,
+        publishSettings.InstagramUserId!,
+        publishSettings.AccessToken!,
+        draft.ImageUrls,
+        caption,
+        ct);
+
+    draft.Status = ok ? "published" : "failed";
+    draft.MediaId = mediaId;
+    draft.Error = ok ? null : errorMessage;
+    await publishStore.UpdateAsync(draft, ct);
+    await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+    {
+        Action = "publish",
+        Success = ok,
+        DraftId = draft.Id,
+        MediaId = mediaId,
+        Error = ok ? null : errorMessage,
+        Details = ok ? "Publicado com sucesso" : "Falha ao publicar"
+    }, ct);
+
+    return new InstagramPublishExecutionResult(ok, StatusCodes.Status200OK, mediaId, errorMessage, draft.Id);
 }
 
 static string BuildInstagramCaption(string caption, string hashtags)
@@ -2108,6 +2604,8 @@ internal sealed record ConvertRequest(string Text, string? Source);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
 internal sealed record WhatsAppIncomingMessage(string ChatId, string Text, bool FromMe, string? InstanceName);
+internal sealed record InstagramWhatsAppCommand(string Action, string? Argument);
+internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);
 internal sealed record InstagramDraftRequest(
     string ProductName,
     string Caption,
