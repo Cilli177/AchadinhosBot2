@@ -57,6 +57,10 @@ builder.Services
     .Bind(builder.Configuration.GetSection("Telegram"))
     .ValidateDataAnnotations();
 
+var telegramStartupOptions = builder.Configuration.GetSection("Telegram").Get<TelegramOptions>() ?? new TelegramOptions();
+var startTelegramBotWorker = !string.IsNullOrWhiteSpace(telegramStartupOptions.BotToken);
+var startTelegramUserbotWorker = telegramStartupOptions.ApiId > 0 && !string.IsNullOrWhiteSpace(telegramStartupOptions.ApiHash);
+
 builder.Services
     .AddOptions<AuthOptions>()
     .Bind(builder.Configuration.GetSection("Auth"))
@@ -138,9 +142,17 @@ builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
 builder.Services.AddSingleton<WhatsAppHelpMenuStore>();
 builder.Services.AddSingleton<ITelegramGateway, TelegramBotApiGateway>();
-builder.Services.AddHostedService<TelegramBotPollingService>();
+if (startTelegramBotWorker)
+{
+    builder.Services.AddHostedService<TelegramBotPollingService>();
+}
+
 builder.Services.AddSingleton<ITelegramUserbotService, TelegramUserbotService>();
-builder.Services.AddHostedService(provider => (TelegramUserbotService)provider.GetRequiredService<ITelegramUserbotService>());
+if (startTelegramUserbotWorker)
+{
+    builder.Services.AddHostedService(provider => (TelegramUserbotService)provider.GetRequiredService<ITelegramUserbotService>());
+}
+
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<IIdempotencyStore, MemoryIdempotencyStore>();
 builder.Services.AddSingleton<LoginAttemptStore>();
@@ -275,7 +287,47 @@ app.MapPost("/converter", async (
     });
 });
 
-app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "AchadinhosBot.Next", ts = DateTimeOffset.UtcNow }));
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "ok",
+    service = "AchadinhosBot.Next",
+    ts = DateTimeOffset.UtcNow,
+    telegramBotWorkerEnabled = startTelegramBotWorker,
+    telegramUserbotWorkerEnabled = startTelegramUserbotWorker
+}));
+
+app.MapGet("/health/live", () => Results.Ok(new
+{
+    status = "ok",
+    service = "AchadinhosBot.Next",
+    kind = "liveness",
+    ts = DateTimeOffset.UtcNow
+}));
+
+app.MapGet("/health/ready", (ITelegramUserbotService userbot) =>
+{
+    var userbotReady = !startTelegramUserbotWorker || userbot.IsReady;
+    var ready = userbotReady;
+
+    if (!ready)
+    {
+        return Results.Json(new
+        {
+            status = "degraded",
+            kind = "readiness",
+            telegramUserbotReady = userbotReady,
+            ts = DateTimeOffset.UtcNow
+        }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    return Results.Ok(new
+    {
+        status = "ok",
+        kind = "readiness",
+        telegramUserbotReady = userbotReady,
+        ts = DateTimeOffset.UtcNow
+    });
+});
 
 app.MapGet("/bio", async (HttpContext context, IInstagramPublishStore publishStore, CancellationToken ct) =>
 {
