@@ -29,6 +29,17 @@ using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Evita falha de permissao no EventLog em ambientes sem privilegio administrativo.
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
+// Mantem a API de pe mesmo que algum worker opcional (ex: Telegram) falhe.
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+});
+
 builder.Services
     .AddOptions<WebhookOptions>()
     .Bind(builder.Configuration.GetSection("Webhook"))
