@@ -45,7 +45,8 @@ public sealed class InstagramImageDownloadService
 
             try
             {
-                using var response = await client.GetAsync(uri, ct);
+                using var request = BuildImageRequest(uri);
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
                 if (!response.IsSuccessStatusCode)
                 {
                     continue;
@@ -120,5 +121,15 @@ public sealed class InstagramImageDownloadService
             ".gif" => "image/gif",
             _ => "image/jpeg"
         };
+    }
+
+    private static HttpRequestMessage BuildImageRequest(Uri uri)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Accept.ParseAdd("image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
+        request.Headers.AcceptLanguage.ParseAdd("pt-BR,pt;q=0.9,en;q=0.8");
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        request.Headers.Referrer = new Uri(uri.GetLeftPart(UriPartial.Authority));
+        return request;
     }
 }

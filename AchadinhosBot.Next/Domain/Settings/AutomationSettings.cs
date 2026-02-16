@@ -132,6 +132,12 @@ public sealed class InstagramPostSettings
     public bool UseBenefitBullets { get; set; }
     public bool UseAbSuggestion { get; set; } = true;
     public bool UseImageDownload { get; set; }
+    public List<string> CaptionTemplates { get; set; } =
+    [
+        "Oferta em destaque: {title}\n\n{lead}\n\nComente \"{keyword}\" para receber o link.\n\n{hashtags}",
+        "Oferta: {title}\n\nPontos principais:\n- {bullet1}\n- {bullet2}\n- {bullet3}\n\nComente \"{keyword}\" para receber o link.\n\n{hashtags}",
+        "Oferta do dia: {title}\n\n{short}\n\nComente \"{keyword}\" para receber o link.\n\n{hashtags}"
+    ];
     public string NichePreset { get; set; } = "geral";
     public string PromptPreset { get; set; } = "premium";
     public string PromptTemplate { get; set; } =

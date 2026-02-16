@@ -760,6 +760,17 @@
         </section>
         <label>Variações de legenda</label>
         <input id="instaVariations" type="number" min="1" max="5" step="1" placeholder="2" />
+        <section class="card" style="margin-top:12px;">
+          <h3>Templates de Legenda (/ig template)</h3>
+          <p class="muted">Personalize os modelos 1, 2 e 3 usados por <code>/ig template</code>.</p>
+          <p class="muted">Placeholders: <code>{title}</code>, <code>{lead}</code>, <code>{body}</code>, <code>{short}</code>, <code>{keyword}</code>, <code>{hashtags}</code>, <code>{bullet1}</code>, <code>{bullet2}</code>, <code>{bullet3}</code></p>
+          <label>Template 1</label>
+          <textarea id="instaCaptionTemplate1" rows="4" placeholder="Oferta em destaque: {title}"></textarea>
+          <label>Template 2</label>
+          <textarea id="instaCaptionTemplate2" rows="5" placeholder="Oferta: {title}&#10;&#10;Pontos principais:&#10;- {bullet1}&#10;- {bullet2}&#10;- {bullet3}"></textarea>
+          <label>Template 3</label>
+          <textarea id="instaCaptionTemplate3" rows="4" placeholder="Oferta do dia: {title}&#10;&#10;{short}"></textarea>
+        </section>
         <label>Prompt IA (editável)</label>
         <textarea id="instaPrompt" rows="8" placeholder="Use {{format}} e os placeholders: {{input}}, {{link}}, {{context}}, {{footer}}, {{images}}, {{title}}, {{description}}"></textarea>
         <section class="card" style="margin-top:12px;">
@@ -861,6 +872,24 @@
           <button onclick="saveInstagramDraft(true)">Publicar agora</button>
           <span id="igDraftStatus" class="status muted"></span>
         </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h3>Operacoes Rapidas (WhatsApp)</h3>
+        <p class="muted">Gera comandos prontos para acelerar o fluxo no WhatsApp.</p>
+        <label>Produto ou link</label>
+        <input id="igQuickInput" placeholder="https://link-da-oferta ou nome do produto" />
+        <label>Palavra CTA</label>
+        <input id="igQuickCta" placeholder="BIKE" />
+        <label>Imagem (opcional)</label>
+        <input id="igQuickImage" placeholder="https://url-da-imagem.jpg" />
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="generateIgQuickCommands()">Gerar comandos</button>
+          <button class="secondary" onclick="copyIgQuickCommands()">Copiar comandos</button>
+          <button onclick="copyIgFastCommand()">Copiar /ig rapido</button>
+        </div>
+        <textarea id="igQuickCommands" rows="6" placeholder="/ig criar ..."></textarea>
+        <span id="igQuickStatus" class="status muted"></span>
       </section>
 
       <section class="card" style="margin-top:16px;">
@@ -1145,6 +1174,14 @@ function getInstaPromptPresetTemplates(){
   };
 }
 
+function getDefaultInstaCaptionTemplates(){
+  return [
+    'Oferta em destaque: {title}\\n\\n{lead}\\n\\nComente "{keyword}" para receber o link.\\n\\n{hashtags}',
+    'Oferta: {title}\\n\\nPontos principais:\\n- {bullet1}\\n- {bullet2}\\n- {bullet3}\\n\\nComente "{keyword}" para receber o link.\\n\\n{hashtags}',
+    'Oferta do dia: {title}\\n\\n{short}\\n\\nComente "{keyword}" para receber o link.\\n\\n{hashtags}'
+  ];
+}
+
 function downloadInstaImages(encoded){
   try {
     const urls = JSON.parse(decodeURIComponent(encoded));
@@ -1415,6 +1452,15 @@ function renderSettings(s){
   if (instaPreset) instaPreset.value = insta.promptPreset || 'premium';
   const instaVariations = document.getElementById('instaVariations');
   if (instaVariations) instaVariations.value = insta.variationsCount ?? 2;
+  const captionTemplates = Array.isArray(insta.captionTemplates) && insta.captionTemplates.length > 0
+    ? insta.captionTemplates
+    : getDefaultInstaCaptionTemplates();
+  const instaCaptionTemplate1 = document.getElementById('instaCaptionTemplate1');
+  if (instaCaptionTemplate1) instaCaptionTemplate1.value = captionTemplates[0] || getDefaultInstaCaptionTemplates()[0];
+  const instaCaptionTemplate2 = document.getElementById('instaCaptionTemplate2');
+  if (instaCaptionTemplate2) instaCaptionTemplate2.value = captionTemplates[1] || getDefaultInstaCaptionTemplates()[1];
+  const instaCaptionTemplate3 = document.getElementById('instaCaptionTemplate3');
+  if (instaCaptionTemplate3) instaCaptionTemplate3.value = captionTemplates[2] || getDefaultInstaCaptionTemplates()[2];
   const instaAiProvider = document.getElementById('instaAiProvider');
   if (instaAiProvider) instaAiProvider.value = insta.aiProvider || 'openai';
   const instaUltraPrompt = document.getElementById('instaUltraPrompt');
@@ -1776,6 +1822,12 @@ async function saveInstagramSettings(){
   existing.instagramPosts.triggers = parseLines('instaTriggers');
   existing.instagramPosts.footerText = document.getElementById('instaFooter')?.value || '';
   existing.instagramPosts.promptTemplate = document.getElementById('instaPrompt')?.value || '';
+  const defaultCaptionTemplates = getDefaultInstaCaptionTemplates();
+  existing.instagramPosts.captionTemplates = [
+    (document.getElementById('instaCaptionTemplate1')?.value || defaultCaptionTemplates[0]).trim(),
+    (document.getElementById('instaCaptionTemplate2')?.value || defaultCaptionTemplates[1]).trim(),
+    (document.getElementById('instaCaptionTemplate3')?.value || defaultCaptionTemplates[2]).trim()
+  ];
 
   existing.openAI = existing.openAI || {};
   existing.openAI.apiKey = document.getElementById('openaiApiKey')?.value || '';
@@ -1875,6 +1927,98 @@ function parseCtas(text){
     }
   }
   return ctas;
+}
+
+function normalizeQuickCta(value){
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return 'LINK';
+  return raw.replace(/\s+/g, '_');
+}
+
+function buildIgQuickCommands(){
+  const input = (document.getElementById('igQuickInput')?.value || '').trim();
+  const cta = normalizeQuickCta(document.getElementById('igQuickCta')?.value || '');
+  const image = (document.getElementById('igQuickImage')?.value || '').trim();
+  if (!input) return '';
+
+  const lines = [];
+  lines.push(`/ig criar ${input} cta=${cta}`);
+  if (image) {
+    lines.push(`/ig imagem ultimo ${image}`);
+  }
+  lines.push('/leg 1 ultimo');
+  lines.push('/ig formatar ultimo');
+  lines.push('/ig revisar ultimo');
+  lines.push('/ig confirmar ultimo');
+  return lines.join('\n');
+}
+
+function buildIgFastCommand(){
+  const input = (document.getElementById('igQuickInput')?.value || '').trim();
+  const cta = normalizeQuickCta(document.getElementById('igQuickCta')?.value || '');
+  const image = (document.getElementById('igQuickImage')?.value || '').trim();
+  if (!input) return '';
+  const imagePart = image ? ` img=${image}` : '';
+  return `/ig rapido ${input} cta=${cta}${imagePart}`;
+}
+
+function setIgQuickStatus(text, cls){
+  const el = document.getElementById('igQuickStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `status ${cls || 'muted'}`;
+}
+
+async function copyToClipboardSafe(text){
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+
+  const temp = document.createElement('textarea');
+  temp.value = text;
+  document.body.appendChild(temp);
+  temp.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(temp);
+  return ok;
+}
+
+function generateIgQuickCommands(){
+  const commands = buildIgQuickCommands();
+  const target = document.getElementById('igQuickCommands');
+  if (target) {
+    target.value = commands;
+  }
+  if (!commands) {
+    setIgQuickStatus('Informe produto/link para gerar comandos.', 'bad');
+    return;
+  }
+  setIgQuickStatus('Comandos gerados.', 'ok');
+}
+
+async function copyIgQuickCommands(){
+  const target = document.getElementById('igQuickCommands');
+  const commands = (target?.value || buildIgQuickCommands()).trim();
+  if (!commands) {
+    setIgQuickStatus('Nada para copiar. Gere os comandos primeiro.', 'bad');
+    return;
+  }
+  const copied = await copyToClipboardSafe(commands);
+  setIgQuickStatus(copied ? 'Comandos copiados.' : 'Nao foi possivel copiar.', copied ? 'ok' : 'bad');
+}
+
+async function copyIgFastCommand(){
+  const command = buildIgFastCommand();
+  if (!command) {
+    setIgQuickStatus('Informe produto/link para montar /ig rapido.', 'bad');
+    return;
+  }
+  const copied = await copyToClipboardSafe(command);
+  setIgQuickStatus(copied ? 'Comando /ig rapido copiado.' : 'Nao foi possivel copiar.', copied ? 'ok' : 'bad');
 }
 
 async function saveInstagramDraft(publishNow){

@@ -49,7 +49,7 @@ public sealed class OpenAiInstagramPostGenerator
                 images = downloaded;
             }
         }
-        var effectiveInput = IsLinkOnly(productInput) && !string.IsNullOrWhiteSpace(meta.Title) ? meta.Title! : productInput;
+        var effectiveInput = ResolveEffectiveInput(productInput, meta.Title, affiliateLink ?? productInput);
         var effectiveContext = !string.IsNullOrWhiteSpace(offerContext) ? offerContext : meta.Description;
         var prompt = BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images, meta.Title, meta.Description, instaSettings);
 
@@ -205,6 +205,37 @@ public sealed class OpenAiInstagramPostGenerator
         if (string.IsNullOrWhiteSpace(input)) return false;
         var cleaned = Regex.Replace(input, @"https?://\S+", string.Empty).Trim();
         return string.IsNullOrWhiteSpace(cleaned);
+    }
+
+    internal static string ResolveEffectiveInput(string productInput, string? metaTitle, string? sourceLink)
+    {
+        if (!IsLinkOnly(productInput) || string.IsNullOrWhiteSpace(metaTitle))
+        {
+            return productInput;
+        }
+
+        var title = metaTitle.Trim();
+        if (title.Length < 6)
+        {
+            return productInput;
+        }
+
+        if (Uri.TryCreate(sourceLink, UriKind.Absolute, out var uri))
+        {
+            var host = uri.Host.ToLowerInvariant();
+            var shortenerHosts = new[] { "bit.ly", "tinyurl.com", "compre.link", "t.co", "linktr.ee" };
+            if (shortenerHosts.Any(s => host.Contains(s, StringComparison.OrdinalIgnoreCase)))
+            {
+                return productInput;
+            }
+
+            if (title.Contains(host, StringComparison.OrdinalIgnoreCase))
+            {
+                return productInput;
+            }
+        }
+
+        return title;
     }
 
     private async Task<(string? Title, string? Description)> TryFetchPageMetaAsync(string? link, CancellationToken cancellationToken)

@@ -48,7 +48,7 @@ public sealed class GeminiInstagramPostGenerator
                 images = downloaded;
             }
         }
-        var effectiveInput = IsLinkOnly(productInput) && !string.IsNullOrWhiteSpace(meta.Title) ? meta.Title! : productInput;
+        var effectiveInput = OpenAiInstagramPostGenerator.ResolveEffectiveInput(productInput, meta.Title, affiliateLink ?? productInput);
         var effectiveContext = !string.IsNullOrWhiteSpace(offerContext) ? offerContext : meta.Description;
         var prompt = OpenAiInstagramPostGenerator.BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images, meta.Title, meta.Description, instaSettings);
 
