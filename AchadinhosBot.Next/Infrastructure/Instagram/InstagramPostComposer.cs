@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text;
 using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Settings;

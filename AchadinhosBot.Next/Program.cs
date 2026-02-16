@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Runtime.Versioning;
 using System.Drawing;
 using System.Drawing.Imaging;
 using AchadinhosBot.Next.Application.Abstractions;
@@ -4190,6 +4191,19 @@ static HttpRequestMessage BuildImageFetchRequest(Uri uri)
 
 static byte[]? NormalizeImageBytes(byte[] input)
 {
+    if (!OperatingSystem.IsWindows())
+    {
+        // Keep original bytes on non-Windows hosts to avoid dropping media.
+        return input;
+    }
+
+    return NormalizeImageBytesWindows(input);
+}
+
+[SupportedOSPlatform("windows")]
+#pragma warning disable CA1416
+static byte[]? NormalizeImageBytesWindows(byte[] input)
+{
     try
     {
         using var ms = new MemoryStream(input);
@@ -4259,6 +4273,7 @@ static byte[]? NormalizeImageBytes(byte[] input)
         return null;
     }
 }
+#pragma warning restore CA1416
 
 static string BuildPublicMediaUrl(string publicBaseUrl, string id)
 {
