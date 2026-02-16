@@ -466,6 +466,13 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
         byte[]? waImageBytes = null;
         string? waImageMime = null;
+        var client = _client;
+        if (client is null)
+        {
+            _logger.LogWarning("TelegramUserbot: cliente nÃ£o inicializado para enviar mensagem ao destino {DestinationId}.", destinationId);
+            return;
+        }
+
         try
         {
             if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
@@ -479,7 +486,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         file_reference = photo.file_reference
                     }
                 };
-                await _client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                await client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
                 (waImageBytes, waImageMime) = await TryDownloadPhotoAsync(photo);
             }
             else if (msg.media is MessageMediaDocument mmDoc && mmDoc.document is Document doc)
@@ -493,7 +500,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         file_reference = doc.file_reference
                     }
                 };
-                await _client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                await client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
                 if (!string.IsNullOrWhiteSpace(doc.mime_type) && doc.mime_type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 {
                     (waImageBytes, waImageMime) = await TryDownloadDocumentAsync(doc);
@@ -501,12 +508,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
             else if (msg.media is MessageMediaWebPage mmWeb && mmWeb.webpage is WebPage webPage && webPage.photo is Photo webPhoto)
             {
-                await _client.SendMessageAsync(destinationPeer, finalText);
+                await client.SendMessageAsync(destinationPeer, finalText);
                 (waImageBytes, waImageMime) = await TryDownloadPhotoAsync(webPhoto);
             }
             else
             {
-                await _client.SendMessageAsync(destinationPeer, finalText);
+                await client.SendMessageAsync(destinationPeer, finalText);
                 if (msg.grouped_id != 0)
                 {
                     var grouped = await TryDownloadGroupedMediaAsync(msg);

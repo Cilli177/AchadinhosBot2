@@ -97,7 +97,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Amazon sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), amazon);
             }
 
-            var shortened = await ShortenAsync(amazon, cancellationToken);
+            var shortened = await ShortenAsync(amazon, cancellationToken) ?? amazon;
             LogStore("Amazon", uri.ToString(), shortened);
             return new AffiliateLinkResult(true, shortened, "Amazon", true, null, null, correctionApplied, correctionNote);
         }
@@ -147,7 +147,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     _logger.LogWarning("Mercado Livre sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), sanitized);
                 }
 
-                var shortened = await ShortenAsync(sanitized, cancellationToken);
+                var shortened = await ShortenAsync(sanitized, cancellationToken) ?? sanitized;
                 LogStore("Mercado Livre", uri.ToString(), shortened);
                 return new AffiliateLinkResult(true, shortened, "Mercado Livre", true, null, null, ensured.CorrectionApplied, ensured.CorrectionNote);
             }

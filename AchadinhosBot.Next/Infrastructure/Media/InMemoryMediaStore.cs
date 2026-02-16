@@ -25,10 +25,11 @@ public sealed class InMemoryMediaStore : IMediaStore
 
     public bool TryGet(string id, out MediaItem item)
     {
-        if (_items.TryGetValue(id, out item))
+        if (_items.TryGetValue(id, out var existingItem))
         {
-            if (item.ExpiresAt > DateTimeOffset.UtcNow)
+            if (existingItem.ExpiresAt > DateTimeOffset.UtcNow)
             {
+                item = existingItem;
                 return true;
             }
 

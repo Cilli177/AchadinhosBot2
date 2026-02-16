@@ -2583,9 +2583,10 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
                 .ToList();
 
             draft.Caption = EnsureInstagramCaptionContainsCta(FormatInstagramCaptionForReadability(draft.Caption), draft.Ctas);
-            if (draft.CaptionOptions.Count > 0 && draft.SelectedCaptionIndex >= 1 && draft.SelectedCaptionIndex <= draft.CaptionOptions.Count)
+            var captionOptions = draft.CaptionOptions ??= new List<string>();
+            if (captionOptions.Count > 0 && draft.SelectedCaptionIndex >= 1 && draft.SelectedCaptionIndex <= captionOptions.Count)
             {
-                draft.CaptionOptions[draft.SelectedCaptionIndex - 1] = draft.Caption;
+                captionOptions[draft.SelectedCaptionIndex - 1] = draft.Caption;
             }
 
             await publishStore.UpdateAsync(draft, ct);
@@ -3914,7 +3915,7 @@ static List<InstagramCtaOption> BuildEffectiveDraftCtas(InstagramPublishDraft dr
         map[keyword] = new InstagramCtaOption
         {
             Keyword = keyword,
-            Link = string.IsNullOrWhiteSpace(cta.Link) ? fallbackLink : cta.Link
+            Link = string.IsNullOrWhiteSpace(cta.Link) ? (fallbackLink ?? string.Empty) : cta.Link
         };
     }
 
@@ -3926,7 +3927,7 @@ static List<InstagramCtaOption> BuildEffectiveDraftCtas(InstagramPublishDraft dr
             map[keyword] = new InstagramCtaOption
             {
                 Keyword = keyword,
-                Link = fallbackLink
+                Link = fallbackLink ?? string.Empty
             };
         }
     }
