@@ -19,8 +19,11 @@ public sealed class AutomationSettings
     public AutoReplySettings AutoRepliesSettings { get; set; } = new();
     public TelegramForwardingSettings TelegramForwarding { get; set; } = new();
     public WhatsAppForwardingSettings WhatsAppForwarding { get; set; } = new();
+    public List<WhatsAppForwardingRouteSettings> WhatsAppForwardingRoutes { get; set; } = new();
     public TelegramToWhatsAppSettings TelegramToWhatsApp { get; set; } = new();
+    public List<TelegramToWhatsAppRouteSettings> TelegramToWhatsAppRoutes { get; set; } = new();
     public LinkResponderSettings LinkResponder { get; set; } = new();
+    public MercadoLivreComplianceSettings MercadoLivreCompliance { get; set; } = new();
     public InstagramPostSettings InstagramPosts { get; set; } = new();
     public InstagramPublishSettings InstagramPublish { get; set; } = new();
     public OpenAISettings OpenAI { get; set; } = new();
@@ -31,6 +34,7 @@ public sealed class IntegrationSettings
 {
     public IntegrationStatus Telegram { get; set; } = new();
     public IntegrationStatus WhatsApp { get; set; } = new();
+    public IntegrationStatus MercadoLivre { get; set; } = new();
 }
 
 public sealed class IntegrationStatus
@@ -83,9 +87,30 @@ public sealed class WhatsAppForwardingSettings
     public string? InstanceName { get; set; }
 }
 
+public sealed class WhatsAppForwardingRouteSettings
+{
+    public string Name { get; set; } = "Rota WhatsApp";
+    public bool Enabled { get; set; } = true;
+    public bool ProcessFromMeOnly { get; set; } = true;
+    public List<string> SourceChatIds { get; set; } = new();
+    public List<string> DestinationGroupIds { get; set; } = new();
+    public bool AppendSheinCode { get; set; } = true;
+    public bool SendMediaEnabled { get; set; } = true;
+    public string FooterText { get; set; } = string.Empty;
+    public string? InstanceName { get; set; }
+}
+
 public sealed class TelegramToWhatsAppSettings
 {
     public bool Enabled { get; set; }
+    public List<long> SourceChatIds { get; set; } = new();
+    public List<string> DestinationGroupIds { get; set; } = new();
+}
+
+public sealed class TelegramToWhatsAppRouteSettings
+{
+    public string Name { get; set; } = "Rota Telegram -> WhatsApp";
+    public bool Enabled { get; set; } = true;
     public List<long> SourceChatIds { get; set; } = new();
     public List<string> DestinationGroupIds { get; set; } = new();
 }
@@ -107,6 +132,16 @@ public sealed class LinkResponderSettings
     public string FooterText { get; set; } = string.Empty;
     public string ReplyTemplate { get; set; } = "Link convertido:\n{link}";
     public string ReplyOnFailure { get; set; } = "Link não suportado.";
+}
+
+public sealed class MercadoLivreComplianceSettings
+{
+    public bool Enabled { get; set; }
+    public bool BlockAutoFlows { get; set; } = true;
+    public bool RequireManualApproval { get; set; } = true;
+    public bool EnforceChannelWhitelist { get; set; }
+    public bool BlockWhenChannelUnknown { get; set; } = true;
+    public List<string> AllowedChannels { get; set; } = new();
 }
 
 public sealed class InstagramPostSettings

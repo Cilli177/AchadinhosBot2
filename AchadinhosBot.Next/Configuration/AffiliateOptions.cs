@@ -16,6 +16,16 @@ public sealed class AffiliateOptions
 
     public string MercadoLivreMattWord { get; init; } = string.Empty;
 
+    public string MercadoLivreClientId { get; init; } = string.Empty;
+
+    public string MercadoLivreClientSecret { get; init; } = string.Empty;
+
+    public string MercadoLivreRefreshToken { get; init; } = string.Empty;
+
+    public string MercadoLivreUserId { get; init; } = string.Empty;
+
+    public bool MercadoLivreRequireOAuth { get; init; }
+
     public string ShopeeAppId { get; init; } = string.Empty;
 
     public string ShopeeSecret { get; init; } = string.Empty;

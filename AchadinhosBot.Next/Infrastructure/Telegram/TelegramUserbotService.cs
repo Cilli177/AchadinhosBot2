@@ -575,26 +575,34 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
     private async Task SendToWhatsAppIfEnabled(AutomationSettings settings, string convertedText, long originId, byte[]? imageBytes, string? imageMime)
     {
-        var route = settings.TelegramToWhatsApp;
-        var wa = settings.WhatsAppForwarding;
-
-        var enabled = route.Enabled || wa.Enabled;
-        if (!enabled)
+        var wa = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
+        var routes = ResolveTelegramToWhatsAppRoutes(settings);
+        if (routes.Count == 0)
         {
             return;
         }
 
-        var routeSources = route.SourceChatIds.Count > 0 || settings.TelegramForwarding.SourceChatIds.Count > 0
-            ? route.SourceChatIds.Union(settings.TelegramForwarding.SourceChatIds).ToList()
-            : settings.TelegramForwarding.SourceChatIds;
-        if (route.Enabled && routeSources.Count > 0 && !IsSourceMatch(originId, routeSources))
+        var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var defaultSources = settings.TelegramForwarding?.SourceChatIds ?? new List<long>();
+        foreach (var route in routes)
         {
-            return;
+            if (!route.Enabled) continue;
+            var effectiveSources = route.SourceChatIds
+                .Union(defaultSources)
+                .Distinct()
+                .ToList();
+            if (effectiveSources.Count == 0) continue;
+            if (!IsSourceMatch(originId, effectiveSources)) continue;
+
+            foreach (var destination in route.DestinationGroupIds)
+            {
+                if (!string.IsNullOrWhiteSpace(destination))
+                {
+                    destinations.Add(destination.Trim());
+                }
+            }
         }
 
-        var destinations = route.Enabled
-            ? route.DestinationGroupIds.Union(wa.DestinationGroupIds).ToList()
-            : wa.DestinationGroupIds;
         if (destinations.Count == 0)
         {
             return;
@@ -629,7 +637,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        var destList = destinations.Distinct().Where(d => !string.IsNullOrWhiteSpace(d)).ToArray();
+        var destList = destinations.Where(d => !string.IsNullOrWhiteSpace(d)).ToArray();
         await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
         {
             OriginChatId = originId,
@@ -956,6 +964,71 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         return null;
+    }
+
+    private static IReadOnlyList<TelegramToWhatsAppRouteSettings> ResolveTelegramToWhatsAppRoutes(AutomationSettings settings)
+    {
+        var explicitRoutes = (settings.TelegramToWhatsAppRoutes ?? new List<TelegramToWhatsAppRouteSettings>())
+            .Where(route => route is not null)
+            .Select(route => new TelegramToWhatsAppRouteSettings
+            {
+                Name = string.IsNullOrWhiteSpace(route.Name) ? "Rota Telegram -> WhatsApp" : route.Name.Trim(),
+                Enabled = route.Enabled,
+                SourceChatIds = route.SourceChatIds
+                    .Distinct()
+                    .ToList(),
+                DestinationGroupIds = route.DestinationGroupIds
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            })
+            .ToList();
+        if (explicitRoutes.Count > 0)
+        {
+            return explicitRoutes;
+        }
+
+        var legacy = settings.TelegramToWhatsApp ?? new TelegramToWhatsAppSettings();
+        if (legacy.SourceChatIds.Count > 0 || legacy.DestinationGroupIds.Count > 0)
+        {
+            return new List<TelegramToWhatsAppRouteSettings>
+            {
+                new()
+                {
+                    Name = "Rota Telegram -> WhatsApp (legado)",
+                    Enabled = legacy.Enabled,
+                    SourceChatIds = legacy.SourceChatIds.Distinct().ToList(),
+                    DestinationGroupIds = legacy.DestinationGroupIds
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                }
+            };
+        }
+
+        var wa = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
+        var tgSources = settings.TelegramForwarding?.SourceChatIds ?? new List<long>();
+        if (!wa.Enabled || wa.DestinationGroupIds.Count == 0 || tgSources.Count == 0)
+        {
+            return Array.Empty<TelegramToWhatsAppRouteSettings>();
+        }
+
+        return new List<TelegramToWhatsAppRouteSettings>
+        {
+            new()
+            {
+                Name = "Rota Telegram -> WhatsApp (fallback)",
+                Enabled = true,
+                SourceChatIds = tgSources.Distinct().ToList(),
+                DestinationGroupIds = wa.DestinationGroupIds
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            }
+        };
     }
 
     private static bool IsSourceMatch(long originId, List<long> sourceIds)

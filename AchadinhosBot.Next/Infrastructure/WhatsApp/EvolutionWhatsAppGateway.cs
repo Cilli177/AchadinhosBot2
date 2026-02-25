@@ -36,7 +36,7 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             if (string.IsNullOrWhiteSpace(_options.ApiKey))
                 return new WhatsAppConnectResult(false, null, "Evolution ApiKey não configurada");
 
-            var client = _httpClientFactory.CreateClient("evolution");
+            var client = _httpClientFactory.CreateClient("evolution-groups");
             client.BaseAddress = new Uri(_options.BaseUrl);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
             // Some Evolution setups require api key in a custom header.
@@ -177,7 +177,7 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             if (string.IsNullOrWhiteSpace(_options.ApiKey))
                 return new WhatsAppInstanceResult(false, null, "Evolution ApiKey não configurada");
 
-            var client = _httpClientFactory.CreateClient("evolution");
+            var client = _httpClientFactory.CreateClient("evolution-groups");
             client.BaseAddress = new Uri(_options.BaseUrl);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
             if (!client.DefaultRequestHeaders.Contains("apikey"))
@@ -226,7 +226,7 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             if (string.IsNullOrWhiteSpace(_options.ApiKey))
                 return Array.Empty<WhatsAppGroupInfo>();
 
-            var client = _httpClientFactory.CreateClient("evolution");
+            var client = _httpClientFactory.CreateClient("evolution-groups");
             client.BaseAddress = new Uri(_options.BaseUrl);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
             if (!client.DefaultRequestHeaders.Contains("apikey"))
@@ -247,8 +247,8 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             }
             endpoints.AddRange(new[]
             {
-                "/group/fetchAllGroups/{instance}?getParticipants=true",
                 "/group/fetchAllGroups/{instance}?getParticipants=false",
+                "/group/fetchAllGroups/{instance}?getParticipants=true",
                 "/group/fetchAll/{instance}",
                 "/group/list/{instance}",
                 "/group/getAllGroups/{instance}",
@@ -413,21 +413,31 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             var endpoints = new List<string>();
             if (!string.IsNullOrWhiteSpace(_options.SendImageEndpoint))
             {
-                endpoints.Add(_options.SendImageEndpoint!);
+                if (_options.SendImageEndpoint.Contains("sendMedia", StringComparison.OrdinalIgnoreCase))
+                {
+                    endpoints.Add(_options.SendImageEndpoint!);
+                }
+                else
+                {
+                    _logger.LogInformation("Ignorando endpoint customizado de imagem sem sendMedia: {Endpoint}", _options.SendImageEndpoint);
+                }
             }
-            endpoints.AddRange(new[]
+            if (!string.IsNullOrWhiteSpace(targetInstance))
             {
-                "/message/sendMedia/{instance}",
-                "/message/sendMedia/{instanceName}",
-                "/message/sendMedia",
-                "/message/sendImage/{instance}",
-                "/message/sendImage/{instanceName}",
-                "/message/sendImage"
-            });
+                endpoints.AddRange(new[]
+                {
+                    "/message/sendMedia/{instance}",
+                    "/message/sendMedia/{instanceName}"
+                });
+            }
+            else
+            {
+                endpoints.Add("/message/sendMedia");
+            }
 
-            var payloads = new List<Dictionary<string, object?>>
+            var payloadFactories = new List<Func<Dictionary<string, object?>>>
             {
-                new()
+                () => new()
                 {
                     ["number"] = to,
                     ["caption"] = caption ?? string.Empty,
@@ -436,7 +446,16 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                     ["media"] = base64,
                     ["fileName"] = "image.jpg"
                 },
-                new()
+                () => new()
+                {
+                    ["number"] = to,
+                    ["caption"] = caption ?? string.Empty,
+                    ["mediaType"] = "image",
+                    ["mimetype"] = resolvedMime,
+                    ["media"] = base64,
+                    ["fileName"] = "image.jpg"
+                },
+                () => new()
                 {
                     ["number"] = to,
                     ["caption"] = caption ?? string.Empty,
@@ -444,17 +463,50 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                     ["base64"] = base64,
                     ["mimetype"] = resolvedMime,
                     ["fileName"] = "image.jpg"
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["caption"] = caption ?? string.Empty,
+                    ["mediatype"] = "image",
+                    ["mimetype"] = resolvedMime,
+                    ["media"] = dataUri,
+                    ["fileName"] = "image.jpg"
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["caption"] = caption ?? string.Empty,
+                    ["mediatype"] = "image",
+                    ["mimetype"] = resolvedMime,
+                    ["image"] = dataUri,
+                    ["fileName"] = "image.jpg"
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediatype"] = "image",
+                        ["mimetype"] = resolvedMime,
+                        ["media"] = dataUri,
+                        ["caption"] = caption ?? string.Empty,
+                        ["fileName"] = "image.jpg"
+                    }
                 }
             };
 
+            string? lastFailure = null;
+            var attemptTrace = new List<string>();
             foreach (var endpoint in endpoints)
             {
                 var path = ResolveEndpoint(endpoint, targetInstance);
                 var includeInstance = !endpoint.Contains("{instance}", StringComparison.OrdinalIgnoreCase) &&
                                       !endpoint.Contains("{instanceName}", StringComparison.OrdinalIgnoreCase);
 
-                foreach (var payload in payloads)
+                for (var i = 0; i < payloadFactories.Count; i++)
                 {
+                    var payload = payloadFactories[i]();
                     if (includeInstance)
                     {
                         payload["instanceName"] = targetInstance;
@@ -470,11 +522,15 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                         return new WhatsAppSendResult(true, "Imagem enviada");
                     }
 
+                    lastFailure =
+                        $"endpoint={path};payload={i + 1};status={(int)res.StatusCode} {res.ReasonPhrase};body={(string.IsNullOrWhiteSpace(body) ? "sem body" : body[..Math.Min(body.Length, 200)])}";
+                    attemptTrace.Add($"endpoint={path};payload={i + 1};status={(int)res.StatusCode}");
                     _logger.LogWarning("Falha ao enviar imagem Evolution: {Status} {Body}", res.StatusCode, body);
                 }
             }
 
-            return new WhatsAppSendResult(false, "Falha ao enviar imagem");
+            var trace = attemptTrace.Count > 0 ? string.Join(" | ", attemptTrace.Take(8)) : "sem tentativas";
+            return new WhatsAppSendResult(false, $"Falha ao enviar imagem ({lastFailure ?? "sem detalhes"}); trace={trace}");
         }
         catch (Exception ex)
         {
@@ -515,25 +571,31 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             var endpoints = new List<string>();
             if (!string.IsNullOrWhiteSpace(_options.SendImageEndpoint))
             {
-                endpoints.Add(_options.SendImageEndpoint!);
+                if (_options.SendImageEndpoint.Contains("sendMedia", StringComparison.OrdinalIgnoreCase))
+                {
+                    endpoints.Add(_options.SendImageEndpoint!);
+                }
+                else
+                {
+                    _logger.LogInformation("Ignorando endpoint customizado de imagem sem sendMedia: {Endpoint}", _options.SendImageEndpoint);
+                }
             }
-            endpoints.AddRange(new[]
+            if (!string.IsNullOrWhiteSpace(targetInstance))
             {
-                "/message/sendMedia/{instance}",
-                "/message/sendMedia/{instanceName}",
-                "/message/sendMedia",
-                "/message/sendImage/{instance}",
-                "/message/sendImage/{instanceName}",
-                "/message/sendImage"
-            });
-
-            foreach (var endpoint in endpoints)
+                endpoints.AddRange(new[]
+                {
+                    "/message/sendMedia/{instance}",
+                    "/message/sendMedia/{instanceName}"
+                });
+            }
+            else
             {
-                var path = ResolveEndpoint(endpoint, targetInstance);
-                var includeInstance = !endpoint.Contains("{instance}", StringComparison.OrdinalIgnoreCase) &&
-                                      !endpoint.Contains("{instanceName}", StringComparison.OrdinalIgnoreCase);
+                endpoints.Add("/message/sendMedia");
+            }
 
-                var payload = new Dictionary<string, object?>
+            var payloadFactories = new List<Func<Dictionary<string, object?>>>
+            {
+                () => new()
                 {
                     ["number"] = to,
                     ["mediatype"] = "image",
@@ -541,26 +603,83 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                     ["caption"] = caption ?? string.Empty,
                     ["media"] = mediaUrl,
                     ["fileName"] = resolvedFileName
-                };
-                if (includeInstance)
+                },
+                () => new()
                 {
-                    payload["instanceName"] = targetInstance;
-                }
-
-                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8);
-                content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-                var res = await client.PostAsync(path, content, cancellationToken);
-                var body = await res.Content.ReadAsStringAsync(cancellationToken);
-
-                if (res.IsSuccessStatusCode)
+                    ["number"] = to,
+                    ["mediaType"] = "image",
+                    ["mimetype"] = resolvedMime,
+                    ["caption"] = caption ?? string.Empty,
+                    ["media"] = mediaUrl,
+                    ["fileName"] = resolvedFileName
+                },
+                () => new()
                 {
-                    return new WhatsAppSendResult(true, "Imagem enviada");
+                    ["number"] = to,
+                    ["mediatype"] = "image",
+                    ["mimetype"] = resolvedMime,
+                    ["caption"] = caption ?? string.Empty,
+                    ["url"] = mediaUrl,
+                    ["fileName"] = resolvedFileName
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["mediatype"] = "image",
+                    ["mimetype"] = resolvedMime,
+                    ["caption"] = caption ?? string.Empty,
+                    ["mediaUrl"] = mediaUrl,
+                    ["fileName"] = resolvedFileName
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediatype"] = "image",
+                        ["mimetype"] = resolvedMime,
+                        ["media"] = mediaUrl,
+                        ["caption"] = caption ?? string.Empty,
+                        ["fileName"] = resolvedFileName
+                    }
                 }
+            };
 
-                _logger.LogWarning("Falha ao enviar imagem Evolution (url): {Status} {Body}", res.StatusCode, body);
+            string? lastFailure = null;
+            var attemptTrace = new List<string>();
+            foreach (var endpoint in endpoints)
+            {
+                var path = ResolveEndpoint(endpoint, targetInstance);
+                var includeInstance = !endpoint.Contains("{instance}", StringComparison.OrdinalIgnoreCase) &&
+                                      !endpoint.Contains("{instanceName}", StringComparison.OrdinalIgnoreCase);
+
+                for (var i = 0; i < payloadFactories.Count; i++)
+                {
+                    var payload = payloadFactories[i]();
+                    if (includeInstance)
+                    {
+                        payload["instanceName"] = targetInstance;
+                    }
+
+                    var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8);
+                    content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                    var res = await client.PostAsync(path, content, cancellationToken);
+                    var body = await res.Content.ReadAsStringAsync(cancellationToken);
+
+                    if (res.IsSuccessStatusCode)
+                    {
+                        return new WhatsAppSendResult(true, "Imagem enviada");
+                    }
+
+                    lastFailure =
+                        $"endpoint={path};payload={i + 1};status={(int)res.StatusCode} {res.ReasonPhrase};body={(string.IsNullOrWhiteSpace(body) ? "sem body" : body[..Math.Min(body.Length, 200)])}";
+                    attemptTrace.Add($"endpoint={path};payload={i + 1};status={(int)res.StatusCode}");
+                    _logger.LogWarning("Falha ao enviar imagem Evolution (url): {Status} {Body}", res.StatusCode, body);
+                }
             }
 
-            return new WhatsAppSendResult(false, "Falha ao enviar imagem");
+            var trace = attemptTrace.Count > 0 ? string.Join(" | ", attemptTrace.Take(8)) : "sem tentativas";
+            return new WhatsAppSendResult(false, $"Falha ao enviar imagem ({lastFailure ?? "sem detalhes"}); trace={trace}");
         }
         catch (Exception ex)
         {

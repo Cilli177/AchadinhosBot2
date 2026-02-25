@@ -302,6 +302,7 @@
         <button data-tab="ops" onclick="showSection('ops')">Operação</button>
         <button data-tab="route" onclick="showSection('route')">Telegram -> WhatsApp</button>
         <button data-tab="linkresponder" onclick="showSection('linkresponder')">Resposta de link</button>
+        <button data-tab="mercadolivre" onclick="showSection('mercadolivre')">Mercado Livre</button>
         <button data-tab="instagram" onclick="showSection('instagram')">Instagram</button>
         <button data-tab="instagram-publish" onclick="showSection('instagram-publish')">Instagram Publicar</button>
         <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>
@@ -330,6 +331,7 @@
         <span id="chipTelegramBot" class="chip warn">Telegram Bot: Não conectado</span>
         <span id="chipUserbot" class="chip warn">Telegram Userbot: Conectando...</span>
         <span id="chipWhatsApp" class="chip warn">WhatsApp: Não conectado</span>
+        <span id="chipMercadoLivre" class="chip warn">Mercado Livre: Não validado</span>
       </div>
       <div class="pill">Ambiente: Development</div>
     </div>
@@ -393,6 +395,16 @@
           <img id="qrImage" class="qr hidden" alt="QR code WhatsApp" />
           <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>
         </section>
+
+        <section class="card">
+          <h2>Mercado Livre (OAuth)</h2>
+          <p class="muted">Valida client_id, refresh_token e conta vinculada.</p>
+          <div class="row">
+            <button id="btnMercadoLivreConnect" onclick="connectMercadoLivre()">Testar conexão</button>
+            <span id="mercadoLivreStatus" class="status warn">Não validado</span>
+          </div>
+          <p class="muted">Usa variáveis do bloco Affiliate no backend.</p>
+        </section>
       </div>
       </div>
 
@@ -450,13 +462,21 @@
           <div id="userbotChats" class="muted">Nenhum grupo carregado.</div>
         </section>
 
-                <section class="card">
+        <section class="card">
           <h2>WhatsApp Grupos (Origem)</h2>
           <p class="muted">Selecione de quais grupos o bot deve capturar ofertas.</p>
           <div class="row">
             <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>
             <button class="secondary" onclick="loadWhatsAppGroups()">Recarregar</button>
           </div>
+          <div class="row">
+            <select id="waRoutePicker" style="max-width:260px;" onchange="switchWhatsAppRoute()"></select>
+            <button class="secondary" onclick="addWhatsAppRoute()">+ Nova rota</button>
+            <button class="secondary" onclick="removeWhatsAppRoute()">Excluir rota</button>
+          </div>
+          <label>Nome da rota</label>
+          <input id="waRouteName" placeholder="Rota principal" oninput="renameWhatsAppRoute()" />
+          <div class="muted">As rotas abaixo substituem a rota única quando houver pelo menos 1 rota configurada.</div>
           <div class="row">
             <input id="waSourceSearch" placeholder="Buscar grupo por nome ou ID" />
             <span class="muted">Selecionados: <strong id="waSourceSelectedCount">0</strong></span>
@@ -614,10 +634,80 @@
       </section>
       </div>
 
+      <div id="section-mercadolivre" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Compliance Mercado Livre</h2>
+        <p class="muted">Controle de bloqueio em automações, whitelist de canais e fila de aprovação manual.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar compliance Mercado Livre</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompBlockAuto" /><span class="slider"></span></label>
+          <span class="muted">Bloquear fluxo automático com links Mercado Livre</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompRequireApproval" /><span class="slider"></span></label>
+          <span class="muted">Exigir aprovação manual para Mercado Livre</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompWhitelistEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar whitelist de canais</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompBlockUnknown" /><span class="slider"></span></label>
+          <span class="muted">Bloquear quando canal não for identificado</span>
+        </div>
+        <label>Canais permitidos (um por linha)</label>
+        <textarea id="mlCompAllowedChannels" rows="4" placeholder="1203630@g.us&#10;manychat-teste@c.us&#10;-100123456789"></textarea>
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveMercadoLivreCompliance()">Salvar compliance</button>
+          <span id="mlCompSaveStatus" class="status muted"></span>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Pendências Mercado Livre</h2>
+        <div class="row">
+          <select id="mlPendingStatus" style="max-width:220px;">
+            <option value="pending">Pendente</option>
+            <option value="approved">Aprovado</option>
+            <option value="rejected">Rejeitado</option>
+            <option value="">Todos</option>
+          </select>
+          <button onclick="loadMercadoLivrePending()">Carregar</button>
+          <span id="mlPendingCount" class="status muted"></span>
+        </div>
+        <div class="table-wrap" style="margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Status</th>
+                <th>Origem</th>
+                <th>Canal</th>
+                <th>Razão</th>
+                <th>URLs</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="mlPendingBody"></tbody>
+          </table>
+        </div>
+      </section>
+      </div>
+
       <div id="section-route" class="hidden">
       <section class="card" style="margin-top:16px;">
         <h2>Rota Telegram -> WhatsApp</h2>
         <p class="muted">Escolha grupos de origem no Telegram e destinos no WhatsApp para envio direto.</p>
+        <div class="row">
+          <select id="tgWaRoutePicker" style="max-width:260px;" onchange="switchTgWaRoute()"></select>
+          <button class="secondary" onclick="addTgWaRoute()">+ Nova rota</button>
+          <button class="secondary" onclick="removeTgWaRoute()">Excluir rota</button>
+        </div>
+        <label>Nome da rota</label>
+        <input id="tgWaRouteName" placeholder="Rota Telegram principal" oninput="renameTgWaRoute()" />
         <div class="row">
           <label class="switch"><input type="checkbox" id="tgWaEnabled" /><span class="slider"></span></label>
           <span class="muted">Rota ativa</span>
@@ -1079,7 +1169,7 @@ function showAuthState(authenticated, username='', role=''){
 }
 
 function showSection(name){
-  const sections = ['ops','connections','route','linkresponder','instagram','instagram-publish','autoreplies','logs','playground','debug'];
+  const sections = ['ops','connections','route','linkresponder','mercadolivre','instagram','instagram-publish','autoreplies','logs','playground','debug'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -1095,6 +1185,9 @@ function showSection(name){
   if (name === 'linkresponder') {
     loadResponderLogs();
     loadResponderClicks();
+  }
+  if (name === 'mercadolivre') {
+    loadMercadoLivrePending();
   }
   if (name === 'instagram') {
     loadInstaAiLogs();
@@ -1329,8 +1422,19 @@ function renderSettings(s){
     : 'Não conectado';
   document.getElementById('whatsappStatus').className = 'status ' + (s.integrations.whatsApp.connected ? 'ok':'warn');
 
+  const ml = s.integrations?.mercadoLivre || {};
+  const mlConnected = !!ml.connected;
+  const mlStatus = document.getElementById('mercadoLivreStatus');
+  if (mlStatus) {
+    mlStatus.textContent = mlConnected
+      ? `Conectado (${ml.identifier || 'sem id'})`
+      : 'Não validado';
+    mlStatus.className = 'status ' + (mlConnected ? 'ok' : 'warn');
+  }
+
   setChipStatus('chipTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot: Conectado' : 'Telegram Bot: Offline', s.integrations.telegram.connected ? 'ok' : 'warn');
   setChipStatus('chipWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp: Conectado' : 'WhatsApp: Offline', s.integrations.whatsApp.connected ? 'ok' : 'warn');
+  setChipStatus('chipMercadoLivre', mlConnected ? 'Mercado Livre: Conectado' : 'Mercado Livre: Nao validado', mlConnected ? 'ok' : 'warn');
   setChipStatus('chipUserbot', 'Telegram Userbot: Conectando...', 'warn');
   setHealthBadge('healthTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot OK' : 'Telegram Bot Offline', s.integrations.telegram.connected ? 'ok' : 'bad');
   setHealthBadge('healthWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp OK' : 'WhatsApp Offline', s.integrations.whatsApp.connected ? 'ok' : 'bad');
@@ -1388,6 +1492,19 @@ function renderSettings(s){
   if (responderTracking) responderTracking.checked = responder.trackingEnabled ?? true;
   const responderFooter = document.getElementById('responderFooter');
   if (responderFooter) responderFooter.value = responder.footerText || '';
+  const mlCompliance = s.mercadoLivreCompliance || {};
+  const mlCompEnabled = document.getElementById('mlCompEnabled');
+  if (mlCompEnabled) mlCompEnabled.checked = !!mlCompliance.enabled;
+  const mlCompBlockAuto = document.getElementById('mlCompBlockAuto');
+  if (mlCompBlockAuto) mlCompBlockAuto.checked = mlCompliance.blockAutoFlows ?? true;
+  const mlCompRequireApproval = document.getElementById('mlCompRequireApproval');
+  if (mlCompRequireApproval) mlCompRequireApproval.checked = mlCompliance.requireManualApproval ?? true;
+  const mlCompWhitelistEnabled = document.getElementById('mlCompWhitelistEnabled');
+  if (mlCompWhitelistEnabled) mlCompWhitelistEnabled.checked = !!mlCompliance.enforceChannelWhitelist;
+  const mlCompBlockUnknown = document.getElementById('mlCompBlockUnknown');
+  if (mlCompBlockUnknown) mlCompBlockUnknown.checked = mlCompliance.blockWhenChannelUnknown ?? true;
+  const mlCompAllowedChannels = document.getElementById('mlCompAllowedChannels');
+  if (mlCompAllowedChannels) mlCompAllowedChannels.value = (mlCompliance.allowedChannels || []).join('\n');
   const insta = s.instagramPosts || {};
   const instaEnabled = document.getElementById('instaEnabled');
   if (instaEnabled) instaEnabled.checked = insta.enabled ?? true;
@@ -1671,6 +1788,148 @@ function parseWhatsAppManualIds(id){
   return text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
 }
 
+function parseLines(id){
+  const text = document.getElementById(id)?.value || '';
+  return text
+    .split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
+async function saveMercadoLivreCompliance(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('mlCompSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.mercadoLivreCompliance = existing.mercadoLivreCompliance || {};
+  existing.mercadoLivreCompliance.enabled = document.getElementById('mlCompEnabled')?.checked ?? false;
+  existing.mercadoLivreCompliance.blockAutoFlows = document.getElementById('mlCompBlockAuto')?.checked ?? true;
+  existing.mercadoLivreCompliance.requireManualApproval = document.getElementById('mlCompRequireApproval')?.checked ?? true;
+  existing.mercadoLivreCompliance.enforceChannelWhitelist = document.getElementById('mlCompWhitelistEnabled')?.checked ?? false;
+  existing.mercadoLivreCompliance.blockWhenChannelUnknown = document.getElementById('mlCompBlockUnknown')?.checked ?? true;
+  existing.mercadoLivreCompliance.allowedChannels = parseLines('mlCompAllowedChannels');
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Compliance salvo.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+    await loadMercadoLivrePending();
+  } catch (e) {
+    if (status) {
+      const message = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
+      status.textContent = message;
+      status.className = 'status bad';
+    }
+  }
+}
+
+function renderMercadoLivrePending(items){
+  const tbody = document.getElementById('mlPendingBody');
+  const count = document.getElementById('mlPendingCount');
+  if (!tbody) return;
+
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pendências.</td></tr>';
+    if (count) count.textContent = '0 item(s)';
+    return;
+  }
+
+  if (count) count.textContent = `${items.length} item(ns)`;
+  tbody.innerHTML = items.map(item => {
+    const status = String(item.status || '').toLowerCase();
+    const badgeClass = status === 'pending' ? 'warn' : (status === 'approved' ? 'ok' : 'bad');
+    const urls = (item.extractedUrls || []).join('\n');
+    const channel = [item.originChatRef || item.originChatId || '-', item.destinationChatRef || item.destinationChatId || '-'].join(' -> ');
+    const actions = status === 'pending'
+      ? `<button class="secondary" onclick="approveMercadoLivrePending('${item.id}')">Aprovar</button>
+         <button class="danger" onclick="rejectMercadoLivrePending('${item.id}')">Rejeitar</button>`
+      : `<span class="muted">${escapeHtml(item.reviewedBy || '-')}</span>`;
+
+    return `
+      <tr>
+        <td>${formatTs(item.createdAt)}</td>
+        <td><span class="badge ${badgeClass}">${escapeHtml(item.status || '-')}</span></td>
+        <td>${escapeHtml(item.source || '-')}</td>
+        <td><small>${escapeHtml(channel)}</small></td>
+        <td><small>${escapeHtml(item.reason || '-')}</small></td>
+        <td><small>${escapeHtml(urls || '-')}</small></td>
+        <td>
+          ${actions}
+          ${item.convertedText ? `<button class="copy-btn" data-copy="${encodeURIComponent(item.convertedText)}">Copiar convertido</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  document.querySelectorAll('#mlPendingBody .copy-btn').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      const text = decodeURIComponent(ev.currentTarget.getAttribute('data-copy') || '');
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    });
+  });
+}
+
+async function loadMercadoLivrePending(){
+  try {
+    const status = document.getElementById('mlPendingStatus')?.value ?? 'pending';
+    const query = new URLSearchParams();
+    if (status) query.set('status', status);
+    query.set('limit', '300');
+    const payload = await api('/api/mercadolivre/pending?' + query.toString());
+    renderMercadoLivrePending(payload.items || []);
+  } catch {
+    renderMercadoLivrePending([]);
+  }
+}
+
+async function approveMercadoLivrePending(id){
+  if (currentRole !== 'admin') return;
+  const note = prompt('Observação de aprovação (opcional):', '') || '';
+  const sendNow = confirm('Enviar o texto aprovado para o(s) destino(s) agora?');
+  try {
+    const result = await api(`/api/mercadolivre/pending/${id}/approve`, 'POST', { note, sendNow });
+    await loadMercadoLivrePending();
+    await loadConversionLogs();
+    if (sendNow) {
+      const sent = result?.sentTargets ?? 0;
+      const failures = (result?.sendFailures || []).length;
+      if (failures > 0) {
+        alert(`Aprovado. Envio: ${sent} sucesso(s), ${failures} falha(s).`);
+      }
+    }
+  } catch (e) {
+    alert(e?.data?.error || e?.message || 'Erro ao aprovar pendência.');
+  }
+}
+
+async function rejectMercadoLivrePending(id){
+  if (currentRole !== 'admin') return;
+  const note = prompt('Motivo da rejeição (opcional):', '') || '';
+  try {
+    await api(`/api/mercadolivre/pending/${id}/reject`, 'POST', { note });
+    await loadMercadoLivrePending();
+  } catch (e) {
+    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendência.');
+  }
+}
+
 async function saveSettings(){
   if (currentRole !== 'admin') return;
 
@@ -1721,16 +1980,20 @@ async function saveTelegramToWhatsAppRoute(){
   }
 
   const existing = await api('/api/settings');
+  persistActiveTgWaRouteFromUi();
+  const routes = (window.__tgWaRoutes || []).map(route => ({
+    name: (route.name || 'Rota Telegram -> WhatsApp').trim() || 'Rota Telegram -> WhatsApp',
+    enabled: !!route.enabled,
+    sourceChatIds: Array.from(new Set((route.sourceChatIds || []).map(Number).filter(x => Number.isFinite(x)))),
+    destinationGroupIds: Array.from(new Set((route.destinationGroupIds || []).map(String).filter(Boolean)))
+  }));
+  existing.telegramToWhatsAppRoutes = routes;
+
   existing.telegramToWhatsApp = existing.telegramToWhatsApp || {};
-  existing.telegramToWhatsApp.enabled = document.getElementById('tgWaEnabled')?.checked ?? false;
-
-  const srcSelected = Array.from((window.__tgWaSelection?.source || new Set()).values()).map(Number);
-  const srcManual = parseManualIdsById('tgWaSourceManual');
-  existing.telegramToWhatsApp.sourceChatIds = Array.from(new Set([...srcSelected, ...srcManual]));
-
-  const destSelected = Array.from((window.__tgWaSelection?.dest || new Set()).values());
-  const destManual = parseWhatsAppManualIds('tgWaDestManual');
-  existing.telegramToWhatsApp.destinationGroupIds = Array.from(new Set([...destSelected, ...destManual]));
+  const firstRoute = routes[0];
+  existing.telegramToWhatsApp.enabled = firstRoute ? !!firstRoute.enabled : false;
+  existing.telegramToWhatsApp.sourceChatIds = firstRoute ? firstRoute.sourceChatIds : [];
+  existing.telegramToWhatsApp.destinationGroupIds = firstRoute ? firstRoute.destinationGroupIds : [];
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -2193,7 +2456,7 @@ function parseLines(id){
 async function connectTelegram(){
   setButtonBusy('btnTelegramConnect', true, 'Validando...');
   try {
-    const r = await api('/api/telegram/connect', 'POST', {});
+    const r = await api('/api/integrations/telegram/connect', 'POST', {});
     document.getElementById('telegramStatus').textContent = r.success
       ? `Conectado (${r.username || 'ok'})`
       : `Erro: ${r.message || 'Falha na conexão'}`;
@@ -2204,6 +2467,28 @@ async function connectTelegram(){
   }
   await loadSettings();
   setButtonBusy('btnTelegramConnect', false);
+}
+
+async function connectMercadoLivre(){
+  setButtonBusy('btnMercadoLivreConnect', true, 'Validando...');
+  try {
+    const r = await api('/api/integrations/mercadolivre/connect', 'POST', {});
+    const status = document.getElementById('mercadoLivreStatus');
+    if (status) {
+      status.textContent = r.success
+        ? `Conectado (${r.userId || 'sem id'})`
+        : `Falha: ${r.message || 'OAuth nao configurado'}`;
+      status.className = 'status ' + (r.success ? 'ok' : 'bad');
+    }
+  } catch (e) {
+    const status = document.getElementById('mercadoLivreStatus');
+    if (status) {
+      status.textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisicao'}`;
+      status.className = 'status bad';
+    }
+  }
+  await loadSettings();
+  setButtonBusy('btnMercadoLivreConnect', false);
 }
 
 async function connectWhatsApp(){
@@ -2439,12 +2724,15 @@ function showAllUserbotChats(){
 }
 
 function renderWhatsAppGroups(payload, settings){
-  const sourceSet = new Set((settings?.whatsAppForwarding?.sourceChatIds || []).map(String));
-  const destSet = new Set((settings?.whatsAppForwarding?.destinationGroupIds || []).map(String));
-
-  window.__waSelection = window.__waSelection || { source: new Set(), dest: new Set() };
-  window.__waSelection.source = sourceSet;
-  window.__waSelection.dest = destSet;
+  const routes = (window.__waRoutes && window.__waRoutes.length > 0)
+    ? window.__waRoutes
+    : buildWhatsAppRoutes(settings || window.__settingsCache || {});
+  window.__waRoutes = routes;
+  if (typeof window.__waRouteIndex !== 'number' || window.__waRouteIndex < 0 || window.__waRouteIndex >= routes.length) {
+    window.__waRouteIndex = 0;
+  }
+  renderWhatsAppRoutePicker();
+  applyActiveWhatsAppRouteToUi();
 
   renderWhatsAppList({
     containerId: 'waSourceGroups',
@@ -2470,14 +2758,267 @@ function renderWhatsAppGroups(payload, settings){
 function renderTelegramToWhatsAppRoute(){
   const settings = window.__settingsCache;
   if (!settings) return;
-  const sourceIds = (settings.telegramToWhatsApp?.sourceChatIds || []).map(String);
-  const destIds = (settings.telegramToWhatsApp?.destinationGroupIds || []).map(String);
-  window.__tgWaSelection = {
-    source: new Set(sourceIds),
-    dest: new Set(destIds)
-  };
+  window.__tgWaRoutes = buildTgWaRoutes(settings);
+  if (typeof window.__tgWaRouteIndex !== 'number' || window.__tgWaRouteIndex < 0 || window.__tgWaRouteIndex >= window.__tgWaRoutes.length) {
+    window.__tgWaRouteIndex = 0;
+  }
+  renderTgWaRoutePicker();
+  applyActiveTgWaRouteToUi();
   renderTgWaSourceList();
   renderTgWaDestList();
+}
+
+function buildWhatsAppRoutes(settings){
+  const routes = (settings?.whatsAppForwardingRoutes || []).map(r => ({
+    name: (r?.name || 'Rota WhatsApp').trim(),
+    enabled: !!r?.enabled,
+    processFromMeOnly: r?.processFromMeOnly ?? true,
+    sourceChatIds: Array.from(new Set((r?.sourceChatIds || []).map(String).filter(Boolean))),
+    destinationGroupIds: Array.from(new Set((r?.destinationGroupIds || []).map(String).filter(Boolean))),
+    appendSheinCode: r?.appendSheinCode ?? true,
+    sendMediaEnabled: r?.sendMediaEnabled ?? true,
+    footerText: r?.footerText || '',
+    instanceName: (r?.instanceName || '').trim() || null
+  }));
+  if (routes.length > 0) return routes;
+
+  const legacy = settings?.whatsAppForwarding || {};
+  return [{
+    name: 'Rota principal',
+    enabled: !!legacy.enabled,
+    processFromMeOnly: legacy.processFromMeOnly ?? true,
+    sourceChatIds: Array.from(new Set((legacy.sourceChatIds || []).map(String).filter(Boolean))),
+    destinationGroupIds: Array.from(new Set((legacy.destinationGroupIds || []).map(String).filter(Boolean))),
+    appendSheinCode: legacy.appendSheinCode ?? true,
+    sendMediaEnabled: legacy.sendMediaEnabled ?? true,
+    footerText: legacy.footerText || '',
+    instanceName: (legacy.instanceName || '').trim() || null
+  }];
+}
+
+function getActiveWhatsAppRoute(){
+  const routes = window.__waRoutes || [];
+  if (routes.length === 0) return null;
+  const idx = Math.max(0, Math.min(window.__waRouteIndex || 0, routes.length - 1));
+  window.__waRouteIndex = idx;
+  return routes[idx];
+}
+
+function persistActiveWhatsAppRouteFromUi(){
+  const route = getActiveWhatsAppRoute();
+  if (!route) return;
+  route.name = (document.getElementById('waRouteName')?.value || route.name || 'Rota WhatsApp').trim() || 'Rota WhatsApp';
+  route.enabled = document.getElementById('waForwardEnabled')?.checked ?? false;
+  route.processFromMeOnly = document.getElementById('waFromMeOnly')?.checked ?? true;
+  route.appendSheinCode = document.getElementById('waAppendShein')?.checked ?? true;
+  route.sendMediaEnabled = document.getElementById('waSendMedia')?.checked ?? true;
+  route.footerText = document.getElementById('waFooter')?.value || '';
+  route.instanceName = (document.getElementById('waInstanceName')?.value || '').trim() || null;
+  const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
+  const sourceManual = parseWhatsAppManualIds('waManualSourceIds');
+  route.sourceChatIds = Array.from(new Set([...sourceSelected, ...sourceManual]));
+  const destSelected = Array.from((window.__waSelection?.dest || new Set()).values());
+  const destManual = parseWhatsAppManualIds('waManualIds');
+  route.destinationGroupIds = Array.from(new Set([...destSelected, ...destManual]));
+}
+
+function applyActiveWhatsAppRouteToUi(){
+  const route = getActiveWhatsAppRoute();
+  if (!route) return;
+  const routeName = document.getElementById('waRouteName');
+  if (routeName) routeName.value = route.name || 'Rota WhatsApp';
+  const waForwardEnabled = document.getElementById('waForwardEnabled');
+  if (waForwardEnabled) waForwardEnabled.checked = !!route.enabled;
+  const waFromMeOnly = document.getElementById('waFromMeOnly');
+  if (waFromMeOnly) waFromMeOnly.checked = route.processFromMeOnly ?? true;
+  const waAppendShein = document.getElementById('waAppendShein');
+  if (waAppendShein) waAppendShein.checked = route.appendSheinCode ?? true;
+  const waSendMedia = document.getElementById('waSendMedia');
+  if (waSendMedia) waSendMedia.checked = route.sendMediaEnabled ?? true;
+  const waFooter = document.getElementById('waFooter');
+  if (waFooter) waFooter.value = route.footerText || '';
+  const waInstanceName = document.getElementById('waInstanceName');
+  if (waInstanceName) waInstanceName.value = route.instanceName || '';
+  window.__waSelection = {
+    source: new Set((route.sourceChatIds || []).map(String)),
+    dest: new Set((route.destinationGroupIds || []).map(String))
+  };
+}
+
+function renderWhatsAppRoutePicker(){
+  const picker = document.getElementById('waRoutePicker');
+  if (!picker) return;
+  const routes = window.__waRoutes || [];
+  picker.innerHTML = routes.map((route, idx) => `<option value="${idx}">${route.name || `Rota ${idx + 1}`}</option>`).join('');
+  picker.value = String(window.__waRouteIndex || 0);
+}
+
+function switchWhatsAppRoute(){
+  persistActiveWhatsAppRouteFromUi();
+  const picker = document.getElementById('waRoutePicker');
+  const idx = Number(picker?.value || 0);
+  const routes = window.__waRoutes || [];
+  if (routes.length === 0) return;
+  window.__waRouteIndex = Math.max(0, Math.min(idx, routes.length - 1));
+  applyActiveWhatsAppRouteToUi();
+  if (window.__waPayload) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
+  }
+}
+
+function addWhatsAppRoute(){
+  persistActiveWhatsAppRouteFromUi();
+  window.__waRoutes = window.__waRoutes || [];
+  window.__waRoutes.push({
+    name: `Rota ${window.__waRoutes.length + 1}`,
+    enabled: true,
+    processFromMeOnly: document.getElementById('waFromMeOnly')?.checked ?? true,
+    sourceChatIds: [],
+    destinationGroupIds: [],
+    appendSheinCode: document.getElementById('waAppendShein')?.checked ?? true,
+    sendMediaEnabled: document.getElementById('waSendMedia')?.checked ?? true,
+    footerText: document.getElementById('waFooter')?.value || '',
+    instanceName: (document.getElementById('waInstanceName')?.value || '').trim() || null
+  });
+  window.__waRouteIndex = window.__waRoutes.length - 1;
+  renderWhatsAppRoutePicker();
+  applyActiveWhatsAppRouteToUi();
+  if (window.__waPayload) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
+  }
+}
+
+function removeWhatsAppRoute(){
+  window.__waRoutes = window.__waRoutes || [];
+  if (window.__waRoutes.length <= 1) {
+    alert('Mantenha pelo menos 1 rota.');
+    return;
+  }
+  const idx = Math.max(0, Math.min(window.__waRouteIndex || 0, window.__waRoutes.length - 1));
+  window.__waRoutes.splice(idx, 1);
+  window.__waRouteIndex = Math.max(0, idx - 1);
+  renderWhatsAppRoutePicker();
+  applyActiveWhatsAppRouteToUi();
+  if (window.__waPayload) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
+  }
+}
+
+function renameWhatsAppRoute(){
+  const route = getActiveWhatsAppRoute();
+  if (!route) return;
+  route.name = (document.getElementById('waRouteName')?.value || route.name || 'Rota WhatsApp').trim() || 'Rota WhatsApp';
+  renderWhatsAppRoutePicker();
+}
+
+function buildTgWaRoutes(settings){
+  const routes = (settings?.telegramToWhatsAppRoutes || []).map(r => ({
+    name: (r?.name || 'Rota Telegram -> WhatsApp').trim(),
+    enabled: !!r?.enabled,
+    sourceChatIds: Array.from(new Set((r?.sourceChatIds || []).map(Number).filter(x => Number.isFinite(x)))),
+    destinationGroupIds: Array.from(new Set((r?.destinationGroupIds || []).map(String).filter(Boolean)))
+  }));
+  if (routes.length > 0) return routes;
+
+  const legacy = settings?.telegramToWhatsApp || {};
+  return [{
+    name: 'Rota Telegram principal',
+    enabled: !!legacy.enabled,
+    sourceChatIds: Array.from(new Set((legacy.sourceChatIds || []).map(Number).filter(x => Number.isFinite(x)))),
+    destinationGroupIds: Array.from(new Set((legacy.destinationGroupIds || []).map(String).filter(Boolean)))
+  }];
+}
+
+function getActiveTgWaRoute(){
+  const routes = window.__tgWaRoutes || [];
+  if (routes.length === 0) return null;
+  const idx = Math.max(0, Math.min(window.__tgWaRouteIndex || 0, routes.length - 1));
+  window.__tgWaRouteIndex = idx;
+  return routes[idx];
+}
+
+function persistActiveTgWaRouteFromUi(){
+  const route = getActiveTgWaRoute();
+  if (!route) return;
+  route.name = (document.getElementById('tgWaRouteName')?.value || route.name || 'Rota Telegram -> WhatsApp').trim() || 'Rota Telegram -> WhatsApp';
+  route.enabled = document.getElementById('tgWaEnabled')?.checked ?? false;
+  const srcSelected = Array.from((window.__tgWaSelection?.source || new Set()).values()).map(Number).filter(x => Number.isFinite(x));
+  const srcManual = parseManualIdsById('tgWaSourceManual');
+  route.sourceChatIds = Array.from(new Set([...srcSelected, ...srcManual]));
+  const destSelected = Array.from((window.__tgWaSelection?.dest || new Set()).values());
+  const destManual = parseWhatsAppManualIds('tgWaDestManual');
+  route.destinationGroupIds = Array.from(new Set([...destSelected, ...destManual]));
+}
+
+function applyActiveTgWaRouteToUi(){
+  const route = getActiveTgWaRoute();
+  if (!route) return;
+  const routeName = document.getElementById('tgWaRouteName');
+  if (routeName) routeName.value = route.name || 'Rota Telegram -> WhatsApp';
+  const tgWaEnabled = document.getElementById('tgWaEnabled');
+  if (tgWaEnabled) tgWaEnabled.checked = !!route.enabled;
+  window.__tgWaSelection = {
+    source: new Set((route.sourceChatIds || []).map(String)),
+    dest: new Set((route.destinationGroupIds || []).map(String))
+  };
+}
+
+function renderTgWaRoutePicker(){
+  const picker = document.getElementById('tgWaRoutePicker');
+  if (!picker) return;
+  const routes = window.__tgWaRoutes || [];
+  picker.innerHTML = routes.map((route, idx) => `<option value="${idx}">${route.name || `Rota ${idx + 1}`}</option>`).join('');
+  picker.value = String(window.__tgWaRouteIndex || 0);
+}
+
+function switchTgWaRoute(){
+  persistActiveTgWaRouteFromUi();
+  const picker = document.getElementById('tgWaRoutePicker');
+  const idx = Number(picker?.value || 0);
+  const routes = window.__tgWaRoutes || [];
+  if (routes.length === 0) return;
+  window.__tgWaRouteIndex = Math.max(0, Math.min(idx, routes.length - 1));
+  applyActiveTgWaRouteToUi();
+  renderTgWaSourceList();
+  renderTgWaDestList();
+}
+
+function addTgWaRoute(){
+  persistActiveTgWaRouteFromUi();
+  window.__tgWaRoutes = window.__tgWaRoutes || [];
+  window.__tgWaRoutes.push({
+    name: `Rota ${window.__tgWaRoutes.length + 1}`,
+    enabled: true,
+    sourceChatIds: [],
+    destinationGroupIds: []
+  });
+  window.__tgWaRouteIndex = window.__tgWaRoutes.length - 1;
+  renderTgWaRoutePicker();
+  applyActiveTgWaRouteToUi();
+  renderTgWaSourceList();
+  renderTgWaDestList();
+}
+
+function removeTgWaRoute(){
+  window.__tgWaRoutes = window.__tgWaRoutes || [];
+  if (window.__tgWaRoutes.length <= 1) {
+    alert('Mantenha pelo menos 1 rota.');
+    return;
+  }
+  const idx = Math.max(0, Math.min(window.__tgWaRouteIndex || 0, window.__tgWaRoutes.length - 1));
+  window.__tgWaRoutes.splice(idx, 1);
+  window.__tgWaRouteIndex = Math.max(0, idx - 1);
+  renderTgWaRoutePicker();
+  applyActiveTgWaRouteToUi();
+  renderTgWaSourceList();
+  renderTgWaDestList();
+}
+
+function renameTgWaRoute(){
+  const route = getActiveTgWaRoute();
+  if (!route) return;
+  route.name = (document.getElementById('tgWaRouteName')?.value || route.name || 'Rota Telegram -> WhatsApp').trim() || 'Rota Telegram -> WhatsApp';
+  renderTgWaRoutePicker();
 }
 
 function renderTgWaSourceList(){
@@ -2777,21 +3318,30 @@ async function saveWhatsAppSelection(){
   }
 
   const existing = await api('/api/settings');
-  existing.whatsAppForwarding = existing.whatsAppForwarding || {};
-  existing.whatsAppForwarding.enabled = document.getElementById('waForwardEnabled').checked;
-  existing.whatsAppForwarding.processFromMeOnly = document.getElementById('waFromMeOnly').checked;
-  existing.whatsAppForwarding.footerText = document.getElementById('waFooter').value || '';
-  existing.whatsAppForwarding.appendSheinCode = document.getElementById('waAppendShein').checked;
-  const waSendMedia = document.getElementById('waSendMedia');
-  if (waSendMedia) existing.whatsAppForwarding.sendMediaEnabled = waSendMedia.checked;
+  persistActiveWhatsAppRouteFromUi();
+  const routes = (window.__waRoutes || []).map(route => ({
+    name: (route.name || 'Rota WhatsApp').trim() || 'Rota WhatsApp',
+    enabled: !!route.enabled,
+    processFromMeOnly: route.processFromMeOnly ?? true,
+    sourceChatIds: Array.from(new Set((route.sourceChatIds || []).map(String).filter(Boolean))),
+    destinationGroupIds: Array.from(new Set((route.destinationGroupIds || []).map(String).filter(Boolean))),
+    appendSheinCode: route.appendSheinCode ?? true,
+    sendMediaEnabled: route.sendMediaEnabled ?? true,
+    footerText: route.footerText || '',
+    instanceName: (route.instanceName || '').trim() || null
+  }));
+  existing.whatsAppForwardingRoutes = routes;
 
-  const selected = Array.from((window.__waSelection?.dest || new Set()).values());
-  const manual = parseWhatsAppManualIds('waManualIds');
-  existing.whatsAppForwarding.destinationGroupIds = Array.from(new Set([...selected, ...manual]));
-  const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
-  const sourceManual = parseWhatsAppManualIds('waManualSourceIds');
-  existing.whatsAppForwarding.sourceChatIds = Array.from(new Set([...sourceSelected, ...sourceManual]));
-  existing.whatsAppForwarding.instanceName = (document.getElementById('waInstanceName').value || '').trim() || null;
+  existing.whatsAppForwarding = existing.whatsAppForwarding || {};
+  const firstRoute = routes[0];
+  existing.whatsAppForwarding.enabled = firstRoute ? !!firstRoute.enabled : false;
+  existing.whatsAppForwarding.processFromMeOnly = firstRoute ? (firstRoute.processFromMeOnly ?? true) : true;
+  existing.whatsAppForwarding.footerText = firstRoute ? (firstRoute.footerText || '') : '';
+  existing.whatsAppForwarding.appendSheinCode = firstRoute ? (firstRoute.appendSheinCode ?? true) : true;
+  existing.whatsAppForwarding.sendMediaEnabled = firstRoute ? (firstRoute.sendMediaEnabled ?? true) : true;
+  existing.whatsAppForwarding.destinationGroupIds = firstRoute ? firstRoute.destinationGroupIds : [];
+  existing.whatsAppForwarding.sourceChatIds = firstRoute ? firstRoute.sourceChatIds : [];
+  existing.whatsAppForwarding.instanceName = firstRoute ? firstRoute.instanceName : null;
 
   try {
     await api('/api/settings', 'PUT', existing);

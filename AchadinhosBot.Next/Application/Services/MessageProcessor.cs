@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Domain.Compliance;
 using AchadinhosBot.Next.Domain.Models;
+using AchadinhosBot.Next.Domain.Settings;
 
 namespace AchadinhosBot.Next.Application.Services;
 
@@ -10,12 +12,21 @@ public sealed partial class MessageProcessor : IMessageProcessor
 {
     private readonly IAffiliateLinkService _affiliateLinkService;
     private readonly IConversionLogStore _conversionLogStore;
+    private readonly ISettingsStore _settingsStore;
+    private readonly IMercadoLivreApprovalStore _mercadoLivreApprovalStore;
     private readonly ILogger<MessageProcessor> _logger;
 
-    public MessageProcessor(IAffiliateLinkService affiliateLinkService, IConversionLogStore conversionLogStore, ILogger<MessageProcessor> logger)
+    public MessageProcessor(
+        IAffiliateLinkService affiliateLinkService,
+        IConversionLogStore conversionLogStore,
+        ISettingsStore settingsStore,
+        IMercadoLivreApprovalStore mercadoLivreApprovalStore,
+        ILogger<MessageProcessor> logger)
     {
         _affiliateLinkService = affiliateLinkService;
         _conversionLogStore = conversionLogStore;
+        _settingsStore = settingsStore;
+        _mercadoLivreApprovalStore = mercadoLivreApprovalStore;
         _logger = logger;
     }
 
@@ -39,6 +50,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
             return new ConversionResult(false, null, 0, source);
         }
 
+        var sw = Stopwatch.StartNew();
         var items = new List<UrlWorkItem>(matches.Count);
         foreach (Match match in matches)
         {
@@ -47,8 +59,70 @@ public sealed partial class MessageProcessor : IMessageProcessor
             items.Add(new UrlWorkItem(match, cleanedUrl, prefix, suffix, isBlocked));
         }
 
+        var mercadoLivreUrls = items
+            .Where(x => IsMercadoLivreUrl(x.CleanedUrl))
+            .Select(x => x.CleanedUrl)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var isAutomaticSource = IsAutomaticSource(source);
+        MercadoLivreComplianceSettings? mercadoLivreCompliance = null;
+
+        if (mercadoLivreUrls.Length > 0)
+        {
+            var settings = await _settingsStore.GetAsync(cancellationToken);
+            var compliance = settings.MercadoLivreCompliance ?? new MercadoLivreComplianceSettings();
+            mercadoLivreCompliance = compliance;
+            var reason = EvaluateMercadoLivreCompliance(
+                compliance,
+                source,
+                originChatId,
+                destinationChatId,
+                originChatRef,
+                destinationChatRef);
+
+            if (!string.IsNullOrWhiteSpace(reason))
+            {
+                if (compliance.RequireManualApproval && isAutomaticSource)
+                {
+                    await _mercadoLivreApprovalStore.AppendAsync(new MercadoLivrePendingApproval
+                    {
+                        Source = source,
+                        Reason = reason!,
+                        OriginalText = input,
+                        ExtractedUrls = mercadoLivreUrls.ToList(),
+                        OriginChatId = originChatId,
+                        DestinationChatId = destinationChatId,
+                        OriginChatRef = originChatRef,
+                        DestinationChatRef = destinationChatRef
+                    }, cancellationToken);
+                }
+
+                await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                {
+                    Source = source,
+                    Store = "Mercado Livre",
+                    Success = false,
+                    Error = reason,
+                    OriginalUrl = string.Join(" | ", mercadoLivreUrls),
+                    ConvertedUrl = string.Empty,
+                    OriginChatId = originChatId,
+                    DestinationChatId = destinationChatId,
+                    OriginChatRef = originChatRef,
+                    DestinationChatRef = destinationChatRef,
+                    ElapsedMs = sw.ElapsedMilliseconds
+                }, cancellationToken);
+
+                _logger.LogWarning(
+                    "Compliance Mercado Livre bloqueou processamento. Source={Source} Reason={Reason} Urls={Urls}",
+                    source,
+                    reason,
+                    string.Join(" | ", mercadoLivreUrls));
+
+                return new ConversionResult(false, null, 0, source);
+            }
+        }
+
         var tasks = new Task<AffiliateLinkResult>[items.Count];
-        var sw = Stopwatch.StartNew();
         for (var i = 0; i < items.Count; i++)
         {
             tasks[i] = items[i].IsBlocked
@@ -57,6 +131,66 @@ public sealed partial class MessageProcessor : IMessageProcessor
         }
 
         await Task.WhenAll(tasks);
+
+        if (mercadoLivreUrls.Length > 0 && isAutomaticSource)
+        {
+            var invalidMercadoLivreUrls = new List<string>();
+            for (var i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                if (!IsMercadoLivreUrl(item.CleanedUrl))
+                {
+                    continue;
+                }
+
+                var result = tasks[i].Result;
+                var valid = result.Success && result.IsAffiliated && !string.IsNullOrWhiteSpace(result.ConvertedUrl);
+                if (!valid)
+                {
+                    invalidMercadoLivreUrls.Add(item.CleanedUrl);
+                }
+            }
+
+            if (invalidMercadoLivreUrls.Count > 0)
+            {
+                var reason = "Verificacao obrigatoria do Mercado Livre falhou. Link nao sera enviado automaticamente.";
+                if (mercadoLivreCompliance?.RequireManualApproval ?? true)
+                {
+                    await _mercadoLivreApprovalStore.AppendAsync(new MercadoLivrePendingApproval
+                    {
+                        Source = source,
+                        Reason = reason,
+                        OriginalText = input,
+                        ExtractedUrls = invalidMercadoLivreUrls.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                        OriginChatId = originChatId,
+                        DestinationChatId = destinationChatId,
+                        OriginChatRef = originChatRef,
+                        DestinationChatRef = destinationChatRef
+                    }, cancellationToken);
+                }
+
+                await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                {
+                    Source = source,
+                    Store = "Mercado Livre",
+                    Success = false,
+                    Error = reason,
+                    OriginalUrl = string.Join(" | ", invalidMercadoLivreUrls.Distinct(StringComparer.OrdinalIgnoreCase)),
+                    ConvertedUrl = string.Empty,
+                    OriginChatId = originChatId,
+                    DestinationChatId = destinationChatId,
+                    OriginChatRef = originChatRef,
+                    DestinationChatRef = destinationChatRef,
+                    ElapsedMs = sw.ElapsedMilliseconds
+                }, cancellationToken);
+
+                _logger.LogWarning("Bloqueio automatico Mercado Livre por validacao obrigatoria. Source={Source} Urls={Urls}",
+                    source,
+                    string.Join(" | ", invalidMercadoLivreUrls.Distinct(StringComparer.OrdinalIgnoreCase)));
+
+                return new ConversionResult(false, null, 0, source);
+            }
+        }
 
         var sb = new StringBuilder(input.Length + 128);
         var lastIndex = 0;
@@ -190,6 +324,122 @@ public sealed partial class MessageProcessor : IMessageProcessor
         }
 
         return false;
+    }
+
+    private static bool IsMercadoLivreUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var host = uri.Host.ToLowerInvariant();
+        return host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("meli.co", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? EvaluateMercadoLivreCompliance(
+        MercadoLivreComplianceSettings compliance,
+        string source,
+        long? originChatId,
+        long? destinationChatId,
+        string? originChatRef,
+        string? destinationChatRef)
+    {
+        if (!compliance.Enabled)
+        {
+            return null;
+        }
+
+        var reasons = new List<string>();
+        var isAutomatic = IsAutomaticSource(source);
+
+        if (compliance.EnforceChannelWhitelist && compliance.AllowedChannels.Count > 0)
+        {
+            var allowed = new HashSet<string>(
+                compliance.AllowedChannels
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim()),
+                StringComparer.OrdinalIgnoreCase);
+
+            var channels = ExtractChannelRefs(originChatId, destinationChatId, originChatRef, destinationChatRef);
+            if (channels.Count == 0 && compliance.BlockWhenChannelUnknown)
+            {
+                reasons.Add("Canal de origem/destino nao identificado para whitelist do Mercado Livre.");
+            }
+            else
+            {
+                var invalid = channels
+                    .Where(x => !allowed.Contains(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (invalid.Count > 0)
+                {
+                    reasons.Add($"Canal nao autorizado para Mercado Livre: {string.Join(", ", invalid)}.");
+                }
+            }
+        }
+
+        if (isAutomatic && compliance.RequireManualApproval)
+        {
+            reasons.Add("Aprovacao manual obrigatoria para links do Mercado Livre.");
+        }
+        else if (isAutomatic && compliance.BlockAutoFlows)
+        {
+            reasons.Add("Fluxo automatico bloqueado para links do Mercado Livre.");
+        }
+
+        return reasons.Count == 0 ? null : string.Join(" ", reasons);
+    }
+
+    private static List<string> ExtractChannelRefs(
+        long? originChatId,
+        long? destinationChatId,
+        string? originChatRef,
+        string? destinationChatRef)
+    {
+        var refs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddCompositeRefs(destinationChatRef, refs);
+        AddCompositeRefs(originChatRef, refs);
+        if (destinationChatId.HasValue && destinationChatId.Value != 0)
+        {
+            refs.Add(destinationChatId.Value.ToString());
+        }
+        if (originChatId.HasValue && originChatId.Value != 0)
+        {
+            refs.Add(originChatId.Value.ToString());
+        }
+        return refs.ToList();
+    }
+
+    private static void AddCompositeRefs(string? raw, HashSet<string> refs)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return;
+        }
+
+        var tokens = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var token in tokens)
+        {
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                refs.Add(token.Trim());
+            }
+        }
+    }
+
+    private static bool IsAutomaticSource(string source)
+    {
+        var normalized = (source ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "playground" => false,
+            "mercadolivremanualapproval" => false,
+            "manual" => false,
+            _ => true
+        };
     }
 
     private sealed record UrlWorkItem(Match Match, string CleanedUrl, string Prefix, string Suffix, bool IsBlocked);
