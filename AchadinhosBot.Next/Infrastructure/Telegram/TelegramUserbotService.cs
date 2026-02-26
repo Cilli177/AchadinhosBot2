@@ -360,7 +360,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var text = msg.message ?? string.Empty;
+                var text = BuildMessageTextForConversion(msg);
                 var result = await _messageProcessor.ProcessAsync(
                     text,
                     "manual",
@@ -511,7 +511,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             return;
         }
 
-        var text = msg.message ?? string.Empty;
+        var text = BuildMessageTextForConversion(msg);
         if (string.IsNullOrWhiteSpace(text))
         {
             return;
@@ -830,7 +830,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var defaultSources = settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>();
+        var defaultSources = (settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>())
+            .Union(settings.TelegramForwarding?.SourceChatIds ?? new List<long>())
+            .Distinct()
+            .ToList();
         foreach (var route in routes)
         {
             if (!route.Enabled) continue;
@@ -1000,7 +1003,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
     {
         var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var routes = ResolveTelegramToWhatsAppRoutes(settings);
-        var defaultSources = settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>();
+        var defaultSources = (settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>())
+            .Union(settings.TelegramForwarding?.SourceChatIds ?? new List<long>())
+            .Distinct()
+            .ToList();
 
         foreach (var route in routes)
         {
@@ -1361,6 +1367,84 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
     private static bool IsTelegramGroupPeer(Peer peer)
         => peer is PeerChat || peer is PeerChannel;
+
+    private static string BuildMessageTextForConversion(Message msg)
+    {
+        var baseText = msg.message ?? string.Empty;
+        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (msg.entities is not null)
+        {
+            foreach (var entity in msg.entities)
+            {
+                switch (entity)
+                {
+                    case MessageEntityTextUrl textUrl when !string.IsNullOrWhiteSpace(textUrl.url):
+                        urls.Add(textUrl.url.Trim());
+                        break;
+                    case MessageEntityUrl urlEntity:
+                        var extracted = TryExtractUrlFromEntity(baseText, urlEntity.offset, urlEntity.length);
+                        if (!string.IsNullOrWhiteSpace(extracted))
+                        {
+                            urls.Add(extracted);
+                        }
+                        break;
+                }
+            }
+        }
+
+        if (msg.media is MessageMediaWebPage mmWeb &&
+            mmWeb.webpage is WebPage webPage &&
+            !string.IsNullOrWhiteSpace(webPage.url))
+        {
+            urls.Add(webPage.url.Trim());
+        }
+
+        if (urls.Count == 0)
+        {
+            return baseText;
+        }
+
+        var sb = new StringBuilder(baseText);
+        foreach (var url in urls)
+        {
+            if (baseText.Contains(url, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (sb.Length > 0)
+            {
+                sb.AppendLine();
+            }
+            sb.Append(url);
+        }
+
+        return sb.ToString();
+    }
+
+    private static string? TryExtractUrlFromEntity(string text, int offset, int length)
+    {
+        if (string.IsNullOrWhiteSpace(text) || offset < 0 || length <= 0 || offset >= text.Length)
+        {
+            return null;
+        }
+
+        var max = Math.Min(length, text.Length - offset);
+        if (max <= 0)
+        {
+            return null;
+        }
+
+        var candidate = text.Substring(offset, max).Trim();
+        if (candidate.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            candidate.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return candidate;
+        }
+
+        return null;
+    }
 
     private static string? GetAutoReply(AutomationSettings settings, string text)
     {
