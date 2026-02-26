@@ -12,6 +12,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
 {
     private readonly IAffiliateLinkService _affiliateLinkService;
     private readonly IConversionLogStore _conversionLogStore;
+    private readonly ICouponSelector _couponSelector;
     private readonly ISettingsStore _settingsStore;
     private readonly IMercadoLivreApprovalStore _mercadoLivreApprovalStore;
     private readonly ILogger<MessageProcessor> _logger;
@@ -19,12 +20,14 @@ public sealed partial class MessageProcessor : IMessageProcessor
     public MessageProcessor(
         IAffiliateLinkService affiliateLinkService,
         IConversionLogStore conversionLogStore,
+        ICouponSelector couponSelector,
         ISettingsStore settingsStore,
         IMercadoLivreApprovalStore mercadoLivreApprovalStore,
         ILogger<MessageProcessor> logger)
     {
         _affiliateLinkService = affiliateLinkService;
         _conversionLogStore = conversionLogStore;
+        _couponSelector = couponSelector;
         _settingsStore = settingsStore;
         _mercadoLivreApprovalStore = mercadoLivreApprovalStore;
         _logger = logger;
@@ -51,6 +54,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         }
 
         var sw = Stopwatch.StartNew();
+        var settings = await _settingsStore.GetAsync(cancellationToken);
         var items = new List<UrlWorkItem>(matches.Count);
         foreach (Match match in matches)
         {
@@ -69,7 +73,6 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
         if (mercadoLivreUrls.Length > 0)
         {
-            var settings = await _settingsStore.GetAsync(cancellationToken);
             var compliance = settings.MercadoLivreCompliance ?? new MercadoLivreComplianceSettings();
             mercadoLivreCompliance = compliance;
             var reason = EvaluateMercadoLivreCompliance(
@@ -192,9 +195,32 @@ public sealed partial class MessageProcessor : IMessageProcessor
             }
         }
 
+        var linkIntegrityBlockReason = EvaluateLinkIntegrityGate(settings.LinkIntegrity, source, items, tasks);
+        if (!string.IsNullOrWhiteSpace(linkIntegrityBlockReason))
+        {
+            await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+            {
+                Source = source,
+                Store = "Link Integrity",
+                Success = false,
+                Error = linkIntegrityBlockReason,
+                OriginalUrl = string.Join(" | ", items.Select(x => x.CleanedUrl).Distinct(StringComparer.OrdinalIgnoreCase)),
+                ConvertedUrl = string.Empty,
+                OriginChatId = originChatId,
+                DestinationChatId = destinationChatId,
+                OriginChatRef = originChatRef,
+                DestinationChatRef = destinationChatRef,
+                ElapsedMs = sw.ElapsedMilliseconds
+            }, cancellationToken);
+
+            _logger.LogWarning("Link Integrity Gate bloqueou processamento. Source={Source} Reason={Reason}", source, linkIntegrityBlockReason);
+            return new ConversionResult(false, null, 0, source);
+        }
+
         var sb = new StringBuilder(input.Length + 128);
         var lastIndex = 0;
         var converted = 0;
+        var convertedStores = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < items.Count; i++)
         {
@@ -214,6 +240,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     sb.Append(result.ConvertedUrl);
                     sb.Append(item.Suffix);
                     converted++;
+                    convertedStores.Add(string.IsNullOrWhiteSpace(result.Store) ? DetectStore(result.ConvertedUrl, item.CleanedUrl) : result.Store);
                     _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = source,
@@ -259,6 +286,17 @@ public sealed partial class MessageProcessor : IMessageProcessor
         }
 
         sb.Append(input, lastIndex, input.Length - lastIndex);
+
+        if (converted > 0 && settings.CouponHub.Enabled && settings.CouponHub.AppendToConvertedMessages)
+        {
+            var couponText = await BuildCouponAppendixAsync(settings, convertedStores, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(couponText))
+            {
+                sb.AppendLine();
+                sb.AppendLine();
+                sb.Append(couponText);
+            }
+        }
 
         _logger.LogInformation("Processamento concluído. Source={Source} ConvertedLinks={ConvertedLinks}", source, converted);
         return new ConversionResult(converted > 0, converted > 0 ? sb.ToString() : null, converted, source);
@@ -440,6 +478,114 @@ public sealed partial class MessageProcessor : IMessageProcessor
             "manual" => false,
             _ => true
         };
+    }
+
+    private string? EvaluateLinkIntegrityGate(
+        LinkIntegritySettings integrity,
+        string source,
+        IReadOnlyList<UrlWorkItem> items,
+        IReadOnlyList<Task<AffiliateLinkResult>> tasks)
+    {
+        if (!integrity.Enabled || !IsAutomaticSource(source))
+        {
+            return null;
+        }
+
+        var enforcedStores = new HashSet<string>(
+            (integrity.EnforcedStores ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+
+        var failures = new List<string>();
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (items[i].IsBlocked)
+            {
+                continue;
+            }
+
+            var result = tasks[i].Result;
+            var detectedStore = string.IsNullOrWhiteSpace(result.Store) || string.Equals(result.Store, "Unknown", StringComparison.OrdinalIgnoreCase)
+                ? DetectStore(result.ConvertedUrl, items[i].CleanedUrl)
+                : result.Store;
+
+            var isUnknownStore = string.IsNullOrWhiteSpace(detectedStore) || string.Equals(detectedStore, "Unknown", StringComparison.OrdinalIgnoreCase);
+            if (isUnknownStore && integrity.IgnoreUnknownStores)
+            {
+                continue;
+            }
+
+            if (enforcedStores.Count > 0 && !enforcedStores.Contains(detectedStore))
+            {
+                continue;
+            }
+
+            var conversionFailed = !result.Success || string.IsNullOrWhiteSpace(result.ConvertedUrl);
+            var nonAffiliated = result.Success && !result.IsAffiliated;
+
+            if (conversionFailed && !integrity.BlockAutomaticFlowOnConversionFailure)
+            {
+                continue;
+            }
+
+            if (nonAffiliated && !integrity.BlockAutomaticFlowOnNonAffiliated)
+            {
+                continue;
+            }
+
+            if (conversionFailed || nonAffiliated)
+            {
+                var issue = $"{detectedStore}: {items[i].CleanedUrl}";
+                failures.Add(issue);
+            }
+        }
+
+        if (failures.Count == 0)
+        {
+            return null;
+        }
+
+        return $"Link Integrity bloqueou envio automatico. Links com falha: {string.Join(" | ", failures)}";
+    }
+
+    private async Task<string?> BuildCouponAppendixAsync(
+        AutomationSettings settings,
+        IReadOnlyCollection<string> convertedStores,
+        CancellationToken cancellationToken)
+    {
+        if (convertedStores.Count == 0)
+        {
+            return null;
+        }
+
+        var maxPerStore = Math.Clamp(settings.CouponHub.MaxCouponsPerStore, 1, 3);
+        var lines = new List<string>();
+
+        foreach (var store in convertedStores)
+        {
+            var coupons = await _couponSelector.GetActiveCouponsAsync(store, maxPerStore, cancellationToken);
+            foreach (var coupon in coupons)
+            {
+                lines.Add(FormatCouponLine(store, coupon));
+            }
+        }
+
+        if (lines.Count == 0)
+        {
+            return null;
+        }
+
+        return $"Cupons ativos:\n{string.Join('\n', lines.Distinct(StringComparer.OrdinalIgnoreCase))}";
+    }
+
+    private static string FormatCouponLine(string store, AffiliateCoupon coupon)
+    {
+        var details = string.IsNullOrWhiteSpace(coupon.Description) ? string.Empty : $" - {coupon.Description.Trim()}";
+        var validity = coupon.EndsAt.HasValue ? $" (valido ate {coupon.EndsAt.Value:dd/MM HH:mm})" : string.Empty;
+        var link = string.IsNullOrWhiteSpace(coupon.AffiliateLink) ? string.Empty : $"\n  Link: {coupon.AffiliateLink.Trim()}";
+        return $"- [{store}] CUPOM {coupon.Code.Trim()}{details}{validity}{link}";
     }
 
     private sealed record UrlWorkItem(Match Match, string CleanedUrl, string Prefix, string Suffix, bool IsBlocked);

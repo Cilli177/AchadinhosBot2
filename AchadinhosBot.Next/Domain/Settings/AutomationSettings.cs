@@ -24,6 +24,8 @@ public sealed class AutomationSettings
     public List<TelegramToWhatsAppRouteSettings> TelegramToWhatsAppRoutes { get; set; } = new();
     public LinkResponderSettings LinkResponder { get; set; } = new();
     public MercadoLivreComplianceSettings MercadoLivreCompliance { get; set; } = new();
+    public LinkIntegritySettings LinkIntegrity { get; set; } = new();
+    public CouponHubSettings CouponHub { get; set; } = new();
     public InstagramPostSettings InstagramPosts { get; set; } = new();
     public InstagramPublishSettings InstagramPublish { get; set; } = new();
     public OpenAISettings OpenAI { get; set; } = new();
@@ -142,6 +144,39 @@ public sealed class MercadoLivreComplianceSettings
     public bool EnforceChannelWhitelist { get; set; }
     public bool BlockWhenChannelUnknown { get; set; } = true;
     public List<string> AllowedChannels { get; set; } = new();
+}
+
+public sealed class LinkIntegritySettings
+{
+    public bool Enabled { get; set; } = true;
+    public bool BlockAutomaticFlowOnNonAffiliated { get; set; } = true;
+    public bool BlockAutomaticFlowOnConversionFailure { get; set; } = true;
+    public bool IgnoreUnknownStores { get; set; } = true;
+    public List<string> EnforcedStores { get; set; } = ["Amazon", "Shopee", "Shein", "Mercado Livre"];
+}
+
+public sealed class CouponHubSettings
+{
+    public bool Enabled { get; set; } = true;
+    public bool AppendToConvertedMessages { get; set; } = true;
+    public bool AppendToInstagramCaptions { get; set; } = true;
+    public int MaxCouponsPerStore { get; set; } = 1;
+    public List<AffiliateCoupon> Coupons { get; set; } = new();
+}
+
+public sealed class AffiliateCoupon
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public bool Enabled { get; set; } = true;
+    public string Store { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string? AffiliateLink { get; set; }
+    public DateTimeOffset? StartsAt { get; set; }
+    public DateTimeOffset? EndsAt { get; set; }
+    public int Priority { get; set; } = 100;
+    public string Source { get; set; } = "manual";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public sealed class InstagramPostSettings

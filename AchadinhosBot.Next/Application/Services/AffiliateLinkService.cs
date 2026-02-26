@@ -1290,6 +1290,59 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return ub.Uri.ToString();
     }
 
+    private static (bool IsAffiliated, string? Error) ValidateShopeeAffiliate(Uri uri, Dictionary<string, string> query)
+    {
+        var host = uri.Host.ToLowerInvariant();
+        var isShopeeDomain = host.Contains("shopee", StringComparison.OrdinalIgnoreCase)
+                             || host.Contains("shope.ee", StringComparison.OrdinalIgnoreCase)
+                             || host.Contains("shp.ee", StringComparison.OrdinalIgnoreCase);
+
+        if (!isShopeeDomain)
+        {
+            return (false, "Dominio Shopee invalido para afiliacao.");
+        }
+
+        if (HasShopeeAffiliateMarker(query) || IsShopeeShortAffiliateHost(host))
+        {
+            return (true, null);
+        }
+
+        return (false, "Link Shopee sem marcador claro de afiliacao.");
+    }
+
+    private static bool HasShopeeAffiliateMarker(Dictionary<string, string> query)
+    {
+        if (query.Count == 0)
+        {
+            return false;
+        }
+
+        var markerKeys = new[]
+        {
+            "smtt",
+            "uls_trackid",
+            "affiliateid",
+            "affiliate_id",
+            "af_click_lookback",
+            "deep_and_deferred"
+        };
+
+        foreach (var key in markerKeys)
+        {
+            if (query.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsShopeeShortAffiliateHost(string host)
+        => host.Equals("shp.ee", StringComparison.OrdinalIgnoreCase)
+           || host.Equals("shope.ee", StringComparison.OrdinalIgnoreCase)
+           || host.Equals("s.shopee.com.br", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsShortLink(string url)
     {
         return url.Contains("amzn.to", StringComparison.OrdinalIgnoreCase)
@@ -1429,7 +1482,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                        && string.Equals(shein, _options.SheinId, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
                 : (false, $"Código Shein inválido (esperado: {_options.SheinId})"),
-            "Shopee" => (true, null),
+            "Shopee" => ValidateShopeeAffiliate(uri, query),
             _ => (true, null)
         };
 

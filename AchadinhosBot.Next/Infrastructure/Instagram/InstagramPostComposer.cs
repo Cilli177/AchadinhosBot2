@@ -9,17 +9,20 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
 {
     private static readonly Regex UrlRegex = new(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private readonly IMessageProcessor _messageProcessor;
+    private readonly ICouponSelector _couponSelector;
     private readonly OpenAiInstagramPostGenerator _openAiGenerator;
     private readonly GeminiInstagramPostGenerator _geminiGenerator;
     private readonly ISettingsStore _settingsStore;
 
     public InstagramPostComposer(
         IMessageProcessor messageProcessor,
+        ICouponSelector couponSelector,
         OpenAiInstagramPostGenerator openAiGenerator,
         GeminiInstagramPostGenerator geminiGenerator,
         ISettingsStore settingsStore)
     {
         _messageProcessor = messageProcessor;
+        _couponSelector = couponSelector;
         _openAiGenerator = openAiGenerator;
         _geminiGenerator = geminiGenerator;
         _settingsStore = settingsStore;
@@ -43,9 +46,11 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
             link = ExtractFirstUrl(baseText);
         }
 
+        var allSettings = await _settingsStore.GetAsync(cancellationToken);
+        var couponLine = await BuildCouponLineAsync(allSettings, link, cancellationToken);
+
         if (settings.UseAi)
         {
-            var allSettings = await _settingsStore.GetAsync(cancellationToken);
             var openAi = allSettings.OpenAI ?? new OpenAISettings();
             var gemini = allSettings.Gemini ?? new GeminiSettings();
 
@@ -72,11 +77,18 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
 
             if (results.Count > 0)
             {
-                return string.Join("\n\n", results);
+                var merged = string.Join("\n\n", results);
+                if (allSettings.CouponHub.Enabled && allSettings.CouponHub.AppendToInstagramCaptions && !string.IsNullOrWhiteSpace(couponLine))
+                {
+                    merged += $"\n\nCupom recomendado: {couponLine}";
+                }
+
+                return merged;
             }
         }
 
-        var productName = RemoveUrls(baseText);
+        var cleanBaseText = RemoveCouponAppendix(baseText);
+        var productName = RemoveUrls(cleanBaseText);
         if (string.IsNullOrWhiteSpace(productName))
         {
             productName = "Produto em destaque";
@@ -100,11 +112,26 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
             "Escolha inteligente",
             "Destaque do dia"
         };
+        var captionCandidates = new List<(int Index, string Caption, int Score)>();
         for (var i = 0; i < variations; i++)
         {
             var tone = tones[i % tones.Length];
+            var caption = BuildCaption(productName, link, tone, couponLine);
+            var score = ScoreCaption(caption);
+            captionCandidates.Add((i + 1, caption, score));
+
             sb.AppendLine($"Legenda {i + 1} (pronta para copiar):");
-            sb.AppendLine(BuildCaption(productName, link, tone));
+            sb.AppendLine(caption);
+            sb.AppendLine();
+        }
+
+        if (captionCandidates.Count > 0)
+        {
+            var best = captionCandidates
+                .OrderByDescending(x => x.Score)
+                .ThenBy(x => x.Index)
+                .First();
+            sb.AppendLine($"Melhor varia\u00e7\u00e3o sugerida: Legenda {best.Index} (score {best.Score})");
             sb.AppendLine();
         }
 
@@ -166,13 +193,17 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         return trimmed;
     }
 
-    private static string BuildCaption(string productName, string? link, string tone)
+    private static string BuildCaption(string productName, string? link, string tone, string? couponLine)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"\u2728 {tone} para voc\u00ea!");
         sb.AppendLine($"\u2705 {productName}");
         sb.AppendLine("\U0001F69A Envio r\u00e1pido e \u00f3tima avalia\u00e7\u00e3o");
         sb.AppendLine("\U0001F4B3 Parcelamento facilitado");
+        if (!string.IsNullOrWhiteSpace(couponLine))
+        {
+            sb.AppendLine($"\U0001F3F7\uFE0F Cupom: {couponLine}");
+        }
         sb.AppendLine("\U0001F3AF Garanta o seu agora");
         if (!string.IsNullOrWhiteSpace(link))
         {
@@ -231,6 +262,62 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         });
     }
 
+    private async Task<string?> BuildCouponLineAsync(AutomationSettings settings, string? link, CancellationToken cancellationToken)
+    {
+        if (!settings.CouponHub.Enabled || string.IsNullOrWhiteSpace(link))
+        {
+            return null;
+        }
+
+        var store = DetectStoreByLink(link);
+        if (string.IsNullOrWhiteSpace(store))
+        {
+            return null;
+        }
+
+        var coupons = await _couponSelector.GetActiveCouponsAsync(store, 1, cancellationToken);
+        var coupon = coupons.FirstOrDefault();
+        if (coupon is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(coupon.Description))
+        {
+            return $"{coupon.Code.Trim()} ({coupon.Description.Trim()})";
+        }
+
+        return coupon.Code.Trim();
+    }
+
+    private static string DetectStoreByLink(string link)
+    {
+        var lower = link.ToLowerInvariant();
+        if (lower.Contains("amazon.") || lower.Contains("amzn.to") || lower.Contains("a.co")) return "Amazon";
+        if (lower.Contains("mercadolivre") || lower.Contains("mercadolibre") || lower.Contains("meli.co")) return "Mercado Livre";
+        if (lower.Contains("shopee") || lower.Contains("shope.ee") || lower.Contains("shp.ee")) return "Shopee";
+        if (lower.Contains("shein")) return "Shein";
+        return string.Empty;
+    }
+
+    private static int ScoreCaption(string caption)
+    {
+        var score = 0;
+        var normalized = caption.ToLowerInvariant();
+
+        if (normalized.Contains("cupom", StringComparison.OrdinalIgnoreCase)) score += 20;
+        if (normalized.Contains("agora", StringComparison.OrdinalIgnoreCase)) score += 12;
+        if (normalized.Contains("oferta", StringComparison.OrdinalIgnoreCase)) score += 10;
+        if (normalized.Contains("garanta", StringComparison.OrdinalIgnoreCase)) score += 8;
+        if (normalized.Contains("link", StringComparison.OrdinalIgnoreCase)) score += 8;
+
+        var length = caption.Length;
+        if (length is >= 180 and <= 380) score += 15;
+        if (length > 550) score -= 10;
+
+        return score;
+    }
+
     private static string? ExtractFirstUrl(string text)
     {
         var match = UrlRegex.Match(text);
@@ -240,5 +327,21 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
     private static string RemoveUrls(string text)
     {
         return UrlRegex.Replace(text, string.Empty).Trim();
+    }
+
+    private static string RemoveCouponAppendix(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        var markerIndex = text.IndexOf("Cupons ativos:", StringComparison.OrdinalIgnoreCase);
+        if (markerIndex <= 0)
+        {
+            return text;
+        }
+
+        return text[..markerIndex].Trim();
     }
 }

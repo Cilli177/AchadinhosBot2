@@ -136,6 +136,7 @@ builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(6
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
 builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
 builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
+builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
 builder.Services.AddSingleton<ILinkTrackingStore, LinkTrackingStore>();
 builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
@@ -1347,6 +1348,169 @@ api.MapPost("/integrations/mercadolivre/connect", async (
     }, ct);
 
     return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
+api.MapGet("/coupons", async (ISettingsStore store, CancellationToken ct) =>
+{
+    var settings = await store.GetAsync(ct);
+    var hub = settings.CouponHub ?? new CouponHubSettings();
+    var coupons = hub.Coupons
+        .OrderByDescending(x => x.Enabled)
+        .ThenByDescending(x => x.Priority)
+        .ThenBy(x => x.Store)
+        .ThenBy(x => x.Code)
+        .ToArray();
+
+    return Results.Ok(new
+    {
+        hub.Enabled,
+        hub.AppendToConvertedMessages,
+        hub.AppendToInstagramCaptions,
+        hub.MaxCouponsPerStore,
+        items = coupons
+    });
+});
+
+api.MapPost("/coupons/upsert", async (
+    CouponUpsertRequest payload,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.Store) || string.IsNullOrWhiteSpace(payload.Code))
+    {
+        return Results.BadRequest(new { success = false, message = "Store e Code sao obrigatorios." });
+    }
+
+    var settings = await store.GetAsync(ct);
+    settings.CouponHub ??= new CouponHubSettings();
+    var coupons = settings.CouponHub.Coupons;
+
+    var id = string.IsNullOrWhiteSpace(payload.Id) ? Guid.NewGuid().ToString("N") : payload.Id.Trim();
+    var existing = coupons.FirstOrDefault(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+    if (existing is null)
+    {
+        existing = coupons.FirstOrDefault(x =>
+            x.Store.Equals(payload.Store.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            x.Code.Equals(payload.Code.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    if (existing is null)
+    {
+        coupons.Add(new AffiliateCoupon
+        {
+            Id = id,
+            Enabled = payload.Enabled ?? true,
+            Store = payload.Store.Trim(),
+            Code = payload.Code.Trim(),
+            Description = payload.Description?.Trim() ?? string.Empty,
+            AffiliateLink = string.IsNullOrWhiteSpace(payload.AffiliateLink) ? null : payload.AffiliateLink.Trim(),
+            StartsAt = payload.StartsAt,
+            EndsAt = payload.EndsAt,
+            Priority = payload.Priority ?? 100,
+            Source = string.IsNullOrWhiteSpace(payload.Source) ? "manual" : payload.Source.Trim(),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+    }
+    else
+    {
+        existing.Enabled = payload.Enabled ?? existing.Enabled;
+        existing.Store = payload.Store.Trim();
+        existing.Code = payload.Code.Trim();
+        existing.Description = payload.Description?.Trim() ?? existing.Description;
+        existing.AffiliateLink = string.IsNullOrWhiteSpace(payload.AffiliateLink) ? existing.AffiliateLink : payload.AffiliateLink.Trim();
+        existing.StartsAt = payload.StartsAt ?? existing.StartsAt;
+        existing.EndsAt = payload.EndsAt ?? existing.EndsAt;
+        existing.Priority = payload.Priority ?? existing.Priority;
+        existing.Source = string.IsNullOrWhiteSpace(payload.Source) ? existing.Source : payload.Source.Trim();
+    }
+
+    await store.SaveAsync(settings, ct);
+    await audit.WriteAsync("coupon.upsert", context.User.Identity?.Name ?? "unknown", new { id, payload.Store, payload.Code }, ct);
+    return Results.Ok(new { success = true, id });
+}).RequireAuthorization("AdminOnly");
+
+api.MapDelete("/coupons/{id}", async (
+    string id,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+    {
+        return Results.BadRequest(new { success = false, message = "Id obrigatorio." });
+    }
+
+    var settings = await store.GetAsync(ct);
+    settings.CouponHub ??= new CouponHubSettings();
+    var removed = settings.CouponHub.Coupons.RemoveAll(x => x.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    if (removed == 0)
+    {
+        return Results.NotFound(new { success = false, message = "Cupom nao encontrado." });
+    }
+
+    await store.SaveAsync(settings, ct);
+    await audit.WriteAsync("coupon.delete", context.User.Identity?.Name ?? "unknown", new { id = id.Trim(), removed }, ct);
+    return Results.Ok(new { success = true, removed });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/coupons/extract", async (
+    CouponExtractRequest payload,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.Store) || string.IsNullOrWhiteSpace(payload.Text))
+    {
+        return Results.BadRequest(new { success = false, message = "Store e Text sao obrigatorios." });
+    }
+
+    var codes = ExtractCouponCodesFromText(payload.Text);
+    if (codes.Count == 0)
+    {
+        return Results.BadRequest(new { success = false, message = "Nenhum cupom detectado no texto." });
+    }
+
+    var settings = await store.GetAsync(ct);
+    settings.CouponHub ??= new CouponHubSettings();
+    var inserted = 0;
+    foreach (var code in codes)
+    {
+        var exists = settings.CouponHub.Coupons.Any(x =>
+            x.Store.Equals(payload.Store.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            x.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
+        if (exists)
+        {
+            continue;
+        }
+
+        settings.CouponHub.Coupons.Add(new AffiliateCoupon
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Enabled = true,
+            Store = payload.Store.Trim(),
+            Code = code,
+            Description = payload.Description?.Trim() ?? string.Empty,
+            AffiliateLink = string.IsNullOrWhiteSpace(payload.AffiliateLink) ? null : payload.AffiliateLink.Trim(),
+            EndsAt = payload.EndsAt,
+            Priority = payload.Priority ?? 100,
+            Source = string.IsNullOrWhiteSpace(payload.Source) ? "extract" : payload.Source.Trim(),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        inserted++;
+    }
+
+    if (inserted > 0)
+    {
+        await store.SaveAsync(settings, ct);
+    }
+
+    await audit.WriteAsync("coupon.extract", context.User.Identity?.Name ?? "unknown", new { payload.Store, inserted, codes }, ct);
+    return Results.Ok(new { success = true, inserted, codes });
 }).RequireAuthorization("AdminOnly");
 
 api.MapPost("/playground/preview", async (
@@ -7347,6 +7511,44 @@ static async Task<InstagramDmSendResult> SendManyChatDmAsync(
     }
 }
 
+static List<string> ExtractCouponCodesFromText(string text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return new List<string>();
+    }
+
+    var hint = text.Contains("cupom", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("coupon", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("código", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("codigo", StringComparison.OrdinalIgnoreCase);
+
+    if (!hint)
+    {
+        return new List<string>();
+    }
+
+    var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "CUPOM",
+        "COUPON",
+        "CODIGO",
+        "CÓDIGO",
+        "OFF",
+        "R",
+        "RS"
+    };
+
+    var matches = Regex.Matches(text.ToUpperInvariant(), @"\b[A-Z0-9]{4,16}\b");
+    return matches
+        .Select(m => m.Value.Trim())
+        .Where(v => !blocked.Contains(v))
+        .Where(v => v.Any(char.IsDigit))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Take(20)
+        .ToList();
+}
+
 static string EscapeJsonValue(string value)
 {
     return (value ?? string.Empty)
@@ -7362,6 +7564,25 @@ internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
 internal sealed record TelegramUserbotReplayRequest(long SourceChatId, int Count = 10);
+internal sealed record CouponUpsertRequest(
+    string? Id,
+    string Store,
+    string Code,
+    string? Description,
+    string? AffiliateLink,
+    DateTimeOffset? StartsAt,
+    DateTimeOffset? EndsAt,
+    int? Priority,
+    bool? Enabled,
+    string? Source);
+internal sealed record CouponExtractRequest(
+    string Store,
+    string Text,
+    string? Description,
+    string? AffiliateLink,
+    DateTimeOffset? EndsAt,
+    int? Priority,
+    string? Source);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
 internal sealed record WhatsAppIncomingMessage(
     string ChatId,
