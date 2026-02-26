@@ -460,6 +460,19 @@ app.MapPost("/webhook/bot-conversor", async (
     var waRoutes = ResolveWhatsAppForwardingRoutes(settings);
     var responder = settings.LinkResponder ?? new LinkResponderSettings();
 
+    async Task SendReplyAsync(string? instanceName, string chatId, string text)
+    {
+        var sendResult = await gateway.SendTextAsync(instanceName, chatId, text, ct);
+        if (!sendResult.Success)
+        {
+            logger.LogWarning(
+                "Falha ao responder WhatsApp comando/chat. Chat={ChatId} Instance={InstanceName} Error={Error}",
+                chatId,
+                instanceName ?? "default",
+                sendResult.Message ?? "unknown");
+        }
+    }
+
     var processed = 0;
     var responderProcessed = 0;
     foreach (var msg in messages)
@@ -486,18 +499,36 @@ app.MapPost("/webhook/bot-conversor", async (
 
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
+        var normalizedText = msg.Text?.Trim() ?? string.Empty;
+        var isCommandLike = normalizedText.StartsWith("/help", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith(@"\help", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith("/ig", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith("ig ", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith("/leg", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith(@"\leg", StringComparison.OrdinalIgnoreCase);
+        if (isCommandLike)
+        {
+            logger.LogInformation(
+                "WA comando recebido. Chat={ChatId} Sender={SenderId} FromMe={FromMe} MessageId={MessageId} Text={Text}",
+                msg.ChatId,
+                msg.SenderId ?? "unknown",
+                msg.FromMe,
+                msg.MessageId ?? "none",
+                normalizedText.Length > 140 ? normalizedText[..140] : normalizedText);
+        }
+
         if (TryParseInstagramCaptionChoiceCommand(msg.Text, out var captionChoice))
         {
             if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
             {
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, "Comando /leg bloqueado neste chat.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, "Comando /leg bloqueado neste chat.");
                 continue;
             }
 
             var (draft, error) = await ResolveInstagramDraftAsync(instagramPublishStore, captionChoice.DraftRef, ct);
             if (draft is null)
             {
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, error ?? "Rascunho nao encontrado.");
                 continue;
             }
 
@@ -513,7 +544,7 @@ app.MapPost("/webhook/bot-conversor", async (
             if (captionChoice.OptionNumber < 1 || captionChoice.OptionNumber > options.Count)
             {
                 var max = options.Count;
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, $"Legenda {captionChoice.OptionNumber} nao existe. Escolha de 1 a {max}.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, $"Legenda {captionChoice.OptionNumber} nao existe. Escolha de 1 a {max}.");
                 continue;
             }
 
@@ -538,11 +569,10 @@ app.MapPost("/webhook/bot-conversor", async (
             }, ct);
 
             var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
-            await gateway.SendTextAsync(
+            await SendReplyAsync(
                 responderInstance,
                 msg.ChatId,
-                $"Legenda {captionChoice.OptionNumber} selecionada para o draft {shortId}.\nUse /ig revisar {shortId} e /ig confirmar {shortId}.",
-                ct);
+                $"Legenda {captionChoice.OptionNumber} selecionada para o draft {shortId}.\nUse /ig revisar {shortId} e /ig confirmar {shortId}.");
             continue;
         }
 
@@ -560,13 +590,13 @@ app.MapPost("/webhook/bot-conversor", async (
             helpMenuStore.Arm(msg.ChatId);
 
             var helpMessage = BuildWhatsAppHelpMessageForScope(helpCommand.Scope);
-            await gateway.SendTextAsync(responderInstance, msg.ChatId, helpMessage, ct);
+            await SendReplyAsync(responderInstance, msg.ChatId, helpMessage);
             continue;
         }
 
         if (helpMenuStore.TryResolveScope(msg.ChatId, msg.Text, out var helpScope))
         {
-            await gateway.SendTextAsync(responderInstance, msg.ChatId, BuildWhatsAppHelpMessageForScope(helpScope), ct);
+            await SendReplyAsync(responderInstance, msg.ChatId, BuildWhatsAppHelpMessageForScope(helpScope));
             continue;
         }
 
@@ -576,7 +606,7 @@ app.MapPost("/webhook/bot-conversor", async (
             {
                 if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
                 {
-                    await gateway.SendTextAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.", ct);
+                    await SendReplyAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.");
                     continue;
                 }
 
@@ -598,7 +628,7 @@ app.MapPost("/webhook/bot-conversor", async (
                 {
                     foreach (var chunk in SplitLongMessage(response, 3000))
                     {
-                        await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
+                        await SendReplyAsync(responderInstance, msg.ChatId, chunk);
                     }
                 }
 
@@ -615,7 +645,38 @@ app.MapPost("/webhook/bot-conversor", async (
 
             if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
             {
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.");
+                continue;
+            }
+
+            if (string.Equals(igCommand.Action, "reset", StringComparison.OrdinalIgnoreCase))
+            {
+                var instaKey = $"wa:{msg.ChatId}";
+                instagramStore.Clear(instaKey);
+                instagramMenuStore.Disarm(msg.ChatId);
+                helpMenuStore.Disarm(msg.ChatId);
+
+                var instances = new[] { msg.InstanceName ?? "default", "default" }
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+                foreach (var inst in instances)
+                {
+                    idempotency.RemoveByPrefix($"wa-help:{inst}:{msg.ChatId}:");
+                    idempotency.RemoveByPrefix($"wa-msg:{inst}:{msg.ChatId}:");
+                    idempotency.RemoveByPrefix($"wa-msg-fallback:{inst}:{msg.ChatId}:");
+                }
+
+                var normalizedArg = igCommand.Argument?.Trim().ToLowerInvariant() ?? string.Empty;
+                var fullReset = normalizedArg is "tudo" or "all" or "geral" or "total";
+                if (fullReset)
+                {
+                    await instagramPublishStore.ClearAsync(ct);
+                }
+
+                var resetMessage = fullReset
+                    ? "Reset concluido: estado do chat limpo e todos os drafts apagados.\nPode comecar de novo com /ig criar <produto ou link>."
+                    : "Reset do chat concluido: menu, contexto pendente e deduplicacao limpos.\nPode comecar de novo com /ig criar <produto ou link>.\nDica: use /ig reset tudo para apagar tambem os drafts.";
+                await SendReplyAsync(responderInstance, msg.ChatId, resetMessage);
                 continue;
             }
 
@@ -637,7 +698,7 @@ app.MapPost("/webhook/bot-conversor", async (
             {
                 foreach (var chunk in SplitLongMessage(response, 3000))
                 {
-                    await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
+                    await SendReplyAsync(responderInstance, msg.ChatId, chunk);
                 }
             }
 
@@ -3189,6 +3250,9 @@ static bool TryParseInstagramWhatsAppCommand(string text, out InstagramWhatsAppC
         "status" => new InstagramWhatsAppCommand("review", argument),
         "confirmar" => new InstagramWhatsAppCommand("confirm", argument),
         "publicar" => new InstagramWhatsAppCommand("confirm", argument),
+        "reset" => new InstagramWhatsAppCommand("reset", argument),
+        "zerar" => new InstagramWhatsAppCommand("reset", argument),
+        "reiniciar" => new InstagramWhatsAppCommand("reset", argument),
         "ajuda" => new InstagramWhatsAppCommand("help", argument),
         "help" => new InstagramWhatsAppCommand("help", argument),
         _ => new InstagramWhatsAppCommand("unknown", payload)
@@ -4101,6 +4165,7 @@ static string BuildInstagramCommandHelp()
         "- /ig templates : lista templates disponiveis.",
         "- /ig revisar <id|ultimo> : mostra resumo do rascunho.",
         "- /ig confirmar <id|ultimo> : publica no Instagram.",
+        "- /ig reset [tudo] : limpa estado do chat; com 'tudo' apaga os drafts.",
         "- /ig anunciar ... : cria anuncio (Meta Ads) do post publicado.",
         "- /ig menu : abre menu numerico rapido (1..8).",
         "",

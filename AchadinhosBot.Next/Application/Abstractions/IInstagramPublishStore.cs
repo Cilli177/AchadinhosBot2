@@ -8,4 +8,5 @@ public interface IInstagramPublishStore
     Task<InstagramPublishDraft?> GetAsync(string id, CancellationToken ct);
     Task SaveAsync(InstagramPublishDraft draft, CancellationToken ct);
     Task UpdateAsync(InstagramPublishDraft draft, CancellationToken ct);
+    Task ClearAsync(CancellationToken ct);
 }

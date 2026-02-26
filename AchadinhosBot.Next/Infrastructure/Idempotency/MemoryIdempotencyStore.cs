@@ -22,4 +22,20 @@ public sealed class MemoryIdempotencyStore : IIdempotencyStore
             return true;
         }
     }
+
+    public void RemoveByPrefix(string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(prefix)) return;
+
+        lock (_sync)
+        {
+            var matches = _keys.Keys
+                .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var key in matches)
+            {
+                _keys.Remove(key);
+            }
+        }
+    }
 }
