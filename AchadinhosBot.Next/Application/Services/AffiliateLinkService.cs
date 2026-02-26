@@ -193,10 +193,15 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     }
 
     private static bool IsAmazonHost(string host)
-        => host == "amazon.com" || host == "amazon.com.br" || host == "amzn.to" || host.EndsWith(".amazon.com") || host.EndsWith(".amazon.com.br");
+        => host == "amazon.com"
+           || host == "amazon.com.br"
+           || host == "amzn.to"
+           || host == "amzn.divulgador.link"
+           || host.EndsWith(".amazon.com")
+           || host.EndsWith(".amazon.com.br");
 
     private static bool IsAmazonShortHost(string host)
-        => host == "amzn.to" || host == "a.co";
+        => host == "amzn.to" || host == "a.co" || host == "amzn.divulgador.link";
 
     private static readonly string[] SheinRemoveKeys =
     {
@@ -268,11 +273,14 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
         return normalized.Contains("mercadolivre.com", StringComparison.OrdinalIgnoreCase)
                || normalized.Contains("mercadolivre.com.br", StringComparison.OrdinalIgnoreCase)
-               || normalized.Contains("mercadolibre.com", StringComparison.OrdinalIgnoreCase);
+               || normalized.Contains("mercadolibre.com", StringComparison.OrdinalIgnoreCase)
+               || normalized.Equals("meli.la", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsShopeeHost(string host)
-        => host.Contains("shopee.com") || host.Contains("shopee.com.br");
+        => host.Contains("shopee.com")
+           || host.Contains("shopee.com.br")
+           || host.Contains("shopeemobile.com");
 
     private async Task<string?> ConvertMercadoLivreAsync(Uri uri, CancellationToken cancellationToken)
     {
@@ -1357,7 +1365,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                || url.Contains("divulgador.link", StringComparison.OrdinalIgnoreCase)
                || url.Contains("mercadolivre.com/sec", StringComparison.OrdinalIgnoreCase)
                || url.Contains("mercadolivre.com.br/sec", StringComparison.OrdinalIgnoreCase)
-               || url.Contains("meli.co", StringComparison.OrdinalIgnoreCase);
+               || url.Contains("meli.co", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("amzlink.to", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryExtractGoUrl(Uri uri, out Uri? goUri)

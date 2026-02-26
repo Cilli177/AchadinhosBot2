@@ -331,6 +331,15 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         var settings = await _settingsStore.GetAsync(cancellationToken);
         var replayed = 0;
         var failed = 0;
+        var telegramReplayEnabled = IsTelegramReplayEnabled(settings, sourceChatId);
+        var telegramDestinationPeer = telegramReplayEnabled
+            ? ResolvePeer(settings.TelegramForwarding.DestinationChatId)
+            : null;
+        if (telegramReplayEnabled && telegramDestinationPeer is null)
+        {
+            await RefreshDialogsAsync(cancellationToken);
+            telegramDestinationPeer = ResolvePeer(settings.TelegramForwarding.DestinationChatId);
+        }
 
         foreach (var msg in candidates)
         {
@@ -349,6 +358,19 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 {
                     failed++;
                     continue;
+                }
+
+                if (telegramReplayEnabled && telegramDestinationPeer is not null)
+                {
+                    try
+                    {
+                        var telegramText = BuildTelegramForwardText(settings, result.ConvertedText);
+                        await _client.SendMessageAsync(telegramDestinationPeer, telegramText);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Falha ao reenviar oferta para Telegram destino. Source={SourceChatId} MsgId={MessageId}", sourceChatId, msg.id);
+                    }
                 }
 
                 var (imageBytes, imageMime) = await TryExtractImageForWhatsAppAsync(msg);
@@ -370,6 +392,41 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             candidates.Length,
             replayed,
             failed);
+    }
+
+    private bool IsTelegramReplayEnabled(AutomationSettings settings, long sourceChatId)
+    {
+        if (!settings.TelegramForwarding.Enabled)
+        {
+            return false;
+        }
+
+        if (settings.TelegramForwarding.DestinationChatId == 0)
+        {
+            return false;
+        }
+
+        var sourceIds = settings.TelegramForwarding.SourceChatIds;
+        return sourceIds.Count > 0 && IsSourceMatch(sourceChatId, sourceIds);
+    }
+
+    private string BuildTelegramForwardText(AutomationSettings settings, string text)
+    {
+        var finalText = text;
+        if (settings.TelegramForwarding.AppendSheinCode &&
+            ContainsShein(finalText) &&
+            !string.IsNullOrWhiteSpace(_affiliateOptions.SheinCode) &&
+            !finalText.Contains(_affiliateOptions.SheinCode, StringComparison.OrdinalIgnoreCase))
+        {
+            finalText += $"\n\nCodigo Shein: {_affiliateOptions.SheinCode}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.TelegramForwarding.FooterText))
+        {
+            finalText += $"\n\n{settings.TelegramForwarding.FooterText}";
+        }
+
+        return finalText;
     }
 
     private static IEnumerable<Message> ExtractHistoryMessages(Messages_MessagesBase history)
