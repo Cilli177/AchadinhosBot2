@@ -29,4 +29,31 @@ public sealed class AffiliateOptions
     public string ShopeeAppId { get; init; } = string.Empty;
 
     public string ShopeeSecret { get; init; } = string.Empty;
+
+    public OfficialCouponApiOptions AmazonOfficialCoupons { get; init; } = new();
+
+    public OfficialCouponApiOptions ShopeeOfficialCoupons { get; init; } = new();
+
+    public OfficialCouponApiOptions SheinOfficialCoupons { get; init; } = new();
+
+    public OfficialCouponApiOptions MercadoLivreOfficialCoupons { get; init; } = new();
+}
+
+public sealed class OfficialCouponApiOptions
+{
+    public bool Enabled { get; init; }
+
+    public string Endpoint { get; init; } = string.Empty;
+
+    public string Method { get; init; } = "GET";
+
+    public string PayloadJson { get; init; } = string.Empty;
+
+    public string ApiKeyHeader { get; init; } = "X-API-Key";
+
+    public string ApiKey { get; init; } = string.Empty;
+
+    public string BearerToken { get; init; } = string.Empty;
+
+    public Dictionary<string, string> Headers { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }

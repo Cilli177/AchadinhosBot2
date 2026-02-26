@@ -16,6 +16,7 @@ using AchadinhosBot.Next.Domain.Compliance;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Audit;
+using AchadinhosBot.Next.Infrastructure.Coupons;
 using AchadinhosBot.Next.Infrastructure.Idempotency;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Logs;
@@ -134,6 +135,11 @@ builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(6
 builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60));
 
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
+builder.Services.AddSingleton<IAffiliateCouponSyncService, AffiliateCouponSyncService>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, AmazonOfficialCouponProvider>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, ShopeeOfficialCouponProvider>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, SheinOfficialCouponProvider>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, MercadoLivreOfficialCouponProvider>();
 builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
 builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
 builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
@@ -1511,6 +1517,30 @@ api.MapPost("/coupons/extract", async (
 
     await audit.WriteAsync("coupon.extract", context.User.Identity?.Name ?? "unknown", new { payload.Store, inserted, codes }, ct);
     return Results.Ok(new { success = true, inserted, codes });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/coupons/sync-official", async (
+    CouponOfficialSyncRequest payload,
+    IAffiliateCouponSyncService couponSyncService,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await couponSyncService.SyncAsync(new AffiliateCouponSyncRequest(payload.Store), ct);
+
+    await audit.WriteAsync("coupon.sync.official", context.User.Identity?.Name ?? "unknown", new
+    {
+        payload.Store,
+        result.Success,
+        result.ProvidersAttempted,
+        result.ProvidersSucceeded,
+        result.TotalFetched,
+        result.TotalInserted,
+        result.TotalUpdated,
+        result.TotalIgnored
+    }, ct);
+
+    return Results.Ok(result);
 }).RequireAuthorization("AdminOnly");
 
 api.MapPost("/playground/preview", async (
@@ -7583,6 +7613,7 @@ internal sealed record CouponExtractRequest(
     DateTimeOffset? EndsAt,
     int? Priority,
     string? Source);
+internal sealed record CouponOfficialSyncRequest(string? Store);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
 internal sealed record WhatsAppIncomingMessage(
     string ChatId,
