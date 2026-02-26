@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using Microsoft.Extensions.Options;
@@ -9,16 +10,20 @@ namespace AchadinhosBot.Next.Infrastructure.Coupons;
 
 public abstract class OfficialCouponProviderBase : IAffiliateCouponProvider
 {
-    private readonly AffiliateOptions _affiliateOptions;
+    protected AffiliateOptions AffiliateOptions { get; }
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
+    private static readonly HashSet<string> BlockedCodeTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SHOP", "SHOPEE", "OFERTA", "OFFER", "OFFERS", "COUPON", "CUPOM", "CODIGO", "CODE", "VOUCHER"
+    };
 
     protected OfficialCouponProviderBase(
         IOptions<AffiliateOptions> affiliateOptions,
         IHttpClientFactory httpClientFactory,
         ILogger logger)
     {
-        _affiliateOptions = affiliateOptions.Value;
+        AffiliateOptions = affiliateOptions.Value;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -29,14 +34,14 @@ public abstract class OfficialCouponProviderBase : IAffiliateCouponProvider
     {
         get
         {
-            var options = GetApiOptions(_affiliateOptions);
+            var options = GetApiOptions(AffiliateOptions);
             return options.Enabled && !string.IsNullOrWhiteSpace(options.Endpoint);
         }
     }
 
     public async Task<IReadOnlyList<AffiliateCouponCandidate>> FetchAsync(CancellationToken cancellationToken)
     {
-        var options = GetApiOptions(_affiliateOptions);
+        var options = GetApiOptions(AffiliateOptions);
         if (!options.Enabled || string.IsNullOrWhiteSpace(options.Endpoint))
         {
             return Array.Empty<AffiliateCouponCandidate>();
@@ -59,7 +64,7 @@ public abstract class OfficialCouponProviderBase : IAffiliateCouponProvider
 
     protected abstract OfficialCouponApiOptions GetApiOptions(AffiliateOptions options);
 
-    private HttpRequestMessage BuildRequest(OfficialCouponApiOptions options)
+    protected virtual HttpRequestMessage BuildRequest(OfficialCouponApiOptions options)
     {
         var method = ParseMethod(options.Method);
         var request = new HttpRequestMessage(method, options.Endpoint.Trim());
@@ -131,6 +136,8 @@ public abstract class OfficialCouponProviderBase : IAffiliateCouponProvider
             }
 
             var code = GetString(item, "code", "couponCode", "coupon_code", "promoCode", "promo_code", "voucherCode", "voucher_code");
+            code ??= ExtractCouponCodeFromText(
+                GetString(item, "offerName", "name", "title", "description", "couponDescription"));
             if (string.IsNullOrWhiteSpace(code))
             {
                 continue;
@@ -142,10 +149,15 @@ public abstract class OfficialCouponProviderBase : IAffiliateCouponProvider
                 continue;
             }
 
-            var description = GetString(item, "description", "title", "name", "couponDescription");
-            var affiliateLink = GetString(item, "affiliateLink", "affiliate_link", "link", "url", "landingUrl", "landing_url");
-            var startsAt = GetDate(item, "startsAt", "startAt", "startDate", "start_date", "validFrom", "valid_from");
-            var endsAt = GetDate(item, "endsAt", "endAt", "endDate", "end_date", "validTo", "valid_to", "expireAt", "expire_at");
+            var description = GetString(item, "description", "title", "name", "offerName", "couponDescription");
+            var affiliateLink = GetString(item, "offerLink", "affiliateLink", "affiliate_link", "link", "url", "landingUrl", "landing_url", "originalLink");
+            var startsAt = GetDate(item, "startsAt", "startAt", "startDate", "start_date", "validFrom", "valid_from", "periodStartTime", "period_start_time");
+            var endsAt = GetDate(item, "endsAt", "endAt", "endDate", "end_date", "validTo", "valid_to", "expireAt", "expire_at", "periodEndTime", "period_end_time");
+            if (!IsActiveNow(startsAt, endsAt))
+            {
+                continue;
+            }
+
             var priority = GetInt(item, "priority", "weight", "rank", "order");
 
             list.Add(new AffiliateCouponCandidate(
@@ -159,6 +171,22 @@ public abstract class OfficialCouponProviderBase : IAffiliateCouponProvider
         }
 
         return list;
+    }
+
+    private static bool IsActiveNow(DateTimeOffset? startsAt, DateTimeOffset? endsAt)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (startsAt.HasValue && startsAt.Value > now)
+        {
+            return false;
+        }
+
+        if (endsAt.HasValue && endsAt.Value < now)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static JsonElement? FindCouponArray(JsonElement root)
@@ -244,6 +272,48 @@ public abstract class OfficialCouponProviderBase : IAffiliateCouponProvider
             {
                 return value.GetRawText();
             }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractCouponCodeFromText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var normalized = text.Trim();
+        var directPattern = Regex.Match(
+            normalized,
+            @"(?:cupom|coupon|codigo|c[oó]digo|code|voucher)\s*[:\-]?\s*([A-Za-z0-9]{4,16})",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (directPattern.Success)
+        {
+            var found = directPattern.Groups[1].Value.Trim().ToUpperInvariant();
+            if (!BlockedCodeTokens.Contains(found))
+            {
+                return found;
+            }
+        }
+
+        var tokens = Regex.Matches(normalized.ToUpperInvariant(), @"\b[A-Z0-9]{4,16}\b");
+        foreach (Match tokenMatch in tokens)
+        {
+            var token = tokenMatch.Value.Trim();
+            if (BlockedCodeTokens.Contains(token))
+            {
+                continue;
+            }
+
+            // Prefere tokens com ao menos um digito para reduzir falso positivo em texto de oferta.
+            if (!token.Any(char.IsDigit))
+            {
+                continue;
+            }
+
+            return token;
         }
 
         return null;
