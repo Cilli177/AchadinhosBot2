@@ -872,12 +872,11 @@ app.MapPost("/webhook/bot-conversor", async (
                 originChatRef: msg.ChatId,
                 destinationChatRef: string.Join(",", destinations));
 
-            if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+            var finalText = string.IsNullOrWhiteSpace(result.ConvertedText) ? msg.Text : result.ConvertedText;
+            if (string.IsNullOrWhiteSpace(finalText))
             {
                 continue;
             }
-
-            var finalText = result.ConvertedText;
             if (waRoute.AppendSheinCode &&
                 finalText.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(affiliate.Value.SheinCode) &&
@@ -2138,12 +2137,13 @@ api.MapPost("/telegram/userbot/replay-to-whatsapp", async (
     }
 
     var count = payload.Count <= 0 ? 10 : Math.Min(payload.Count, 50);
-    var result = await userbot.ReplayRecentOffersToWhatsAppAsync(payload.SourceChatId, count, ct);
+    var result = await userbot.ReplayRecentOffersToWhatsAppAsync(payload.SourceChatId, count, payload.AllowOfficialDestination, ct);
 
     await audit.WriteAsync("telegram.userbot.replay_to_whatsapp", context.User.Identity?.Name ?? "unknown", new
     {
         payload.SourceChatId,
         Count = count,
+        payload.AllowOfficialDestination,
         result.Success,
         result.Replayed,
         result.Failed
@@ -7593,7 +7593,7 @@ internal sealed record ConvertRequest(string Text, string? Source);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
-internal sealed record TelegramUserbotReplayRequest(long SourceChatId, int Count = 10);
+internal sealed record TelegramUserbotReplayRequest(long SourceChatId, int Count = 10, bool AllowOfficialDestination = false);
 internal sealed record CouponUpsertRequest(
     string? Id,
     string Store,

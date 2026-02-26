@@ -38,7 +38,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return new AffiliateLinkResult(false, null, "Unknown", false, null, "URL inválida", false, null);
         }
 
-        var host = uri.Host.ToLowerInvariant();
+        var host = NormalizeHost(uri.Host);
         return await ConvertWithExpansionAsync(uri, host, cancellationToken);
     }
 
@@ -193,15 +193,25 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     }
 
     private static bool IsAmazonHost(string host)
-        => host == "amazon.com"
-           || host == "amazon.com.br"
-           || host == "amzn.to"
-           || host == "amzn.divulgador.link"
-           || host.EndsWith(".amazon.com")
-           || host.EndsWith(".amazon.com.br");
+    {
+        var normalized = NormalizeHost(host);
+        return normalized == "amazon.com"
+               || normalized == "amazon.com.br"
+               || normalized == "amzn.to"
+               || normalized == "amzlink.to"
+               || normalized == "amzn.divulgador.link"
+               || normalized.EndsWith(".amazon.com", StringComparison.OrdinalIgnoreCase)
+               || normalized.EndsWith(".amazon.com.br", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsAmazonShortHost(string host)
-        => host == "amzn.to" || host == "a.co" || host == "amzn.divulgador.link";
+    {
+        var normalized = NormalizeHost(host);
+        return normalized == "amzn.to"
+               || normalized == "a.co"
+               || normalized == "amzlink.to"
+               || normalized == "amzn.divulgador.link";
+    }
 
     private static readonly string[] SheinRemoveKeys =
     {
@@ -265,22 +275,39 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         // Remove caracteres invisíveis/estranhos que podem vir de redirecionamentos.
-        var normalized = new string(host
-            .Trim()
-            .ToLowerInvariant()
-            .Where(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-')
-            .ToArray());
+        var normalized = NormalizeHost(host);
 
         return normalized.Contains("mercadolivre.com", StringComparison.OrdinalIgnoreCase)
                || normalized.Contains("mercadolivre.com.br", StringComparison.OrdinalIgnoreCase)
                || normalized.Contains("mercadolibre.com", StringComparison.OrdinalIgnoreCase)
-               || normalized.Equals("meli.la", StringComparison.OrdinalIgnoreCase);
+               || normalized.Equals("meli.la", StringComparison.OrdinalIgnoreCase)
+               || normalized.Equals("meli.co", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsShopeeHost(string host)
-        => host.Contains("shopee.com")
-           || host.Contains("shopee.com.br")
-           || host.Contains("shopeemobile.com");
+    {
+        var normalized = NormalizeHost(host);
+        return normalized.Contains("shopee.com", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("shopee.com.br", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("shopeemobile.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return string.Empty;
+        }
+
+        var normalized = new string(host
+            .Trim()
+            .Trim('.')
+            .ToLowerInvariant()
+            .Where(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-')
+            .ToArray());
+
+        return normalized.Trim('.');
+    }
 
     private async Task<string?> ConvertMercadoLivreAsync(Uri uri, CancellationToken cancellationToken)
     {

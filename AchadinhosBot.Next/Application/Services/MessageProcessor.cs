@@ -374,7 +374,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
         var host = uri.Host.ToLowerInvariant();
         return host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
                || host.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
-               || host.Contains("meli.co", StringComparison.OrdinalIgnoreCase);
+               || host.Contains("meli.co", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("meli.la", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? EvaluateMercadoLivreCompliance(
@@ -594,8 +595,14 @@ public sealed partial class MessageProcessor : IMessageProcessor
     {
         var url = convertedUrl ?? originalUrl;
         var lower = url.ToLowerInvariant();
-        if (lower.Contains("amazon.") || lower.Contains("amzn.to") || lower.Contains("a.co")) return "Amazon";
+        if (lower.Contains("images-na.ssl-images-amazon.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Unknown";
+        }
+
+        if (lower.Contains("amazon.") || lower.Contains("amzn.to") || lower.Contains("a.co") || lower.Contains("amzlink.to") || lower.Contains("amzn.divulgador.link")) return "Amazon";
         if (lower.Contains("mercadolivre") || lower.Contains("mercadolibre")) return "Mercado Livre";
+        if (lower.Contains("meli.co") || lower.Contains("meli.la")) return "Mercado Livre";
         if (lower.Contains("shopee") || lower.Contains("shope.ee") || lower.Contains("s.shopee")) return "Shopee";
         if (lower.Contains("shein")) return "Shein";
         return "Unknown";

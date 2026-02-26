@@ -4,7 +4,7 @@ public interface ITelegramUserbotService
 {
     Task<IReadOnlyList<TelegramUserbotChat>> GetDialogsAsync(CancellationToken cancellationToken);
     Task<bool> RefreshDialogsAsync(CancellationToken cancellationToken);
-    Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, CancellationToken cancellationToken);
+    Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, bool allowOfficialDestination, CancellationToken cancellationToken);
     bool IsReady { get; }
 }
 

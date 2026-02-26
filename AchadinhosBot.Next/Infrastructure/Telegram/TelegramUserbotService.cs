@@ -16,6 +16,7 @@ namespace AchadinhosBot.Next.Infrastructure.Telegram;
 
 public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbotService
 {
+    private const string OfficialWhatsAppDemandGroupId = "120363405661434395@g.us";
     private readonly TelegramOptions _options;
     private readonly AffiliateOptions _affiliateOptions;
     private readonly ISettingsStore _settingsStore;
@@ -242,7 +243,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
     }
 
-    public async Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, CancellationToken cancellationToken)
+    public async Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, bool allowOfficialDestination, CancellationToken cancellationToken)
     {
         if (_client is null || _manager is null || !_ready)
         {
@@ -329,6 +330,19 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         var settings = await _settingsStore.GetAsync(cancellationToken);
+        var replayDestinations = ResolveReplayWhatsAppDestinations(settings, sourceChatId);
+        if (!allowOfficialDestination && replayDestinations.Any(d => string.Equals(d, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                $"Replay bloqueado: destino oficial {OfficialWhatsAppDemandGroupId} protegido. Use AllowOfficialDestination=true somente em recuperacao real.",
+                sourceChatId,
+                requested,
+                candidates.Length,
+                0,
+                0);
+        }
+
         var replayed = 0;
         var failed = 0;
         var telegramReplayEnabled = IsTelegramReplayEnabled(settings, sourceChatId);
@@ -349,12 +363,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 var text = msg.message ?? string.Empty;
                 var result = await _messageProcessor.ProcessAsync(
                     text,
-                    "TelegramUserbotBackfill",
+                    "manual",
                     cancellationToken,
                     originChatId: sourceChatId,
                     destinationChatId: settings.TelegramForwarding.DestinationChatId);
-
-                if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+                var replayText = string.IsNullOrWhiteSpace(result.ConvertedText) ? text : result.ConvertedText;
+                if (string.IsNullOrWhiteSpace(replayText))
                 {
                     failed++;
                     continue;
@@ -364,7 +378,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 {
                     try
                     {
-                        var telegramText = BuildTelegramForwardText(settings, result.ConvertedText);
+                        var telegramText = BuildTelegramForwardText(settings, replayText);
                         await _client.SendMessageAsync(telegramDestinationPeer, telegramText);
                     }
                     catch (Exception ex)
@@ -374,7 +388,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 }
 
                 var (imageBytes, imageMime) = await TryExtractImageForWhatsAppAsync(msg);
-                await SendToWhatsAppIfEnabled(settings, result.ConvertedText, sourceChatId, imageBytes, imageMime);
+                await SendToWhatsAppIfEnabled(settings, replayText, sourceChatId, imageBytes, imageMime, allowOfficialDestination);
                 replayed++;
             }
             catch (Exception ex)
@@ -664,7 +678,8 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             CancellationToken.None,
             originChatId: originId,
             destinationChatId: settings.TelegramForwarding.DestinationChatId);
-        if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+        var finalText = string.IsNullOrWhiteSpace(result.ConvertedText) ? text : result.ConvertedText;
+        if (string.IsNullOrWhiteSpace(finalText))
         {
             return;
         }
@@ -683,7 +698,6 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             return;
         }
 
-        var finalText = result.ConvertedText;
         if (settings.TelegramForwarding.AppendSheinCode &&
             ContainsShein(finalText) &&
             !string.IsNullOrWhiteSpace(_affiliateOptions.SheinCode) &&
@@ -803,10 +817,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }, CancellationToken.None);
         }
 
-        await SendToWhatsAppIfEnabled(settings, result.ConvertedText, originId, waImageBytes, waImageMime);
+        await SendToWhatsAppIfEnabled(settings, finalText, originId, waImageBytes, waImageMime);
     }
 
-    private async Task SendToWhatsAppIfEnabled(AutomationSettings settings, string convertedText, long originId, byte[]? imageBytes, string? imageMime)
+    private async Task SendToWhatsAppIfEnabled(AutomationSettings settings, string convertedText, long originId, byte[]? imageBytes, string? imageMime, bool allowOfficialDestination = true)
     {
         var wa = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
         var routes = ResolveTelegramToWhatsAppRoutes(settings);
@@ -816,7 +830,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var defaultSources = settings.TelegramForwarding?.SourceChatIds ?? new List<long>();
+        var defaultSources = settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>();
         foreach (var route in routes)
         {
             if (!route.Enabled) continue;
@@ -839,6 +853,16 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         if (destinations.Count == 0)
         {
             return;
+        }
+
+        if (!allowOfficialDestination)
+        {
+            destinations.RemoveWhere(x => string.Equals(x, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase));
+            if (destinations.Count == 0)
+            {
+                _logger.LogWarning("Envio para WhatsApp ignorado: apenas grupo oficial protegido estava como destino.");
+                return;
+            }
         }
 
         var text = convertedText;
@@ -962,6 +986,41 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             Detail = $"Destinos={destList.Length}",
             Success = imageBytes is not null && imageBytes.Length > 0
         }, CancellationToken.None);
+    }
+
+    private static HashSet<string> ResolveReplayWhatsAppDestinations(AutomationSettings settings, long originId)
+    {
+        var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var routes = ResolveTelegramToWhatsAppRoutes(settings);
+        var defaultSources = settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>();
+
+        foreach (var route in routes)
+        {
+            if (!route.Enabled)
+            {
+                continue;
+            }
+
+            var effectiveSources = route.SourceChatIds
+                .Union(defaultSources)
+                .Distinct()
+                .ToList();
+
+            if (effectiveSources.Count == 0 || !IsSourceMatch(originId, effectiveSources))
+            {
+                continue;
+            }
+
+            foreach (var destination in route.DestinationGroupIds)
+            {
+                if (!string.IsNullOrWhiteSpace(destination))
+                {
+                    destinations.Add(destination.Trim());
+                }
+            }
+        }
+
+        return destinations;
     }
 
     private async Task<(byte[]? bytes, string? mime)> TryDownloadPhotoAsync(Photo photo)
