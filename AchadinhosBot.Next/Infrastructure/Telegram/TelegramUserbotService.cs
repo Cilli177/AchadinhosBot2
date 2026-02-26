@@ -367,9 +367,14 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     cancellationToken,
                     originChatId: sourceChatId,
                     destinationChatId: settings.TelegramForwarding.DestinationChatId);
-                var replayText = string.IsNullOrWhiteSpace(result.ConvertedText) ? text : result.ConvertedText;
-                if (string.IsNullOrWhiteSpace(replayText))
+                if (!TryGetStrictForwardText(text, result.Success, result.ConvertedLinks, result.ConvertedText, out var replayText))
                 {
+                    _logger.LogWarning(
+                        "Replay bloqueado por conversao invalida. SourceChat={SourceChatId} MsgId={MessageId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                        sourceChatId,
+                        msg.id,
+                        result.ConvertedLinks,
+                        result.Success);
                     failed++;
                     continue;
                 }
@@ -678,9 +683,14 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             CancellationToken.None,
             originChatId: originId,
             destinationChatId: settings.TelegramForwarding.DestinationChatId);
-        var finalText = string.IsNullOrWhiteSpace(result.ConvertedText) ? text : result.ConvertedText;
-        if (string.IsNullOrWhiteSpace(finalText))
+        if (!TryGetStrictForwardText(text, result.Success, result.ConvertedLinks, result.ConvertedText, out var finalText))
         {
+            _logger.LogWarning(
+                "TelegramUserbot bloqueou encaminhamento por conversao invalida. Origin={OriginChatId} MsgId={MessageId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                originId,
+                msg.id,
+                result.ConvertedLinks,
+                result.Success);
             return;
         }
 
@@ -1444,6 +1454,65 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         return null;
+    }
+
+    private static bool TryGetStrictForwardText(string originalText, bool conversionSuccess, int convertedLinks, string? convertedText, out string strictText)
+    {
+        strictText = string.Empty;
+        if (!conversionSuccess || convertedLinks <= 0 || string.IsNullOrWhiteSpace(convertedText))
+        {
+            return false;
+        }
+
+        var originalUrls = ExtractNormalizedUrls(originalText);
+        if (originalUrls.Count == 0)
+        {
+            return false;
+        }
+
+        var convertedUrls = ExtractNormalizedUrls(convertedText);
+        if (convertedUrls.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var originalUrl in originalUrls)
+        {
+            if (convertedUrls.Contains(originalUrl))
+            {
+                return false;
+            }
+        }
+
+        strictText = convertedText;
+        return true;
+    }
+
+    private static HashSet<string> ExtractNormalizedUrls(string text)
+    {
+        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return urls;
+        }
+
+        foreach (Match match in UrlRegex.Matches(text))
+        {
+            var normalized = NormalizeUrlForComparison(match.Value);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                urls.Add(normalized);
+            }
+        }
+
+        return urls;
+    }
+
+    private static string NormalizeUrlForComparison(string rawUrl)
+    {
+        return rawUrl
+            .Trim()
+            .TrimEnd('"', '\'', '`', '.', ',', ';', ':', ')', ']', '}', '!', '?');
     }
 
     private static string? GetAutoReply(AutomationSettings settings, string text)

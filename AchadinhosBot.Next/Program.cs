@@ -877,11 +877,17 @@ app.MapPost("/webhook/bot-conversor", async (
                 originChatRef: msg.ChatId,
                 destinationChatRef: string.Join(",", destinations));
 
-            var finalText = string.IsNullOrWhiteSpace(result.ConvertedText) ? msg.Text : result.ConvertedText;
-            if (string.IsNullOrWhiteSpace(finalText))
+            if (!result.Success || result.ConvertedLinks <= 0 || string.IsNullOrWhiteSpace(result.ConvertedText))
             {
+                logger.LogWarning(
+                    "WhatsApp forwarding bloqueado por conversao invalida. Chat={ChatId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                    msg.ChatId,
+                    result.ConvertedLinks,
+                    result.Success);
                 continue;
             }
+
+            var finalText = result.ConvertedText;
             if (waRoute.AppendSheinCode &&
                 finalText.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(affiliate.Value.SheinCode) &&
