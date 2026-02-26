@@ -835,8 +835,13 @@ app.MapPost("/webhook/bot-conversor", async (
                 continue;
             }
 
+            const string protectedOfficialGroupId = "120363405661434395@g.us";
+            var isTestRoute = !string.IsNullOrWhiteSpace(waRoute.Name)
+                && waRoute.Name.Contains("teste", StringComparison.OrdinalIgnoreCase);
+
             var destinations = waRoute.DestinationGroupIds
                 .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Where(x => !(isTestRoute && string.Equals(x.Trim(), protectedOfficialGroupId, StringComparison.OrdinalIgnoreCase)))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (destinations.Length == 0 || waRoute.SourceChatIds.Count == 0)

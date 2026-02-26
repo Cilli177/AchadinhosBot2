@@ -834,6 +834,8 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         foreach (var route in routes)
         {
             if (!route.Enabled) continue;
+            var isTestRoute = !string.IsNullOrWhiteSpace(route.Name)
+                && route.Name.Contains("teste", StringComparison.OrdinalIgnoreCase);
             var effectiveSources = route.SourceChatIds
                 .Union(defaultSources)
                 .Distinct()
@@ -845,7 +847,13 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             {
                 if (!string.IsNullOrWhiteSpace(destination))
                 {
-                    destinations.Add(destination.Trim());
+                    var normalizedDestination = destination.Trim();
+                    if (isTestRoute && string.Equals(normalizedDestination, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    destinations.Add(normalizedDestination);
                 }
             }
         }
@@ -1001,6 +1009,9 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 continue;
             }
 
+            var isTestRoute = !string.IsNullOrWhiteSpace(route.Name)
+                && route.Name.Contains("teste", StringComparison.OrdinalIgnoreCase);
+
             var effectiveSources = route.SourceChatIds
                 .Union(defaultSources)
                 .Distinct()
@@ -1015,7 +1026,13 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             {
                 if (!string.IsNullOrWhiteSpace(destination))
                 {
-                    destinations.Add(destination.Trim());
+                    var normalizedDestination = destination.Trim();
+                    if (isTestRoute && string.Equals(normalizedDestination, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    destinations.Add(normalizedDestination);
                 }
             }
         }
