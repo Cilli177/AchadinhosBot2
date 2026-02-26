@@ -240,6 +240,21 @@ public sealed class InstagramPublishSettings
     public string DmTemplate { get; set; } = "Oi {name}! Aqui esta seu link: {link}";
     public string? ManyChatWebhookUrl { get; set; }
     public string? ManyChatApiKey { get; set; }
+    public bool AutoPilotEnabled { get; set; }
+    public int AutoPilotIntervalMinutes { get; set; } = 180;
+    public int AutoPilotTopCount { get; set; } = 3;
+    public int AutoPilotLookbackHours { get; set; } = 24;
+    public int AutoPilotRepeatWindowHours { get; set; } = 48;
+    public bool AutoPilotAllowShortLinks { get; set; }
+    public int AutoPilotWeightSales { get; set; } = 35;
+    public int AutoPilotWeightReturn { get; set; } = 30;
+    public int AutoPilotWeightDiscount { get; set; } = 25;
+    public int AutoPilotWeightRecency { get; set; } = 10;
+    public bool AutoPilotSendForApproval { get; set; } = true;
+    public string AutoPilotApprovalChannel { get; set; } = "telegram";
+    public long AutoPilotApprovalTelegramChatId { get; set; }
+    public string? AutoPilotApprovalWhatsAppGroupId { get; set; }
+    public string? AutoPilotApprovalWhatsAppInstanceName { get; set; }
 }
 
 public enum InstagramOfferContextMode

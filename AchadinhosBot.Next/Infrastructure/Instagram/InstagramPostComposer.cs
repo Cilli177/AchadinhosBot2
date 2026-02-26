@@ -56,22 +56,42 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
 
             var provider = string.IsNullOrWhiteSpace(settings.AiProvider) ? "openai" : settings.AiProvider.Trim().ToLowerInvariant();
             var results = new List<string>();
+            var openAiResult = string.Empty;
+            var geminiResult = string.Empty;
 
             if (provider is "openai" or "both")
             {
-                var openAiResult = await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken);
+                openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
                 if (!string.IsNullOrWhiteSpace(openAiResult))
                 {
-                    results.Add(provider == "both" ? $"=== OPENAI ===\n{openAiResult.Trim()}" : openAiResult.Trim());
+                    results.Add(provider == "both" ? $"=== OPENAI ===\n{openAiResult}" : openAiResult);
                 }
             }
 
             if (provider is "gemini" or "both")
             {
-                var geminiResult = await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemini, cancellationToken);
+                geminiResult = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemini, cancellationToken))?.Trim() ?? string.Empty;
                 if (!string.IsNullOrWhiteSpace(geminiResult))
                 {
-                    results.Add(provider == "both" ? $"=== GEMINI ===\n{geminiResult.Trim()}" : geminiResult.Trim());
+                    results.Add(provider == "both" ? $"=== GEMINI ===\n{geminiResult}" : geminiResult);
+                }
+            }
+
+            // Fallback cruzado: evita cair para o texto generico quando o provider principal falha (ex.: limite de cota).
+            if (results.Count == 0 && provider == "gemini")
+            {
+                openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(openAiResult))
+                {
+                    results.Add(openAiResult);
+                }
+            }
+            else if (results.Count == 0 && provider == "openai")
+            {
+                geminiResult = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemini, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(geminiResult))
+                {
+                    results.Add(geminiResult);
                 }
             }
 

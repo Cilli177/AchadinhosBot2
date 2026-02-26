@@ -374,6 +374,16 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
             if (string.IsNullOrWhiteSpace(mlbId))
             {
+                if (IsMercadoLivreSocialOrShortUri(resolvedUri))
+                {
+                    // Fallback para links sociais/curtos do ML quando o ID do item não
+                    // está disponível no HTML/redirect. Mantém rastreio com parâmetros
+                    // de afiliação no próprio link social.
+                    var social = CleanMercadoLivreSocial(resolvedUri.ToString());
+                    var ensuredFallback = EnsureMercadoLivreAffiliate(social, uri.ToString());
+                    return ensuredFallback.Url;
+                }
+
                 return null;
             }
         }
@@ -668,8 +678,11 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     }
 
                     var discovered = ExtractFirstUrl(html);
-                    if (Uri.TryCreate(discovered, UriKind.Absolute, out var discoveredUri))
+                    var best = ExtractBestUrlFromHtml(html, current.ToString())
+                               ?? (Uri.TryCreate(discovered, UriKind.Absolute, out var discoveredUriOld) ? discoveredUriOld : null);
+                    if (best is not null)
                     {
+                        var discoveredUri = best;
                         if (TryExtractGoUrl(discoveredUri, out var goUriFromHtml) && goUriFromHtml is not null)
                         {
                             discoveredUri = goUriFromHtml;
@@ -1119,7 +1132,123 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return Task.FromResult(cached);
         }
 
-        return ExpandUrlRecursiveAsync(uri.ToString(), 0, cancellationToken);
+        return ExpandUrlSmartAsync(uri, cancellationToken);
+    }
+
+    private async Task<Uri?> ExpandUrlSmartAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        var smart = await ExpandShortLinkWithRedirectHintsAsync(uri, cancellationToken);
+        if (smart is not null)
+        {
+            CacheExpansion(uri.ToString(), smart);
+            return smart;
+        }
+
+        return await ExpandUrlRecursiveAsync(uri.ToString(), 0, cancellationToken);
+    }
+
+    private async Task<Uri?> ExpandShortLinkWithRedirectHintsAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = true,
+                CookieContainer = new CookieContainer()
+            };
+            using var client = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+
+            var current = uri;
+            Uri? bestCandidate = null;
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                bestCandidate = PreferBestCandidate(bestCandidate, current);
+                if (IsStrongAffiliateCandidate(current))
+                {
+                    return current;
+                }
+
+                using var req = new HttpRequestMessage(HttpMethod.Get, current);
+                using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+                if (res.Headers.Location is not null)
+                {
+                    var next = res.Headers.Location;
+                    if (!next.IsAbsoluteUri)
+                    {
+                        next = new Uri(current, next);
+                    }
+
+                    if (TryExtractGoUrl(next, out var goUri) && goUri is not null)
+                    {
+                        next = goUri;
+                    }
+
+                    bestCandidate = PreferBestCandidate(bestCandidate, next);
+                    if (IsStrongAffiliateCandidate(next))
+                    {
+                        return next;
+                    }
+
+                    if (!string.Equals(next.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        current = next;
+                        continue;
+                    }
+                }
+
+                var contentType = res.Content.Headers.ContentType?.MediaType ?? string.Empty;
+                if (contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+                {
+                    var html = await res.Content.ReadAsStringAsync(cancellationToken);
+                    var discovered = ExtractBestUrlFromHtml(html, current.ToString());
+                    if (discovered is not null)
+                    {
+                        if (TryExtractGoUrl(discovered, out var discoveredGoUri) && discoveredGoUri is not null)
+                        {
+                            discovered = discoveredGoUri;
+                        }
+
+                        bestCandidate = PreferBestCandidate(bestCandidate, discovered);
+                        if (IsStrongAffiliateCandidate(discovered))
+                        {
+                            return discovered;
+                        }
+
+                        if (!string.Equals(discovered.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            current = discovered;
+                            continue;
+                        }
+                    }
+                }
+
+                var requestUri = res.RequestMessage?.RequestUri;
+                if (requestUri is not null)
+                {
+                    bestCandidate = PreferBestCandidate(bestCandidate, requestUri);
+                    if (IsStrongAffiliateCandidate(requestUri))
+                    {
+                        return requestUri;
+                    }
+                }
+
+                break;
+            }
+
+            return bestCandidate;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<Uri?> ExpandUrlRecursiveAsync(string url, int depth, CancellationToken cancellationToken)
@@ -1149,8 +1278,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             if (contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase))
             {
                 var html = await res.Content.ReadAsStringAsync(cancellationToken);
-                var discovered = ExtractFirstUrl(html);
-                if (Uri.TryCreate(discovered, UriKind.Absolute, out var discoveredUri))
+                var discoveredUri = ExtractBestUrlFromHtml(html, url);
+                if (discoveredUri is not null)
                 {
                     var expanded = await ExpandUrlRecursiveAsync(discoveredUri.ToString(), depth + 1, cancellationToken);
                     CacheExpansion(url, expanded);
@@ -1271,6 +1400,65 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
         var link = Regex.Match(html, "https?://[^\\s\"']+", RegexOptions.IgnoreCase);
         return link.Success ? link.Value : null;
+    }
+
+    private static Uri? ExtractBestUrlFromHtml(string html, string baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return null;
+        }
+
+        var candidates = new List<string>();
+        void AddMatch(string pattern)
+        {
+            foreach (Match match in Regex.Matches(html, pattern, RegexOptions.IgnoreCase))
+            {
+                if (match.Groups.Count > 1)
+                {
+                    candidates.Add(WebUtility.HtmlDecode(match.Groups[1].Value));
+                }
+                else if (match.Success)
+                {
+                    candidates.Add(WebUtility.HtmlDecode(match.Value));
+                }
+            }
+        }
+
+        AddMatch("<link[^>]+rel=[\"']canonical[\"'][^>]+href=[\"']([^\"']+)[\"']");
+        AddMatch("<meta[^>]+property=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']");
+        AddMatch("<meta[^>]+name=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']");
+        AddMatch("http-equiv=[\"']refresh[\"'][^>]*content=[\"'][^\"']*url=([^\"'>]+)");
+        AddMatch("location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']");
+        AddMatch("location\\.replace\\(\\s*[\"']([^\"']+)[\"']\\s*\\)");
+        AddMatch("window\\.location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']");
+        AddMatch("top\\.location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']");
+        AddMatch("https?://[^\\s\"'<>]+");
+
+        Uri? best = null;
+        var bestScore = int.MinValue;
+        foreach (var candidateRaw in candidates)
+        {
+            var candidate = ToAbsolute(baseUrl, candidateRaw);
+            if (candidate is null)
+            {
+                continue;
+            }
+
+            if (TryExtractGoUrl(candidate, out var goUri) && goUri is not null)
+            {
+                candidate = goUri;
+            }
+
+            var score = ScoreAffiliateCandidate(candidate);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+
+        return bestScore > 0 ? best : null;
     }
 
     private static string? ExtractMercadoLivreIdFromJson(string html)
@@ -1397,6 +1585,116 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                || url.Contains("amzlink.to", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsStrongAffiliateCandidate(Uri uri)
+        => ScoreAffiliateCandidate(uri) >= 80;
+
+    private static Uri PreferBestCandidate(Uri? current, Uri candidate)
+    {
+        if (current is null)
+        {
+            return candidate;
+        }
+
+        return ScoreAffiliateCandidate(candidate) > ScoreAffiliateCandidate(current)
+            ? candidate
+            : current;
+    }
+
+    private static int ScoreAffiliateCandidate(Uri uri)
+    {
+        var score = 0;
+        var host = NormalizeHost(uri.Host);
+        var url = uri.ToString();
+        var path = uri.AbsolutePath ?? string.Empty;
+        var query = ParseQuery(uri.Query);
+
+        if (IsLikelyMediaHost(host))
+        {
+            score -= 140;
+        }
+
+        if (IsLikelyMediaPath(path))
+        {
+            score -= 120;
+        }
+
+        if (IsAmazonHost(host))
+        {
+            score += 70;
+            if (path.Contains("/dp/", StringComparison.OrdinalIgnoreCase) ||
+                path.Contains("/gp/product/", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 45;
+            }
+            if (query.TryGetValue("tag", out var tag) && !string.IsNullOrWhiteSpace(tag))
+            {
+                score += 20;
+            }
+        }
+
+        if (IsMercadoLivreHost(host))
+        {
+            score += 70;
+            if (IsMercadoLivreProductUri(uri))
+            {
+                score += 50;
+            }
+            if (IsMercadoLivreSocialOrShortUri(uri))
+            {
+                score += 15;
+            }
+            if (query.TryGetValue("matt_tool", out var tool) && !string.IsNullOrWhiteSpace(tool) &&
+                query.TryGetValue("matt_word", out var word) && !string.IsNullOrWhiteSpace(word))
+            {
+                score += 20;
+            }
+        }
+
+        if (IsShopeeHost(host))
+        {
+            score += 65;
+        }
+
+        if (host.Contains("shein.com", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 65;
+            if (query.TryGetValue("url_from", out var shein) && !string.IsNullOrWhiteSpace(shein))
+            {
+                score += 20;
+            }
+        }
+
+        if (IsShortLink(url))
+        {
+            score += 10;
+        }
+
+        return score;
+    }
+
+    private static bool IsLikelyMediaHost(string host)
+    {
+        return host.Contains("images-amazon.com", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("ssl-images-amazon.com", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("media-amazon.com", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("mmg.whatsapp.net", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLikelyMediaPath(string path)
+        => Regex.IsMatch(path ?? string.Empty, @"\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|mp4|webm|m3u8|pdf)$", RegexOptions.IgnoreCase);
+
+    private static bool IsMercadoLivreSocialOrShortUri(Uri uri)
+    {
+        var host = NormalizeHost(uri.Host);
+        if (host.Equals("meli.la", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("meli.co", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IsMercadoLivreSocial(uri.ToString());
+    }
+
     private static bool TryExtractGoUrl(Uri uri, out Uri? goUri)
     {
         goUri = null;
@@ -1508,7 +1806,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                         && string.Equals(tag, _options.AmazonTag, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
                 : (false, $"Tag Amazon inválida (esperado: {_options.AmazonTag})"),
-            "Mercado Livre" => IsMercadoLivreProductUri(uri)
+            "Mercado Livre" => (IsMercadoLivreProductUri(uri) || IsMercadoLivreSocialOrShortUri(uri))
                                 && query.TryGetValue("matt_tool", out var tool)
                                 && query.TryGetValue("matt_word", out var word)
                                 && string.Equals(tool, MercadoLivreMattTool, StringComparison.OrdinalIgnoreCase)
