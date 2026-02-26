@@ -475,8 +475,9 @@ app.MapPost("/webhook/bot-conversor", async (
         else
         {
             // Fallback idempotency for payloads sem messageId (alguns provedores reenviam o mesmo evento).
-            var textHash = ComputeStableHash(msg.Text);
-            var waFallbackKey = $"wa-msg-fallback:{msg.InstanceName ?? "default"}:{msg.ChatId}:{msg.FromMe}:{textHash}";
+            var fallbackHash = ComputeStableHash(msg.RawPayloadJson ?? msg.Text);
+            var senderKey = string.IsNullOrWhiteSpace(msg.SenderId) ? "unknown" : msg.SenderId;
+            var waFallbackKey = $"wa-msg-fallback:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{fallbackHash}";
             if (!idempotency.TryBegin(waFallbackKey, TimeSpan.FromSeconds(45)))
             {
                 continue;
@@ -485,7 +486,7 @@ app.MapPost("/webhook/bot-conversor", async (
 
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
-        if (!msg.FromMe && TryParseInstagramCaptionChoiceCommand(msg.Text, out var captionChoice))
+        if (TryParseInstagramCaptionChoiceCommand(msg.Text, out var captionChoice))
         {
             if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
             {
@@ -547,7 +548,8 @@ app.MapPost("/webhook/bot-conversor", async (
 
         if (TryParseWhatsAppHelpCommand(msg.Text, out var helpCommand))
         {
-            var helpKey = $"wa-help:{msg.InstanceName ?? "default"}:{msg.ChatId}:{msg.FromMe}:{ComputeStableHash(msg.Text)}";
+            var senderKey = string.IsNullOrWhiteSpace(msg.SenderId) ? "unknown" : msg.SenderId;
+            var helpKey = $"wa-help:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{ComputeStableHash(msg.Text)}";
             if (!idempotency.TryBegin(helpKey, TimeSpan.FromMinutes(1)))
             {
                 continue;
@@ -2978,15 +2980,17 @@ static List<WhatsAppIncomingMessage> ExtractEvolutionMessages(string body)
 
 static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, out WhatsAppIncomingMessage msg)
 {
-    msg = new WhatsAppIncomingMessage(string.Empty, string.Empty, false, instanceName, null, false, null, null, null, null, null);
+    msg = new WhatsAppIncomingMessage(string.Empty, null, string.Empty, false, instanceName, null, false, null, null, null, null, null);
 
     var chatId = string.Empty;
+    var senderId = string.Empty;
     var messageId = string.Empty;
     var fromMe = false;
 
     if (node.TryGetProperty("key", out var key))
     {
         chatId = GetString(key, "remoteJid") ?? string.Empty;
+        senderId = GetString(key, "participant", "sender", "from") ?? string.Empty;
         messageId = GetString(key, "id") ?? string.Empty;
         fromMe = GetBool(key, "fromMe");
     }
@@ -3001,6 +3005,28 @@ static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, o
         fromMe = GetBool(node, "fromMe");
     }
 
+    if (string.IsNullOrWhiteSpace(senderId))
+    {
+        senderId = GetString(node, "participant", "sender", "sender_id", "from") ?? string.Empty;
+    }
+
+    if (string.IsNullOrWhiteSpace(senderId) && node.TryGetProperty("sender", out var senderNode))
+    {
+        if (senderNode.ValueKind == JsonValueKind.String)
+        {
+            senderId = senderNode.GetString() ?? string.Empty;
+        }
+        else if (senderNode.ValueKind == JsonValueKind.Object)
+        {
+            senderId = GetString(senderNode, "id", "jid", "from", "user") ?? string.Empty;
+        }
+    }
+
+    if (string.IsNullOrWhiteSpace(senderId) && fromMe)
+    {
+        senderId = "self";
+    }
+
     var text = ExtractMessageText(node);
     var hasMedia = TryExtractIncomingMedia(node, out var mediaUrl, out var mediaBase64, out var mediaMimeType, out var mediaFileName);
     if (string.IsNullOrWhiteSpace(text) && !hasMedia)
@@ -3010,6 +3036,7 @@ static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, o
 
     msg = new WhatsAppIncomingMessage(
         chatId,
+        string.IsNullOrWhiteSpace(senderId) ? null : senderId,
         text,
         fromMe,
         instanceName,
@@ -7171,6 +7198,7 @@ internal sealed record WhatsAppInstanceRequest(string? InstanceName);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
 internal sealed record WhatsAppIncomingMessage(
     string ChatId,
+    string? SenderId,
     string Text,
     bool FromMe,
     string? InstanceName,
