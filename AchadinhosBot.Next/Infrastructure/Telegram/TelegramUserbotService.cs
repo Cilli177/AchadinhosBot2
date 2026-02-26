@@ -242,6 +242,182 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
     }
 
+    public async Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, CancellationToken cancellationToken)
+    {
+        if (_client is null || _manager is null || !_ready)
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                "Telegram userbot nao esta pronto.",
+                sourceChatId,
+                count,
+                0,
+                0,
+                0);
+        }
+
+        var requested = Math.Clamp(count, 1, 50);
+        var peer = ResolvePeer(sourceChatId);
+        if (peer is null)
+        {
+            await RefreshDialogsAsync(cancellationToken);
+            peer = ResolvePeer(sourceChatId);
+        }
+
+        if (peer is null)
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                $"Chat {sourceChatId} nao encontrado nos dialogs do userbot.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        Messages_MessagesBase? history;
+        try
+        {
+            history = await _client.Messages_GetHistory(peer, limit: Math.Clamp(requested * 8, 20, 200));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao carregar historico do chat {SourceChatId} para replay.", sourceChatId);
+            return new TelegramUserbotReplayResult(
+                false,
+                "Falha ao carregar historico do Telegram.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        if (history is null)
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                "Historico vazio para o chat informado.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        var candidates = ExtractHistoryMessages(history)
+            .Where(m => !string.IsNullOrWhiteSpace(m.message))
+            .Where(m => m.message!.Contains("http", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(m => m.date)
+            .ThenByDescending(m => m.id)
+            .Take(requested)
+            .OrderBy(m => m.date)
+            .ThenBy(m => m.id)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            return new TelegramUserbotReplayResult(
+                true,
+                "Nenhuma oferta com link encontrada no historico recente.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        var settings = await _settingsStore.GetAsync(cancellationToken);
+        var replayed = 0;
+        var failed = 0;
+
+        foreach (var msg in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var text = msg.message ?? string.Empty;
+                var result = await _messageProcessor.ProcessAsync(
+                    text,
+                    "TelegramUserbotBackfill",
+                    cancellationToken,
+                    originChatId: sourceChatId,
+                    destinationChatId: settings.TelegramForwarding.DestinationChatId);
+
+                if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+                {
+                    failed++;
+                    continue;
+                }
+
+                var (imageBytes, imageMime) = await TryExtractImageForWhatsAppAsync(msg);
+                await SendToWhatsAppIfEnabled(settings, result.ConvertedText, sourceChatId, imageBytes, imageMime);
+                replayed++;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                _logger.LogWarning(ex, "Falha ao reenviar mensagem do Telegram para WhatsApp. Chat={SourceChatId} MsgId={MessageId}", sourceChatId, msg.id);
+            }
+        }
+
+        return new TelegramUserbotReplayResult(
+            true,
+            $"Replay concluido. reenviadas={replayed}, falhas={failed}.",
+            sourceChatId,
+            requested,
+            candidates.Length,
+            replayed,
+            failed);
+    }
+
+    private static IEnumerable<Message> ExtractHistoryMessages(Messages_MessagesBase history)
+    {
+        return history switch
+        {
+            Messages_MessagesSlice ms => ms.messages.OfType<Message>(),
+            Messages_ChannelMessages cm => cm.messages.OfType<Message>(),
+            Messages_Messages mm => mm.messages.OfType<Message>(),
+            _ => Enumerable.Empty<Message>()
+        };
+    }
+
+    private async Task<(byte[]? bytes, string? mime)> TryExtractImageForWhatsAppAsync(Message msg)
+    {
+        if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
+        {
+            return await TryDownloadPhotoAsync(photo);
+        }
+
+        if (msg.media is MessageMediaDocument mmDoc && mmDoc.document is Document doc)
+        {
+            if (!string.IsNullOrWhiteSpace(doc.mime_type) &&
+                doc.mime_type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                return await TryDownloadDocumentAsync(doc);
+            }
+        }
+
+        if (msg.media is MessageMediaWebPage mmWeb &&
+            mmWeb.webpage is WebPage webPage &&
+            webPage.photo is Photo webPhoto)
+        {
+            return await TryDownloadPhotoAsync(webPhoto);
+        }
+
+        if (msg.grouped_id != 0)
+        {
+            var grouped = await TryDownloadGroupedMediaAsync(msg);
+            if (grouped.bytes is not null && grouped.bytes.Length > 0)
+            {
+                return grouped;
+            }
+        }
+
+        return await TryDownloadNearbyMediaAsync(msg);
+    }
+
     private async Task OnUserbotUpdate(Update update)
     {
         if (_client is null || _manager is null)

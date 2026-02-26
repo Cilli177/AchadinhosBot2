@@ -21,6 +21,7 @@ using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Logs;
 using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.Media;
+using AchadinhosBot.Next.Infrastructure.Monitoring;
 using AchadinhosBot.Next.Infrastructure.Security;
 using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Telegram;
@@ -77,6 +78,10 @@ builder.Services
     .AddOptions<EvolutionOptions>()
     .Bind(builder.Configuration.GetSection("Evolution"))
     .ValidateDataAnnotations();
+
+builder.Services
+    .AddOptions<HeartbeatOptions>()
+    .Bind(builder.Configuration.GetSection("Heartbeat"));
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -151,6 +156,7 @@ builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
 builder.Services.AddSingleton<WhatsAppHelpMenuStore>();
 builder.Services.AddSingleton<ITelegramGateway, TelegramBotApiGateway>();
+builder.Services.AddSingleton<TelegramAlertSender>();
 if (startTelegramBotWorker)
 {
     builder.Services.AddHostedService<TelegramBotPollingService>();
@@ -166,6 +172,7 @@ builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<IIdempotencyStore, MemoryIdempotencyStore>();
 builder.Services.AddSingleton<LoginAttemptStore>();
 builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
+builder.Services.AddHostedService<UptimeHeartbeatService>();
 
 var app = builder.Build();
 
@@ -1281,6 +1288,40 @@ api.MapPost("/integrations/telegram/connect", async (
     return Results.Ok(result);
 }).RequireAuthorization("AdminOnly");
 
+api.MapPost("/integrations/telegram/test-alert", async (
+    TelegramAlertSender alertSender,
+    IOptions<TelegramOptions> telegramOptions,
+    IOptions<HeartbeatOptions> heartbeatOptions,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var chatId = heartbeatOptions.Value.TelegramAlertChatId != 0
+        ? heartbeatOptions.Value.TelegramAlertChatId
+        : telegramOptions.Value.LogsChatId;
+
+    if (chatId == 0)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = "Chat de alerta nao configurado. Defina Heartbeat:TelegramAlertChatId ou Telegram:LogsChatId."
+        });
+    }
+
+    var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
+    var sent = await alertSender.SendAsync(chatId, $"TESTE ALERTA: monitoramento ativo. Horario: {stamp}", ct);
+
+    await audit.WriteAsync("integration.telegram.test_alert", context.User.Identity?.Name ?? "unknown", new { sent, chatId }, ct);
+
+    if (!sent)
+    {
+        return Results.Json(new { success = false, message = "Falha ao enviar teste no Telegram." }, statusCode: StatusCodes.Status502BadGateway);
+    }
+
+    return Results.Ok(new { success = true, chatId, message = "Teste enviado com sucesso no Telegram." });
+}).RequireAuthorization("AdminOnly");
+
 api.MapPost("/integrations/mercadolivre/connect", async (
     IMercadoLivreOAuthService mercadoLivreOAuthService,
     ISettingsStore store,
@@ -1889,6 +1930,33 @@ api.MapPost("/telegram/userbot/refresh", async (ITelegramUserbotService userbot,
     var chats = await userbot.GetDialogsAsync(ct);
     return Results.Ok(new { success = ok, ready = userbot.IsReady, chats });
 });
+
+api.MapPost("/telegram/userbot/replay-to-whatsapp", async (
+    TelegramUserbotReplayRequest payload,
+    ITelegramUserbotService userbot,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (payload.SourceChatId == 0)
+    {
+        return Results.BadRequest(new { success = false, error = "SourceChatId obrigatorio." });
+    }
+
+    var count = payload.Count <= 0 ? 10 : Math.Min(payload.Count, 50);
+    var result = await userbot.ReplayRecentOffersToWhatsAppAsync(payload.SourceChatId, count, ct);
+
+    await audit.WriteAsync("telegram.userbot.replay_to_whatsapp", context.User.Identity?.Name ?? "unknown", new
+    {
+        payload.SourceChatId,
+        Count = count,
+        result.Success,
+        result.Replayed,
+        result.Failed
+    }, ct);
+
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
 
 api.MapGet("/whatsapp/groups", async (
     [FromQuery] string? instanceName,
@@ -3995,9 +4063,13 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             }
 
             var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
-            var help = publishResult.Error?.Contains("Sem imagens", StringComparison.OrdinalIgnoreCase) == true
+            var isNoImageError = publishResult.Error?.Contains("Sem imagens", StringComparison.OrdinalIgnoreCase) == true;
+            var isMediaTypeError = IsInstagramMediaTypeError(publishResult.Error);
+            var help = isNoImageError
                 ? $"\nDica: /ig imagem {shortId} <url-da-imagem>"
-                : string.Empty;
+                : isMediaTypeError
+                    ? $"\nDica: /ig imagens {shortId} (listar)\nDepois selecione JPG/PNG: /ig imagens {shortId} 1,2\nOu limpe e adicione novas: /ig limpar-imagens {shortId}"
+                    : string.Empty;
 
             return new[] { $"Falha ao publicar.\nDraft: {draft.Id}\nErro: {publishResult.Error ?? "erro desconhecido"}{help}" };
         }
@@ -5910,10 +5982,15 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
     }
 
     var caption = BuildInstagramCaption(effectiveCaption, draft.Hashtags);
-    var normalized = await NormalizeInstagramImagesAsync(httpClientFactory, mediaStore, publicBaseUrl, draft.ImageUrls, ct);
+    var selectedImageUrls = (draft.ImageUrls ?? new List<string>())
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    var publishImageUrls = selectedImageUrls;
+    var normalized = await NormalizeInstagramImagesAsync(httpClientFactory, mediaStore, publicBaseUrl, selectedImageUrls, ct);
     if (normalized.Count > 0)
     {
-        draft.ImageUrls = normalized;
+        publishImageUrls = normalized;
     }
     draft.PostType = NormalizeInstagramPostTypeValue(draft.PostType);
 
@@ -5923,9 +6000,25 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
         publishSettings.InstagramUserId!,
         publishSettings.AccessToken!,
         draft.PostType,
-        draft.ImageUrls,
+        publishImageUrls,
         caption,
         ct);
+    if (!ok &&
+        normalized.Count > 0 &&
+        selectedImageUrls.Count > 0 &&
+        IsInstagramMediaTypeError(errorMessage))
+    {
+        // Retry with original source URLs when hosted/transcoded URL is rejected by Graph.
+        (ok, mediaId, errorMessage) = await PublishToInstagramAsync(
+            httpClientFactory,
+            publishSettings.GraphBaseUrl,
+            publishSettings.InstagramUserId!,
+            publishSettings.AccessToken!,
+            draft.PostType,
+            selectedImageUrls,
+            caption,
+            ct);
+    }
 
     draft.Status = ok ? "published" : "failed";
     draft.MediaId = mediaId;
@@ -6289,6 +6382,14 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
     {
         return (false, null, ex.Message);
     }
+}
+
+static bool IsInstagramMediaTypeError(string? error)
+{
+    if (string.IsNullOrWhiteSpace(error)) return false;
+    return error.Contains("Only photo or video can be accepted as media type", StringComparison.OrdinalIgnoreCase)
+           || error.Contains("image format is not supported", StringComparison.OrdinalIgnoreCase)
+           || error.Contains("code 9004", StringComparison.OrdinalIgnoreCase);
 }
 
 static async Task<(string? Id, string? Error)> CreateMediaContainerAsync(HttpClient client, string baseUrl, string igUserId, string token, string imageUrl, string caption, bool carouselItem, string? mediaType, CancellationToken ct)
@@ -7260,6 +7361,7 @@ internal sealed record ConvertRequest(string Text, string? Source);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
+internal sealed record TelegramUserbotReplayRequest(long SourceChatId, int Count = 10);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
 internal sealed record WhatsAppIncomingMessage(
     string ChatId,
