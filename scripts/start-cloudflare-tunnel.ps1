@@ -1,10 +1,15 @@
 param(
+    [string]$TunnelName = "achadinhos-fixed",
+    [string]$Hostname = "achadinhos.reidasofertas.com",
     [string]$AppUrl = "http://localhost:5000",
     [switch]$NoConfigUpdate
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 function Resolve-CloudflaredPath {
     $candidates = @(
@@ -30,27 +35,94 @@ function Resolve-CloudflaredPath {
     throw "cloudflared nao encontrado. Instale com: winget install --id Cloudflare.cloudflared -e --source winget"
 }
 
-function Extract-TunnelUrlFromLogs {
-    param([string[]]$Paths)
+function Ensure-CertFile {
+    $certPath = Join-Path $env:USERPROFILE ".cloudflared\cert.pem"
+    if (Test-Path $certPath) {
+        return $certPath
+    }
 
-    $pattern = "https://[a-z0-9-]+\.trycloudflare\.com"
-    foreach ($path in $Paths) {
-        if (-not (Test-Path $path)) {
-            continue
-        }
+    throw "cert.pem nao encontrado. Execute: cloudflared tunnel login"
+}
 
-        $content = Get-Content -Path $path -Raw -ErrorAction SilentlyContinue
-        if ([string]::IsNullOrWhiteSpace($content)) {
-            continue
-        }
+function Resolve-TunnelId {
+    param(
+        [string]$CloudflaredPath,
+        [string]$Name
+    )
 
-        $match = [regex]::Match($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        if ($match.Success) {
-            return $match.Value.Trim().TrimEnd("/")
+    $info = & $CloudflaredPath --loglevel error tunnel info $Name 2>$null
+    if ($LASTEXITCODE -eq 0 -and $info) {
+        $idLine = $info | Where-Object { $_ -match "^ID:\s+" } | Select-Object -First 1
+        if ($idLine -and $idLine -match "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})") {
+            return $matches[1]
         }
     }
 
-    return $null
+    $createOutput = & $CloudflaredPath --loglevel error tunnel create $Name 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao criar tunnel '$Name'."
+    }
+
+    $allText = ($createOutput | Out-String)
+    if ($allText -match "id ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})") {
+        return $matches[1]
+    }
+
+    $infoRetry = & $CloudflaredPath --loglevel error tunnel info $Name
+    $idLineRetry = $infoRetry | Where-Object { $_ -match "^ID:\s+" } | Select-Object -First 1
+    if ($idLineRetry -and $idLineRetry -match "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})") {
+        return $matches[1]
+    }
+
+    throw "Nao foi possivel identificar o ID do tunnel '$Name'."
+}
+
+function Ensure-DnsRoute {
+    param(
+        [string]$CloudflaredPath,
+        [string]$Name,
+        [string]$HostnameValue
+    )
+
+    $routeOutput = & $CloudflaredPath --loglevel error tunnel route dns $Name $HostnameValue 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    $text = ($routeOutput | Out-String)
+    if ($text -match "already exists|CNAME .* already exists|code: 1003") {
+        return
+    }
+
+    throw "Falha ao configurar rota DNS para '$HostnameValue'."
+}
+
+function Write-TunnelConfig {
+    param(
+        [string]$TunnelId,
+        [string]$HostnameValue,
+        [string]$OriginUrl
+    )
+
+    $cfgDir = Join-Path $env:USERPROFILE ".cloudflared"
+    $cfgPath = Join-Path $cfgDir "config.yml"
+    $credPath = Join-Path $cfgDir "$TunnelId.json"
+    if (-not (Test-Path $credPath)) {
+        throw "Arquivo de credenciais nao encontrado: $credPath"
+    }
+
+    $yaml = @"
+tunnel: $TunnelId
+credentials-file: $credPath
+ingress:
+  - hostname: $HostnameValue
+    service: $OriginUrl
+  - service: http_status:404
+"@
+
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($cfgPath, $yaml, $encoding)
+    return $cfgPath
 }
 
 function Update-PublicBaseUrl {
@@ -78,56 +150,46 @@ function Update-PublicBaseUrl {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$outLog = Join-Path $repoRoot "cloudflared.out.log"
-$errLog = Join-Path $repoRoot "cloudflared.err.log"
+$publicBaseUrl = "https://$Hostname"
 
+$cloudflaredPath = Resolve-CloudflaredPath
+Ensure-CertFile | Out-Null
+
+$tunnelId = Resolve-TunnelId -CloudflaredPath $cloudflaredPath -Name $TunnelName
+Ensure-DnsRoute -CloudflaredPath $cloudflaredPath -Name $TunnelName -HostnameValue $Hostname
+$configPath = Write-TunnelConfig -TunnelId $tunnelId -HostnameValue $Hostname -OriginUrl $AppUrl
+
+if (-not $NoConfigUpdate) {
+    Update-PublicBaseUrl -FilePath (Join-Path $repoRoot "AchadinhosBot.Next\appsettings.json") -NewUrl $publicBaseUrl
+    Update-PublicBaseUrl -FilePath (Join-Path $repoRoot "AchadinhosBot.Next\appsettings.Development.json") -NewUrl $publicBaseUrl
+}
+
+$outLog = Join-Path $repoRoot "cloudflared.named.out.log"
+$errLog = Join-Path $repoRoot "cloudflared.named.err.log"
+Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
 foreach ($log in @($outLog, $errLog)) {
     if (Test-Path $log) {
-        Remove-Item $log -Force
+        Remove-Item $log -Force -ErrorAction SilentlyContinue
     }
 }
 
-# Garante apenas um tunnel local ativo.
-Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
-
-$cloudflaredPath = Resolve-CloudflaredPath
-$process = Start-Process `
+$proc = Start-Process `
     -FilePath $cloudflaredPath `
-    -ArgumentList @("tunnel", "--url", $AppUrl, "--no-autoupdate") `
+    -ArgumentList @("tunnel", "--config", $configPath, "run", $TunnelName) `
     -WorkingDirectory $repoRoot `
     -WindowStyle Minimized `
     -RedirectStandardOutput $outLog `
     -RedirectStandardError $errLog `
     -PassThru
 
-$tunnelUrl = $null
-for ($i = 0; $i -lt 40; $i++) {
-    Start-Sleep -Seconds 1
-    $tunnelUrl = Extract-TunnelUrlFromLogs -Paths @($outLog, $errLog)
-    if (-not [string]::IsNullOrWhiteSpace($tunnelUrl)) {
-        break
-    }
-
-    if ($process.HasExited) {
-        break
-    }
+Start-Sleep -Seconds 3
+if ($proc.HasExited) {
+    throw "cloudflared encerrou apos iniciar. Veja: $errLog"
 }
 
-if ([string]::IsNullOrWhiteSpace($tunnelUrl)) {
-    Write-Host "Falha ao obter URL do Cloudflare Tunnel."
-    if (Test-Path $errLog) {
-        Write-Host "Ultimas linhas de erro:"
-        Get-Content -Path $errLog -Tail 40
-    }
-    exit 1
-}
-
-if (-not $NoConfigUpdate) {
-    Update-PublicBaseUrl -FilePath (Join-Path $repoRoot "AchadinhosBot.Next\appsettings.json") -NewUrl $tunnelUrl
-    Update-PublicBaseUrl -FilePath (Join-Path $repoRoot "AchadinhosBot.Next\appsettings.Development.json") -NewUrl $tunnelUrl
-}
-
-Write-Host "Cloudflare Tunnel ativo."
-Write-Host "URL: $tunnelUrl"
-Write-Host "PID: $($process.Id)"
+Write-Host "Cloudflare Named Tunnel ativo."
+Write-Host "Tunnel: $TunnelName ($tunnelId)"
+Write-Host "Hostname fixo: $publicBaseUrl"
+Write-Host "Origem local: $AppUrl"
+Write-Host "PID: $($proc.Id)"
 Write-Host "Logs: $outLog / $errLog"
