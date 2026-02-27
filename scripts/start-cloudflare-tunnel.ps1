@@ -1,6 +1,6 @@
 param(
     [string]$TunnelName = "achadinhos-fixed",
-    [string]$Hostname = "achadinhos.reidasofertas.com",
+    [string]$Hostname = "achadinhos.reidasofertas.ia.br",
     [string]$AppUrl = "http://localhost:5000",
     [switch]$NoConfigUpdate
 )
