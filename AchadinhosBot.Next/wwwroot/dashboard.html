@@ -369,6 +369,26 @@
         </section>
 
         <section class="card">
+          <h2>Telegram Userbot (Reconexão)</h2>
+          <p class="muted">Use quando o Telegram pedir código SMS/Telegram ou senha 2FA.</p>
+          <label>Telefone (opcional)</label>
+          <input id="userbotAuthPhone" placeholder="+5513999999999" />
+          <label>Código de verificação (opcional)</label>
+          <input id="userbotAuthCode" type="password" placeholder="12345" />
+          <label>Senha 2FA (opcional)</label>
+          <input id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="userbotForceReconnect" checked /><span class="slider"></span></label>
+            <span class="muted">Forçar reconexão após aplicar</span>
+          </div>
+          <div class="row">
+            <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e reconectar</button>
+          </div>
+          <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>
+          <p class="muted">As credenciais desta área ficam apenas em memória da sessão atual.</p>
+        </section>
+
+        <section class="card">
           <h2>WhatsApp (Evolution API)</h2>
           <label>Instance Name</label>
           <input id="waInstanceName" placeholder="ZapOfertas" />
@@ -438,22 +458,6 @@
             <button onclick="refreshUserbotChats()">Atualizar grupos</button>
             <button class="secondary" onclick="loadUserbotChats()">Recarregar</button>
           </div>
-          <h3 style="margin:10px 0 6px;">Reconexão segura do Userbot</h3>
-          <p class="muted">Use quando o Telegram pedir código SMS/Telegram ou senha 2FA. Dados ficam só em memória da sessão do app.</p>
-          <label>Telefone (opcional)</label>
-          <input id="userbotAuthPhone" placeholder="+5513999999999" />
-          <label>Código de verificação (opcional)</label>
-          <input id="userbotAuthCode" type="password" placeholder="12345" />
-          <label>Senha 2FA (opcional)</label>
-          <input id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
-          <div class="row">
-            <label class="switch"><input type="checkbox" id="userbotForceReconnect" checked /><span class="slider"></span></label>
-            <span class="muted">Forçar reconexão após aplicar</span>
-          </div>
-          <div class="row">
-            <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e reconectar</button>
-          </div>
-          <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>
           <label>Destino (ID do grupo/canal)</label>
           <input id="userbotDestinationId" placeholder="-1003612784929" />
           <div class="row">
