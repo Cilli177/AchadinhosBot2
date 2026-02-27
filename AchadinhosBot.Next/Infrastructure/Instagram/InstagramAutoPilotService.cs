@@ -1287,7 +1287,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
 
     private static string BuildPublicJpegUrl(string publicBaseUrl, string id)
     {
-        var url = $"{publicBaseUrl.TrimEnd('/')}/media/{id}.jpg";
+        var url = $"{publicBaseUrl.TrimEnd('/')}/media/{id}.jpeg";
         if (url.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
             url.Contains("ngrok.app", StringComparison.OrdinalIgnoreCase))
         {
