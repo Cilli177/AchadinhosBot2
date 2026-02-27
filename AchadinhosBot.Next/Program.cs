@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Globalization;
 using System.Runtime.Versioning;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -1747,6 +1748,7 @@ api.MapPost("/instagram/publish/drafts/{id}/publish", async (
     var publishResult = await PublishInstagramDraftAsync(
         id,
         settings.InstagramPublish ?? new InstagramPublishSettings(),
+        settings.Gemini ?? new GeminiSettings(),
         publishStore,
         publishLogStore,
         httpClientFactory,
@@ -4157,6 +4159,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var publishResult = await PublishInstagramDraftAsync(
                 draft.Id,
                 settings.InstagramPublish ?? new InstagramPublishSettings(),
+                settings.Gemini ?? new GeminiSettings(),
                 publishStore,
                 publishLogStore,
                 httpClientFactory,
@@ -4588,6 +4591,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var publishResult = await PublishInstagramDraftAsync(
                 draft.Id,
                 settings.InstagramPublish ?? new InstagramPublishSettings(),
+                settings.Gemini ?? new GeminiSettings(),
                 publishStore,
                 publishLogStore,
                 httpClientFactory,
@@ -6963,6 +6967,7 @@ static bool GetBool(JsonElement node, string name)
 static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
     string id,
     InstagramPublishSettings publishSettings,
+    GeminiSettings geminiSettings,
     IInstagramPublishStore publishStore,
     IInstagramPublishLogStore publishLogStore,
     IHttpClientFactory httpClientFactory,
@@ -7040,6 +7045,29 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
     {
         publishImageUrls = normalized;
     }
+    var qualityCheck = await ValidateInstagramDraftQualityAsync(
+        draft,
+        effectiveCaption,
+        publishImageUrls,
+        geminiSettings,
+        httpClientFactory,
+        ct);
+    if (!qualityCheck.IsValid)
+    {
+        draft.Status = "failed";
+        draft.MediaId = null;
+        draft.Error = qualityCheck.Error;
+        await publishStore.UpdateAsync(draft, ct);
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "publish",
+            Success = false,
+            DraftId = draft.Id,
+            Error = qualityCheck.Error,
+            Details = qualityCheck.Details
+        }, ct);
+        return new InstagramPublishExecutionResult(false, StatusCodes.Status400BadRequest, null, qualityCheck.Error, draft.Id);
+    }
     draft.PostType = NormalizeInstagramPostTypeValue(draft.PostType);
 
     var (ok, mediaId, errorMessage) = await PublishToInstagramAsync(
@@ -7089,6 +7117,360 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
     }, ct);
 
     return new InstagramPublishExecutionResult(ok, StatusCodes.Status200OK, mediaId, errorMessage, draft.Id);
+}
+
+static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagramDraftQualityAsync(
+    InstagramPublishDraft draft,
+    string? effectiveCaption,
+    IReadOnlyList<string> publishImageUrls,
+    GeminiSettings geminiSettings,
+    IHttpClientFactory httpClientFactory,
+    CancellationToken ct)
+{
+    var productName = (draft.ProductName ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(productName))
+    {
+        return (false, "Produto vazio no rascunho. Defina um produto real antes de publicar.", "quality=product_missing");
+    }
+
+    if (publishImageUrls.Count == 0 || publishImageUrls.All(string.IsNullOrWhiteSpace))
+    {
+        return (false, "Sem imagens para validar/publicar.", "quality=image_missing");
+    }
+
+    if (!IsCaptionAlignedWithProduct(productName, effectiveCaption, out var captionDetails))
+    {
+        return (false, "Legenda nao condiz com o produto informado. Revise o texto antes de publicar.", $"quality=caption_mismatch;{captionDetails}");
+    }
+
+    if (!IsGeminiConfiguredForImageValidation(geminiSettings))
+    {
+        return (false, "Validacao de imagem/produto exige Gemini configurado.", "quality=gemini_not_configured");
+    }
+
+    var firstImage = publishImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    if (string.IsNullOrWhiteSpace(firstImage))
+    {
+        return (false, "Imagem invalida para validacao.", "quality=image_invalid");
+    }
+
+    var imageValidation = await EvaluateImageProductMatchWithGeminiAsync(
+        productName,
+        effectiveCaption ?? string.Empty,
+        firstImage,
+        geminiSettings,
+        httpClientFactory,
+        ct);
+    if (imageValidation is null)
+    {
+        return (false, "Nao foi possivel validar a imagem com IA. Tente outra imagem.", "quality=gemini_validation_failed");
+    }
+
+    const int minimumMatchScore = 65;
+    if (!imageValidation.Value.IsMatch || imageValidation.Value.Score < minimumMatchScore)
+    {
+        var reason = string.IsNullOrWhiteSpace(imageValidation.Value.Reason) ? "sem motivo informado" : imageValidation.Value.Reason;
+        return (false, $"Imagem nao condiz com o produto (score {imageValidation.Value.Score}/100).", $"quality=image_mismatch;score={imageValidation.Value.Score};reason={reason}");
+    }
+
+    return (true, null, $"quality=ok;image_score={imageValidation.Value.Score}");
+}
+
+static bool IsGeminiConfiguredForImageValidation(GeminiSettings settings)
+    => !string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********";
+
+static bool IsCaptionAlignedWithProduct(string productName, string? caption, out string details)
+{
+    var productTokens = ExtractMeaningfulTokens(productName, minLength: 3).Take(8).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    if (productTokens.Count == 0)
+    {
+        details = "caption_check=skipped_no_product_tokens";
+        return true;
+    }
+
+    var captionTokens = ExtractMeaningfulTokens(caption ?? string.Empty, minLength: 3).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var overlap = productTokens.Count(token => captionTokens.Contains(token));
+    var requiredOverlap = productTokens.Count >= 4 ? 2 : 1;
+    var ok = overlap >= requiredOverlap;
+
+    details = $"caption_overlap={overlap};required={requiredOverlap};product_tokens={productTokens.Count}";
+    return ok;
+}
+
+static IEnumerable<string> ExtractMeaningfulTokens(string input, int minLength)
+{
+    var normalized = NormalizeForTokenization(input);
+    foreach (Match match in Regex.Matches(normalized, @"[a-z0-9]+", RegexOptions.CultureInvariant))
+    {
+        var token = match.Value;
+        if (token.Length < minLength)
+        {
+            continue;
+        }
+
+        if (IsInstagramConsistencyStopWord(token))
+        {
+            continue;
+        }
+
+        yield return token;
+    }
+}
+
+static string NormalizeForTokenization(string input)
+{
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return string.Empty;
+    }
+
+    var formD = input.Normalize(NormalizationForm.FormD);
+    var sb = new StringBuilder(formD.Length);
+    foreach (var c in formD)
+    {
+        var category = CharUnicodeInfo.GetUnicodeCategory(c);
+        if (category == UnicodeCategory.NonSpacingMark)
+        {
+            continue;
+        }
+
+        sb.Append(char.ToLowerInvariant(c));
+    }
+
+    return sb.ToString().Normalize(NormalizationForm.FormC);
+}
+
+static bool IsInstagramConsistencyStopWord(string token)
+    => token is
+        "de" or "da" or "do" or "das" or "dos" or
+        "com" or "sem" or "para" or "por" or "em" or
+        "na" or "no" or "nas" or "nos" or "e" or "ou" or
+        "a" or "o" or "as" or "os" or "um" or "uma" or "uns" or "umas" or
+        "oferta" or "ofertas" or "produto" or "produtos" or "link" or "bio" or
+        "comente" or "comentario" or "comprar" or "promocao" or "promocaoo" or
+        "desconto" or "imperdivel" or "reidasofertas" or "achadinho" or
+        "achadinhos" or "hoje" or "agora" or "novo" or "nova" or "top" or
+        "kit" or "item" or "loja" or "oficial";
+
+static async Task<(int Score, bool IsMatch, string Reason)?> EvaluateImageProductMatchWithGeminiAsync(
+    string productName,
+    string caption,
+    string imageUrl,
+    GeminiSettings geminiSettings,
+    IHttpClientFactory httpClientFactory,
+    CancellationToken ct)
+{
+    try
+    {
+        var client = httpClientFactory.CreateClient("default");
+        using var imageResponse = await client.GetAsync(imageUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!imageResponse.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var contentLength = imageResponse.Content.Headers.ContentLength;
+        if (contentLength.HasValue && contentLength.Value > 5_000_000)
+        {
+            return null;
+        }
+
+        var imageBytes = await imageResponse.Content.ReadAsByteArrayAsync(ct);
+        if (imageBytes.Length == 0 || imageBytes.Length > 5_000_000)
+        {
+            return null;
+        }
+
+        var mimeType = ResolveImageMimeTypeForPublishValidation(imageResponse.Content.Headers.ContentType?.MediaType, imageUrl);
+        if (!mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var shortCaption = (caption ?? string.Empty).Trim();
+        if (shortCaption.Length > 280)
+        {
+            shortCaption = shortCaption[..280];
+        }
+
+        var prompt =
+            "Valide se a imagem representa exatamente o produto informado. " +
+            $"Produto: {productName}. " +
+            $"Legenda resumida: {shortCaption}. " +
+            "Responda somente JSON valido no formato: " +
+            "{\"score\":0-100,\"isMatch\":true|false,\"reason\":\"texto curto\"}.";
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["contents"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["role"] = "user",
+                    ["parts"] = new object[]
+                    {
+                        new Dictionary<string, object?> { ["text"] = prompt },
+                        new Dictionary<string, object?>
+                        {
+                            ["inline_data"] = new Dictionary<string, object?>
+                            {
+                                ["mime_type"] = mimeType,
+                                ["data"] = Convert.ToBase64String(imageBytes)
+                            }
+                        }
+                    }
+                }
+            },
+            ["generationConfig"] = new Dictionary<string, object?>
+            {
+                ["temperature"] = 0,
+                ["response_mime_type"] = "application/json"
+            }
+        };
+
+        var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
+        var geminiClient = httpClientFactory.CreateClient("gemini");
+        var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(geminiSettings.ApiKey!)}";
+        using var response = await geminiClient.PostAsync(
+            url,
+            new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+            ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var raw = await response.Content.ReadAsStringAsync(ct);
+        var output = ExtractGeminiOutputTextForImageValidation(raw);
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return null;
+        }
+
+        var json = ExtractFirstJsonObjectForImageValidation(output) ?? output.Trim();
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var score = root.TryGetProperty("score", out var scoreNode) && scoreNode.TryGetInt32(out var parsedScore)
+            ? parsedScore
+            : 0;
+        score = Math.Clamp(score, 0, 100);
+
+        var isMatch = root.TryGetProperty("isMatch", out var matchNode) && matchNode.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? matchNode.GetBoolean()
+            : score >= 55;
+
+        var reason = root.TryGetProperty("reason", out var reasonNode) ? reasonNode.GetString() : null;
+        reason = string.IsNullOrWhiteSpace(reason) ? $"gemini_match={isMatch}" : reason.Trim();
+        return (score, isMatch, reason);
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static string ResolveImageMimeTypeForPublishValidation(string? contentType, string imageUrl)
+{
+    if (!string.IsNullOrWhiteSpace(contentType) && contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+    {
+        return contentType;
+    }
+
+    var extension = Path.GetExtension(imageUrl ?? string.Empty).ToLowerInvariant();
+    return extension switch
+    {
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        ".gif" => "image/gif",
+        ".bmp" => "image/bmp",
+        _ => "image/jpeg"
+    };
+}
+
+static string? ExtractGeminiOutputTextForImageValidation(string json)
+{
+    if (string.IsNullOrWhiteSpace(json))
+    {
+        return null;
+    }
+
+    try
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var candidate in candidates.EnumerateArray())
+        {
+            if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            var sb = new StringBuilder();
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.TryGetProperty("text", out var text))
+                {
+                    sb.Append(text.GetString());
+                }
+            }
+
+            var combined = sb.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(combined))
+            {
+                return combined;
+            }
+        }
+    }
+    catch
+    {
+        return null;
+    }
+
+    return null;
+}
+
+static string? ExtractFirstJsonObjectForImageValidation(string input)
+{
+    var trimmed = input?.Trim();
+    if (string.IsNullOrWhiteSpace(trimmed))
+    {
+        return null;
+    }
+
+    var start = trimmed.IndexOf('{');
+    if (start < 0)
+    {
+        return null;
+    }
+
+    var depth = 0;
+    for (var i = start; i < trimmed.Length; i++)
+    {
+        if (trimmed[i] == '{')
+        {
+            depth++;
+        }
+        else if (trimmed[i] == '}')
+        {
+            depth--;
+            if (depth == 0)
+            {
+                return trimmed[start..(i + 1)];
+            }
+        }
+    }
+
+    return null;
 }
 
 static string FormatInstagramCaptionForReadability(string? caption)
