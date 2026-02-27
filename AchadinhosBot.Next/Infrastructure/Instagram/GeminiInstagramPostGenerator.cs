@@ -61,6 +61,10 @@ public sealed class GeminiInstagramPostGenerator
                     role = "user",
                     parts = new[] { new { text = prompt } }
                 }
+            },
+            generationConfig = new
+            {
+                maxOutputTokens = Math.Clamp(geminiSettings.MaxOutputTokens <= 0 ? 1200 : geminiSettings.MaxOutputTokens, 200, 4096)
             }
         };
 

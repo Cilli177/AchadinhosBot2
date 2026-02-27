@@ -868,6 +868,7 @@
           <input id="geminiApiKey" type="password" placeholder="Chave Gemini (AIza...)" />
           <div class="row">
             <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />
+            <input id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
           </div>
         </section>
         <label>Variações de legenda</label>
@@ -1762,6 +1763,8 @@ function renderSettings(s){
   if (geminiKey) geminiKey.value = gemini.apiKey ? '********' : '';
   const geminiModel = document.getElementById('geminiModel');
   if (geminiModel) geminiModel.value = gemini.model || 'gemini-2.5-flash';
+  const geminiMaxTokens = document.getElementById('geminiMaxTokens');
+  if (geminiMaxTokens) geminiMaxTokens.value = String(gemini.maxOutputTokens ?? 1200);
   const igPub = s.instagramPublish || {};
   const igPubEnabled = document.getElementById('igPubEnabled');
   if (igPubEnabled) igPubEnabled.checked = igPub.enabled ?? true;
@@ -2309,6 +2312,7 @@ async function saveInstagramSettings(){
   existing.gemini = existing.gemini || {};
   existing.gemini.apiKey = document.getElementById('geminiApiKey')?.value || '';
   existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
+  existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
 
   try {
     await api('/api/settings', 'PUT', existing);
