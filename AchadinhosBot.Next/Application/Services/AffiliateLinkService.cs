@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Net;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Infrastructure.Amazon;
 using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Application.Services;
@@ -14,6 +15,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 {
     private readonly AffiliateOptions _options;
     private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
+    private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly ILogger<AffiliateLinkService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private static readonly TimeSpan ExpandCacheTtl = TimeSpan.FromMinutes(10);
@@ -22,11 +24,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     public AffiliateLinkService(
         IOptions<AffiliateOptions> options,
         IMercadoLivreOAuthService mercadoLivreOAuthService,
+        AmazonPaApiClient amazonPaApiClient,
         ILogger<AffiliateLinkService> logger,
         IHttpClientFactory httpClientFactory)
     {
         _options = options.Value;
         _mercadoLivreOAuthService = mercadoLivreOAuthService;
+        _amazonPaApiClient = amazonPaApiClient;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
     }
@@ -35,7 +39,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     {
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri))
         {
-            return new AffiliateLinkResult(false, null, "Unknown", false, null, "URL inválida", false, null);
+            return new AffiliateLinkResult(false, null, "Unknown", false, null, "URL invÃ¡lida", false, null);
         }
 
         var host = NormalizeHost(uri.Host);
@@ -55,7 +59,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         {
             return converted.Error is not null
                 ? converted
-                : new AffiliateLinkResult(false, null, "Unknown", false, null, "Não foi possível expandir o link", false, null);
+                : new AffiliateLinkResult(false, null, "Unknown", false, null, "NÃ£o foi possÃ­vel expandir o link", false, null);
         }
 
         var expandedHost = expanded.Host.ToLowerInvariant();
@@ -63,7 +67,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         {
             return converted.Error is not null
                 ? converted
-                : new AffiliateLinkResult(false, null, "Unknown", false, null, "Conversão não suportada", false, null);
+                : new AffiliateLinkResult(false, null, "Unknown", false, null, "ConversÃ£o nÃ£o suportada", false, null);
         }
 
         return await ConvertInternalAsync(expanded, expandedHost, cancellationToken);
@@ -84,18 +88,39 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 }
             }
 
+            if (_amazonPaApiClient.IsConfigured)
+            {
+                var official = await ConvertAmazonWithOfficialApiAsync(resolved, cancellationToken);
+                if (!official.Success || string.IsNullOrWhiteSpace(official.Url))
+                {
+                    _logger.LogWarning("Conversao Amazon via API oficial falhou. Original={OriginalUrl} Erro={Error}", uri.ToString(), official.Error);
+                    return new AffiliateLinkResult(false, null, "Amazon", false, official.Error, "Falha na conversao oficial Amazon", false, official.Note);
+                }
+
+                var officialValidation = await ValidateAffiliateAsync("Amazon", official.Url, cancellationToken);
+                if (!officialValidation.IsAffiliated)
+                {
+                    _logger.LogWarning("Verificacao Amazon oficial falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), official.Url, officialValidation.Error);
+                    return new AffiliateLinkResult(false, null, "Amazon", false, officialValidation.Error, "Link oficial Amazon invalido", false, official.Note);
+                }
+
+                LogStore("Amazon", uri.ToString(), official.Url);
+                return new AffiliateLinkResult(true, official.Url, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
+            }
+
+            var expectedTag = ResolveAmazonPartnerTag();
             var originalQuery = ParseQuery(resolved.Query);
             originalQuery.TryGetValue("tag", out var existingTag);
-            var amazon = ApplyOrReplaceQuery(RemoveQueryKey(resolved, "tag"), "tag", _options.AmazonTag);
+            var amazon = ApplyOrReplaceQuery(RemoveQueryKey(resolved, "tag"), "tag", expectedTag);
             var correctionApplied = string.IsNullOrWhiteSpace(existingTag)
-                || !string.Equals(existingTag, _options.AmazonTag, StringComparison.OrdinalIgnoreCase);
-            var correctionNote = correctionApplied ? $"Tag Amazon corrigida ({existingTag ?? "vazio"} -> {_options.AmazonTag})" : null;
+                || !string.Equals(existingTag, expectedTag, StringComparison.OrdinalIgnoreCase);
+            var correctionNote = correctionApplied ? $"Tag Amazon corrigida ({existingTag ?? "vazio"} -> {expectedTag})" : null;
 
             var validation = await ValidateAffiliateAsync("Amazon", amazon, cancellationToken);
             if (!validation.IsAffiliated)
             {
-                _logger.LogWarning("Verificação Amazon falhou após correção. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), amazon, validation.Error);
-                return new AffiliateLinkResult(false, null, "Amazon", false, validation.Error, "Link convertido sem afiliado válido", correctionApplied, correctionNote);
+                _logger.LogWarning("Verificacao Amazon falhou apos correcao. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), amazon, validation.Error);
+                return new AffiliateLinkResult(false, null, "Amazon", false, validation.Error, "Link convertido sem afiliado valido", correctionApplied, correctionNote);
             }
 
             if (correctionApplied)
@@ -103,9 +128,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Amazon sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), amazon);
             }
 
-            var shortened = await ShortenAsync(amazon, cancellationToken) ?? amazon;
-            LogStore("Amazon", uri.ToString(), shortened);
-            return new AffiliateLinkResult(true, shortened, "Amazon", true, null, null, correctionApplied, correctionNote);
+            LogStore("Amazon", uri.ToString(), amazon);
+            return new AffiliateLinkResult(true, amazon, "Amazon", true, null, null, correctionApplied, correctionNote);
         }
 
         if (host.Contains("shein.com"))
@@ -121,8 +145,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             var validation = await ValidateAffiliateAsync("Shein", shein, cancellationToken);
             if (!validation.IsAffiliated)
             {
-                _logger.LogWarning("Verificação Shein falhou após correção. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shein, validation.Error);
-                return new AffiliateLinkResult(false, null, "Shein", false, validation.Error, "Link convertido sem afiliado válido", correctionApplied, correctionNote);
+                _logger.LogWarning("VerificaÃ§Ã£o Shein falhou apÃ³s correÃ§Ã£o. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shein, validation.Error);
+                return new AffiliateLinkResult(false, null, "Shein", false, validation.Error, "Link convertido sem afiliado vÃ¡lido", correctionApplied, correctionNote);
             }
 
             if (correctionApplied)
@@ -146,8 +170,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 var validation = await ValidateAffiliateAsync("Mercado Livre", sanitized, cancellationToken);
                 if (!validation.IsAffiliated)
                 {
-                    _logger.LogWarning("Verificação Mercado Livre falhou após correção. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), sanitized, validation.Error);
-                    return new AffiliateLinkResult(false, null, "Mercado Livre", false, validation.Error, "Link convertido sem afiliado válido", ensured.CorrectionApplied, ensured.CorrectionNote);
+                    _logger.LogWarning("VerificaÃ§Ã£o Mercado Livre falhou apÃ³s correÃ§Ã£o. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), sanitized, validation.Error);
+                    return new AffiliateLinkResult(false, null, "Mercado Livre", false, validation.Error, "Link convertido sem afiliado vÃ¡lido", ensured.CorrectionApplied, ensured.CorrectionNote);
                 }
 
                 if (ensured.CorrectionApplied)
@@ -165,7 +189,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 null,
                 "Mercado Livre",
                 false,
-                "Produto não identificado",
+                "Produto nÃ£o identificado",
                 "Nao foi possivel identificar um produto valido do Mercado Livre para afiliacao.",
                 false,
                 null);
@@ -179,8 +203,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 var validation = await ValidateAffiliateAsync("Shopee", shopee, cancellationToken);
                 if (!validation.IsAffiliated)
                 {
-                    _logger.LogWarning("Verificação Shopee falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shopee, validation.Error);
-                    return new AffiliateLinkResult(false, null, "Shopee", false, validation.Error, "Link convertido sem afiliado válido", false, null);
+                    _logger.LogWarning("VerificaÃ§Ã£o Shopee falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shopee, validation.Error);
+                    return new AffiliateLinkResult(false, null, "Shopee", false, validation.Error, "Link convertido sem afiliado vÃ¡lido", false, null);
                 }
 
                 LogStore("Shopee", uri.ToString(), shopee);
@@ -188,8 +212,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
         }
 
-        _logger.LogDebug("Host não suportado para afiliação: {Host}", host);
-        return new AffiliateLinkResult(false, null, "Unknown", false, null, $"Host não suportado: {host}", false, null);
+        _logger.LogDebug("Host nÃ£o suportado para afiliaÃ§Ã£o: {Host}", host);
+        return new AffiliateLinkResult(false, null, "Unknown", false, null, $"Host nÃ£o suportado: {host}", false, null);
     }
 
     private static bool IsAmazonHost(string host)
@@ -198,6 +222,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return normalized == "amazon.com"
                || normalized == "amazon.com.br"
                || normalized == "amzn.to"
+               || normalized == "a.co"
                || normalized == "amzlink.to"
                || normalized == "amzn.divulgador.link"
                || normalized.EndsWith(".amazon.com", StringComparison.OrdinalIgnoreCase)
@@ -274,7 +299,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return false;
         }
 
-        // Remove caracteres invisíveis/estranhos que podem vir de redirecionamentos.
+        // Remove caracteres invisÃ­veis/estranhos que podem vir de redirecionamentos.
         var normalized = NormalizeHost(host);
 
         return normalized.Contains("mercadolivre.com", StringComparison.OrdinalIgnoreCase)
@@ -340,14 +365,14 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         {
             if (!string.Equals(resolvedUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
             {
-                // Para URLs sociais, não aceitar MLB "solto" do HTML (gera falso positivo).
+                // Para URLs sociais, nÃ£o aceitar MLB "solto" do HTML (gera falso positivo).
                 mlbId = await ExtractMercadoLivreIdFromHtmlAsync(resolvedUrl, cancellationToken, allowLooseMatch: !isSocialUrl);
             }
         }
 
         if (!string.IsNullOrWhiteSpace(mlbId) && isSocialUrl && !hasIdInResolvedPath)
         {
-            // Garante que links sociais só virem produto quando houver evidência forte.
+            // Garante que links sociais sÃ³ virem produto quando houver evidÃªncia forte.
             mlbId = null;
         }
 
@@ -376,9 +401,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             {
                 if (IsMercadoLivreSocialOrShortUri(resolvedUri))
                 {
-                    // Fallback para links sociais/curtos do ML quando o ID do item não
-                    // está disponível no HTML/redirect. Mantém rastreio com parâmetros
-                    // de afiliação no próprio link social.
+                    // Fallback para links sociais/curtos do ML quando o ID do item nÃ£o
+                    // estÃ¡ disponÃ­vel no HTML/redirect. MantÃ©m rastreio com parÃ¢metros
+                    // de afiliaÃ§Ã£o no prÃ³prio link social.
                     var social = CleanMercadoLivreSocial(resolvedUri.ToString());
                     var ensuredFallback = EnsureMercadoLivreAffiliate(social, uri.ToString());
                     return ensuredFallback.Url;
@@ -391,12 +416,12 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var itemValidation = await ValidateMercadoLivreItemWithApiAsync(mlbId, cancellationToken);
         if (itemValidation == MercadoLivreItemValidation.Invalid)
         {
-            _logger.LogWarning("Mercado Livre item inválido ou não encontrado via API. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
+            _logger.LogWarning("Mercado Livre item invÃ¡lido ou nÃ£o encontrado via API. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
             return null;
         }
         if (itemValidation == MercadoLivreItemValidation.Unknown)
         {
-            _logger.LogWarning("Validação de item Mercado Livre inconclusiva via API. Prosseguindo com heurística. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
+            _logger.LogWarning("ValidaÃ§Ã£o de item Mercado Livre inconclusiva via API. Prosseguindo com heurÃ­stica. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
         }
 
         var query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -491,8 +516,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var fixedWord = MercadoLivreMattWord;
         if (string.IsNullOrWhiteSpace(fixedTool) || string.IsNullOrWhiteSpace(fixedWord))
         {
-            _logger.LogWarning("Mercado Livre afiliado ausente no link e opções vazias. Original={OriginalUrl}", originalUrl);
-            return new AffiliateCorrectionResult(url, false, "Afiliado ausente e opções vazias");
+            _logger.LogWarning("Mercado Livre afiliado ausente no link e opÃ§Ãµes vazias. Original={OriginalUrl}", originalUrl);
+            return new AffiliateCorrectionResult(url, false, "Afiliado ausente e opÃ§Ãµes vazias");
         }
 
         query["matt_tool"] = fixedTool;
@@ -510,7 +535,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     {
         if (string.IsNullOrWhiteSpace(_options.ShopeeAppId) || string.IsNullOrWhiteSpace(_options.ShopeeSecret))
         {
-            _logger.LogWarning("Shopee AppId/Secret não configurados");
+            _logger.LogWarning("Shopee AppId/Secret nÃ£o configurados");
             return null;
         }
 
@@ -520,7 +545,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             var payload = BuildShopeePayload(uri.ToString());
             if (payload is null)
             {
-                _logger.LogWarning("Shopee payload não configurado. Informe a query GraphQL do projeto antigo.");
+                _logger.LogWarning("Shopee payload nÃ£o configurado. Informe a query GraphQL do projeto antigo.");
                 return null;
             }
 
@@ -1792,20 +1817,81 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         _logger.LogInformation("{Store} convertido: {Input} => {Output}", store, input, output);
     }
 
+    private async Task<(bool Success, string? Url, bool CorrectionApplied, string? Note, string? Error)> ConvertAmazonWithOfficialApiAsync(
+        Uri resolved,
+        CancellationToken cancellationToken)
+    {
+        var asin = ExtractAmazonAsin(resolved);
+        if (string.IsNullOrWhiteSpace(asin))
+        {
+            return (false, null, false, "ASIN nao encontrado na URL Amazon.", "ASIN nao encontrado");
+        }
+
+        var item = await _amazonPaApiClient.GetItemAsync(asin, cancellationToken);
+        if (item is null || string.IsNullOrWhiteSpace(item.DetailPageUrl))
+        {
+            return (false, null, false, $"PA-API nao retornou link para ASIN {asin}.", "PA-API sem link de detalhe");
+        }
+
+        return (true, item.DetailPageUrl.Trim(), true, $"Link oficial via PA-API (ASIN {asin}).", null);
+    }
+
+    private static string? ExtractAmazonAsin(Uri uri)
+    {
+        var path = (uri.AbsolutePath ?? string.Empty).ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var patterns = new[]
+        {
+            @"/DP/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/AW/D/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(path, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (match.Success)
+            {
+                return match.Groups["asin"].Value;
+            }
+        }
+
+        var query = uri.Query ?? string.Empty;
+        var queryMatch = Regex.Match(query, @"(?:^|[?&])asin=(?<asin>[A-Za-z0-9]{10})(?:&|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return queryMatch.Success ? queryMatch.Groups["asin"].Value.ToUpperInvariant() : null;
+    }
+
+    private string ResolveAmazonPartnerTag()
+    {
+        var configured = _options.AmazonProductApi?.PartnerTag;
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.Trim();
+        }
+
+        return (_options.AmazonTag ?? string.Empty).Trim();
+    }
+
     private async Task<(bool IsAffiliated, string? Error)> ValidateAffiliateAsync(string store, string url, CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            return (false, "URL convertida inválida");
+            return (false, "URL convertida invÃ¡lida");
         }
 
         var query = ParseQuery(uri.Query);
+        var amazonExpectedTag = ResolveAmazonPartnerTag();
         (bool IsAffiliated, string? Error) result = store switch
         {
             "Amazon" => query.TryGetValue("tag", out var tag)
-                        && string.Equals(tag, _options.AmazonTag, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(tag, amazonExpectedTag, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
-                : (false, $"Tag Amazon inválida (esperado: {_options.AmazonTag})"),
+                : (false, $"Tag Amazon invÃ¡lida (esperado: {amazonExpectedTag})"),
             "Mercado Livre" => (IsMercadoLivreProductUri(uri) || IsMercadoLivreSocialOrShortUri(uri))
                                 && query.TryGetValue("matt_tool", out var tool)
                                 && query.TryGetValue("matt_word", out var word)
@@ -1816,7 +1902,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             "Shein" => query.TryGetValue("url_from", out var shein)
                        && string.Equals(shein, _options.SheinId, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
-                : (false, $"Código Shein inválido (esperado: {_options.SheinId})"),
+                : (false, $"CÃ³digo Shein invÃ¡lido (esperado: {_options.SheinId})"),
             "Shopee" => ValidateShopeeAffiliate(uri, query),
             _ => (true, null)
         };
@@ -1828,7 +1914,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             var oauth = await _mercadoLivreOAuthService.GetStatusAsync(cancellationToken);
             if (!oauth.Success)
             {
-                result = (false, $"OAuth Mercado Livre invÃ¡lido: {oauth.Message}");
+                result = (false, $"OAuth Mercado Livre invÃƒÂ¡lido: {oauth.Message}");
             }
         }
 
@@ -1905,3 +1991,4 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return false;
     }
 }
+
