@@ -300,6 +300,94 @@ app.MapGet("/auth/me", (HttpContext context) =>
 app.MapConverterEndpoint();
 app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 
+app.MapGet("/conversor", async (
+    HttpContext context,
+    IAffiliateLinkService affiliateLinkService,
+    InstagramLinkMetaService instagramMeta,
+    ILinkTrackingStore trackingStore,
+    ISettingsStore settingsStore,
+    IOptions<WebhookOptions> webhookOptions,
+    CancellationToken ct) =>
+{
+    var request = context.Request;
+    var input = request.Query["url"].ToString();
+    var viewModel = new PublicLinkConverterViewModel
+    {
+        Input = input?.Trim() ?? string.Empty
+    };
+
+    if (!string.IsNullOrWhiteSpace(viewModel.Input))
+    {
+        var normalizedInputUrl = NormalizeConverterInputToUrl(viewModel.Input);
+        if (string.IsNullOrWhiteSpace(normalizedInputUrl))
+        {
+            viewModel.Error = "Cole um link valido para converter.";
+        }
+        else
+        {
+            viewModel.OriginalUrl = normalizedInputUrl;
+            var conversion = await affiliateLinkService.ConvertAsync(normalizedInputUrl, ct);
+            if (!conversion.Success || string.IsNullOrWhiteSpace(conversion.ConvertedUrl))
+            {
+                viewModel.Error = string.IsNullOrWhiteSpace(conversion.Error)
+                    ? "Nao foi possivel converter esse link agora."
+                    : conversion.Error;
+                viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) ? "Loja" : conversion.Store;
+                viewModel.IsAffiliated = conversion.IsAffiliated;
+            }
+            else
+            {
+                var convertedUrl = conversion.ConvertedUrl.Trim();
+                var settings = await settingsStore.GetAsync(ct);
+                var publicBaseUrl = ResolvePublicBaseUrl(
+                    settings.BioHub?.PublicBaseUrl,
+                    webhookOptions.Value.PublicBaseUrl,
+                    request.Scheme,
+                    request.Host.ToString());
+
+                var tracked = await trackingStore.GetOrCreateAsync(convertedUrl, ct);
+                var trackedUrl = BuildTrackedRedirectUrl(publicBaseUrl, tracked.Id, "conversor", null);
+
+                LinkMetaResult meta;
+                try
+                {
+                    meta = await instagramMeta.GetMetaAsync(convertedUrl, ct);
+                    if (string.IsNullOrWhiteSpace(meta.Title) &&
+                        meta.Images.Count == 0 &&
+                        !string.Equals(convertedUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        meta = await instagramMeta.GetMetaAsync(normalizedInputUrl, ct);
+                    }
+                }
+                catch
+                {
+                    meta = new LinkMetaResult();
+                }
+
+                viewModel.Success = true;
+                viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) || string.Equals(conversion.Store, "Unknown", StringComparison.OrdinalIgnoreCase)
+                    ? ResolveStoreNameFromUrl(convertedUrl)
+                    : conversion.Store.Trim();
+                viewModel.Title = FirstNonEmpty(meta.Title ?? string.Empty, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
+                viewModel.Description = meta.Description?.Trim() ?? string.Empty;
+                viewModel.Price = FirstNonEmpty(meta.PriceText ?? string.Empty, ExtractPriceFromText(meta.Description), "Preco sob consulta") ?? "Preco sob consulta";
+                viewModel.ImageUrl = SelectBestConverterImage(meta.Images);
+                viewModel.ConvertedUrl = convertedUrl;
+                viewModel.TrackedUrl = trackedUrl;
+                viewModel.IsAffiliated = conversion.IsAffiliated;
+                viewModel.ValidationError = conversion.ValidationError;
+                viewModel.CorrectionNote = conversion.CorrectionNote;
+                viewModel.ConversionHost = ExtractHostForDisplay(convertedUrl);
+                viewModel.DomainHost = ExtractHostForDisplay(trackedUrl);
+            }
+        }
+    }
+
+    var currentUrl = $"{request.Scheme}://{request.Host}{request.Path}";
+    var html = BuildPublicLinkConverterPageHtml(viewModel, currentUrl);
+    return Results.Content(html, "text/html; charset=utf-8");
+});
+
 app.MapGet("/bio", async (
     HttpContext context,
     IInstagramPublishStore publishStore,
@@ -5148,6 +5236,190 @@ static string BuildInstagramMenuMessage()
     });
 }
 
+static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel model, string currentUrl)
+{
+    var input = System.Net.WebUtility.HtmlEncode(model.Input ?? string.Empty);
+    var current = System.Net.WebUtility.HtmlEncode(currentUrl);
+    var sb = new StringBuilder();
+    sb.AppendLine("<!doctype html>");
+    sb.AppendLine("<html lang=\"pt-BR\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("  <meta charset=\"utf-8\" />");
+    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+    sb.AppendLine("  <title>Conversor de Links - Rei das Ofertas</title>");
+    sb.AppendLine("  <style>");
+    sb.AppendLine("    :root{--bg:#fffaf1;--bg2:#f6f3ff;--card:#ffffff;--line:#eadfc9;--text:#1e1a12;--muted:#6d614f;--cta:#e46e2f;--ctaText:#fff;--ok:#157347;--warn:#8f2d2d}");
+    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif;background:radial-gradient(circle at 10% 10%,#ffe8cc 0%,#fff8ee 35%,#f7f4ff 100%)}");
+    sb.AppendLine("    .wrap{max-width:980px;margin:0 auto;padding:22px 14px 40px}");
+    sb.AppendLine("    .hero{padding:18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,#fffdf8 0%,#ffffff 55%,#fff7e8 100%)}");
+    sb.AppendLine("    h1{margin:0 0 8px;font-size:1.45rem} p{margin:0;color:var(--muted)}");
+    sb.AppendLine("    .form{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}");
+    sb.AppendLine("    .form input{flex:1;min-width:250px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);font-size:.95rem}");
+    sb.AppendLine("    .form button{padding:11px 16px;border:0;border-radius:10px;background:var(--cta);color:var(--ctaText);font-weight:800;cursor:pointer}");
+    sb.AppendLine("    .hint{margin-top:10px;font-size:.83rem;color:var(--muted)}");
+    sb.AppendLine("    .panel{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card)}");
+    sb.AppendLine("    .status{font-weight:800}.status.ok{color:var(--ok)}.status.error{color:var(--warn)}");
+    sb.AppendLine("    .result{margin-top:14px;display:grid;grid-template-columns:minmax(220px,320px) 1fr;gap:14px}");
+    sb.AppendLine("    .media{border:1px solid var(--line);border-radius:14px;background:#fff;min-height:230px;display:flex;align-items:center;justify-content:center;overflow:hidden}");
+    sb.AppendLine("    .media img{width:100%;height:100%;object-fit:cover;display:block}");
+    sb.AppendLine("    .media .empty{padding:16px;color:var(--muted);font-size:.88rem;text-align:center}");
+    sb.AppendLine("    .card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px}");
+    sb.AppendLine("    .store{display:inline-block;padding:5px 9px;border-radius:999px;background:#fff1e7;color:#9a4a1f;font-size:.8rem;font-weight:800}");
+    sb.AppendLine("    .title{margin-top:8px;font-size:1.2rem;line-height:1.3;font-weight:800}");
+    sb.AppendLine("    .price{margin-top:8px;font-size:1.05rem;font-weight:800}");
+    sb.AppendLine("    .desc{margin-top:8px;color:var(--muted);line-height:1.4}");
+    sb.AppendLine("    .meta{margin-top:10px;font-size:.85rem;color:var(--muted)}");
+    sb.AppendLine("    .actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}");
+    sb.AppendLine("    .btn{display:inline-block;text-decoration:none;padding:10px 12px;border-radius:10px;font-weight:800}");
+    sb.AppendLine("    .btn.buy{background:var(--cta);color:var(--ctaText)}");
+    sb.AppendLine("    .btn.ghost{background:#f4f1ff;color:#3d2f88}");
+    sb.AppendLine("    .urlbox{margin-top:10px;padding:9px 10px;border:1px dashed var(--line);border-radius:10px;background:#fffdf8;font-family:Consolas,'Courier New',monospace;font-size:.8rem;word-break:break-all}");
+    sb.AppendLine("    @media (max-width:760px){.result{grid-template-columns:1fr}.media{min-height:200px}}");
+    sb.AppendLine("  </style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body><main class=\"wrap\">");
+    sb.AppendLine("  <section class=\"hero\">");
+    sb.AppendLine("    <h1>Conversor de Links de Afiliado</h1>");
+    sb.AppendLine("    <p>Cole um link de oferta e gere uma versao afiliada com visual pronto para compra.</p>");
+    sb.AppendLine("    <form class=\"form\" method=\"get\" action=\"/conversor\">");
+    sb.AppendLine($"      <input name=\"url\" value=\"{input}\" placeholder=\"Ex: https://amzn.to/...\" />");
+    sb.AppendLine("      <button type=\"submit\">Converter agora</button>");
+    sb.AppendLine("    </form>");
+    sb.AppendLine($"    <div class=\"hint\">Pagina atual: {current}</div>");
+    sb.AppendLine("  </section>");
+
+    if (!string.IsNullOrWhiteSpace(model.Error))
+    {
+        sb.AppendLine("  <section class=\"panel\">");
+        sb.AppendLine($"    <div class=\"status error\">Falha na conversao</div>");
+        sb.AppendLine($"    <div class=\"meta\">{System.Net.WebUtility.HtmlEncode(model.Error)}</div>");
+        if (!string.IsNullOrWhiteSpace(model.ValidationError))
+        {
+            sb.AppendLine($"    <div class=\"meta\">Validacao: {System.Net.WebUtility.HtmlEncode(model.ValidationError)}</div>");
+        }
+        sb.AppendLine("  </section>");
+    }
+    else if (model.Success)
+    {
+        var image = System.Net.WebUtility.HtmlEncode(model.ImageUrl ?? string.Empty);
+        var store = System.Net.WebUtility.HtmlEncode(model.Store ?? "Loja");
+        var title = System.Net.WebUtility.HtmlEncode(model.Title ?? "Oferta");
+        var price = System.Net.WebUtility.HtmlEncode(model.Price ?? "Preco sob consulta");
+        var desc = System.Net.WebUtility.HtmlEncode(model.Description ?? string.Empty);
+        var host = System.Net.WebUtility.HtmlEncode(model.ConversionHost ?? "-");
+        var domainHost = System.Net.WebUtility.HtmlEncode(model.DomainHost ?? "-");
+        var converted = System.Net.WebUtility.HtmlEncode(model.ConvertedUrl ?? string.Empty);
+        var tracked = System.Net.WebUtility.HtmlEncode(model.TrackedUrl ?? string.Empty);
+        var correction = System.Net.WebUtility.HtmlEncode(model.CorrectionNote ?? string.Empty);
+
+        sb.AppendLine("  <section class=\"panel\">");
+        sb.AppendLine($"    <div class=\"status ok\">Link convertido com sucesso ({(model.IsAffiliated ? "afiliado validado" : "sem validacao de afiliado")})</div>");
+        sb.AppendLine("  </section>");
+        sb.AppendLine("  <section class=\"result\">");
+        sb.AppendLine("    <div class=\"media\">");
+        if (!string.IsNullOrWhiteSpace(model.ImageUrl))
+        {
+            sb.AppendLine($"      <img src=\"{image}\" alt=\"Imagem da oferta\" loading=\"lazy\" />");
+        }
+        else
+        {
+            sb.AppendLine("      <div class=\"empty\">Sem imagem disponivel para esta oferta.</div>");
+        }
+        sb.AppendLine("    </div>");
+        sb.AppendLine("    <article class=\"card\">");
+        sb.AppendLine($"      <span class=\"store\">{store}</span>");
+        sb.AppendLine($"      <div class=\"title\">{title}</div>");
+        sb.AppendLine($"      <div class=\"price\">{price}</div>");
+        if (!string.IsNullOrWhiteSpace(desc))
+        {
+            sb.AppendLine($"      <div class=\"desc\">{desc}</div>");
+        }
+        sb.AppendLine($"      <div class=\"meta\">Destino final: {host}</div>");
+        sb.AppendLine($"      <div class=\"meta\">Link publico no seu dominio: {domainHost}</div>");
+        sb.AppendLine("      <div class=\"actions\">");
+        sb.AppendLine($"        <a class=\"btn buy\" href=\"{tracked}\" target=\"_blank\" rel=\"noopener noreferrer\">Comprar com meu link</a>");
+        sb.AppendLine($"        <a class=\"btn ghost\" href=\"{converted}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir link convertido</a>");
+        sb.AppendLine("      </div>");
+        sb.AppendLine($"      <div class=\"urlbox\">Link no dominio: {tracked}</div>");
+        sb.AppendLine($"      <div class=\"urlbox\">Link convertido: {converted}</div>");
+        if (!string.IsNullOrWhiteSpace(correction))
+        {
+            sb.AppendLine($"      <div class=\"meta\">Ajuste aplicado: {correction}</div>");
+        }
+        sb.AppendLine("    </article>");
+        sb.AppendLine("  </section>");
+    }
+
+    sb.AppendLine("</main></body></html>");
+    return sb.ToString();
+}
+
+static string? NormalizeConverterInputToUrl(string? input)
+{
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return null;
+    }
+
+    var raw = input.Trim().Trim('"', '\'');
+    var detected = ExtractFirstUrl(raw) ?? raw;
+    if (Uri.TryCreate(detected, UriKind.Absolute, out var absolute))
+    {
+        return absolute.ToString();
+    }
+
+    if (Uri.TryCreate($"https://{detected}", UriKind.Absolute, out var withScheme))
+    {
+        return withScheme.ToString();
+    }
+
+    return null;
+}
+
+static string SelectBestConverterImage(IReadOnlyList<string>? images)
+{
+    if (images is null || images.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    var valid = images
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Where(x => Uri.TryCreate(x, UriKind.Absolute, out _))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (valid.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    var preferred = valid.FirstOrDefault(x =>
+        x.Contains(".jpg", StringComparison.OrdinalIgnoreCase) ||
+        x.Contains(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+        x.Contains(".png", StringComparison.OrdinalIgnoreCase));
+    if (!string.IsNullOrWhiteSpace(preferred))
+    {
+        return preferred;
+    }
+
+    return valid[0];
+}
+
+static string ExtractPriceFromText(string? text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return string.Empty;
+    }
+
+    var match = Regex.Match(
+        text,
+        @"(R\$\s?\d{1,3}(?:\.\d{3})*(?:,\d{2})?|\d{1,3}(?:\.\d{3})*,\d{2}\s?(?:reais|BRL))",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    return match.Success ? match.Value.Trim() : string.Empty;
+}
+
 static string BuildBioLinksPageHtml(
     IReadOnlyList<BioLinkItem> items,
     string currentUrl,
@@ -9438,6 +9710,25 @@ internal sealed record BioLinkItem
     public string Store { get; init; } = "Loja";
     public int? ItemNumber { get; init; }
     public string? Keyword { get; init; }
+}
+internal sealed record PublicLinkConverterViewModel
+{
+    public string Input { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+    public string Store { get; set; } = "Loja";
+    public string OriginalUrl { get; set; } = string.Empty;
+    public string ConvertedUrl { get; set; } = string.Empty;
+    public string TrackedUrl { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Price { get; set; } = string.Empty;
+    public string ImageUrl { get; set; } = string.Empty;
+    public bool IsAffiliated { get; set; }
+    public string? ValidationError { get; set; }
+    public string? CorrectionNote { get; set; }
+    public string? ConversionHost { get; set; }
+    public string? DomainHost { get; set; }
 }
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);
 internal sealed record InstagramBoostAdResult(bool Success, string? CampaignId, string? AdSetId, string? AdId, string? Error);
