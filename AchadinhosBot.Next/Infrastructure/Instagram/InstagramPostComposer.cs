@@ -105,6 +105,8 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
 
                 return merged;
             }
+
+            return "Nao consegui gerar legenda com IA no momento. Tente novamente em instantes.";
         }
 
         var cleanBaseText = RemoveCouponAppendix(baseText);

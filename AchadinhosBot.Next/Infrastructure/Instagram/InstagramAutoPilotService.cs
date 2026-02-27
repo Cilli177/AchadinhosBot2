@@ -2,11 +2,16 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Net;
+using System.Net.Http.Headers;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.Versioning;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Settings;
+using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.Telegram;
 using Microsoft.Extensions.Options;
 
@@ -24,9 +29,11 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     private readonly IInstagramPublishLogStore _publishLogStore;
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly InstagramLinkMetaService _instagramMeta;
+    private readonly IMediaStore _mediaStore;
     private readonly ICouponSelector _couponSelector;
     private readonly IWhatsAppGateway _whatsAppGateway;
     private readonly TelegramAlertSender _telegramAlertSender;
+    private readonly WebhookOptions _webhookOptions;
     private readonly TelegramOptions _telegramOptions;
     private readonly EvolutionOptions _evolutionOptions;
     private readonly ILogger<InstagramAutoPilotService> _logger;
@@ -40,9 +47,11 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         IInstagramPublishLogStore publishLogStore,
         IInstagramPostComposer instagramComposer,
         InstagramLinkMetaService instagramMeta,
+        IMediaStore mediaStore,
         ICouponSelector couponSelector,
         IWhatsAppGateway whatsAppGateway,
         TelegramAlertSender telegramAlertSender,
+        IOptions<WebhookOptions> webhookOptions,
         IOptions<TelegramOptions> telegramOptions,
         IOptions<EvolutionOptions> evolutionOptions,
         ILogger<InstagramAutoPilotService> logger)
@@ -55,9 +64,11 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         _publishLogStore = publishLogStore;
         _instagramComposer = instagramComposer;
         _instagramMeta = instagramMeta;
+        _mediaStore = mediaStore;
         _couponSelector = couponSelector;
         _whatsAppGateway = whatsAppGateway;
         _telegramAlertSender = telegramAlertSender;
+        _webhookOptions = webhookOptions.Value;
         _telegramOptions = telegramOptions.Value;
         _evolutionOptions = evolutionOptions.Value;
         _logger = logger;
@@ -335,7 +346,14 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             }
 
             var offerContext = $"Score {candidate.FinalScore} | vendas={candidate.SalesSignal} retorno={candidate.ReturnSignal} desconto={candidate.DiscountSignal}";
+            settings.UseAi = true;
             var postText = await _instagramComposer.BuildAsync(candidate.Url, offerContext, settings, ct);
+            if (postText.StartsWith("Nao consegui gerar legenda com IA", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Skipping autopilot candidate because AI caption generation failed: {Url}", candidate.Url);
+                return null;
+            }
+
             var (captionsRaw, hashtagsRaw) = ExtractCaptionsAndHashtags(postText);
 
             var meta = await _instagramMeta.GetMetaAsync(candidate.Url, ct);
@@ -365,8 +383,20 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var hashtags = NormalizeHashtags(hashtagsRaw, candidate.Store, productName);
             var imagesRaw = NormalizeExternalUrls(meta.Images, 10);
             var imageSelection = await SelectBestImagesForProductAsync(productName, candidate.Store, imagesRaw, geminiSettings, ct);
-            var images = imageSelection.OrderedUrls;
-            candidate.SelectedImageUrl = imageSelection.BestImageUrl;
+            var images = await HostImagesAsJpegAsync(imageSelection.OrderedUrls, ct);
+            if (images.Count == 0)
+            {
+                images = imageSelection.OrderedUrls
+                    .Where(x => !IsLikelyWebpImageUrl(x))
+                    .ToList();
+            }
+
+            if (images.Count == 0)
+            {
+                images = imageSelection.OrderedUrls;
+            }
+
+            candidate.SelectedImageUrl = images.FirstOrDefault() ?? imageSelection.BestImageUrl;
             candidate.ImageMatchScore = imageSelection.BestScore;
             candidate.ImageMatchReason = imageSelection.BestReason;
             var ctas = new List<InstagramCtaOption>
@@ -1130,6 +1160,153 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         return null;
     }
 
+    private async Task<List<string>> HostImagesAsJpegAsync(IReadOnlyList<string> imageUrls, CancellationToken ct)
+    {
+        var results = new List<string>();
+        var baseUrl = _webhookOptions.PublicBaseUrl;
+        if (imageUrls.Count == 0 || string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return results;
+        }
+
+        var client = _httpClientFactory.CreateClient("default");
+        foreach (var imageUrl in imageUrls.Take(10))
+        {
+            if (!Uri.TryCreate(imageUrl, UriKind.Absolute, out var uri))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var request = BuildImageFetchRequest(uri);
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    continue;
+                }
+
+                var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                if (bytes.Length == 0 || bytes.Length > 8 * 1024 * 1024)
+                {
+                    continue;
+                }
+
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                var jpegBytes = NormalizeToJpegBytes(bytes, contentType);
+                if (jpegBytes is null || jpegBytes.Length == 0)
+                {
+                    continue;
+                }
+
+                var id = _mediaStore.Add(jpegBytes, "image/jpeg", TimeSpan.FromHours(4));
+                var publicUrl = BuildPublicJpegUrl(baseUrl, id);
+                if (!string.IsNullOrWhiteSpace(publicUrl))
+                {
+                    results.Add(publicUrl);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to host image as jpeg for autopilot: {ImageUrl}", imageUrl);
+            }
+        }
+
+        return results
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static HttpRequestMessage BuildImageFetchRequest(Uri uri)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/jpeg"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/png", 0.9));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/*", 0.8));
+        request.Headers.AcceptLanguage.ParseAdd("pt-BR,pt;q=0.9,en;q=0.8");
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        request.Headers.Referrer = new Uri(uri.GetLeftPart(UriPartial.Authority));
+        return request;
+    }
+
+    private static byte[]? NormalizeToJpegBytes(byte[] input, string? contentType)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return NormalizeToJpegBytesWindows(input);
+        }
+
+        return string.Equals(contentType, "image/jpeg", StringComparison.OrdinalIgnoreCase)
+            ? input
+            : null;
+    }
+
+    [SupportedOSPlatform("windows")]
+#pragma warning disable CA1416
+    private static byte[]? NormalizeToJpegBytesWindows(byte[] input)
+    {
+        try
+        {
+            using var ms = new MemoryStream(input);
+            using var image = Image.FromStream(ms);
+            if (image.Width == 0 || image.Height == 0)
+            {
+                return null;
+            }
+
+            using var bitmap = new Bitmap(image.Width, image.Height, PixelFormat.Format24bppRgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                graphics.Clear(Color.White);
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                graphics.DrawImage(image, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+            }
+
+            using var outStream = new MemoryStream();
+            var encoder = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.MimeType == "image/jpeg");
+            if (encoder is null)
+            {
+                bitmap.Save(outStream, ImageFormat.Jpeg);
+            }
+            else
+            {
+                using var encParams = new EncoderParameters(1);
+                encParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 90L);
+                bitmap.Save(outStream, encoder, encParams);
+            }
+
+            return outStream.ToArray();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+#pragma warning restore CA1416
+
+    private static string BuildPublicJpegUrl(string publicBaseUrl, string id)
+    {
+        var url = $"{publicBaseUrl.TrimEnd('/')}/media/{id}.jpg";
+        if (url.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
+            url.Contains("ngrok.app", StringComparison.OrdinalIgnoreCase))
+        {
+            url += "?ngrok-skip-browser-warning=1";
+        }
+
+        return url;
+    }
+
+    private static bool IsLikelyWebpImageUrl(string? imageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl))
+        {
+            return false;
+        }
+
+        return Regex.IsMatch(imageUrl, @"\.webp(\?|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
     private static string ResolveImageMimeType(string? contentType, string imageUrl)
     {
         if (!string.IsNullOrWhiteSpace(contentType) && contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
@@ -1171,7 +1348,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             score += 6;
         }
 
-        if (Regex.IsMatch(normalized, @"\.(jpg|jpeg|png|webp)(\?|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        if (Regex.IsMatch(normalized, @"\.(jpg|jpeg|png)(\?|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
         {
             score += 4;
         }
