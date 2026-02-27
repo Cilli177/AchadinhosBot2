@@ -990,7 +990,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     }
 
     private static bool ShouldUseGeminiImageValidation(GeminiSettings settings)
-        => !string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********";
+        => GetGeminiApiKeys(settings).Count > 0;
 
     private async Task<GeminiImageValidationResult?> EvaluateImageRelevanceWithGeminiAsync(
         string productName,
@@ -1001,6 +1001,12 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     {
         try
         {
+            var apiKeys = GetGeminiApiKeys(geminiSettings);
+            if (apiKeys.Count == 0)
+            {
+                return null;
+            }
+
             var client = _httpClientFactory.CreateClient("default");
             using var imageResponse = await client.GetAsync(imageUrl, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!imageResponse.IsSuccessStatusCode)
@@ -1063,26 +1069,90 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
             var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
             var geminiClient = _httpClientFactory.CreateClient("gemini");
-            var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(geminiSettings.ApiKey!)}";
-            using var response = await geminiClient.PostAsync(
-                url,
-                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
-                ct);
-
-            if (!response.IsSuccessStatusCode)
+            foreach (var apiKey in apiKeys)
             {
-                return null;
+                var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+                using var response = await geminiClient.PostAsync(
+                    url,
+                    new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                    ct);
+
+                var raw = await response.Content.ReadAsStringAsync(ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (ShouldTryNextGeminiKey(response.StatusCode, raw))
+                    {
+                        continue;
+                    }
+
+                    return null;
+                }
+
+                var text = ExtractGeminiOutputText(raw);
+                var parsed = ParseGeminiValidationResult(text);
+                if (parsed is not null)
+                {
+                    return parsed;
+                }
             }
 
-            var raw = await response.Content.ReadAsStringAsync(ct);
-            var text = ExtractGeminiOutputText(raw);
-            return ParseGeminiValidationResult(text);
+            return null;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not validate image relevance with Gemini for {Url}", imageUrl);
             return null;
         }
+    }
+
+    private static List<string> GetGeminiApiKeys(GeminiSettings settings)
+    {
+        var keys = new List<string>();
+        if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+        {
+            keys.Add(settings.ApiKey.Trim());
+        }
+
+        if (settings.ApiKeys is not null)
+        {
+            foreach (var key in settings.ApiKeys)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                var trimmed = key.Trim();
+                if (trimmed == "********")
+                {
+                    continue;
+                }
+
+                keys.Add(trimmed);
+            }
+        }
+
+        return keys
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static bool ShouldTryNextGeminiKey(System.Net.HttpStatusCode statusCode, string? body)
+    {
+        var status = (int)statusCode;
+        if (status is 401 or 403 or 429 or 500 or 502 or 503 or 504)
+        {
+            return true;
+        }
+
+        if (status == 400 && !string.IsNullOrWhiteSpace(body))
+        {
+            return body.Contains("RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase) ||
+                   body.Contains("quota", StringComparison.OrdinalIgnoreCase) ||
+                   body.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static GeminiImageValidationResult? ParseGeminiValidationResult(string? text)

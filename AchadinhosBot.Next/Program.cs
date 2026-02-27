@@ -1213,6 +1213,13 @@ api.MapGet("/settings", async (
     {
         settings.Gemini.ApiKey = "********";
     }
+    if (settings.Gemini?.ApiKeys?.Count > 0)
+    {
+        settings.Gemini.ApiKeys = settings.Gemini.ApiKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(_ => "********")
+            .ToList();
+    }
     if (!string.IsNullOrWhiteSpace(settings.InstagramPublish?.AccessToken))
     {
         settings.InstagramPublish.AccessToken = "********";
@@ -1267,11 +1274,13 @@ api.MapPut("/settings", async (
     }
     else
     {
-        var key = payload.Gemini.ApiKey;
-        if (string.IsNullOrWhiteSpace(key) || key == "********")
-        {
-            payload.Gemini.ApiKey = current.Gemini?.ApiKey;
-        }
+        var incomingGeminiApiKey = payload.Gemini.ApiKey;
+        payload.Gemini.ApiKey = ResolveSecretWithMask(incomingGeminiApiKey, current.Gemini?.ApiKey);
+        payload.Gemini.ApiKeys = MergeSecretListWithMask(
+            current.Gemini?.ApiKeys,
+            payload.Gemini.ApiKeys,
+            incomingGeminiApiKey,
+            current.Gemini?.ApiKey);
     }
 
     if (payload.InstagramPublish is null)
@@ -2594,6 +2603,77 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     {
         yield return "BioHub.PublicBaseUrl invalido. Use URL absoluta (http/https).";
     }
+
+    var gemini = settings.Gemini ?? new GeminiSettings();
+    if (gemini.MaxOutputTokens is < 200 or > 4096)
+    {
+        yield return "Gemini.MaxOutputTokens deve estar entre 200 e 4096.";
+    }
+}
+
+static string? ResolveSecretWithMask(string? incoming, string? current)
+{
+    if (string.IsNullOrWhiteSpace(incoming))
+    {
+        return current;
+    }
+
+    var trimmed = incoming.Trim();
+    return trimmed == "********" ? current : trimmed;
+}
+
+static List<string> MergeSecretListWithMask(
+    IEnumerable<string>? currentValues,
+    IEnumerable<string>? incomingValues,
+    string? incomingSingle,
+    string? currentSingle)
+{
+    var current = NormalizeSecretList(currentValues);
+    var singleCurrent = NormalizeSecret(currentSingle);
+    if (!string.IsNullOrWhiteSpace(singleCurrent))
+    {
+        current.Add(singleCurrent);
+    }
+
+    var incoming = NormalizeSecretList(incomingValues);
+    var hasMaskedValue = incomingValues?.Any(x => string.Equals(x?.Trim(), "********", StringComparison.Ordinal)) ?? false;
+    var singleIncoming = NormalizeSecret(incomingSingle);
+
+    if (incoming.Count == 0 && string.IsNullOrWhiteSpace(singleIncoming))
+    {
+        return current;
+    }
+
+    var merged = hasMaskedValue ? new List<string>(current) : new List<string>();
+    merged.AddRange(incoming);
+    if (!string.IsNullOrWhiteSpace(singleIncoming))
+    {
+        merged.Add(singleIncoming);
+    }
+
+    return merged
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+}
+
+static List<string> NormalizeSecretList(IEnumerable<string>? values)
+    => (values ?? Array.Empty<string>())
+        .Select(NormalizeSecret)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Cast<string>()
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+static string? NormalizeSecret(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
+    }
+
+    var trimmed = value.Trim();
+    return trimmed == "********" ? null : trimmed;
 }
 
 static bool IsBotConversorWebhookAuthorized(HttpRequest request, string body, string? webhookSecret, string? fallbackApiKey)
@@ -7177,7 +7257,7 @@ static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagr
 }
 
 static bool IsGeminiConfiguredForImageValidation(GeminiSettings settings)
-    => !string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********";
+    => GetGeminiApiKeys(settings).Count > 0;
 
 static bool IsCaptionAlignedWithProduct(string productName, string? caption, out string details)
 {
@@ -7262,6 +7342,12 @@ static async Task<(int Score, bool IsMatch, string Reason)?> EvaluateImageProduc
 {
     try
     {
+        var apiKeys = GetGeminiApiKeys(geminiSettings);
+        if (apiKeys.Count == 0)
+        {
+            return null;
+        }
+
         var client = httpClientFactory.CreateClient("default");
         using var imageResponse = await client.GetAsync(imageUrl, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!imageResponse.IsSuccessStatusCode)
@@ -7331,43 +7417,103 @@ static async Task<(int Score, bool IsMatch, string Reason)?> EvaluateImageProduc
         var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
         var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
         var geminiClient = httpClientFactory.CreateClient("gemini");
-        var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(geminiSettings.ApiKey!)}";
-        using var response = await geminiClient.PostAsync(
-            url,
-            new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
-            ct);
-        if (!response.IsSuccessStatusCode)
+        foreach (var apiKey in apiKeys)
         {
-            return null;
+            var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+            using var response = await geminiClient.PostAsync(
+                url,
+                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                ct);
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                if (ShouldTryNextGeminiKey(response.StatusCode, raw))
+                {
+                    continue;
+                }
+
+                return null;
+            }
+
+            var output = ExtractGeminiOutputTextForImageValidation(raw);
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                continue;
+            }
+
+            var json = ExtractFirstJsonObjectForImageValidation(output) ?? output.Trim();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var score = root.TryGetProperty("score", out var scoreNode) && scoreNode.TryGetInt32(out var parsedScore)
+                ? parsedScore
+                : 0;
+            score = Math.Clamp(score, 0, 100);
+
+            var isMatch = root.TryGetProperty("isMatch", out var matchNode) && matchNode.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? matchNode.GetBoolean()
+                : score >= 55;
+
+            var reason = root.TryGetProperty("reason", out var reasonNode) ? reasonNode.GetString() : null;
+            reason = string.IsNullOrWhiteSpace(reason) ? $"gemini_match={isMatch}" : reason.Trim();
+            return (score, isMatch, reason);
         }
 
-        var raw = await response.Content.ReadAsStringAsync(ct);
-        var output = ExtractGeminiOutputTextForImageValidation(raw);
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            return null;
-        }
-
-        var json = ExtractFirstJsonObjectForImageValidation(output) ?? output.Trim();
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var score = root.TryGetProperty("score", out var scoreNode) && scoreNode.TryGetInt32(out var parsedScore)
-            ? parsedScore
-            : 0;
-        score = Math.Clamp(score, 0, 100);
-
-        var isMatch = root.TryGetProperty("isMatch", out var matchNode) && matchNode.ValueKind is JsonValueKind.True or JsonValueKind.False
-            ? matchNode.GetBoolean()
-            : score >= 55;
-
-        var reason = root.TryGetProperty("reason", out var reasonNode) ? reasonNode.GetString() : null;
-        reason = string.IsNullOrWhiteSpace(reason) ? $"gemini_match={isMatch}" : reason.Trim();
-        return (score, isMatch, reason);
+        return null;
     }
     catch
     {
         return null;
     }
+}
+
+static List<string> GetGeminiApiKeys(GeminiSettings settings)
+{
+    var keys = new List<string>();
+    if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+    {
+        keys.Add(settings.ApiKey.Trim());
+    }
+
+    if (settings.ApiKeys is not null)
+    {
+        foreach (var key in settings.ApiKeys)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            var trimmed = key.Trim();
+            if (trimmed == "********")
+            {
+                continue;
+            }
+
+            keys.Add(trimmed);
+        }
+    }
+
+    return keys
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+}
+
+static bool ShouldTryNextGeminiKey(System.Net.HttpStatusCode statusCode, string? body)
+{
+    var status = (int)statusCode;
+    if (status is 401 or 403 or 429 or 500 or 502 or 503 or 504)
+    {
+        return true;
+    }
+
+    if (status == 400 && !string.IsNullOrWhiteSpace(body))
+    {
+        return body.Contains("RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase) ||
+               body.Contains("quota", StringComparison.OrdinalIgnoreCase) ||
+               body.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    return false;
 }
 
 static string ResolveImageMimeTypeForPublishValidation(string? contentType, string imageUrl)

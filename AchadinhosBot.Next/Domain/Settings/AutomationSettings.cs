@@ -300,6 +300,7 @@ public sealed class OpenAISettings
 public sealed class GeminiSettings
 {
     public string? ApiKey { get; set; }
+    public List<string> ApiKeys { get; set; } = new();
     public string Model { get; set; } = "gemini-2.5-flash";
     public string BaseUrl { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
     public int MaxOutputTokens { get; set; } = 1200;

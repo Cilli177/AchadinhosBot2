@@ -866,6 +866,7 @@
         <section class="card">
           <h3>Gemini</h3>
           <input id="geminiApiKey" type="password" placeholder="Chave Gemini (AIza...)" />
+          <textarea id="geminiApiKeys" rows="4" placeholder="Chaves Gemini adicionais (uma por linha)"></textarea>
           <div class="row">
             <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />
             <input id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
@@ -1761,6 +1762,17 @@ function renderSettings(s){
   const gemini = s.gemini || {};
   const geminiKey = document.getElementById('geminiApiKey');
   if (geminiKey) geminiKey.value = gemini.apiKey ? '********' : '';
+  const geminiKeys = document.getElementById('geminiApiKeys');
+  if (geminiKeys) {
+    const maskedKeys = Array.isArray(gemini.apiKeys) ? gemini.apiKeys : [];
+    if (maskedKeys.length > 0) {
+      geminiKeys.value = maskedKeys.join('\n');
+    } else if (gemini.apiKey) {
+      geminiKeys.value = '********';
+    } else {
+      geminiKeys.value = '';
+    }
+  }
   const geminiModel = document.getElementById('geminiModel');
   if (geminiModel) geminiModel.value = gemini.model || 'gemini-2.5-flash';
   const geminiMaxTokens = document.getElementById('geminiMaxTokens');
@@ -2311,6 +2323,10 @@ async function saveInstagramSettings(){
 
   existing.gemini = existing.gemini || {};
   existing.gemini.apiKey = document.getElementById('geminiApiKey')?.value || '';
+  existing.gemini.apiKeys = (document.getElementById('geminiApiKeys')?.value || '')
+    .split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(Boolean);
   existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
   existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
 
