@@ -438,6 +438,22 @@
             <button onclick="refreshUserbotChats()">Atualizar grupos</button>
             <button class="secondary" onclick="loadUserbotChats()">Recarregar</button>
           </div>
+          <h3 style="margin:10px 0 6px;">Reconexão segura do Userbot</h3>
+          <p class="muted">Use quando o Telegram pedir código SMS/Telegram ou senha 2FA. Dados ficam só em memória da sessão do app.</p>
+          <label>Telefone (opcional)</label>
+          <input id="userbotAuthPhone" placeholder="+5513999999999" />
+          <label>Código de verificação (opcional)</label>
+          <input id="userbotAuthCode" type="password" placeholder="12345" />
+          <label>Senha 2FA (opcional)</label>
+          <input id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="userbotForceReconnect" checked /><span class="slider"></span></label>
+            <span class="muted">Forçar reconexão após aplicar</span>
+          </div>
+          <div class="row">
+            <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e reconectar</button>
+          </div>
+          <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>
           <label>Destino (ID do grupo/canal)</label>
           <input id="userbotDestinationId" placeholder="-1003612784929" />
           <div class="row">
@@ -2961,6 +2977,61 @@ async function runPlayground(){
   const text = document.getElementById('playgroundText').value;
   const result = await api('/api/playground/preview', 'POST', { text });
   document.getElementById('playgroundResult').textContent = JSON.stringify(result, null, 2);
+}
+
+async function applyUserbotAuth(){
+  const statusEl = document.getElementById('userbotAuthStatus');
+  if (currentRole !== 'admin') {
+    if (statusEl) {
+      statusEl.textContent = 'Permissão insuficiente para atualizar credenciais.';
+      statusEl.className = 'status bad';
+    }
+    return;
+  }
+
+  const phoneRaw = (document.getElementById('userbotAuthPhone')?.value || '').trim();
+  const codeRaw = (document.getElementById('userbotAuthCode')?.value || '').trim();
+  const passwordRaw = (document.getElementById('userbotAuthPassword')?.value || '').trim();
+  const forceReconnect = !!document.getElementById('userbotForceReconnect')?.checked;
+
+  const payload = {
+    phoneNumber: phoneRaw ? phoneRaw : null,
+    verificationCode: codeRaw ? codeRaw : null,
+    password: passwordRaw ? passwordRaw : null,
+    forceReconnect
+  };
+
+  if (!payload.phoneNumber && !payload.verificationCode && !payload.password && !payload.forceReconnect) {
+    if (statusEl) {
+      statusEl.textContent = 'Informe ao menos um campo ou marque reconexão.';
+      statusEl.className = 'status bad';
+    }
+    return;
+  }
+
+  setButtonBusy('btnUserbotAuthApply', true, 'Aplicando...');
+  if (statusEl) {
+    statusEl.textContent = 'Enviando credenciais...';
+    statusEl.className = 'status warn';
+  }
+
+  try {
+    const res = await api('/api/telegram/userbot/auth', 'POST', payload);
+    if (statusEl) {
+      statusEl.textContent = res?.message || 'Credenciais aplicadas.';
+      statusEl.className = 'status ok';
+    }
+    const codeEl = document.getElementById('userbotAuthCode');
+    if (codeEl) codeEl.value = '';
+    setTimeout(loadUserbotChats, 1200);
+  } catch (e) {
+    if (statusEl) {
+      statusEl.textContent = e?.data?.message || e?.data?.error || e?.message || 'Falha ao atualizar credenciais.';
+      statusEl.className = 'status bad';
+    }
+  } finally {
+    setButtonBusy('btnUserbotAuthApply', false);
+  }
 }
 
 function renderUserbotChats(payload, settings){

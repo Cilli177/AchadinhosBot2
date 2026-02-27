@@ -2313,6 +2313,45 @@ api.MapPost("/telegram/userbot/refresh", async (ITelegramUserbotService userbot,
     return Results.Ok(new { success = ok, ready = userbot.IsReady, chats });
 });
 
+api.MapPost("/telegram/userbot/auth", async (
+    TelegramUserbotAuthUpdateRequest payload,
+    ITelegramUserbotService userbot,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await userbot.UpdateRuntimeAuthAsync(payload, ct);
+
+    await audit.WriteAsync("telegram.userbot.auth.update", context.User.Identity?.Name ?? "unknown", new
+    {
+        HasPhone = payload.PhoneNumber is not null,
+        HasCode = payload.VerificationCode is not null,
+        HasPassword = payload.Password is not null,
+        payload.ForceReconnect,
+        result.Success,
+        result.ReconnectRequested
+    }, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = result.Message
+        });
+    }
+
+    return Results.Ok(new
+    {
+        success = true,
+        reconnectRequested = result.ReconnectRequested,
+        hasPhoneNumber = result.HasPhoneNumber,
+        hasVerificationCode = result.HasVerificationCode,
+        hasPassword = result.HasPassword,
+        message = result.Message
+    });
+}).RequireAuthorization("AdminOnly");
+
 api.MapPost("/telegram/userbot/replay-to-whatsapp", async (
     TelegramUserbotReplayRequest payload,
     ITelegramUserbotService userbot,

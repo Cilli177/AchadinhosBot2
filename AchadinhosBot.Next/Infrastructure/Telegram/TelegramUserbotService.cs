@@ -35,6 +35,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
     private IReadOnlyList<TelegramUserbotChat> _cachedChats = Array.Empty<TelegramUserbotChat>();
     private readonly ConcurrentDictionary<long, InputPeer> _inputPeers = new();
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private readonly object _runtimeAuthLock = new();
+    private readonly object _reconnectLock = new();
+    private CancellationTokenSource _reconnectSignal = new();
+    private string? _runtimePhoneNumber;
+    private string? _runtimeVerificationCode;
+    private string? _runtimePassword;
     private long? _selfUserId;
     private volatile bool _ready;
 
@@ -95,15 +101,9 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        var phoneEnv =
-            Environment.GetEnvironmentVariable("TELEGRAM_PHONE")
-            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOTPHONE")
-            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOT_PHONE");
-        var phoneConfig = _options.UserbotPhone;
-        if (!hasSession && string.IsNullOrWhiteSpace(phoneEnv))
+        if (!hasSession && string.IsNullOrWhiteSpace(GetPhoneNumberForLogin()))
         {
-            _logger.LogWarning("TelegramUserbotService: defina TELEGRAM_PHONE ou forneÃ§a um session file ({SessionPath}).", sessionPath);
-            return;
+            _logger.LogWarning("TelegramUserbotService: sem sessao valida e sem telefone configurado. Aguardando credenciais via painel.");
         }
 
         string? Config(string what)
@@ -113,18 +113,42 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 "session_pathname" => sessionPath,
                 "api_id" => _options.ApiId.ToString(),
                 "api_hash" => _options.ApiHash,
-                "phone_number" => phoneEnv ?? phoneConfig ?? string.Empty,
-                "verification_code" => Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE") ?? string.Empty,
-                "password" => Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD") ?? string.Empty,
+                "phone_number" => GetPhoneNumberForLogin(),
+                "verification_code" => GetVerificationCodeForLogin(),
+                "password" => GetPasswordForLogin(),
                 _ => null
             };
         }
 
         var retryCount = 0;
+        var waitCredentialsCount = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                hasSession = File.Exists(sessionPath);
+                if (!hasSession)
+                {
+                    var altSession = Path.Combine(Directory.GetCurrentDirectory(), "WTelegram.session");
+                    if (File.Exists(altSession))
+                    {
+                        sessionPath = altSession;
+                        hasSession = true;
+                    }
+                }
+
+                if (!hasSession && string.IsNullOrWhiteSpace(GetPhoneNumberForLogin()))
+                {
+                    waitCredentialsCount++;
+                    if (waitCredentialsCount == 1 || waitCredentialsCount % 12 == 0)
+                    {
+                        _logger.LogWarning("TelegramUserbotService: aguardando telefone/codigo no painel para autenticar.");
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    continue;
+                }
+
+                waitCredentialsCount = 0;
                 _client = new Client(Config);
                 await using (_client)
                 {
@@ -136,13 +160,19 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     _logger.LogInformation("TelegramUserbot conectado. UserId={UserId}. Session={SessionPath}", _selfUserId, sessionPath);
 
                     await RefreshDialogsAsync(stoppingToken);
-                    await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+                    using var linkedRun = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, GetReconnectToken());
+                    await Task.Delay(Timeout.InfiniteTimeSpan, linkedRun.Token);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation("TelegramUserbotService cancelado.");
                 break;
+            }
+            catch (OperationCanceledException)
+            {
+                retryCount = 0;
+                _logger.LogInformation("TelegramUserbotService: reconexao acionada manualmente.");
             }
             catch (Exception ex)
             {
@@ -200,6 +230,75 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         return TimeSpan.FromSeconds(seconds);
     }
 
+    public Task<TelegramUserbotAuthUpdateResult> UpdateRuntimeAuthAsync(TelegramUserbotAuthUpdateRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var phone = NormalizePhone(request.PhoneNumber);
+        var code = NormalizeSecret(request.VerificationCode);
+        var password = NormalizeSecret(request.Password);
+        var updated = false;
+
+        lock (_runtimeAuthLock)
+        {
+            if (request.PhoneNumber is not null)
+            {
+                _runtimePhoneNumber = phone;
+                updated = true;
+            }
+
+            if (request.VerificationCode is not null)
+            {
+                _runtimeVerificationCode = code;
+                updated = true;
+            }
+
+            if (request.Password is not null)
+            {
+                _runtimePassword = password;
+                updated = true;
+            }
+        }
+
+        var reconnectRequested = request.ForceReconnect || request.VerificationCode is not null || request.Password is not null;
+        if (reconnectRequested)
+        {
+            RequestReconnect("userbot_auth_update");
+        }
+
+        var hasPhone = !string.IsNullOrWhiteSpace(GetPhoneNumberForLogin());
+        var hasCode = !string.IsNullOrWhiteSpace(GetCurrentRuntimeVerificationCode());
+        var hasPassword = !string.IsNullOrWhiteSpace(GetPasswordForLogin());
+
+        if (!updated && !reconnectRequested)
+        {
+            return Task.FromResult(new TelegramUserbotAuthUpdateResult(
+                false,
+                false,
+                hasPhone,
+                hasCode,
+                hasPassword,
+                "Nenhum dado foi informado."));
+        }
+
+        _logger.LogInformation(
+            "TelegramUserbot auth atualizado via painel. phone={HasPhone} code={HasCode} password={HasPassword} reconnect={ReconnectRequested}",
+            request.PhoneNumber is not null,
+            request.VerificationCode is not null,
+            request.Password is not null,
+            reconnectRequested);
+
+        return Task.FromResult(new TelegramUserbotAuthUpdateResult(
+            true,
+            reconnectRequested,
+            hasPhone,
+            hasCode,
+            hasPassword,
+            reconnectRequested
+                ? "Credenciais atualizadas e reconexao solicitada."
+                : "Credenciais atualizadas."));
+    }
+
     public async Task<IReadOnlyList<TelegramUserbotChat>> GetDialogsAsync(CancellationToken cancellationToken)
     {
         await _refreshLock.WaitAsync(cancellationToken);
@@ -255,6 +354,137 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         {
             _refreshLock.Release();
         }
+    }
+
+    private string GetPhoneNumberForLogin()
+    {
+        var runtime = GetCurrentRuntimePhoneNumber();
+        if (!string.IsNullOrWhiteSpace(runtime))
+        {
+            return runtime;
+        }
+
+        var envPhone =
+            Environment.GetEnvironmentVariable("TELEGRAM_PHONE")
+            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOTPHONE")
+            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOT_PHONE");
+
+        return NormalizePhone(envPhone) ?? NormalizePhone(_options.UserbotPhone) ?? string.Empty;
+    }
+
+    private string GetVerificationCodeForLogin()
+    {
+        lock (_runtimeAuthLock)
+        {
+            if (!string.IsNullOrWhiteSpace(_runtimeVerificationCode))
+            {
+                var code = _runtimeVerificationCode!;
+                _runtimeVerificationCode = null;
+                return code;
+            }
+        }
+
+        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE")) ?? string.Empty;
+    }
+
+    private string GetPasswordForLogin()
+    {
+        var runtime = GetCurrentRuntimePassword();
+        if (!string.IsNullOrWhiteSpace(runtime))
+        {
+            return runtime;
+        }
+
+        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD")) ?? string.Empty;
+    }
+
+    private string? GetCurrentRuntimePhoneNumber()
+    {
+        lock (_runtimeAuthLock)
+        {
+            return _runtimePhoneNumber;
+        }
+    }
+
+    private string? GetCurrentRuntimeVerificationCode()
+    {
+        lock (_runtimeAuthLock)
+        {
+            return _runtimeVerificationCode;
+        }
+    }
+
+    private string? GetCurrentRuntimePassword()
+    {
+        lock (_runtimeAuthLock)
+        {
+            return _runtimePassword;
+        }
+    }
+
+    private CancellationToken GetReconnectToken()
+    {
+        lock (_reconnectLock)
+        {
+            return _reconnectSignal.Token;
+        }
+    }
+
+    private void RequestReconnect(string reason)
+    {
+        CancellationTokenSource previous;
+        lock (_reconnectLock)
+        {
+            previous = _reconnectSignal;
+            _reconnectSignal = new CancellationTokenSource();
+        }
+
+        try
+        {
+            previous.Cancel();
+        }
+        catch
+        {
+            // ignore cancellation races
+        }
+        finally
+        {
+            previous.Dispose();
+        }
+
+        _ready = false;
+        try
+        {
+            _client?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao descartar client durante reconexao manual.");
+        }
+
+        _logger.LogInformation("TelegramUserbot reconexao solicitada. reason={Reason}", reason);
+    }
+
+    private static string? NormalizePhone(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim().Replace(" ", string.Empty, StringComparison.Ordinal);
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    private static string? NormalizeSecret(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length == 0 ? null : trimmed;
     }
 
     public async Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, bool allowOfficialDestination, CancellationToken cancellationToken)
