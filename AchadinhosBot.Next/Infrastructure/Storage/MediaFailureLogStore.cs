@@ -25,6 +25,7 @@ public sealed class MediaFailureLogStore : IMediaFailureLogStore
             var json = JsonSerializer.Serialize(entry);
             await writer.WriteLineAsync(json);
             await writer.FlushAsync();
+            await JsonlLogRetention.TrimIfNeededAsync(_path, 8000, 4 * 1024 * 1024, cancellationToken);
         }
         finally
         {

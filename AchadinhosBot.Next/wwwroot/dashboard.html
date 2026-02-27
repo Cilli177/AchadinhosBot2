@@ -1152,7 +1152,7 @@ async function api(url, method='GET', body=null){
   });
 
   let data = {};
-  try { data = await res.json(); } catch {}
+  try { data = await res.json(); } catch (error) { console.debug('Resposta sem JSON para', url, error); }
   if (!res.ok) throw { status: res.status, data };
   return data;
 }
@@ -1280,7 +1280,9 @@ function downloadInstaImages(encoded){
     const urls = JSON.parse(decodeURIComponent(encoded));
     if (!Array.isArray(urls) || urls.length === 0) return;
     urls.forEach(u => window.open(u, '_blank'));
-  } catch {}
+  } catch (error) {
+    console.warn('Falha ao abrir imagens do Instagram.', error);
+  }
 }
 
 async function copyInstaImages(encoded){
@@ -1288,7 +1290,9 @@ async function copyInstaImages(encoded){
     const urls = JSON.parse(decodeURIComponent(encoded));
     if (!Array.isArray(urls) || urls.length === 0) return;
     await navigator.clipboard.writeText(urls.join('\n'));
-  } catch {}
+  } catch (error) {
+    console.warn('Falha ao copiar URLs de imagens do Instagram.', error);
+  }
 }
 
 function applyInstaPromptPreset(){
@@ -2239,7 +2243,9 @@ async function copyToClipboardSafe(text){
       await navigator.clipboard.writeText(text);
       return true;
     }
-  } catch {}
+  } catch (error) {
+    console.warn('Falha ao copiar para clipboard (API).', error);
+  }
 
   const temp = document.createElement('textarea');
   temp.value = text;
@@ -3381,7 +3387,9 @@ async function loadWhatsAppGroups(){
     let settings = null;
     try {
       settings = await api('/api/settings');
-    } catch {}
+    } catch (fallbackError) {
+      console.debug('Nao foi possivel carregar settings no fallback.', fallbackError);
+    }
     if (settings) {
       renderWhatsAppGroups({ groups: [] }, settings);
     }

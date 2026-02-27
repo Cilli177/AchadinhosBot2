@@ -10,6 +10,7 @@ using System.Net.Http.Headers;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Endpoints;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Compliance;
@@ -159,7 +160,7 @@ builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
 builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalStore>();
 builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 builder.Services.AddSingleton<IWhatsAppGateway, EvolutionWhatsAppGateway>();
-builder.Services.AddSingleton<IMediaStore, InMemoryMediaStore>();
+builder.Services.AddSingleton<IMediaStore, FileMediaStore>();
 builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
 builder.Services.AddSingleton<WhatsAppHelpMenuStore>();
@@ -285,74 +286,8 @@ app.MapGet("/auth/me", (HttpContext context) =>
     });
 });
 
-app.MapPost("/converter", async (
-    ConvertRequest payload,
-    HttpContext context,
-    IMessageProcessor processor,
-    IOptions<WebhookOptions> options,
-    CancellationToken ct) =>
-{
-    if (!context.Request.Headers.TryGetValue("x-api-key", out var provided) || provided != options.Value.ApiKey)
-    {
-        return Results.Json(new { success = false, error = "forbidden" }, statusCode: StatusCodes.Status403Forbidden);
-    }
-
-    if (string.IsNullOrWhiteSpace(payload.Text))
-    {
-        return Results.BadRequest(new { success = false, error = "payload invÃ¡lido" });
-    }
-
-    var result = await processor.ProcessAsync(payload.Text, payload.Source ?? "Webhook", ct);
-    return Results.Ok(new
-    {
-        success = result.Success,
-        converted = result.ConvertedText,
-        convertedLinks = result.ConvertedLinks,
-        source = result.Source
-    });
-});
-
-app.MapGet("/health", () => Results.Ok(new
-{
-    status = "ok",
-    service = "AchadinhosBot.Next",
-    ts = DateTimeOffset.UtcNow,
-    telegramBotWorkerEnabled = startTelegramBotWorker,
-    telegramUserbotWorkerEnabled = startTelegramUserbotWorker
-}));
-
-app.MapGet("/health/live", () => Results.Ok(new
-{
-    status = "ok",
-    service = "AchadinhosBot.Next",
-    kind = "liveness",
-    ts = DateTimeOffset.UtcNow
-}));
-
-app.MapGet("/health/ready", (ITelegramUserbotService userbot) =>
-{
-    var userbotReady = !startTelegramUserbotWorker || userbot.IsReady;
-    var ready = userbotReady;
-
-    if (!ready)
-    {
-        return Results.Json(new
-        {
-            status = "degraded",
-            kind = "readiness",
-            telegramUserbotReady = userbotReady,
-            ts = DateTimeOffset.UtcNow
-        }, statusCode: StatusCodes.Status503ServiceUnavailable);
-    }
-
-    return Results.Ok(new
-    {
-        status = "ok",
-        kind = "readiness",
-        telegramUserbotReady = userbotReady,
-        ts = DateTimeOffset.UtcNow
-    });
-});
+app.MapConverterEndpoint();
+app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 
 app.MapGet("/bio", async (HttpContext context, IInstagramPublishStore publishStore, CancellationToken ct) =>
 {
@@ -395,7 +330,7 @@ app.MapPost("/webhooks/evolution", async (
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
 
-    if (!VerifyWebhookSignature(request, body, evolution.Value.WebhookSecret))
+    if (!WebhookSignatureVerifier.TryValidate(request, body, evolution.Value.WebhookSecret))
     {
         return Results.Unauthorized();
     }
@@ -460,6 +395,11 @@ app.MapPost("/webhook/bot-conversor", async (
     CancellationToken ct) =>
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
+    if (!IsBotConversorWebhookAuthorized(request, body, evolutionOptions.Value.WebhookSecret, webhookOptions.Value.ApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
     if (string.IsNullOrWhiteSpace(body))
     {
         return Results.Ok(new { success = true, ignored = true });
@@ -533,7 +473,7 @@ app.MapPost("/webhook/bot-conversor", async (
                 normalizedText.Length > 140 ? normalizedText[..140] : normalizedText);
         }
 
-        if (TryParseInstagramCaptionChoiceCommand(msg.Text, out var captionChoice))
+        if (TryParseInstagramCaptionChoiceCommand(normalizedText, out var captionChoice))
         {
             if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
             {
@@ -592,10 +532,10 @@ app.MapPost("/webhook/bot-conversor", async (
             continue;
         }
 
-        if (TryParseWhatsAppHelpCommand(msg.Text, out var helpCommand))
+        if (TryParseWhatsAppHelpCommand(normalizedText, out var helpCommand))
         {
             var senderKey = string.IsNullOrWhiteSpace(msg.SenderId) ? "unknown" : msg.SenderId;
-            var helpKey = $"wa-help:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{ComputeStableHash(msg.Text)}";
+            var helpKey = $"wa-help:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{ComputeStableHash(normalizedText)}";
             if (!idempotency.TryBegin(helpKey, TimeSpan.FromMinutes(1)))
             {
                 continue;
@@ -652,7 +592,7 @@ app.MapPost("/webhook/bot-conversor", async (
             }
         }
 
-        if (TryParseInstagramWhatsAppCommand(msg.Text, out var igCommand))
+        if (TryParseInstagramWhatsAppCommand(normalizedText, out var igCommand))
         {
             if (string.Equals(igCommand.Action, "menu", StringComparison.OrdinalIgnoreCase))
             {
@@ -722,7 +662,7 @@ app.MapPost("/webhook/bot-conversor", async (
         }
 
         if (!msg.FromMe &&
-            !IsInstagramBotResponse(msg.Text) &&
+            !IsInstagramBotResponse(normalizedText) &&
             instaSettings.Enabled &&
             instaSettings.AllowWhatsApp &&
             IsInstagramAllowed(instaSettings, msg.ChatId))
@@ -730,18 +670,18 @@ app.MapPost("/webhook/bot-conversor", async (
             var instaKey = $"wa:{msg.ChatId}";
             if (instagramStore.TryConsume(instaKey, out var convo))
             {
-                var post = await instagramComposer.BuildAsync(msg.Text, convo.Context, instaSettings, ct);
+                var post = await instagramComposer.BuildAsync(normalizedText, convo.Context, instaSettings, ct);
                 foreach (var chunk in SplitInstagramMessages(post))
                 {
                     await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
                 }
-                await SendInstagramImagesIfAnyAsync(instaSettings, msg.Text, convo.Context, post, responderInstance, msg.ChatId, instagramMeta, instagramImages, gateway, ct);
+                await SendInstagramImagesIfAnyAsync(instaSettings, normalizedText, convo.Context, post, responderInstance, msg.ChatId, instagramMeta, instagramImages, gateway, ct);
                 continue;
             }
 
-            if (IsInstagramTrigger(msg.Text, instaSettings.Triggers))
+            if (IsInstagramTrigger(normalizedText, instaSettings.Triggers))
             {
-                if (TryGetInstagramInlineProduct(msg.Text, instaSettings.Triggers, out var inlineProduct))
+                if (TryGetInstagramInlineProduct(normalizedText, instaSettings.Triggers, out var inlineProduct))
                 {
                     var post = await instagramComposer.BuildAsync(inlineProduct, null, instaSettings, ct);
                     foreach (var chunk in SplitInstagramMessages(post))
@@ -752,14 +692,14 @@ app.MapPost("/webhook/bot-conversor", async (
                 }
                 else
                 {
-                    instagramStore.SetPending(instaKey, msg.Text);
+                    instagramStore.SetPending(instaKey, normalizedText);
                     await gateway.SendTextAsync(responderInstance, msg.ChatId, "Qual produto? Envie o nome ou o link.", ct);
                 }
                 continue;
             }
         }
 
-        var autoReply = GetAutoReply(settings, msg.Text);
+        var autoReply = GetAutoReply(settings, normalizedText);
         if (!msg.FromMe && !string.IsNullOrWhiteSpace(autoReply))
         {
             var tracked = await ApplyTrackingAsync(autoReply, linkTrackingStore, webhookOptions.Value.PublicBaseUrl, responder.TrackingEnabled, ct);
@@ -769,7 +709,7 @@ app.MapPost("/webhook/bot-conversor", async (
                 Source = "AutoReply",
                 Store = "AutoReply",
                 Success = true,
-                OriginalUrl = msg.Text,
+                OriginalUrl = normalizedText,
                 ConvertedUrl = tracked.Text,
                 TrackingIds = tracked.TrackingIds,
                 OriginChatRef = msg.ChatId,
@@ -781,11 +721,11 @@ app.MapPost("/webhook/bot-conversor", async (
         if (responder.Enabled &&
             responder.AllowWhatsApp &&
             !msg.FromMe &&
-            msg.Text.Contains("http", StringComparison.OrdinalIgnoreCase) &&
+            normalizedText.Contains("http", StringComparison.OrdinalIgnoreCase) &&
             IsWhatsAppResponderAllowed(responder, msg))
         {
             var responderResult = await processor.ProcessAsync(
-                msg.Text,
+                normalizedText,
                 "WhatsAppResponder",
                 ct,
                 originChatRef: msg.ChatId,
@@ -815,7 +755,7 @@ app.MapPost("/webhook/bot-conversor", async (
                     Source = "WhatsAppResponder",
                     Store = "Unknown",
                     Success = true,
-                    OriginalUrl = msg.Text,
+                    OriginalUrl = normalizedText,
                     ConvertedUrl = tracked.Text,
                     TrackingIds = tracked.TrackingIds,
                     OriginChatRef = msg.ChatId,
@@ -873,7 +813,7 @@ app.MapPost("/webhook/bot-conversor", async (
             }
 
             var result = await processor.ProcessAsync(
-                msg.Text,
+                normalizedText,
                 "WhatsApp",
                 ct,
                 originChatRef: msg.ChatId,
@@ -2297,18 +2237,19 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     }
 }
 
-static bool VerifyWebhookSignature(HttpRequest request, string body, string? secret)
+static bool IsBotConversorWebhookAuthorized(HttpRequest request, string body, string? webhookSecret, string? fallbackApiKey)
 {
-    if (string.IsNullOrWhiteSpace(secret)) return true;
+    if (WebhookSignatureVerifier.TryValidate(request, body, webhookSecret))
+    {
+        return true;
+    }
 
-    if (!request.Headers.TryGetValue("x-signature", out var signatureHeader)) return false;
+    if (!request.Headers.TryGetValue("x-api-key", out var providedApiKey))
+    {
+        return false;
+    }
 
-    using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-    var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(body));
-    var expectedHex = Convert.ToHexString(hash).ToLowerInvariant();
-    var provided = signatureHeader.ToString().Trim().ToLowerInvariant();
-
-    return expectedHex == provided;
+    return SecretComparer.EqualsConstantTime(fallbackApiKey, providedApiKey.ToString());
 }
 
 static string ComputeStableHash(string? input)
@@ -2852,19 +2793,32 @@ static bool IsLikelyBinaryMediaPayload(byte[] payload, string contentType)
 
 static byte[]? TryTranscodeImageToPng(byte[] payload, ILogger logger)
 {
+    if (!(OperatingSystem.IsWindows() && OperatingSystem.IsWindowsVersionAtLeast(6, 1)))
+    {
+        return null;
+    }
+
     try
     {
-        using var input = new MemoryStream(payload);
-        using var image = Image.FromStream(input, useEmbeddedColorManagement: false, validateImageData: true);
-        using var output = new MemoryStream();
-        image.Save(output, ImageFormat.Png);
-        return output.ToArray();
+        return TryTranscodeImageToPngWindows(payload);
     }
     catch (Exception ex)
     {
         logger.LogDebug(ex, "Nao foi possivel transcodificar imagem para PNG.");
         return null;
     }
+}
+
+[SupportedOSPlatform("windows6.1")]
+static byte[] TryTranscodeImageToPngWindows(byte[] payload)
+{
+#pragma warning disable CA1416
+    using var input = new MemoryStream(payload);
+    using var image = Image.FromStream(input, useEmbeddedColorManagement: false, validateImageData: true);
+    using var output = new MemoryStream();
+    image.Save(output, ImageFormat.Png);
+    return output.ToArray();
+#pragma warning restore CA1416
 }
 
 static string? DetectMimeTypeFromBytes(byte[] payload)
@@ -7868,7 +7822,6 @@ static string EscapeJsonValue(string value)
 }
 
 internal sealed record LoginRequest(string Username, string Password);
-internal sealed record ConvertRequest(string Text, string? Source);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
@@ -7951,3 +7904,4 @@ internal sealed record InstagramDraftRequest(
     List<string> ImageUrls,
     string? PostType);
 internal sealed record InstagramApproveRequest(string Message);
+

@@ -25,6 +25,7 @@ public sealed class ConversionLogStore : IConversionLogStore
             var json = JsonSerializer.Serialize(entry);
             await writer.WriteLineAsync(json);
             await writer.FlushAsync();
+            await JsonlLogRetention.TrimIfNeededAsync(_path, 15000, 8 * 1024 * 1024, cancellationToken);
         }
         finally
         {
