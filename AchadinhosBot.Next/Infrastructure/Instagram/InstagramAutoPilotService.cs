@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Net;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
@@ -80,11 +81,13 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var sendForApproval = request.SendForApproval ?? instaPublishSettings.AutoPilotSendForApproval;
             var dryRun = request.DryRun;
 
-            var ranked = await BuildRankedCandidatesAsync(settings, instaPublishSettings, lookbackHours, repeatWindowHours, request.ForceIncludeExisting, cancellationToken);
+            var ranked = await BuildRankedCandidatesAsync(settings, instaPublishSettings, topCount, lookbackHours, repeatWindowHours, request.ForceIncludeExisting, cancellationToken);
             result.CandidatesEvaluated = ranked.Count;
 
             var selected = ranked
+                .Where(x => !string.IsNullOrWhiteSpace(x.ProductName))
                 .OrderByDescending(x => x.FinalScore)
+                .ThenByDescending(x => x.EngagementSignal)
                 .ThenByDescending(x => x.LatestTimestamp)
                 .Take(topCount)
                 .ToList();
@@ -93,10 +96,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             foreach (var candidate in selected)
             {
                 candidate.Url = await ExpandCandidateUrlAsync(candidate.Url, cancellationToken);
-                if (string.IsNullOrWhiteSpace(candidate.ProductName) || LooksOpaqueProductName(candidate.ProductName))
-                {
-                    candidate.ProductName = TryExtractProductNameFromUrl(candidate.Url);
-                }
+                candidate.ProductName = TryResolveRealProductName(null, candidate.ProductName, candidate.Url, candidate.Store);
 
                 var item = new InstagramAutoPilotSelectionItem
                 {
@@ -110,6 +110,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                     ReturnSignal = candidate.ReturnSignal,
                     DiscountSignal = candidate.DiscountSignal,
                     RecencySignal = candidate.RecencySignal,
+                    EngagementSignal = candidate.EngagementSignal,
                     FinalScore = candidate.FinalScore,
                     Note = candidate.Note
                 };
@@ -165,6 +166,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     private async Task<List<CandidateScore>> BuildRankedCandidatesAsync(
         AutomationSettings settings,
         InstagramPublishSettings instaPublishSettings,
+        int topCount,
         int lookbackHours,
         int repeatWindowHours,
         bool forceIncludeExisting,
@@ -242,7 +244,6 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 Key = key,
                 Url = url,
                 Store = store,
-                ProductName = TryExtractProductNameFromUrl(url),
                 SalesSignal = salesSignal,
                 ReturnSignal = returnSignal,
                 DiscountSignal = discountSignal,
@@ -253,7 +254,62 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             });
         }
 
+        await EnrichCandidatesForInstagramAsync(list, topCount, ct);
         return list;
+    }
+
+    private async Task EnrichCandidatesForInstagramAsync(List<CandidateScore> candidates, int topCount, CancellationToken ct)
+    {
+        if (candidates.Count == 0)
+        {
+            return;
+        }
+
+        var poolSize = Math.Clamp(Math.Max(topCount * 5, 12), 12, 40);
+        var shortlist = candidates
+            .OrderByDescending(x => x.FinalScore)
+            .ThenByDescending(x => x.LatestTimestamp)
+            .Take(poolSize)
+            .ToList();
+
+        foreach (var candidate in shortlist)
+        {
+            ct.ThrowIfCancellationRequested();
+            candidate.Url = await ExpandCandidateUrlAsync(candidate.Url, ct);
+
+            LinkMetaResult meta;
+            try
+            {
+                meta = await _instagramMeta.GetMetaAsync(candidate.Url, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not load metadata for candidate {Url}", candidate.Url);
+                meta = new LinkMetaResult();
+            }
+
+            var productName = TryResolveRealProductName(meta.Title, candidate.ProductName, candidate.Url, candidate.Store);
+            candidate.ProductName = productName;
+
+            var engagement = ComputeInstagramEngagementSignal(
+                productName,
+                candidate.Store,
+                meta.Images.Count,
+                candidate.SalesSignal,
+                candidate.DiscountSignal,
+                candidate.RecencySignal);
+
+            if (string.IsNullOrWhiteSpace(productName))
+            {
+                engagement -= 12;
+            }
+
+            candidate.EngagementSignal = Math.Clamp(engagement, -20, 25);
+            candidate.FinalScore = Math.Clamp(candidate.FinalScore + candidate.EngagementSignal, 0, 100);
+
+            var titleFound = string.IsNullOrWhiteSpace(meta.Title) ? "no" : "yes";
+            candidate.Note = $"{candidate.Note}, engagement={candidate.EngagementSignal}, title={titleFound}, images={meta.Images.Count}";
+        }
     }
 
     private async Task<HashSet<string>> LoadRecentDraftKeysAsync(DateTimeOffset minTimestamp, CancellationToken ct)
@@ -283,7 +339,14 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var (captionsRaw, hashtagsRaw) = ExtractCaptionsAndHashtags(postText);
 
             var meta = await _instagramMeta.GetMetaAsync(candidate.Url, ct);
-            var productName = FirstNotEmpty(meta.Title, candidate.ProductName, $"Oferta {candidate.Store}");
+            var productName = TryResolveRealProductName(meta.Title, candidate.ProductName, candidate.Url, candidate.Store);
+            if (string.IsNullOrWhiteSpace(productName))
+            {
+                _logger.LogInformation("Skipping autopilot candidate without reliable product title: {Url}", candidate.Url);
+                return null;
+            }
+
+            candidate.ProductName = productName;
             var link = ExtractFirstUrl(postText) ?? candidate.Url;
             var keyword = BuildKeyword(productName, candidate.Store);
 
@@ -402,7 +465,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var item = selected[i];
             var shortDraft = item.DraftId is { Length: > 8 } ? item.DraftId[..8] : item.DraftId;
             sb.AppendLine($"{i + 1}) Produto: {FirstNotEmpty(item.ProductName, item.Store)}");
-            sb.AppendLine($"Loja: {item.Store} | Score: {item.FinalScore}");
+            sb.AppendLine($"Loja: {item.Store} | Score: {item.FinalScore} | Engajamento: {item.EngagementSignal}");
             sb.AppendLine($"Draft: {shortDraft}");
             if (!string.IsNullOrWhiteSpace(item.ImageUrl))
             {
@@ -521,6 +584,63 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         return (int)Math.Round(weighted / (double)weightTotal);
     }
 
+    private static int ComputeInstagramEngagementSignal(
+        string? productName,
+        string store,
+        int imageCount,
+        int salesSignal,
+        int discountSignal,
+        int recencySignal)
+    {
+        var score = 0;
+        var normalizedName = (productName ?? string.Empty).Trim();
+
+        if (!string.IsNullOrWhiteSpace(normalizedName) && !LooksOpaqueProductName(normalizedName) && !LooksGenericProductName(normalizedName))
+        {
+            score += 8;
+        }
+
+        if (imageCount > 0)
+        {
+            score += 5;
+            if (imageCount >= 3)
+            {
+                score += 4;
+            }
+        }
+
+        var lowerName = normalizedName.ToLowerInvariant();
+        var keywordHits = InstagramEngagementTerms.Count(term => lowerName.Contains(term, StringComparison.OrdinalIgnoreCase));
+        score += Math.Min(8, keywordHits * 2);
+
+        if (salesSignal >= 30)
+        {
+            score += 4;
+        }
+
+        if (discountSignal >= 8)
+        {
+            score += 4;
+        }
+
+        if (recencySignal >= 12)
+        {
+            score += 2;
+        }
+
+        if (!string.IsNullOrWhiteSpace(store))
+        {
+            score += 1;
+        }
+
+        if (LooksGenericProductName(normalizedName))
+        {
+            score -= 8;
+        }
+
+        return score;
+    }
+
     private static int ClampWeight(int input, int fallback)
     {
         var value = input <= 0 ? fallback : input;
@@ -618,6 +738,109 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         }
 
         return Regex.IsMatch(value, @"^[A-Za-z0-9]{4,12}$", RegexOptions.CultureInvariant);
+    }
+
+    private static bool LooksGenericProductName(string? name)
+    {
+        var value = (name ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var normalized = Regex.Replace(value.ToLowerInvariant(), @"[^\p{L}\p{N}\s]", " ", RegexOptions.CultureInvariant);
+        normalized = Regex.Replace(normalized, @"\s+", " ", RegexOptions.CultureInvariant).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return true;
+        }
+
+        if (GenericProductNameTerms.Contains(normalized))
+        {
+            return true;
+        }
+
+        if (normalized.StartsWith("oferta ", StringComparison.Ordinal) ||
+            normalized.StartsWith("produto ", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var tokens = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return tokens.Length == 1 && GenericProductNameTerms.Contains(tokens[0]);
+    }
+
+    private static string? TryResolveRealProductName(string? metaTitle, string? candidateName, string url, string store)
+    {
+        var options = new[]
+        {
+            NormalizeProductTitle(metaTitle, store),
+            NormalizeProductTitle(candidateName, store),
+            NormalizeProductTitle(TryExtractProductNameFromUrl(url), store)
+        };
+
+        return options
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .FirstOrDefault(x => !LooksOpaqueProductName(x) && !LooksGenericProductName(x));
+    }
+
+    private static string? NormalizeProductTitle(string? rawTitle, string store)
+    {
+        if (string.IsNullOrWhiteSpace(rawTitle))
+        {
+            return null;
+        }
+
+        var title = WebUtility.HtmlDecode(rawTitle)?.Trim() ?? string.Empty;
+        title = title.Replace('\u00A0', ' ');
+        title = Regex.Replace(title, @"\s+", " ", RegexOptions.CultureInvariant).Trim();
+        if (title.Length < 6)
+        {
+            return null;
+        }
+
+        title = TrimMarketplaceSuffix(title, store);
+        title = Regex.Replace(title, @"\s+", " ", RegexOptions.CultureInvariant).Trim(' ', '|', '-', '.', ':');
+        if (title.Length < 6)
+        {
+            return null;
+        }
+
+        return title.Length > 110 ? title[..110].TrimEnd() : title;
+    }
+
+    private static string TrimMarketplaceSuffix(string title, string store)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return string.Empty;
+        }
+
+        var result = title.Trim();
+        var normalizedStore = Regex.Replace((store ?? string.Empty).ToLowerInvariant(), @"\s+", string.Empty, RegexOptions.CultureInvariant);
+        foreach (var sep in new[] { " | ", " - " })
+        {
+            var idx = result.LastIndexOf(sep, StringComparison.Ordinal);
+            if (idx <= 0)
+            {
+                continue;
+            }
+
+            var suffix = result[(idx + sep.Length)..].Trim().ToLowerInvariant();
+            var isMarketplaceSuffix = MarketplaceTitleTerms.Any(term => suffix.Contains(term, StringComparison.OrdinalIgnoreCase));
+            if (!isMarketplaceSuffix && !string.IsNullOrWhiteSpace(normalizedStore))
+            {
+                isMarketplaceSuffix = suffix.Replace(" ", string.Empty, StringComparison.Ordinal).Contains(normalizedStore, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (isMarketplaceSuffix)
+            {
+                result = result[..idx].Trim();
+            }
+        }
+
+        return result;
     }
 
     private static bool IsLikelyShortLink(string url)
@@ -1197,6 +1420,28 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         "store", "produto", "oferta", "ofertas", "shop", "shopping", "mercado", "livre"
     };
 
+    private static readonly HashSet<string> GenericProductNameTerms = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "produto", "item", "oferta", "ofertas", "promocao", "promo", "desconto", "loja", "shop", "marketplace", "achadinho"
+    };
+
+    private static readonly HashSet<string> MarketplaceTitleTerms = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "amazon", "mercado livre", "mercadolivre", "shopee", "shein", "loja", "store", "marketplace", "brasil", "oficial"
+    };
+
+    private static readonly HashSet<string> UrlNoiseSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "dp", "gp", "p", "d", "product", "products", "produto", "produtos", "item", "items", "offer", "oferta", "shop", "loja"
+    };
+
+    private static readonly HashSet<string> InstagramEngagementTerms = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "kit", "organizador", "cozinha", "casa", "decor", "decoracao", "beleza", "maquiagem", "skincare", "perfume",
+        "fone", "headset", "smart", "gamer", "led", "fitness", "academia", "moda", "vestido", "tenis",
+        "sapato", "bolsa", "bebe", "infantil", "pet"
+    };
+
     private static string? ExtractFirstUrl(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -1215,20 +1460,66 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             return null;
         }
 
-        var segment = uri.Segments.LastOrDefault()?.Trim('/').Trim();
-        if (string.IsNullOrWhiteSpace(segment))
+        var query = ParseQuery(uri.Query);
+        foreach (var key in new[] { "title", "name", "product", "produto", "description", "desc" })
+        {
+            if (!query.TryGetValue(key, out var value))
+            {
+                continue;
+            }
+
+            var normalized = NormalizeProductTitle(value, string.Empty);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                return normalized;
+            }
+        }
+
+        var segments = uri.AbsolutePath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => Uri.UnescapeDataString(s).Trim())
+            .ToList();
+        if (segments.Count == 0)
         {
             return null;
         }
 
-        segment = segment.Replace('-', ' ');
-        segment = Regex.Replace(segment, @"[^\wÀ-ÖØ-öø-ÿ ]", string.Empty, RegexOptions.CultureInvariant).Trim();
-        if (segment.Length < 4)
+        string? best = null;
+        for (var i = segments.Count - 1; i >= 0; i--)
+        {
+            var raw = segments[i];
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var lower = raw.ToLowerInvariant();
+            if (UrlNoiseSegments.Contains(lower))
+            {
+                continue;
+            }
+
+            raw = raw.Replace('-', ' ').Replace('_', ' ');
+            raw = Regex.Replace(raw, @"\b[a-z]{1,3}\d{4,}\b", " ", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            raw = Regex.Replace(raw, @"\b\d{5,}\b", " ", RegexOptions.CultureInvariant);
+            raw = Regex.Replace(raw, @"[^\wÀ-ÖØ-öø-ÿ ]", " ", RegexOptions.CultureInvariant);
+            raw = Regex.Replace(raw, @"\s+", " ", RegexOptions.CultureInvariant).Trim();
+
+            if (raw.Length < 6 || LooksOpaqueProductName(raw))
+            {
+                continue;
+            }
+
+            best = raw;
+            break;
+        }
+
+        if (string.IsNullOrWhiteSpace(best))
         {
             return null;
         }
 
-        return segment.Length > 90 ? segment[..90].TrimEnd() : segment;
+        return best.Length > 110 ? best[..110].TrimEnd() : best;
     }
 
     private static string FirstNotEmpty(params string?[] values)
@@ -1263,8 +1554,11 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         public int ReturnSignal { get; set; }
         public int DiscountSignal { get; set; }
         public int RecencySignal { get; set; }
+        public int EngagementSignal { get; set; }
         public int FinalScore { get; set; }
         public DateTimeOffset LatestTimestamp { get; set; }
         public string? Note { get; set; }
     }
 }
+
+

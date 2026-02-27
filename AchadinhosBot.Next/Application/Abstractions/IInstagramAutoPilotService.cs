@@ -45,6 +45,7 @@ public sealed class InstagramAutoPilotSelectionItem
     public int ReturnSignal { get; set; }
     public int DiscountSignal { get; set; }
     public int RecencySignal { get; set; }
+    public int EngagementSignal { get; set; }
     public int FinalScore { get; set; }
     public string? DraftId { get; set; }
     public string? Note { get; set; }
