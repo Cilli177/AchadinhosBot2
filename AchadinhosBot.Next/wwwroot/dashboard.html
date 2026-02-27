@@ -865,8 +865,11 @@
         </section>
         <section class="card">
           <h3>Gemini</h3>
-          <input id="geminiApiKey" type="password" placeholder="Chave Gemini (AIza...)" />
-          <textarea id="geminiApiKeys" rows="4" placeholder="Chaves Gemini adicionais (uma por linha)"></textarea>
+          <label>Chaves API (uma por linha)</label>
+          <div id="geminiApiKeyRows"></div>
+          <div class="row" style="margin-top:8px;">
+            <button class="secondary" type="button" onclick="addGeminiApiKeyRow()">+ Adicionar chave</button>
+          </div>
           <div class="row">
             <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />
             <input id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
@@ -1387,6 +1390,49 @@ function shortId(text){
   return `${s.slice(0, 6)}…${s.slice(-6)}`;
 }
 
+function getGeminiApiKeyRowsFromDom(){
+  return Array.from(document.querySelectorAll('#geminiApiKeyRows input[data-gemini-key="1"]'))
+    .map(input => String(input.value || '').trim());
+}
+
+function renderGeminiApiKeyRows(values){
+  const container = document.getElementById('geminiApiKeyRows');
+  if (!container) return;
+  const rows = (values || [])
+    .map(v => String(v || '').trim());
+  const effective = rows.length > 0 ? rows : [''];
+  container.innerHTML = effective.map((value, index) => `
+    <div class="row" style="margin-top:8px;">
+      <input type="password" data-gemini-key="1" placeholder="Chave Gemini ${index + 1} (AIza...)" value="${escapeHtml(value)}" />
+      <button class="secondary" type="button" onclick="removeGeminiApiKeyRow(${index})">- Remover</button>
+    </div>
+  `).join('');
+}
+
+function addGeminiApiKeyRow(){
+  const current = getGeminiApiKeyRowsFromDom();
+  current.push('');
+  renderGeminiApiKeyRows(current);
+}
+
+function removeGeminiApiKeyRow(index){
+  const current = getGeminiApiKeyRowsFromDom();
+  if (current.length <= 1) {
+    renderGeminiApiKeyRows(['']);
+    return;
+  }
+
+  const safeIndex = Math.max(0, Math.min(index, current.length - 1));
+  current.splice(safeIndex, 1);
+  renderGeminiApiKeyRows(current);
+}
+
+function collectGeminiApiKeysFromUi(){
+  return getGeminiApiKeyRowsFromDom()
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 function renderSourceBadge(source){
   const s = String(source || '-');
   const map = {
@@ -1760,18 +1806,13 @@ function renderSettings(s){
   if (instaImageDownload) instaImageDownload.checked = !!insta.useImageDownload;
 
   const gemini = s.gemini || {};
-  const geminiKey = document.getElementById('geminiApiKey');
-  if (geminiKey) geminiKey.value = gemini.apiKey ? '********' : '';
-  const geminiKeys = document.getElementById('geminiApiKeys');
-  if (geminiKeys) {
-    const maskedKeys = Array.isArray(gemini.apiKeys) ? gemini.apiKeys : [];
-    if (maskedKeys.length > 0) {
-      geminiKeys.value = maskedKeys.join('\n');
-    } else if (gemini.apiKey) {
-      geminiKeys.value = '********';
-    } else {
-      geminiKeys.value = '';
-    }
+  const maskedKeys = Array.isArray(gemini.apiKeys) ? gemini.apiKeys : [];
+  if (maskedKeys.length > 0) {
+    renderGeminiApiKeyRows(maskedKeys);
+  } else if (gemini.apiKey) {
+    renderGeminiApiKeyRows(['********']);
+  } else {
+    renderGeminiApiKeyRows(['']);
   }
   const geminiModel = document.getElementById('geminiModel');
   if (geminiModel) geminiModel.value = gemini.model || 'gemini-2.5-flash';
@@ -2322,11 +2363,9 @@ async function saveInstagramSettings(){
   existing.openAI.maxOutputTokens = parseInt(document.getElementById('openaiMaxTokens')?.value || '700', 10);
 
   existing.gemini = existing.gemini || {};
-  existing.gemini.apiKey = document.getElementById('geminiApiKey')?.value || '';
-  existing.gemini.apiKeys = (document.getElementById('geminiApiKeys')?.value || '')
-    .split(/\r?\n/)
-    .map(x => x.trim())
-    .filter(Boolean);
+  const geminiKeys = collectGeminiApiKeysFromUi();
+  existing.gemini.apiKey = geminiKeys[0] || '';
+  existing.gemini.apiKeys = geminiKeys;
   existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
   existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
 
