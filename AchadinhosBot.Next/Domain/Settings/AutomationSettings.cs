@@ -255,6 +255,16 @@ public sealed class InstagramPublishSettings
     public long AutoPilotApprovalTelegramChatId { get; set; }
     public string? AutoPilotApprovalWhatsAppGroupId { get; set; }
     public string? AutoPilotApprovalWhatsAppInstanceName { get; set; }
+    public bool StoryAutoPilotEnabled { get; set; }
+    public int StoryAutoPilotIntervalMinutes { get; set; } = 240;
+    public int StoryAutoPilotTopCount { get; set; } = 2;
+    public int StoryAutoPilotLookbackHours { get; set; } = 24;
+    public int StoryAutoPilotRepeatWindowHours { get; set; } = 24;
+    public bool StoryAutoPilotSendForApproval { get; set; } = true;
+    public string StoryAutoPilotApprovalChannel { get; set; } = "whatsapp";
+    public long StoryAutoPilotApprovalTelegramChatId { get; set; }
+    public string? StoryAutoPilotApprovalWhatsAppGroupId { get; set; }
+    public string? StoryAutoPilotApprovalWhatsAppInstanceName { get; set; }
 }
 
 public enum InstagramOfferContextMode

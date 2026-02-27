@@ -1579,6 +1579,16 @@ api.MapPost("/instagram/autopilot/run", async (
     return Results.Ok(result);
 }).RequireAuthorization("AdminOnly");
 
+api.MapPost("/instagram/autostory/run", async (
+    InstagramAutoPilotRunRequest payload,
+    IInstagramAutoPilotService autoPilotService,
+    CancellationToken ct) =>
+{
+    payload.PostType = "story";
+    var result = await autoPilotService.RunNowAsync(payload, ct);
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
 api.MapPost("/instagram/publish/drafts/{id}/publish", async (
     string id,
     ISettingsStore store,

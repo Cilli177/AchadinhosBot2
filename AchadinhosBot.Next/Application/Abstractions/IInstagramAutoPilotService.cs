@@ -7,6 +7,7 @@ public interface IInstagramAutoPilotService
 
 public sealed class InstagramAutoPilotRunRequest
 {
+    public string? PostType { get; set; }
     public int? TopCount { get; set; }
     public int? LookbackHours { get; set; }
     public int? RepeatWindowHours { get; set; }
@@ -22,6 +23,7 @@ public sealed class InstagramAutoPilotRunRequest
 public sealed class InstagramAutoPilotRunResult
 {
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
+    public string PostType { get; set; } = "feed";
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
     public int CandidatesEvaluated { get; set; }

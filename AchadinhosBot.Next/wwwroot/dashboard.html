@@ -305,6 +305,7 @@
         <button data-tab="mercadolivre" onclick="showSection('mercadolivre')">Mercado Livre</button>
         <button data-tab="instagram" onclick="showSection('instagram')">Instagram</button>
         <button data-tab="instagram-publish" onclick="showSection('instagram-publish')">Instagram Publicar</button>
+        <button data-tab="instagram-story" onclick="showSection('instagram-story')">Instagram Story</button>
         <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>
         <button data-tab="logs" onclick="showSection('logs')">
           Logs
@@ -1009,6 +1010,58 @@
       </section>
       </div>
 
+      <div id="section-instagram-story" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Instagram Story - AutoPilot</h2>
+        <p class="muted">Configuração dedicada para Story com canal/grupo de aprovação separado do feed.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igStoryAutoEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar AutoStory automático</span>
+        </div>
+        <div class="row">
+          <div style="flex:1;">
+            <label>Intervalo (minutos)</label>
+            <input id="igStoryInterval" type="number" min="15" max="1440" step="1" placeholder="240" />
+          </div>
+          <div style="flex:1;">
+            <label>Top produtos por rodada</label>
+            <input id="igStoryTopCount" type="number" min="1" max="10" step="1" placeholder="2" />
+          </div>
+        </div>
+        <div class="row">
+          <div style="flex:1;">
+            <label>Janela de análise (horas)</label>
+            <input id="igStoryLookback" type="number" min="6" max="168" step="1" placeholder="24" />
+          </div>
+          <div style="flex:1;">
+            <label>Repetição mínima (horas)</label>
+            <input id="igStoryRepeatWindow" type="number" min="6" max="240" step="1" placeholder="24" />
+          </div>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igStorySendApproval" /><span class="slider"></span></label>
+          <span class="muted">Enviar para aprovação antes de publicar</span>
+        </div>
+        <label>Canal de aprovação</label>
+        <select id="igStoryApprovalChannel">
+          <option value="whatsapp">WhatsApp</option>
+          <option value="telegram">Telegram</option>
+        </select>
+        <label>Telegram Chat ID (se canal = Telegram)</label>
+        <input id="igStoryApprovalTelegramChatId" type="number" step="1" placeholder="-1001234567890" />
+        <label>WhatsApp Group ID (se canal = WhatsApp)</label>
+        <input id="igStoryApprovalWhatsAppGroupId" placeholder="1203630...@g.us" />
+        <label>Instância WhatsApp (opcional)</label>
+        <input id="igStoryApprovalWhatsAppInstance" placeholder="ZapOfertas" />
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveInstagramStorySettings()">Salvar AutoStory</button>
+          <button onclick="runInstagramAutoStory(false)">Rodar AutoStory agora</button>
+          <button class="secondary" onclick="runInstagramAutoStory(true)">Dry-run</button>
+          <span id="igStoryStatus" class="status muted"></span>
+        </div>
+      </section>
+      </div>
+
       <div id="section-autoreplies" class="hidden">
       <section class="card" style="margin-top:16px;">
         <h2>Respostas Automáticas</h2>
@@ -1169,7 +1222,7 @@ function showAuthState(authenticated, username='', role=''){
 }
 
 function showSection(name){
-  const sections = ['ops','connections','route','linkresponder','mercadolivre','instagram','instagram-publish','autoreplies','logs','playground','debug'];
+  const sections = ['ops','connections','route','linkresponder','mercadolivre','instagram','instagram-publish','instagram-story','autoreplies','logs','playground','debug'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -1629,6 +1682,26 @@ function renderSettings(s){
   if (igPubManyChatWebhookUrl) igPubManyChatWebhookUrl.value = igPub.manyChatWebhookUrl || '';
   const igPubManyChatApiKey = document.getElementById('igPubManyChatApiKey');
   if (igPubManyChatApiKey) igPubManyChatApiKey.value = igPub.manyChatApiKey ? '********' : '';
+  const igStoryAutoEnabled = document.getElementById('igStoryAutoEnabled');
+  if (igStoryAutoEnabled) igStoryAutoEnabled.checked = !!igPub.storyAutoPilotEnabled;
+  const igStoryInterval = document.getElementById('igStoryInterval');
+  if (igStoryInterval) igStoryInterval.value = String(igPub.storyAutoPilotIntervalMinutes ?? 240);
+  const igStoryTopCount = document.getElementById('igStoryTopCount');
+  if (igStoryTopCount) igStoryTopCount.value = String(igPub.storyAutoPilotTopCount ?? 2);
+  const igStoryLookback = document.getElementById('igStoryLookback');
+  if (igStoryLookback) igStoryLookback.value = String(igPub.storyAutoPilotLookbackHours ?? 24);
+  const igStoryRepeatWindow = document.getElementById('igStoryRepeatWindow');
+  if (igStoryRepeatWindow) igStoryRepeatWindow.value = String(igPub.storyAutoPilotRepeatWindowHours ?? 24);
+  const igStorySendApproval = document.getElementById('igStorySendApproval');
+  if (igStorySendApproval) igStorySendApproval.checked = igPub.storyAutoPilotSendForApproval ?? true;
+  const igStoryApprovalChannel = document.getElementById('igStoryApprovalChannel');
+  if (igStoryApprovalChannel) igStoryApprovalChannel.value = igPub.storyAutoPilotApprovalChannel || 'whatsapp';
+  const igStoryApprovalTelegramChatId = document.getElementById('igStoryApprovalTelegramChatId');
+  if (igStoryApprovalTelegramChatId) igStoryApprovalTelegramChatId.value = String(igPub.storyAutoPilotApprovalTelegramChatId ?? 0);
+  const igStoryApprovalWhatsAppGroupId = document.getElementById('igStoryApprovalWhatsAppGroupId');
+  if (igStoryApprovalWhatsAppGroupId) igStoryApprovalWhatsAppGroupId.value = igPub.storyAutoPilotApprovalWhatsAppGroupId || '';
+  const igStoryApprovalWhatsAppInstance = document.getElementById('igStoryApprovalWhatsAppInstance');
+  if (igStoryApprovalWhatsAppInstance) igStoryApprovalWhatsAppInstance.value = igPub.storyAutoPilotApprovalWhatsAppInstanceName || '';
   const tgWaEnabled = document.getElementById('tgWaEnabled');
   if (tgWaEnabled) tgWaEnabled.checked = !!s.telegramToWhatsApp?.enabled;
   document.getElementById('waForwardEnabled').onchange = scheduleWhatsAppSave;
@@ -2157,6 +2230,79 @@ async function saveInstagramPublishSettings(){
   } catch (e) {
     if (status) {
       status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function saveInstagramStorySettings(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('igStoryStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.instagramPublish = existing.instagramPublish || {};
+  existing.instagramPublish.storyAutoPilotEnabled = document.getElementById('igStoryAutoEnabled')?.checked ?? false;
+  existing.instagramPublish.storyAutoPilotIntervalMinutes = parseInt(document.getElementById('igStoryInterval')?.value || '240', 10);
+  existing.instagramPublish.storyAutoPilotTopCount = parseInt(document.getElementById('igStoryTopCount')?.value || '2', 10);
+  existing.instagramPublish.storyAutoPilotLookbackHours = parseInt(document.getElementById('igStoryLookback')?.value || '24', 10);
+  existing.instagramPublish.storyAutoPilotRepeatWindowHours = parseInt(document.getElementById('igStoryRepeatWindow')?.value || '24', 10);
+  existing.instagramPublish.storyAutoPilotSendForApproval = document.getElementById('igStorySendApproval')?.checked ?? true;
+  existing.instagramPublish.storyAutoPilotApprovalChannel = document.getElementById('igStoryApprovalChannel')?.value || 'whatsapp';
+  existing.instagramPublish.storyAutoPilotApprovalTelegramChatId = parseInt(document.getElementById('igStoryApprovalTelegramChatId')?.value || '0', 10) || 0;
+  existing.instagramPublish.storyAutoPilotApprovalWhatsAppGroupId = document.getElementById('igStoryApprovalWhatsAppGroupId')?.value || '';
+  existing.instagramPublish.storyAutoPilotApprovalWhatsAppInstanceName = document.getElementById('igStoryApprovalWhatsAppInstance')?.value || '';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'AutoStory salvo.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function runInstagramAutoStory(dryRun){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('igStoryStatus');
+  if (status) {
+    status.textContent = dryRun ? 'Executando dry-run...' : 'Executando AutoStory...';
+    status.className = 'status warn';
+  }
+
+  const payload = {
+    postType: 'story',
+    topCount: parseInt(document.getElementById('igStoryTopCount')?.value || '2', 10),
+    lookbackHours: parseInt(document.getElementById('igStoryLookback')?.value || '24', 10),
+    repeatWindowHours: parseInt(document.getElementById('igStoryRepeatWindow')?.value || '24', 10),
+    sendForApproval: document.getElementById('igStorySendApproval')?.checked ?? true,
+    approvalChannel: document.getElementById('igStoryApprovalChannel')?.value || 'whatsapp',
+    approvalTelegramChatId: parseInt(document.getElementById('igStoryApprovalTelegramChatId')?.value || '0', 10) || 0,
+    approvalWhatsAppGroupId: document.getElementById('igStoryApprovalWhatsAppGroupId')?.value || '',
+    approvalWhatsAppInstanceName: document.getElementById('igStoryApprovalWhatsAppInstance')?.value || '',
+    dryRun: !!dryRun
+  };
+
+  try {
+    const res = await api('/api/instagram/autostory/run', 'POST', payload);
+    if (status) {
+      status.textContent = res?.message || 'AutoStory executado.';
+      status.className = res?.success ? 'status ok' : 'status bad';
+    }
+    await loadInstagramDrafts();
+    await loadInstagramPublishLogs();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao executar AutoStory.';
       status.className = 'status bad';
     }
   }

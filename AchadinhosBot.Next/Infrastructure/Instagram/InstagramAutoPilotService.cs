@@ -78,6 +78,9 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     {
         var result = new InstagramAutoPilotRunResult();
         request ??= new InstagramAutoPilotRunRequest();
+        var normalizedPostType = NormalizeAutoPilotPostType(request.PostType);
+        var storyMode = string.Equals(normalizedPostType, "story", StringComparison.OrdinalIgnoreCase);
+        result.PostType = normalizedPostType;
 
         try
         {
@@ -86,10 +89,19 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var instaPublishSettings = settings.InstagramPublish ?? new InstagramPublishSettings();
             var geminiSettings = settings.Gemini ?? new GeminiSettings();
 
-            var topCount = Math.Clamp(request.TopCount ?? instaPublishSettings.AutoPilotTopCount, 1, 10);
-            var lookbackHours = Math.Clamp(request.LookbackHours ?? instaPublishSettings.AutoPilotLookbackHours, 6, 168);
-            var repeatWindowHours = Math.Clamp(request.RepeatWindowHours ?? instaPublishSettings.AutoPilotRepeatWindowHours, 6, 240);
-            var sendForApproval = request.SendForApproval ?? instaPublishSettings.AutoPilotSendForApproval;
+            var topCount = Math.Clamp(
+                request.TopCount ?? (storyMode ? instaPublishSettings.StoryAutoPilotTopCount : instaPublishSettings.AutoPilotTopCount),
+                1,
+                10);
+            var lookbackHours = Math.Clamp(
+                request.LookbackHours ?? (storyMode ? instaPublishSettings.StoryAutoPilotLookbackHours : instaPublishSettings.AutoPilotLookbackHours),
+                6,
+                168);
+            var repeatWindowHours = Math.Clamp(
+                request.RepeatWindowHours ?? (storyMode ? instaPublishSettings.StoryAutoPilotRepeatWindowHours : instaPublishSettings.AutoPilotRepeatWindowHours),
+                6,
+                240);
+            var sendForApproval = request.SendForApproval ?? (storyMode ? instaPublishSettings.StoryAutoPilotSendForApproval : instaPublishSettings.AutoPilotSendForApproval);
             var dryRun = request.DryRun;
 
             var ranked = await BuildRankedCandidatesAsync(settings, instaPublishSettings, topCount, lookbackHours, repeatWindowHours, request.ForceIncludeExisting, cancellationToken);
@@ -134,7 +146,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 // e funcione com o atalho /ig revisar 1.
                 foreach (var candidate in selected.AsEnumerable().Reverse())
                 {
-                    var draft = await CreateDraftFromCandidateAsync(candidate, instaPostSettings, geminiSettings, cancellationToken);
+                    var draft = await CreateDraftFromCandidateAsync(candidate, instaPostSettings, geminiSettings, normalizedPostType, cancellationToken);
                     if (draft is null)
                     {
                         continue;
@@ -152,17 +164,24 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 }
             }
 
-            var approvalChannel = ResolveApprovalChannel(request, instaPublishSettings);
+            var approvalChannel = ResolveApprovalChannel(request, instaPublishSettings, storyMode);
             result.ApprovalChannel = approvalChannel;
             if (!dryRun && sendForApproval && result.DraftsCreated > 0)
             {
-                var (sent, target) = await SendApprovalAsync(result.Selected.Where(x => !string.IsNullOrWhiteSpace(x.DraftId)).ToList(), request, instaPublishSettings, approvalChannel, cancellationToken);
+                var (sent, target) = await SendApprovalAsync(
+                    result.Selected.Where(x => !string.IsNullOrWhiteSpace(x.DraftId)).ToList(),
+                    request,
+                    instaPublishSettings,
+                    approvalChannel,
+                    storyMode,
+                    normalizedPostType,
+                    cancellationToken);
                 result.ApprovalSent = sent;
                 result.ApprovalTarget = target;
             }
 
             result.Success = true;
-            result.Message = BuildSummaryMessage(result, dryRun, sendForApproval);
+            result.Message = BuildSummaryMessage(result, dryRun, sendForApproval, normalizedPostType);
         }
         catch (Exception ex)
         {
@@ -335,7 +354,12 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    private async Task<InstagramPublishDraft?> CreateDraftFromCandidateAsync(CandidateScore candidate, InstagramPostSettings settings, GeminiSettings geminiSettings, CancellationToken ct)
+    private async Task<InstagramPublishDraft?> CreateDraftFromCandidateAsync(
+        CandidateScore candidate,
+        InstagramPostSettings settings,
+        GeminiSettings geminiSettings,
+        string postType,
+        CancellationToken ct)
     {
         try
         {
@@ -410,7 +434,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
 
             var draft = new InstagramPublishDraft
             {
-                PostType = "feed",
+                PostType = postType,
                 ProductName = productName,
                 Caption = captions[0],
                 CaptionOptions = captions,
@@ -451,6 +475,8 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         InstagramAutoPilotRunRequest request,
         InstagramPublishSettings settings,
         string channel,
+        bool storyMode,
+        string postType,
         CancellationToken ct)
     {
         if (selected.Count == 0)
@@ -458,22 +484,29 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             return (false, null);
         }
 
-        var message = BuildApprovalMessage(selected);
+        var message = BuildApprovalMessage(selected, postType);
         if (string.Equals(channel, "whatsapp", StringComparison.OrdinalIgnoreCase))
         {
-            var groupId = FirstNotEmpty(request.ApprovalWhatsAppGroupId, settings.AutoPilotApprovalWhatsAppGroupId);
+            var groupId = FirstNotEmpty(
+                request.ApprovalWhatsAppGroupId,
+                storyMode ? settings.StoryAutoPilotApprovalWhatsAppGroupId : settings.AutoPilotApprovalWhatsAppGroupId);
             if (string.IsNullOrWhiteSpace(groupId))
             {
                 return (false, null);
             }
 
-            var instanceName = FirstNotEmpty(request.ApprovalWhatsAppInstanceName, settings.AutoPilotApprovalWhatsAppInstanceName, _evolutionOptions.InstanceName);
+            var instanceName = FirstNotEmpty(
+                request.ApprovalWhatsAppInstanceName,
+                storyMode ? settings.StoryAutoPilotApprovalWhatsAppInstanceName : settings.AutoPilotApprovalWhatsAppInstanceName,
+                _evolutionOptions.InstanceName);
             var send = await _whatsAppGateway.SendTextAsync(instanceName, groupId, message, ct);
             return (send.Success, groupId);
         }
 
         var chatId = request.ApprovalTelegramChatId
-            ?? (settings.AutoPilotApprovalTelegramChatId != 0 ? settings.AutoPilotApprovalTelegramChatId : _telegramOptions.LogsChatId);
+            ?? ((storyMode ? settings.StoryAutoPilotApprovalTelegramChatId : settings.AutoPilotApprovalTelegramChatId) != 0
+                ? (storyMode ? settings.StoryAutoPilotApprovalTelegramChatId : settings.AutoPilotApprovalTelegramChatId)
+                : _telegramOptions.LogsChatId);
         if (chatId == 0)
         {
             return (false, null);
@@ -483,10 +516,11 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         return (sent, chatId.ToString());
     }
 
-    private static string BuildApprovalMessage(IReadOnlyList<InstagramAutoPilotSelectionItem> selected)
+    private static string BuildApprovalMessage(IReadOnlyList<InstagramAutoPilotSelectionItem> selected, string postType)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("AUTOPILOT INSTAGRAM");
+        var label = string.Equals(postType, "story", StringComparison.OrdinalIgnoreCase) ? "STORY" : "FEED";
+        sb.AppendLine($"AUTOPILOT INSTAGRAM {label}");
         sb.AppendLine("Rascunhos criados para aprovacao:");
         sb.AppendLine();
 
@@ -516,7 +550,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         return sb.ToString().Trim();
     }
 
-    private static string BuildSummaryMessage(InstagramAutoPilotRunResult result, bool dryRun, bool sendForApproval)
+    private static string BuildSummaryMessage(InstagramAutoPilotRunResult result, bool dryRun, bool sendForApproval, string postType)
     {
         if (!result.Success)
         {
@@ -525,7 +559,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
 
         var mode = dryRun ? "dry-run" : "execucao";
         var approval = sendForApproval ? (result.ApprovalSent ? "aprovacao enviada" : "aprovacao pendente") : "sem envio para aprovacao";
-        return $"Autopilot {mode} concluido: candidatos={result.CandidatesEvaluated}, selecionados={result.SelectedCount}, drafts={result.DraftsCreated}, {approval}.";
+        return $"Autopilot {postType} {mode} concluido: candidatos={result.CandidatesEvaluated}, selecionados={result.SelectedCount}, drafts={result.DraftsCreated}, {approval}.";
     }
 
     private static int GetStoreReturnSignal(string store)
@@ -700,15 +734,29 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         return 0;
     }
 
-    private static string ResolveApprovalChannel(InstagramAutoPilotRunRequest request, InstagramPublishSettings settings)
+    private static string ResolveApprovalChannel(InstagramAutoPilotRunRequest request, InstagramPublishSettings settings, bool storyMode)
     {
-        var value = FirstNotEmpty(request.ApprovalChannel, settings.AutoPilotApprovalChannel, "telegram");
+        var value = FirstNotEmpty(
+            request.ApprovalChannel,
+            storyMode ? settings.StoryAutoPilotApprovalChannel : settings.AutoPilotApprovalChannel,
+            "telegram");
         return value.Trim().ToLowerInvariant() switch
         {
             "wa" => "whatsapp",
             "zap" => "whatsapp",
             "whatsapp" => "whatsapp",
             _ => "telegram"
+        };
+    }
+
+    private static string NormalizeAutoPilotPostType(string? input)
+    {
+        var normalized = (input ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "story" => "story",
+            "stories" => "story",
+            _ => "feed"
         };
     }
 
