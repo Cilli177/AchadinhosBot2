@@ -289,10 +289,32 @@ app.MapGet("/auth/me", (HttpContext context) =>
 app.MapConverterEndpoint();
 app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 
-app.MapGet("/bio", async (HttpContext context, IInstagramPublishStore publishStore, CancellationToken ct) =>
+app.MapGet("/bio", async (
+    HttpContext context,
+    IInstagramPublishStore publishStore,
+    ILinkTrackingStore trackingStore,
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
 {
+    var settings = await settingsStore.GetAsync(ct);
+    var bioSettings = settings.BioHub ?? new BioHubSettings();
+    if (!bioSettings.Enabled)
+    {
+        return Results.Content("<!doctype html><html><body><p>Bio temporariamente desativada.</p></body></html>", "text/html; charset=utf-8");
+    }
+
+    var request = context.Request;
+    var source = NormalizeTrackingToken(
+        FirstNonEmpty(request.Query["src"].ToString(), bioSettings.DefaultSource, "bio"),
+        "bio") ?? "bio";
+    var campaign = NormalizeTrackingToken(
+        FirstNonEmpty(request.Query["camp"].ToString(), bioSettings.DefaultCampaign),
+        null);
+    var medium = NormalizeTrackingToken(request.Query["medium"].ToString(), "instagram") ?? "instagram";
+    var maxItems = Math.Clamp(bioSettings.MaxItems, 5, 80);
+
     var drafts = await publishStore.ListAsync(ct);
-    var items = drafts
+    var baseItems = drafts
         .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
         .Select(d =>
         {
@@ -304,6 +326,8 @@ app.MapGet("/bio", async (HttpContext context, IInstagramPublishStore publishSto
                 CreatedAt = d.CreatedAt,
                 Title = title.Trim(),
                 Link = link?.Trim() ?? string.Empty,
+                OriginalLink = link?.Trim() ?? string.Empty,
+                Store = ResolveStoreNameFromUrl(link),
                 Keyword = cta?.Keyword?.Trim()
             };
         })
@@ -311,12 +335,24 @@ app.MapGet("/bio", async (HttpContext context, IInstagramPublishStore publishSto
         .OrderByDescending(x => x.CreatedAt)
         .GroupBy(x => x.Link, StringComparer.OrdinalIgnoreCase)
         .Select(g => g.First())
-        .Take(40)
+        .Take(maxItems)
         .ToList();
 
-    var request = context.Request;
-    var currentUrl = $"{request.Scheme}://{request.Host}/bio";
-    var html = BuildBioLinksPageHtml(items, currentUrl);
+    var publicBaseUrl = $"{request.Scheme}://{request.Host}";
+    var trackedItems = new List<BioLinkItem>(baseItems.Count);
+    foreach (var item in baseItems)
+    {
+        var targetUrl = AppendBioCampaignParameters(item.OriginalLink, source, medium, campaign, item.Title);
+        var tracked = await trackingStore.GetOrCreateAsync(targetUrl, ct);
+        trackedItems.Add(item with
+        {
+            Link = BuildTrackedRedirectUrl(publicBaseUrl, tracked.Id, source, campaign),
+            OriginalLink = targetUrl
+        });
+    }
+
+    var currentUrl = BuildBioCurrentUrl(publicBaseUrl, source, campaign);
+    var html = BuildBioLinksPageHtml(trackedItems, currentUrl, bioSettings, source, campaign);
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
@@ -1999,6 +2035,101 @@ api.MapGet("/logs/clicks", async (
     return Results.Ok(new { items });
 });
 
+api.MapGet("/logs/funnel", async (
+    [FromQuery] int? hours,
+    IConversionLogStore conversionLogStore,
+    IClickLogStore clickLogStore,
+    CancellationToken ct) =>
+{
+    var windowHours = Math.Clamp(hours ?? 168, 1, 720);
+    var since = DateTimeOffset.UtcNow.AddHours(-windowHours);
+    var conversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 2000 }, ct);
+    var clicks = await clickLogStore.QueryAsync(null, 2000, ct);
+
+    var conversionsWindow = conversions
+        .Where(x => x.Timestamp >= since)
+        .ToList();
+    var clicksWindow = clicks
+        .Where(x => x.Timestamp >= since)
+        .ToList();
+
+    var bySource = clicksWindow
+        .GroupBy(x => string.IsNullOrWhiteSpace(x.Source) ? "unknown" : x.Source.Trim().ToLowerInvariant())
+        .Select(g => new
+        {
+            source = g.Key,
+            clicks = g.Count(),
+            uniqueLinks = g
+                .Select(x => x.TargetUrl)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count()
+        })
+        .OrderByDescending(x => x.clicks)
+        .Take(20)
+        .ToArray();
+
+    var byCampaign = clicksWindow
+        .GroupBy(x => string.IsNullOrWhiteSpace(x.Campaign) ? "(none)" : x.Campaign!.Trim().ToLowerInvariant())
+        .Select(g => new
+        {
+            campaign = g.Key,
+            clicks = g.Count(),
+            uniqueLinks = g
+                .Select(x => x.TargetUrl)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count()
+        })
+        .OrderByDescending(x => x.clicks)
+        .Take(20)
+        .ToArray();
+
+    var topLinks = clicksWindow
+        .GroupBy(x => x.TargetUrl, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new
+        {
+            targetUrl = g.Key,
+            clicks = g.Count(),
+            lastClickAt = g.Max(x => x.Timestamp),
+            source = g
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Source) ? "unknown" : x.Source.Trim().ToLowerInvariant())
+                .OrderByDescending(x => x.Count())
+                .Select(x => x.Key)
+                .FirstOrDefault() ?? "unknown",
+            campaign = g
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Campaign) ? "(none)" : x.Campaign!.Trim().ToLowerInvariant())
+                .OrderByDescending(x => x.Count())
+                .Select(x => x.Key)
+                .FirstOrDefault() ?? "(none)"
+        })
+        .OrderByDescending(x => x.clicks)
+        .ThenByDescending(x => x.lastClickAt)
+        .Take(30)
+        .ToArray();
+
+    return Results.Ok(new
+    {
+        windowHours,
+        since,
+        totals = new
+        {
+            clicks = clicksWindow.Count,
+            conversions = conversionsWindow.Count,
+            successfulConversions = conversionsWindow.Count(x => x.Success),
+            affiliatedConversions = conversionsWindow.Count(x => x.IsAffiliated),
+            trackedConversionLinks = conversionsWindow
+                .SelectMany(x => x.TrackingIds ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count()
+        },
+        bySource,
+        byCampaign,
+        topLinks
+    });
+});
+
 api.MapPost("/logs/clicks/clear", async (IClickLogStore clickLogStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
 {
     await clickLogStore.ClearAsync(ct);
@@ -2155,6 +2286,7 @@ app.MapGet("/media/{id}.{ext}", (string id, string ext, IMediaStore store) =>
 
 app.MapGet("/r/{id}", async (
     string id,
+    HttpContext context,
     ILinkTrackingStore trackingStore,
     IClickLogStore clickLogStore,
     CancellationToken ct) =>
@@ -2165,10 +2297,21 @@ app.MapGet("/r/{id}", async (
         return Results.NotFound();
     }
 
+    var source = NormalizeTrackingToken(context.Request.Query["src"].ToString(), "LinkTracking") ?? "LinkTracking";
+    var campaign = NormalizeTrackingToken(context.Request.Query["camp"].ToString(), null);
+    var referrer = TruncateForLog(context.Request.Headers.Referer.ToString(), 600);
+    var userAgent = TruncateForLog(context.Request.Headers.UserAgent.ToString(), 320);
+    var ip = context.Connection.RemoteIpAddress?.ToString();
+
     await clickLogStore.AppendAsync(new ClickLogEntry
     {
         TrackingId = entry.Id,
-        TargetUrl = entry.TargetUrl
+        TargetUrl = entry.TargetUrl,
+        Source = source,
+        Campaign = campaign,
+        Referrer = string.IsNullOrWhiteSpace(referrer) ? null : referrer,
+        UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
+        IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
     }, ct);
 
     return Results.Redirect(entry.TargetUrl);
@@ -2277,6 +2420,24 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
         {
             yield return $"Gatilho duplicado: {rule.Trigger}";
         }
+    }
+
+    var bio = settings.BioHub ?? new BioHubSettings();
+    if (bio.MaxItems is < 5 or > 80)
+    {
+        yield return "BioHub.MaxItems deve estar entre 5 e 80.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(bio.DefaultSource) &&
+        NormalizeTrackingToken(bio.DefaultSource, null) is null)
+    {
+        yield return "BioHub.DefaultSource invalido.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(bio.DefaultCampaign) &&
+        NormalizeTrackingToken(bio.DefaultCampaign, null) is null)
+    {
+        yield return "BioHub.DefaultCampaign invalido.";
     }
 }
 
@@ -4639,15 +4800,25 @@ static string BuildInstagramMenuMessage()
     });
 }
 
-static string BuildBioLinksPageHtml(IReadOnlyList<BioLinkItem> items, string currentUrl)
+static string BuildBioLinksPageHtml(
+    IReadOnlyList<BioLinkItem> items,
+    string currentUrl,
+    BioHubSettings settings,
+    string source,
+    string? campaign)
 {
     var sb = new StringBuilder();
+    var brandName = string.IsNullOrWhiteSpace(settings.BrandName) ? "Rei das Ofertas" : settings.BrandName.Trim();
+    var headline = string.IsNullOrWhiteSpace(settings.Headline) ? "Achadinhos em destaque" : settings.Headline.Trim();
+    var subheadline = string.IsNullOrWhiteSpace(settings.Subheadline) ? "Toque no botao para abrir a oferta." : settings.Subheadline.Trim();
+    var buttonLabel = string.IsNullOrWhiteSpace(settings.ButtonLabel) ? "Abrir oferta" : settings.ButtonLabel.Trim();
+    var campaignLabel = string.IsNullOrWhiteSpace(campaign) ? "sem campanha" : campaign;
     sb.AppendLine("<!doctype html>");
     sb.AppendLine("<html lang=\"pt-BR\">");
     sb.AppendLine("<head>");
     sb.AppendLine("  <meta charset=\"utf-8\" />");
     sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
-    sb.AppendLine("  <title>Achadinhos - Links</title>");
+    sb.AppendLine($"  <title>{System.Net.WebUtility.HtmlEncode(brandName)} - Links</title>");
     sb.AppendLine("  <style>");
     sb.AppendLine("    :root{--bg:#f7f5ef;--card:#fffaf2;--line:#e8dfcc;--text:#1f1a14;--muted:#6a5f4e;--btn:#1f8f5f;--btnText:#fff;}");
     sb.AppendLine("    *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(180deg,#fffdf8 0%,var(--bg) 100%);color:var(--text)}");
@@ -4664,8 +4835,9 @@ static string BuildBioLinksPageHtml(IReadOnlyList<BioLinkItem> items, string cur
     sb.AppendLine("</head>");
     sb.AppendLine("<body><main class=\"wrap\">");
     sb.AppendLine("  <section class=\"head\">");
-    sb.AppendLine("    <h1>Achadinhos em destaque</h1>");
-    sb.AppendLine("    <p>Toque no botao para abrir a oferta.</p>");
+    sb.AppendLine($"    <h1>{System.Net.WebUtility.HtmlEncode(headline)}</h1>");
+    sb.AppendLine($"    <p>{System.Net.WebUtility.HtmlEncode(subheadline)}</p>");
+    sb.AppendLine($"    <p style=\"margin-top:6px;font-size:.82rem;\">Origem: <strong>{System.Net.WebUtility.HtmlEncode(source)}</strong> | Campanha: <strong>{System.Net.WebUtility.HtmlEncode(campaignLabel)}</strong></p>");
     sb.AppendLine("  </section>");
 
     if (items.Count == 0)
@@ -4679,12 +4851,16 @@ static string BuildBioLinksPageHtml(IReadOnlyList<BioLinkItem> items, string cur
             var title = System.Net.WebUtility.HtmlEncode(item.Title);
             var link = System.Net.WebUtility.HtmlEncode(item.Link);
             var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
+            var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
+            var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
             var createdAt = item.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
 
             sb.AppendLine("  <article class=\"card\">");
             sb.AppendLine($"    <div class=\"title\">{title}</div>");
-            sb.AppendLine($"    <div class=\"meta\">Publicado em {createdAt}" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" Â· Palavra: <strong>{keyword}</strong>") + "</div>");
-            sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
+            sb.AppendLine($"    <div class=\"meta\">Loja: <strong>{store}</strong></div>");
+            sb.AppendLine($"    <div class=\"meta\">Publicado em {createdAt}" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" | Palavra: <strong>{keyword}</strong>") + "</div>");
+            sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">{System.Net.WebUtility.HtmlEncode(buttonLabel)}</a>");
+            sb.AppendLine($"    <div class=\"meta\" style=\"margin-top:8px;font-size:.8rem;\">Destino: {host}</div>");
             sb.AppendLine("  </article>");
         }
     }
@@ -4692,6 +4868,205 @@ static string BuildBioLinksPageHtml(IReadOnlyList<BioLinkItem> items, string cur
     sb.AppendLine($"  <div class=\"foot\">Link desta pagina: {System.Net.WebUtility.HtmlEncode(currentUrl)}</div>");
     sb.AppendLine("</main></body></html>");
     return sb.ToString();
+}
+
+static string BuildBioCurrentUrl(string publicBaseUrl, string source, string? campaign)
+{
+    var parameters = new List<string>();
+    if (!string.IsNullOrWhiteSpace(source))
+    {
+        parameters.Add($"src={Uri.EscapeDataString(source)}");
+    }
+
+    if (!string.IsNullOrWhiteSpace(campaign))
+    {
+        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+    }
+
+    var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
+    return $"{publicBaseUrl.TrimEnd('/')}/bio{query}";
+}
+
+static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, string source, string? campaign)
+{
+    var parameters = new List<string>();
+    if (!string.IsNullOrWhiteSpace(source))
+    {
+        parameters.Add($"src={Uri.EscapeDataString(source)}");
+    }
+
+    if (!string.IsNullOrWhiteSpace(campaign))
+    {
+        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+    }
+
+    if (publicBaseUrl.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
+        publicBaseUrl.Contains("ngrok.app", StringComparison.OrdinalIgnoreCase))
+    {
+        parameters.Add("ngrok-skip-browser-warning=1");
+    }
+
+    var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
+    return $"{publicBaseUrl.TrimEnd('/')}/r/{trackingId}{query}";
+}
+
+static string AppendBioCampaignParameters(string? url, string source, string medium, string? campaign, string title)
+{
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return url?.Trim() ?? string.Empty;
+    }
+
+    var query = ParseQueryMap(uri.Query);
+    if (!string.IsNullOrWhiteSpace(source))
+    {
+        query["utm_source"] = source;
+    }
+
+    if (!string.IsNullOrWhiteSpace(medium))
+    {
+        query["utm_medium"] = medium;
+    }
+
+    if (!string.IsNullOrWhiteSpace(campaign))
+    {
+        query["utm_campaign"] = campaign;
+    }
+
+    var content = BuildUtmContentValue(title);
+    if (!string.IsNullOrWhiteSpace(content))
+    {
+        query["utm_content"] = content;
+    }
+
+    var queryString = query.Count == 0
+        ? string.Empty
+        : string.Join("&", query.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+
+    var builder = new UriBuilder(uri)
+    {
+        Query = queryString
+    };
+    return builder.Uri.ToString();
+}
+
+static Dictionary<string, string> ParseQueryMap(string? query)
+{
+    var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return map;
+    }
+
+    foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+    {
+        var idx = pair.IndexOf('=');
+        if (idx < 0)
+        {
+            continue;
+        }
+
+        var key = Uri.UnescapeDataString(pair[..idx]);
+        var value = Uri.UnescapeDataString(pair[(idx + 1)..]);
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            map[key] = value;
+        }
+    }
+
+    return map;
+}
+
+static string BuildUtmContentValue(string? title)
+{
+    if (string.IsNullOrWhiteSpace(title))
+    {
+        return "oferta";
+    }
+
+    var normalized = Regex.Replace(title.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "-", RegexOptions.CultureInvariant);
+    normalized = Regex.Replace(normalized, @"-+", "-", RegexOptions.CultureInvariant).Trim('-');
+    if (normalized.Length > 60)
+    {
+        normalized = normalized[..60].Trim('-');
+    }
+
+    return string.IsNullOrWhiteSpace(normalized) ? "oferta" : normalized;
+}
+
+static string? NormalizeTrackingToken(string? value, string? fallback)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return fallback;
+    }
+
+    var normalized = Regex.Replace(value.Trim().ToLowerInvariant(), @"[^a-z0-9_.-]+", "-", RegexOptions.CultureInvariant);
+    normalized = Regex.Replace(normalized, @"-+", "-", RegexOptions.CultureInvariant).Trim('-');
+    if (normalized.Length > 48)
+    {
+        normalized = normalized[..48].Trim('-');
+    }
+
+    if (string.IsNullOrWhiteSpace(normalized))
+    {
+        return fallback;
+    }
+
+    return normalized;
+}
+
+static string ResolveStoreNameFromUrl(string? url)
+{
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return "Loja";
+    }
+
+    var host = uri.Host.ToLowerInvariant();
+    if (host.Contains("amazon", StringComparison.Ordinal))
+    {
+        return "Amazon";
+    }
+
+    if (host.Contains("mercadolivre", StringComparison.Ordinal) || host.Contains("mercado-livre", StringComparison.Ordinal))
+    {
+        return "Mercado Livre";
+    }
+
+    if (host.Contains("shopee", StringComparison.Ordinal))
+    {
+        return "Shopee";
+    }
+
+    if (host.Contains("shein", StringComparison.Ordinal))
+    {
+        return "Shein";
+    }
+
+    return host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
+}
+
+static string ExtractHostForDisplay(string? url)
+{
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return "-";
+    }
+
+    var host = uri.Host;
+    return host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
+}
+
+static string TruncateForLog(string? value, int maxLength)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return string.Empty;
+    }
+
+    var trimmed = value.Trim();
+    return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
 }
 
 static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)
@@ -6117,7 +6492,7 @@ static async Task<(string Text, List<string> TrackingIds)> ApplyTrackingAsync(st
         }
         else
         {
-            var entry = await store.CreateAsync(url, ct);
+            var entry = await store.GetOrCreateAsync(url, ct);
             sb.Append($"{baseUrl}/r/{entry.Id}{trackingSuffix}");
             trackingIds.Add(entry.Id);
         }
@@ -7932,6 +8307,8 @@ internal sealed record BioLinkItem
     public DateTimeOffset CreatedAt { get; init; }
     public string Title { get; init; } = string.Empty;
     public string Link { get; init; } = string.Empty;
+    public string OriginalLink { get; init; } = string.Empty;
+    public string Store { get; init; } = "Loja";
     public string? Keyword { get; init; }
 }
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);

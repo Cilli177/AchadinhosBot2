@@ -23,6 +23,7 @@ public sealed class AutomationSettings
     public TelegramToWhatsAppSettings TelegramToWhatsApp { get; set; } = new();
     public List<TelegramToWhatsAppRouteSettings> TelegramToWhatsAppRoutes { get; set; } = new();
     public LinkResponderSettings LinkResponder { get; set; } = new();
+    public BioHubSettings BioHub { get; set; } = new();
     public MercadoLivreComplianceSettings MercadoLivreCompliance { get; set; } = new();
     public LinkIntegritySettings LinkIntegrity { get; set; } = new();
     public CouponHubSettings CouponHub { get; set; } = new();
@@ -134,6 +135,18 @@ public sealed class LinkResponderSettings
     public string FooterText { get; set; } = string.Empty;
     public string ReplyTemplate { get; set; } = "Link convertido:\n{link}";
     public string ReplyOnFailure { get; set; } = "Link não suportado.";
+}
+
+public sealed class BioHubSettings
+{
+    public bool Enabled { get; set; } = true;
+    public string BrandName { get; set; } = "Rei das Ofertas";
+    public string Headline { get; set; } = "Achadinhos em destaque";
+    public string Subheadline { get; set; } = "Toque no botão para abrir a oferta com o melhor link.";
+    public string ButtonLabel { get; set; } = "Abrir oferta";
+    public int MaxItems { get; set; } = 40;
+    public string DefaultSource { get; set; } = "bio";
+    public string DefaultCampaign { get; set; } = string.Empty;
 }
 
 public sealed class MercadoLivreComplianceSettings

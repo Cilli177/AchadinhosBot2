@@ -90,7 +90,7 @@ public sealed class ConversionLogStore : IConversionLogStore
 
         return entries
             .OrderByDescending(e => e.Timestamp)
-            .Take(Math.Clamp(query.Limit, 1, 500))
+            .Take(Math.Clamp(query.Limit, 1, 2000))
             .ToArray();
     }
 

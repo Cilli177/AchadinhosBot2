@@ -306,6 +306,7 @@
         <button data-tab="instagram" onclick="showSection('instagram')">Instagram</button>
         <button data-tab="instagram-publish" onclick="showSection('instagram-publish')">Instagram Publicar</button>
         <button data-tab="instagram-story" onclick="showSection('instagram-story')">Instagram Story</button>
+        <button data-tab="bio-growth" onclick="showSection('bio-growth')">Bio & Growth</button>
         <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>
         <button data-tab="logs" onclick="showSection('logs')">
           Logs
@@ -1062,6 +1063,89 @@
       </section>
       </div>
 
+      <div id="section-bio-growth" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Bio Hub (Link unico)</h2>
+        <p class="muted">Configure a landing da bio para usar o mesmo link em Instagram, Stories e ManyChat.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="bioHubEnabled" /><span class="slider"></span></label>
+          <span class="muted">Bio hub ativo</span>
+        </div>
+        <label>Marca</label>
+        <input id="bioHubBrandName" placeholder="Rei das Ofertas" />
+        <label>Titulo</label>
+        <input id="bioHubHeadline" placeholder="Achadinhos em destaque" />
+        <label>Subtitulo</label>
+        <input id="bioHubSubheadline" placeholder="Toque no botao para abrir a oferta." />
+        <div class="row">
+          <div style="flex:1;">
+            <label>Texto do botao</label>
+            <input id="bioHubButtonLabel" placeholder="Abrir oferta" />
+          </div>
+          <div style="flex:1;">
+            <label>Maximo de itens</label>
+            <input id="bioHubMaxItems" type="number" min="5" max="80" step="1" placeholder="40" />
+          </div>
+        </div>
+        <div class="row">
+          <div style="flex:1;">
+            <label>Origem padrao</label>
+            <input id="bioHubDefaultSource" placeholder="bio" />
+          </div>
+          <div style="flex:1;">
+            <label>Campanha padrao</label>
+            <input id="bioHubDefaultCampaign" placeholder="insta-feed" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveBioHubSettings()">Salvar Bio Hub</button>
+          <button class="secondary" onclick="refreshBioLinksPreview()">Atualizar links</button>
+          <span id="bioHubStatus" class="status muted"></span>
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Uso</th>
+                <th>Link</th>
+                <th>Ação</th>
+              </tr>
+            </thead>
+            <tbody id="bioLinksTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Funnel de Cliques</h2>
+        <p class="muted">Resumo por origem/campanha para decidir o que entra no feed e story.</p>
+        <div class="row">
+          <select id="bioFunnelHours">
+            <option value="24">Ultimas 24h</option>
+            <option value="72">Ultimas 72h</option>
+            <option value="168" selected>Ultimos 7 dias</option>
+            <option value="336">Ultimos 14 dias</option>
+          </select>
+          <button class="secondary" onclick="loadBioFunnel()">Atualizar funnel</button>
+          <span id="bioFunnelStatus" class="status muted"></span>
+        </div>
+        <div class="grid" style="margin-top:10px;">
+          <div class="card" style="padding:12px;">
+            <h3 style="margin:0 0 6px;">Totais</h3>
+            <pre id="bioFunnelTotals">Sem dados.</pre>
+          </div>
+          <div class="card" style="padding:12px;">
+            <h3 style="margin:0 0 6px;">Top Origens</h3>
+            <pre id="bioFunnelSources">Sem dados.</pre>
+          </div>
+        </div>
+        <div class="card" style="padding:12px;margin-top:10px;">
+          <h3 style="margin:0 0 6px;">Top Campanhas</h3>
+          <pre id="bioFunnelCampaigns">Sem dados.</pre>
+        </div>
+      </section>
+      </div>
+
       <div id="section-autoreplies" class="hidden">
       <section class="card" style="margin-top:16px;">
         <h2>Respostas Automáticas</h2>
@@ -1222,7 +1306,7 @@ function showAuthState(authenticated, username='', role=''){
 }
 
 function showSection(name){
-  const sections = ['ops','connections','route','linkresponder','mercadolivre','instagram','instagram-publish','instagram-story','autoreplies','logs','playground','debug'];
+  const sections = ['ops','connections','route','linkresponder','mercadolivre','instagram','instagram-publish','instagram-story','bio-growth','autoreplies','logs','playground','debug'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -1249,6 +1333,10 @@ function showSection(name){
     loadInstagramDrafts();
     loadInstagramComments();
     loadInstagramPublishLogs();
+  }
+  if (name === 'bio-growth') {
+    refreshBioLinksPreview();
+    loadBioFunnel();
   }
 }
 
@@ -1702,6 +1790,23 @@ function renderSettings(s){
   if (igStoryApprovalWhatsAppGroupId) igStoryApprovalWhatsAppGroupId.value = igPub.storyAutoPilotApprovalWhatsAppGroupId || '';
   const igStoryApprovalWhatsAppInstance = document.getElementById('igStoryApprovalWhatsAppInstance');
   if (igStoryApprovalWhatsAppInstance) igStoryApprovalWhatsAppInstance.value = igPub.storyAutoPilotApprovalWhatsAppInstanceName || '';
+  const bioHub = s.bioHub || {};
+  const bioHubEnabled = document.getElementById('bioHubEnabled');
+  if (bioHubEnabled) bioHubEnabled.checked = bioHub.enabled ?? true;
+  const bioHubBrandName = document.getElementById('bioHubBrandName');
+  if (bioHubBrandName) bioHubBrandName.value = bioHub.brandName || 'Rei das Ofertas';
+  const bioHubHeadline = document.getElementById('bioHubHeadline');
+  if (bioHubHeadline) bioHubHeadline.value = bioHub.headline || 'Achadinhos em destaque';
+  const bioHubSubheadline = document.getElementById('bioHubSubheadline');
+  if (bioHubSubheadline) bioHubSubheadline.value = bioHub.subheadline || 'Toque no botao para abrir a oferta.';
+  const bioHubButtonLabel = document.getElementById('bioHubButtonLabel');
+  if (bioHubButtonLabel) bioHubButtonLabel.value = bioHub.buttonLabel || 'Abrir oferta';
+  const bioHubMaxItems = document.getElementById('bioHubMaxItems');
+  if (bioHubMaxItems) bioHubMaxItems.value = String(bioHub.maxItems ?? 40);
+  const bioHubDefaultSource = document.getElementById('bioHubDefaultSource');
+  if (bioHubDefaultSource) bioHubDefaultSource.value = bioHub.defaultSource || 'bio';
+  const bioHubDefaultCampaign = document.getElementById('bioHubDefaultCampaign');
+  if (bioHubDefaultCampaign) bioHubDefaultCampaign.value = bioHub.defaultCampaign || '';
   const tgWaEnabled = document.getElementById('tgWaEnabled');
   if (tgWaEnabled) tgWaEnabled.checked = !!s.telegramToWhatsApp?.enabled;
   document.getElementById('waForwardEnabled').onchange = scheduleWhatsAppSave;
@@ -1723,6 +1828,7 @@ function renderSettings(s){
 
   document.getElementById('debug').textContent = JSON.stringify(s, null, 2);
   document.getElementById('statStatus').textContent = 'Online';
+  refreshBioLinksPreview();
 }
 
 async function loadSettings(){
@@ -2268,6 +2374,135 @@ async function saveInstagramStorySettings(){
       status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
       status.className = 'status bad';
     }
+  }
+}
+
+function buildBioLinksFromUi(){
+  const base = window.location.origin.replace(/\/$/, '');
+  const source = (document.getElementById('bioHubDefaultSource')?.value || 'bio').trim() || 'bio';
+  const campaign = (document.getElementById('bioHubDefaultCampaign')?.value || '').trim();
+  const feedCampaign = campaign || 'insta-feed';
+  const storyCampaign = campaign || 'insta-story';
+  const manychatCampaign = campaign || 'manychat';
+  const encode = encodeURIComponent;
+
+  const linkBase = `${base}/bio?src=${encode(source)}`;
+  return [
+    { label: 'Instagram Bio', url: campaign ? `${linkBase}&camp=${encode(campaign)}` : linkBase },
+    { label: 'Story CTA', url: `${base}/bio?src=instagram-story&camp=${encode(storyCampaign)}` },
+    { label: 'ManyChat DM', url: `${base}/bio?src=manychat&camp=${encode(manychatCampaign)}` },
+    { label: 'Feed Comentario', url: `${base}/bio?src=instagram-feed&camp=${encode(feedCampaign)}` }
+  ];
+}
+
+function copyToClipboard(text){
+  if (!text) return;
+  navigator.clipboard.writeText(text).catch(() => {
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    document.body.removeChild(area);
+  });
+}
+
+function refreshBioLinksPreview(){
+  const body = document.getElementById('bioLinksTableBody');
+  if (!body) return;
+  const items = buildBioLinksFromUi();
+  body.innerHTML = items.map((item, index) => `
+    <tr>
+      <td>${escapeHtml(item.label)}</td>
+      <td><small>${escapeHtml(item.url)}</small></td>
+      <td>
+        <button class="secondary" onclick="window.open(decodeURIComponent('${encodeURIComponent(item.url)}'), '_blank')">Abrir</button>
+        <button class="secondary" onclick="copyToClipboard(decodeURIComponent('${encodeURIComponent(item.url)}'))">Copiar</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function saveBioHubSettings(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('bioHubStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.bioHub = existing.bioHub || {};
+  existing.bioHub.enabled = document.getElementById('bioHubEnabled')?.checked ?? true;
+  existing.bioHub.brandName = document.getElementById('bioHubBrandName')?.value || 'Rei das Ofertas';
+  existing.bioHub.headline = document.getElementById('bioHubHeadline')?.value || 'Achadinhos em destaque';
+  existing.bioHub.subheadline = document.getElementById('bioHubSubheadline')?.value || 'Toque no botao para abrir a oferta.';
+  existing.bioHub.buttonLabel = document.getElementById('bioHubButtonLabel')?.value || 'Abrir oferta';
+  existing.bioHub.maxItems = parseInt(document.getElementById('bioHubMaxItems')?.value || '40', 10);
+  existing.bioHub.defaultSource = document.getElementById('bioHubDefaultSource')?.value || 'bio';
+  existing.bioHub.defaultCampaign = document.getElementById('bioHubDefaultCampaign')?.value || '';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Bio Hub salvo.';
+      status.className = 'status ok';
+    }
+    refreshBioLinksPreview();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function loadBioFunnel(){
+  const status = document.getElementById('bioFunnelStatus');
+  const totals = document.getElementById('bioFunnelTotals');
+  const sources = document.getElementById('bioFunnelSources');
+  const campaigns = document.getElementById('bioFunnelCampaigns');
+  const hours = document.getElementById('bioFunnelHours')?.value || '168';
+  if (status) {
+    status.textContent = 'Carregando...';
+    status.className = 'status warn';
+  }
+
+  try {
+    const data = await api(`/api/logs/funnel?hours=${encodeURIComponent(hours)}`);
+    const total = data?.totals || {};
+    if (totals) {
+      totals.textContent = [
+        `Janela: ${data?.windowHours || hours}h`,
+        `Cliques: ${total.clicks ?? 0}`,
+        `Conversoes: ${total.conversions ?? 0}`,
+        `Conversoes OK: ${total.successfulConversions ?? 0}`,
+        `Conversoes afiliadas: ${total.affiliatedConversions ?? 0}`
+      ].join('\\n');
+    }
+
+    if (sources) {
+      const lines = (data?.bySource || []).slice(0, 8).map(x => `${x.source}: ${x.clicks} cliques (${x.uniqueLinks} links)`);
+      sources.textContent = lines.length ? lines.join('\\n') : 'Sem cliques no periodo.';
+    }
+
+    if (campaigns) {
+      const lines = (data?.byCampaign || []).slice(0, 10).map(x => `${x.campaign}: ${x.clicks} cliques (${x.uniqueLinks} links)`);
+      campaigns.textContent = lines.length ? lines.join('\\n') : 'Sem campanhas no periodo.';
+    }
+
+    if (status) {
+      status.textContent = 'Funnel atualizado.';
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao carregar funnel.';
+      status.className = 'status bad';
+    }
+    if (totals) totals.textContent = 'Falha ao carregar.';
+    if (sources) sources.textContent = 'Falha ao carregar.';
+    if (campaigns) campaigns.textContent = 'Falha ao carregar.';
   }
 }
 
