@@ -15,6 +15,7 @@ using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Endpoints;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Instagram;
+using AchadinhosBot.Next.Domain.Content;
 using AchadinhosBot.Next.Domain.Compliance;
 using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Requests;
@@ -24,6 +25,7 @@ using AchadinhosBot.Next.Infrastructure.Coupons;
 using AchadinhosBot.Next.Infrastructure.Amazon;
 using AchadinhosBot.Next.Infrastructure.Idempotency;
 using AchadinhosBot.Next.Infrastructure.Instagram;
+using AchadinhosBot.Next.Infrastructure.Content;
 using AchadinhosBot.Next.Infrastructure.Logs;
 using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.Media;
@@ -151,6 +153,7 @@ builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
 builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
 builder.Services.AddSingleton<ILinkTrackingStore, LinkTrackingStore>();
 builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
+builder.Services.AddSingleton<IContentCalendarStore, CsvContentCalendarStore>();
 builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
 builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
@@ -161,6 +164,7 @@ builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
 builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
 builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
 builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
+builder.Services.AddSingleton<ContentCalendarAutomationService>();
 builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
 builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalStore>();
@@ -189,6 +193,7 @@ builder.Services.AddSingleton<LoginAttemptStore>();
 builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
 builder.Services.AddHostedService<UptimeHeartbeatService>();
 builder.Services.AddHostedService<InstagramAutoPilotWorker>();
+builder.Services.AddHostedService<ContentCalendarWorker>();
 
 var app = builder.Build();
 
@@ -1685,6 +1690,101 @@ api.MapPost("/instagram/test", async (
     return Results.Ok(new { text });
 }).RequireAuthorization("AdminOnly");
 
+api.MapGet("/content-calendar/items", async (
+    [FromQuery] int? limit,
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    var max = Math.Clamp(limit ?? 300, 1, 1000);
+    var items = (await store.ListAsync(ct))
+        .OrderBy(x => x.ScheduledAt)
+        .Take(max)
+        .ToList();
+    return Results.Ok(new { items });
+}).RequireAuthorization("ReadAccess");
+
+api.MapGet("/content-calendar/csv", async (
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    var csv = await store.ExportCsvAsync(ct);
+    var bytes = Encoding.UTF8.GetBytes(csv);
+    return Results.File(bytes, "text/csv; charset=utf-8", "content-calendar.csv");
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/content-calendar/items", async (
+    ContentCalendarCreateRequest payload,
+    ContentCalendarAutomationService automationService,
+    CancellationToken ct) =>
+{
+    var item = await automationService.CreateAsync(payload, ct);
+    return Results.Ok(new { success = true, item });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPut("/content-calendar/items/{id}", async (
+    string id,
+    ContentCalendarCreateRequest payload,
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    var existing = await store.GetAsync(id, ct);
+    if (existing is null)
+    {
+        return Results.NotFound(new { error = "Item do calendario nao encontrado." });
+    }
+
+    existing.ScheduledAt = payload.ScheduledAt ?? existing.ScheduledAt;
+    existing.PostType = string.IsNullOrWhiteSpace(payload.PostType) ? existing.PostType : payload.PostType.Trim();
+    existing.SourceInput = payload.SourceInput ?? existing.SourceInput;
+    existing.OfferContext = payload.OfferContext ?? existing.OfferContext;
+    existing.MediaUrl = payload.MediaUrl ?? existing.MediaUrl;
+    existing.OfferUrl = payload.OfferUrl ?? existing.OfferUrl;
+    existing.Keyword = payload.Keyword ?? existing.Keyword;
+    existing.Hashtags = payload.Hashtags ?? existing.Hashtags;
+    existing.GeneratedCaption = payload.GeneratedCaption ?? existing.GeneratedCaption;
+    existing.AutoPublish = payload.AutoPublish ?? existing.AutoPublish;
+    existing.ReferenceUrl = payload.ReferenceUrl ?? existing.ReferenceUrl;
+    existing.ReferenceCaption = payload.ReferenceCaption ?? existing.ReferenceCaption;
+    existing.ReferenceMediaUrl = payload.ReferenceMediaUrl ?? existing.ReferenceMediaUrl;
+    existing.UpdatedAt = DateTimeOffset.UtcNow;
+    await store.SaveAsync(existing, ct);
+
+    return Results.Ok(new { success = true, item = existing });
+}).RequireAuthorization("AdminOnly");
+
+api.MapDelete("/content-calendar/items/{id}", async (
+    string id,
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    await store.DeleteAsync(id, ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/content-calendar/import-reference", async (
+    ContentReferenceImportRequest payload,
+    ContentCalendarAutomationService automationService,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.ReferenceUrl) &&
+        string.IsNullOrWhiteSpace(payload.ReferenceCaption) &&
+        string.IsNullOrWhiteSpace(payload.OfferUrl))
+    {
+        return Results.BadRequest(new { error = "Informe ao menos referencia (url/legenda) ou link da oferta." });
+    }
+
+    var item = await automationService.ImportReferenceAsync(payload, ct);
+    return Results.Ok(new { success = true, item });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/content-calendar/process-due", async (
+    ContentCalendarAutomationService automationService,
+    CancellationToken ct) =>
+{
+    var result = await automationService.ProcessDueAsync(ct);
+    return Results.Ok(new { success = true, result });
+}).RequireAuthorization("AdminOnly");
+
 api.MapGet("/instagram/publish/drafts", async (
     IInstagramPublishStore publishStore,
     CancellationToken ct) =>
@@ -2608,6 +2708,17 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     if (gemini.MaxOutputTokens is < 200 or > 4096)
     {
         yield return "Gemini.MaxOutputTokens deve estar entre 200 e 4096.";
+    }
+
+    var contentCalendar = settings.ContentCalendar ?? new ContentCalendarSettings();
+    if (contentCalendar.PollIntervalSeconds is < 15 or > 300)
+    {
+        yield return "ContentCalendar.PollIntervalSeconds deve estar entre 15 e 300.";
+    }
+
+    if (contentCalendar.MaxAttempts is < 1 or > 10)
+    {
+        yield return "ContentCalendar.MaxAttempts deve estar entre 1 e 10.";
     }
 }
 

@@ -27,6 +27,7 @@ public sealed class AutomationSettings
     public MercadoLivreComplianceSettings MercadoLivreCompliance { get; set; } = new();
     public LinkIntegritySettings LinkIntegrity { get; set; } = new();
     public CouponHubSettings CouponHub { get; set; } = new();
+    public ContentCalendarSettings ContentCalendar { get; set; } = new();
     public InstagramPostSettings InstagramPosts { get; set; } = new();
     public InstagramPublishSettings InstagramPublish { get; set; } = new();
     public OpenAISettings OpenAI { get; set; } = new();
@@ -176,6 +177,13 @@ public sealed class CouponHubSettings
     public bool AppendToInstagramCaptions { get; set; } = true;
     public int MaxCouponsPerStore { get; set; } = 1;
     public List<AffiliateCoupon> Coupons { get; set; } = new();
+}
+
+public sealed class ContentCalendarSettings
+{
+    public bool Enabled { get; set; } = true;
+    public int PollIntervalSeconds { get; set; } = 60;
+    public int MaxAttempts { get; set; } = 3;
 }
 
 public sealed class AffiliateCoupon
