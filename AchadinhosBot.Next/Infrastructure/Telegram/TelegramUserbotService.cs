@@ -95,7 +95,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        var phoneEnv = Environment.GetEnvironmentVariable("TELEGRAM_PHONE");
+        var phoneEnv =
+            Environment.GetEnvironmentVariable("TELEGRAM_PHONE")
+            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOTPHONE")
+            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOT_PHONE");
         var phoneConfig = _options.UserbotPhone;
         if (!hasSession && string.IsNullOrWhiteSpace(phoneEnv))
         {
@@ -155,6 +158,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         "Verifique relogio/NTP e, se necessario, recrie o arquivo WTelegram.session.");
                 }
 
+                if (IsPhoneNumberInvalid(ex))
+                {
+                    _logger.LogWarning(
+                        "TelegramUserbot falhou com PHONE_NUMBER_INVALID. Configure TELEGRAM__USERBOTPHONE no formato internacional (ex: +5511999999999) e, se preciso, apague WTelegram.session para refazer login.");
+                }
+
                 try
                 {
                     await Task.Delay(delay, stoppingToken);
@@ -178,6 +187,11 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         var dump = ex.ToString();
         return dump.Contains("BadMsgNotification", StringComparison.OrdinalIgnoreCase)
                || dump.Contains("BadServerSalt", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPhoneNumberInvalid(Exception ex)
+    {
+        return ex.ToString().Contains("PHONE_NUMBER_INVALID", StringComparison.OrdinalIgnoreCase);
     }
 
     private static TimeSpan GetRetryDelay(int retryCount)

@@ -2211,7 +2211,7 @@ static void LoadDotEnvIfPresent()
             }
 
             var key = line[..idx].Trim();
-            if (string.IsNullOrWhiteSpace(key) || Environment.GetEnvironmentVariable(key) is not null)
+            if (string.IsNullOrWhiteSpace(key))
             {
                 continue;
             }
@@ -2224,8 +2224,41 @@ static void LoadDotEnvIfPresent()
                 value = value[1..^1];
             }
 
+            SetIfMissing(key, value);
+
+            var normalizedAlias = BuildNormalizedAlias(key);
+            if (!normalizedAlias.Equals(key, StringComparison.Ordinal))
+            {
+                SetIfMissing(normalizedAlias, value);
+            }
+        }
+    }
+
+    static void SetIfMissing(string key, string value)
+    {
+        if (Environment.GetEnvironmentVariable(key) is null)
+        {
             Environment.SetEnvironmentVariable(key, value, EnvironmentVariableTarget.Process);
         }
+    }
+
+    static string BuildNormalizedAlias(string key)
+    {
+        var sections = key.Split("__", StringSplitOptions.None);
+        if (sections.Length < 2)
+        {
+            return key;
+        }
+
+        for (var i = 0; i < sections.Length; i++)
+        {
+            if (sections[i].Contains('_', StringComparison.Ordinal))
+            {
+                sections[i] = sections[i].Replace("_", string.Empty, StringComparison.Ordinal);
+            }
+        }
+
+        return string.Join("__", sections);
     }
 }
 

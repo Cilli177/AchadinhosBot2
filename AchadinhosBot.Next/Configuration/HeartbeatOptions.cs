@@ -9,6 +9,12 @@ public sealed class HeartbeatOptions
     public bool LogSuccess { get; set; } = false;
     public bool TelegramAlertEnabled { get; set; } = true;
     public long TelegramAlertChatId { get; set; }
+    public bool NtfyAlertEnabled { get; set; } = false;
+    public string? NtfyTopicUrl { get; set; }
+    public string? NtfyAccessToken { get; set; }
+    public string NtfyTitle { get; set; } = "AchadinhosBot Heartbeat";
+    public string? NtfyPriority { get; set; } = "default";
+    public string? NtfyTags { get; set; } = "warning";
     public int FailureAlertThreshold { get; set; } = 3;
     public bool RecoveryAlertEnabled { get; set; } = true;
 }

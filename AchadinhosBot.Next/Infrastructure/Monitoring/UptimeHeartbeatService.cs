@@ -1,6 +1,8 @@
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Infrastructure.Telegram;
 using Microsoft.Extensions.Options;
+using System.Net.Http.Headers;
+using System.Text;
 
 namespace AchadinhosBot.Next.Infrastructure.Monitoring;
 
@@ -131,7 +133,7 @@ public sealed class UptimeHeartbeatService : BackgroundService
         {
             if (_outageAlertSent && options.RecoveryAlertEnabled)
             {
-                await SendTelegramAlertAsync(options, BuildRecoveryMessage(), stoppingToken);
+                await SendAlertsAsync(options, BuildRecoveryMessage(), stoppingToken);
             }
 
             _consecutiveFailures = 0;
@@ -151,11 +153,18 @@ public sealed class UptimeHeartbeatService : BackgroundService
             return;
         }
 
-        var sent = await SendTelegramAlertAsync(options, BuildOutageMessage(_consecutiveFailures), stoppingToken);
+        var sent = await SendAlertsAsync(options, BuildOutageMessage(_consecutiveFailures), stoppingToken);
         if (sent)
         {
             _outageAlertSent = true;
         }
+    }
+
+    private async Task<bool> SendAlertsAsync(HeartbeatOptions options, string message, CancellationToken ct)
+    {
+        var telegramSent = await SendTelegramAlertAsync(options, message, ct);
+        var ntfySent = await SendNtfyAlertAsync(options, message, ct);
+        return telegramSent || ntfySent;
     }
 
     private async Task<bool> SendTelegramAlertAsync(HeartbeatOptions options, string message, CancellationToken ct)
@@ -182,6 +191,66 @@ public sealed class UptimeHeartbeatService : BackgroundService
         }
 
         return sent;
+    }
+
+    private async Task<bool> SendNtfyAlertAsync(HeartbeatOptions options, string message, CancellationToken ct)
+    {
+        if (!options.NtfyAlertEnabled)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.NtfyTopicUrl))
+        {
+            _logger.LogWarning("Heartbeat ntfy alert habilitado, mas Heartbeat:NtfyTopicUrl nao foi configurado.");
+            return false;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            using var request = new HttpRequestMessage(HttpMethod.Post, options.NtfyTopicUrl);
+            request.Content = new StringContent(message, Encoding.UTF8, "text/plain");
+            request.Headers.TryAddWithoutValidation("Title", options.NtfyTitle);
+
+            if (!string.IsNullOrWhiteSpace(options.NtfyPriority))
+            {
+                request.Headers.TryAddWithoutValidation("Priority", options.NtfyPriority);
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.NtfyTags))
+            {
+                request.Headers.TryAddWithoutValidation("Tags", options.NtfyTags);
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.PingUrl))
+            {
+                request.Headers.TryAddWithoutValidation("Click", options.PingUrl);
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.NtfyAccessToken))
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.NtfyAccessToken);
+            }
+
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning(
+                    "Falha ao enviar alerta no ntfy. Status={StatusCode} Body={Body}",
+                    (int)response.StatusCode,
+                    Truncate(body, 300));
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Erro ao enviar alerta de heartbeat no ntfy.");
+            return false;
+        }
     }
 
     private static string BuildOutageMessage(int failures)
