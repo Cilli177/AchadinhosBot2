@@ -110,9 +110,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     return new AffiliateLinkResult(false, null, "Amazon", false, officialValidation.Error, "Link oficial Amazon invalido", false, official.Note);
                 }
 
-                var officialShort = await ShortenAsync(official.Url, cancellationToken) ?? official.Url;
-                LogStore("Amazon", uri.ToString(), officialShort);
-                return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
+                LogStore("Amazon", uri.ToString(), official.Url);
+                return new AffiliateLinkResult(true, official.Url, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
             }
 
             var expectedTag = ResolveAmazonPartnerTag();
@@ -135,9 +134,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Amazon sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), amazon);
             }
 
-            var fallbackShort = await ShortenAsync(amazon, cancellationToken) ?? amazon;
-            LogStore("Amazon", uri.ToString(), fallbackShort);
-            return new AffiliateLinkResult(true, fallbackShort, "Amazon", true, null, null, correctionApplied, correctionNote);
+            LogStore("Amazon", uri.ToString(), amazon);
+            return new AffiliateLinkResult(true, amazon, "Amazon", true, null, null, correctionApplied, correctionNote);
         }
 
         if (host.Contains("shein.com"))
