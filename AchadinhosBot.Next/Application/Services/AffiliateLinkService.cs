@@ -14,7 +14,9 @@ namespace AchadinhosBot.Next.Application.Services;
 public sealed class AffiliateLinkService : IAffiliateLinkService
 {
     private readonly AffiliateOptions _options;
+    private readonly WebhookOptions _webhookOptions;
     private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
+    private readonly ILinkTrackingStore _linkTrackingStore;
     private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly ILogger<AffiliateLinkService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -23,13 +25,17 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     public AffiliateLinkService(
         IOptions<AffiliateOptions> options,
+        IOptions<WebhookOptions> webhookOptions,
         IMercadoLivreOAuthService mercadoLivreOAuthService,
+        ILinkTrackingStore linkTrackingStore,
         AmazonPaApiClient amazonPaApiClient,
         ILogger<AffiliateLinkService> logger,
         IHttpClientFactory httpClientFactory)
     {
         _options = options.Value;
+        _webhookOptions = webhookOptions.Value;
         _mercadoLivreOAuthService = mercadoLivreOAuthService;
+        _linkTrackingStore = linkTrackingStore;
         _amazonPaApiClient = amazonPaApiClient;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
@@ -104,8 +110,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     return new AffiliateLinkResult(false, null, "Amazon", false, officialValidation.Error, "Link oficial Amazon invalido", false, official.Note);
                 }
 
-                LogStore("Amazon", uri.ToString(), official.Url);
-                return new AffiliateLinkResult(true, official.Url, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
+                var officialShort = await ShortenAsync(official.Url, cancellationToken) ?? official.Url;
+                LogStore("Amazon", uri.ToString(), officialShort);
+                return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
             }
 
             var expectedTag = ResolveAmazonPartnerTag();
@@ -128,8 +135,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Amazon sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), amazon);
             }
 
-            LogStore("Amazon", uri.ToString(), amazon);
-            return new AffiliateLinkResult(true, amazon, "Amazon", true, null, null, correctionApplied, correctionNote);
+            var fallbackShort = await ShortenAsync(amazon, cancellationToken) ?? amazon;
+            LogStore("Amazon", uri.ToString(), fallbackShort);
+            return new AffiliateLinkResult(true, fallbackShort, "Amazon", true, null, null, correctionApplied, correctionNote);
         }
 
         if (host.Contains("shein.com"))
@@ -747,28 +755,31 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private async Task<string?> ShortenAsync(string url, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
         try
         {
-            var client = _httpClientFactory.CreateClient("default");
-            var shortener = $"https://tinyurl.com/api-create.php?url={Uri.EscapeDataString(url)}";
-            var res = await client.GetAsync(shortener, cancellationToken);
-            if (!res.IsSuccessStatusCode)
+            var baseUrl = (_webhookOptions.PublicBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(baseUrl))
             {
-                _logger.LogWarning("TinyURL falhou: {Status}", res.StatusCode);
                 return url;
             }
 
-            var body = await res.Content.ReadAsStringAsync(cancellationToken);
-            if (Uri.TryCreate(body.Trim(), UriKind.Absolute, out _))
+            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri) ||
+                (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
             {
-                return body.Trim();
+                return url;
             }
 
-            return url;
+            var entry = await _linkTrackingStore.GetOrCreateAsync(url, cancellationToken);
+            return $"{baseUrl}/r/{entry.Id}";
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Erro ao encurtar URL");
+            _logger.LogWarning(ex, "Erro ao encurtar URL internamente");
             return url;
         }
     }
