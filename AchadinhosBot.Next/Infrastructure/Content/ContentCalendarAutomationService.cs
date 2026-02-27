@@ -207,6 +207,7 @@ public sealed class ContentCalendarAutomationService
 
     private async Task EnsureItemPreparedForDraftAsync(ContentCalendarItem item, InstagramPostSettings instaSettings, CancellationToken ct)
     {
+        var postType = NormalizePostType(item.PostType);
         item.SourceInput = ResolveSourceInput(item);
         item.Keyword = NormalizeKeyword(item.Keyword);
         item.Hashtags = NormalizeHashtags(item.Hashtags);
@@ -258,11 +259,10 @@ public sealed class ContentCalendarAutomationService
                 try
                 {
                     var meta = await _instagramMetaService.GetMetaAsync(candidate, ct);
-                    var image = meta.Images
-                        .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && !x.EndsWith(".webp", StringComparison.OrdinalIgnoreCase));
-                    if (!string.IsNullOrWhiteSpace(image))
+                    var selectedMedia = SelectBestMediaForPostType(postType, meta);
+                    if (!string.IsNullOrWhiteSpace(selectedMedia))
                     {
-                        item.MediaUrl = image;
+                        item.MediaUrl = selectedMedia;
                         break;
                     }
                 }
@@ -304,9 +304,10 @@ public sealed class ContentCalendarAutomationService
         var candidates = new[]
         {
             item.SourceInput,
+            item.ReferenceCaption,
+            item.OfferContext,
             item.OfferUrl,
-            item.ReferenceUrl,
-            item.ReferenceCaption
+            item.ReferenceUrl
         };
 
         foreach (var candidate in candidates)
@@ -398,12 +399,7 @@ public sealed class ContentCalendarAutomationService
         var mediaUrl = draft.ImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
         if (string.IsNullOrWhiteSpace(mediaUrl))
         {
-            return (false, null, "Sem imagem para publicacao.");
-        }
-
-        if (IsVideoUrl(mediaUrl))
-        {
-            return (false, null, "Publicacao automatica de video ainda nao suportada no calendario.");
+            return (false, null, "Sem midia para publicacao.");
         }
 
         var baseUrl = string.IsNullOrWhiteSpace(settings.GraphBaseUrl)
@@ -411,19 +407,46 @@ public sealed class ContentCalendarAutomationService
             : settings.GraphBaseUrl.TrimEnd('/');
         var client = _httpClientFactory.CreateClient("default");
         var createUrl = $"{baseUrl}/{settings.InstagramUserId}/media";
+        var postType = NormalizePostType(draft.PostType);
+        var isVideo = await IsVideoUrlAsync(client, mediaUrl, ct);
         var createParams = new Dictionary<string, string>
         {
-            ["access_token"] = settings.AccessToken!,
-            ["image_url"] = mediaUrl
+            ["access_token"] = settings.AccessToken!
         };
+        if (isVideo)
+        {
+            createParams["video_url"] = mediaUrl;
+        }
+        else
+        {
+            createParams["image_url"] = mediaUrl;
+        }
 
-        var postType = NormalizePostType(draft.PostType);
         if (postType == "story")
         {
             createParams["media_type"] = "STORIES";
         }
+        else if (postType == "reel")
+        {
+            if (!isVideo)
+            {
+                return (false, null, "Reel requer URL de video.");
+            }
+
+            createParams["media_type"] = "REELS";
+            var captionForReel = BuildCaptionWithHashtags(draft.Caption, draft.Hashtags);
+            if (!string.IsNullOrWhiteSpace(captionForReel))
+            {
+                createParams["caption"] = captionForReel;
+            }
+        }
         else
         {
+            if (isVideo)
+            {
+                createParams["media_type"] = "VIDEO";
+            }
+
             var caption = BuildCaptionWithHashtags(draft.Caption, draft.Hashtags);
             if (!string.IsNullOrWhiteSpace(caption))
             {
@@ -445,22 +468,39 @@ public sealed class ContentCalendarAutomationService
         }
 
         var publishUrl = $"{baseUrl}/{settings.InstagramUserId}/media_publish";
-        using var publishResp = await client.PostAsync(
-            publishUrl,
-            new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["access_token"] = settings.AccessToken!,
-                ["creation_id"] = creationId
-            }),
-            ct);
-        var publishBody = await publishResp.Content.ReadAsStringAsync(ct);
-        if (!publishResp.IsSuccessStatusCode)
+        var publishParams = new Dictionary<string, string>
         {
-            return (false, null, $"Falha ao publicar: {TrimError(publishBody)}");
+            ["access_token"] = settings.AccessToken!,
+            ["creation_id"] = creationId
+        };
+        var retryDelays = new[] { 0, 4, 8, 12, 16, 22 };
+        string? lastPublishBody = null;
+        foreach (var delay in retryDelays)
+        {
+            if (delay > 0)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(delay), ct);
+            }
+
+            using var publishResp = await client.PostAsync(
+                publishUrl,
+                new FormUrlEncodedContent(publishParams),
+                ct);
+            var publishBody = await publishResp.Content.ReadAsStringAsync(ct);
+            lastPublishBody = publishBody;
+            if (publishResp.IsSuccessStatusCode)
+            {
+                var mediaId = ExtractIdFromGraphJson(publishBody);
+                return (true, mediaId, null);
+            }
+
+            if (!IsGraphMediaNotReadyError(publishBody))
+            {
+                return (false, null, $"Falha ao publicar: {TrimError(publishBody)}");
+            }
         }
 
-        var mediaId = ExtractIdFromGraphJson(publishBody);
-        return (true, mediaId, null);
+        return (false, null, $"Falha ao publicar: {TrimError(lastPublishBody)}");
     }
 
     private static string BuildCaptionWithHashtags(string? caption, string? hashtags)
@@ -488,7 +528,17 @@ public sealed class ContentCalendarAutomationService
         }
 
         var normalized = value.Trim().ToLowerInvariant();
-        return normalized.StartsWith("story", StringComparison.Ordinal) ? "story" : "feed";
+        if (normalized.StartsWith("story", StringComparison.Ordinal))
+        {
+            return "story";
+        }
+
+        if (normalized.StartsWith("reel", StringComparison.Ordinal))
+        {
+            return "reel";
+        }
+
+        return "feed";
     }
 
     private static string BuildProductName(string sourceInput)
@@ -643,6 +693,109 @@ public sealed class ContentCalendarAutomationService
         return clean.Contains(".mp4", StringComparison.Ordinal) ||
                clean.Contains(".mov", StringComparison.Ordinal) ||
                clean.Contains(".m4v", StringComparison.Ordinal) ||
-               clean.Contains(".webm", StringComparison.Ordinal);
+               clean.Contains(".webm", StringComparison.Ordinal) ||
+               clean.Contains(".m3u8", StringComparison.Ordinal);
+    }
+
+    private static async Task<bool> IsVideoUrlAsync(HttpClient client, string url, CancellationToken ct)
+    {
+        if (IsVideoUrl(url))
+        {
+            return true;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
+            using var headResponse = await client.SendAsync(headRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (headResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return true;
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+
+        try
+        {
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, url);
+            getRequest.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
+            using var getResponse = await client.SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            return getResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? SelectBestMediaForPostType(string postType, LinkMetaResult meta)
+    {
+        if (meta is null)
+        {
+            return null;
+        }
+
+        if (postType is "story" or "reel")
+        {
+            var video = meta.Videos
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+            if (!string.IsNullOrWhiteSpace(video))
+            {
+                return video;
+            }
+        }
+
+        var image = meta.Images
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && !x.EndsWith(".webp", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(image))
+        {
+            return image;
+        }
+
+        return meta.Images.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    }
+
+    private static bool IsGraphMediaNotReadyError(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("error", out var err))
+            {
+                return false;
+            }
+
+            var code = err.TryGetProperty("code", out var codeNode) ? codeNode.ToString() : string.Empty;
+            var sub = err.TryGetProperty("error_subcode", out var subNode) ? subNode.ToString() : string.Empty;
+            if (string.Equals(code, "9007", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(sub, "2207027", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var message = err.TryGetProperty("message", out var messageNode) ? messageNode.GetString() : string.Empty;
+            var userMessage = err.TryGetProperty("error_user_msg", out var userMessageNode) ? userMessageNode.GetString() : string.Empty;
+            return (message ?? string.Empty).Contains("not available", StringComparison.OrdinalIgnoreCase)
+                   || (message ?? string.Empty).Contains("not ready", StringComparison.OrdinalIgnoreCase)
+                   || (userMessage ?? string.Empty).Contains("nao esta pronta", StringComparison.OrdinalIgnoreCase)
+                   || (userMessage ?? string.Empty).Contains("aguarde", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

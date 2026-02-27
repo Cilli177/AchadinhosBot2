@@ -7339,16 +7339,22 @@ static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagr
         return (false, "Validacao de imagem/produto exige Gemini configurado.", "quality=gemini_not_configured");
     }
 
-    var firstImage = publishImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-    if (string.IsNullOrWhiteSpace(firstImage))
+    var firstMedia = publishImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    if (string.IsNullOrWhiteSpace(firstMedia))
     {
         return (false, "Imagem invalida para validacao.", "quality=image_invalid");
+    }
+
+    var probeClient = httpClientFactory.CreateClient("default");
+    if (await IsLikelyVideoUrlAsync(probeClient, firstMedia, ct))
+    {
+        return (true, null, "quality=ok;video_validation_skipped=true");
     }
 
     var imageValidation = await EvaluateImageProductMatchWithGeminiAsync(
         productName,
         effectiveCaption ?? string.Empty,
-        firstImage,
+        firstMedia,
         geminiSettings,
         httpClientFactory,
         ct);
@@ -8164,22 +8170,31 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
     {
         if (imageUrls is null || imageUrls.Count == 0)
         {
-            return (false, null, "Sem imagens para publicar.");
+            return (false, null, "Sem midia para publicar.");
         }
 
         var client = httpClientFactory.CreateClient("default");
         baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://graph.facebook.com/v19.0" : baseUrl.TrimEnd('/');
         var normalizedType = NormalizeInstagramPostTypeValue(postType);
+        var mediaUrls = imageUrls
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToList();
+        if (mediaUrls.Count == 0)
+        {
+            return (false, null, "Sem midia valida para publicar.");
+        }
 
         if (normalizedType == "story")
         {
-            var firstImage = imageUrls.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(firstImage))
+            var firstMedia = mediaUrls.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(firstMedia))
             {
-                return (false, null, "Sem imagens para publicar story.");
+                return (false, null, "Sem midia para publicar story.");
             }
 
-            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, firstImage, string.Empty, false, "STORIES", ct);
+            var isStoryVideo = await IsLikelyVideoUrlAsync(client, firstMedia, ct);
+            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, firstMedia, string.Empty, false, "STORIES", isStoryVideo, ct);
             if (string.IsNullOrWhiteSpace(containerId))
             {
                 return (false, null, $"Falha ao criar story. {containerError}");
@@ -8188,9 +8203,35 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
             return string.IsNullOrWhiteSpace(mediaId) ? (false, null, $"Falha ao publicar story. {publishError}") : (true, mediaId, null);
         }
 
-        if (imageUrls.Count == 1)
+        if (normalizedType == "reel")
         {
-            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, imageUrls[0], caption, false, null, ct);
+            var firstMedia = mediaUrls.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(firstMedia))
+            {
+                return (false, null, "Sem midia para publicar reel.");
+            }
+
+            var isReelVideo = await IsLikelyVideoUrlAsync(client, firstMedia, ct);
+            if (!isReelVideo)
+            {
+                return (false, null, "Reel requer URL de video valida.");
+            }
+
+            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, firstMedia, caption, false, "REELS", true, ct);
+            if (string.IsNullOrWhiteSpace(containerId))
+            {
+                return (false, null, $"Falha ao criar reel. {containerError}");
+            }
+            var (mediaId, publishError) = await PublishMediaAsync(client, baseUrl, igUserId, accessToken, containerId!, ct);
+            return string.IsNullOrWhiteSpace(mediaId) ? (false, null, $"Falha ao publicar reel. {publishError}") : (true, mediaId, null);
+        }
+
+        if (mediaUrls.Count == 1)
+        {
+            var singleMedia = mediaUrls[0];
+            var isSingleVideo = await IsLikelyVideoUrlAsync(client, singleMedia, ct);
+            var mediaType = isSingleVideo ? "VIDEO" : null;
+            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, singleMedia, caption, false, mediaType, isSingleVideo, ct);
             if (string.IsNullOrWhiteSpace(containerId))
             {
                 return (false, null, $"Falha ao criar container. {containerError}");
@@ -8199,11 +8240,19 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
             return string.IsNullOrWhiteSpace(mediaId) ? (false, null, $"Falha ao publicar. {publishErrorSingle}") : (true, mediaId, null);
         }
 
+        foreach (var candidate in mediaUrls)
+        {
+            if (await IsLikelyVideoUrlAsync(client, candidate, ct))
+            {
+                return (false, null, "Carrossel com video nao suportado neste fluxo automatico.");
+            }
+        }
+
         var childIds = new List<string>();
         string? firstError = null;
-        foreach (var url in imageUrls)
+        foreach (var url in mediaUrls)
         {
-            var (child, childError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, url, string.Empty, true, null, ct);
+            var (child, childError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, url, string.Empty, true, null, false, ct);
             if (!string.IsNullOrWhiteSpace(child)) childIds.Add(child!);
             if (firstError is null && !string.IsNullOrWhiteSpace(childError)) firstError = childError;
         }
@@ -8245,14 +8294,84 @@ static bool IsLikelyWebpUrl(string? url)
     return Regex.IsMatch(url, @"\.webp(\?|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 }
 
-static async Task<(string? Id, string? Error)> CreateMediaContainerAsync(HttpClient client, string baseUrl, string igUserId, string token, string imageUrl, string caption, bool carouselItem, string? mediaType, CancellationToken ct)
+static bool IsLikelyVideoUrl(string? url)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return false;
+    }
+
+    var normalized = url.ToLowerInvariant();
+    return normalized.Contains(".mp4", StringComparison.Ordinal) ||
+           normalized.Contains(".mov", StringComparison.Ordinal) ||
+           normalized.Contains(".m4v", StringComparison.Ordinal) ||
+           normalized.Contains(".webm", StringComparison.Ordinal) ||
+           normalized.Contains(".m3u8", StringComparison.Ordinal);
+}
+
+static async Task<bool> IsLikelyVideoUrlAsync(HttpClient client, string? url, CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return false;
+    }
+
+    if (IsLikelyVideoUrl(url))
+    {
+        return true;
+    }
+
+    if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+    {
+        return false;
+    }
+
+    try
+    {
+        using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
+        using var headResponse = await client.SendAsync(headRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (headResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+    }
+    catch
+    {
+        // ignored
+    }
+
+    try
+    {
+        using var getRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        getRequest.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
+        using var getResponse = await client.SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        return getResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+static async Task<(string? Id, string? Error)> CreateMediaContainerAsync(HttpClient client, string baseUrl, string igUserId, string token, string mediaUrl, string caption, bool carouselItem, string? mediaType, bool isVideo, CancellationToken ct)
 {
     var url = $"{baseUrl}/{igUserId}/media";
     var data = new Dictionary<string, string>
     {
-        ["image_url"] = imageUrl,
         ["access_token"] = token
     };
+    if (isVideo)
+    {
+        data["video_url"] = mediaUrl;
+        if (string.IsNullOrWhiteSpace(mediaType))
+        {
+            data["media_type"] = "VIDEO";
+        }
+    }
+    else
+    {
+        data["image_url"] = mediaUrl;
+    }
     if (!string.IsNullOrWhiteSpace(mediaType))
     {
         data["media_type"] = mediaType;

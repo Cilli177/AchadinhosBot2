@@ -91,12 +91,24 @@ public sealed class InstagramLinkMetaService
             images.AddRange(ExtractImageUrlsFromImgTags(html));
             images = NormalizeImageUrls(images, resolvedUri);
 
+            var videos = new List<string>();
+            videos.AddRange(ExtractMetaContents(html, "property", "og:video"));
+            videos.AddRange(ExtractMetaContents(html, "property", "og:video:url"));
+            videos.AddRange(ExtractMetaContents(html, "property", "og:video:secure_url"));
+            videos.AddRange(ExtractMetaContents(html, "name", "twitter:player:stream"));
+            videos.AddRange(ExtractVideoUrlsFromJsonLd(html));
+            videos.AddRange(ExtractVideoUrlsFromVideoTags(html));
+            videos.AddRange(ExtractVideoUrlsFromKnownJsonKeys(html));
+            videos.AddRange(ExtractVideoUrlsByExtensionPattern(html));
+            videos = NormalizeVideoUrls(videos, resolvedUri);
+
             var result = new LinkMetaResult
             {
                 Title = WebUtility.HtmlDecode(title?.Trim() ?? string.Empty),
                 Description = WebUtility.HtmlDecode(description?.Trim() ?? string.Empty),
                 PriceText = amazonMeta?.PriceText,
-                Images = images
+                Images = images,
+                Videos = videos
             };
             SetCache(link, result);
             return result;
@@ -363,6 +375,159 @@ public sealed class InstagramLinkMetaService
             .ToList();
     }
 
+    private static List<string> ExtractVideoUrlsFromVideoTags(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var urls = new List<string>();
+        var videoTags = Regex.Matches(html, @"<video\b[^>]*>(?<inner>[\s\S]*?)</video>", RegexOptions.IgnoreCase);
+        foreach (Match match in videoTags)
+        {
+            var tag = match.Value ?? string.Empty;
+            var src = ExtractTagAttribute(tag, "src");
+            if (!string.IsNullOrWhiteSpace(src))
+            {
+                urls.Add(src!);
+            }
+
+            var inner = match.Groups["inner"].Value ?? string.Empty;
+            foreach (Match source in Regex.Matches(inner, @"<source\b[^>]*>", RegexOptions.IgnoreCase))
+            {
+                var sourceSrc = ExtractTagAttribute(source.Value, "src");
+                if (!string.IsNullOrWhiteSpace(sourceSrc))
+                {
+                    urls.Add(sourceSrc!);
+                }
+            }
+        }
+
+        var sourceOnly = Regex.Matches(html, @"<source\b[^>]*>", RegexOptions.IgnoreCase);
+        foreach (Match source in sourceOnly)
+        {
+            var sourceSrc = ExtractTagAttribute(source.Value, "src");
+            if (!string.IsNullOrWhiteSpace(sourceSrc))
+            {
+                urls.Add(sourceSrc!);
+            }
+        }
+
+        return urls
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractVideoUrlsFromJsonLd(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var list = new List<string>();
+        var scripts = Regex.Matches(
+            html,
+            @"<script[^>]*type\s*=\s*['""]application/ld\+json['""][^>]*>(?<json>[\s\S]*?)</script>",
+            RegexOptions.IgnoreCase);
+
+        foreach (Match script in scripts)
+        {
+            var json = script.Groups["json"].Value;
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                continue;
+            }
+
+            list.AddRange(ExtractJsonImageByKey(json, "contentUrl"));
+            list.AddRange(ExtractJsonImageByKey(json, "embedUrl"));
+            list.AddRange(ExtractJsonImageByKey(json, "video"));
+        }
+
+        return list
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractVideoUrlsFromKnownJsonKeys(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var keys = new[]
+        {
+            "videoUrl",
+            "video_url",
+            "playUrl",
+            "play_url",
+            "streamUrl",
+            "stream_url",
+            "hlsUrl",
+            "hls_url",
+            "masterUrl",
+            "master_url",
+            "downloadUrl",
+            "download_url",
+            "video"
+        };
+
+        var list = new List<string>();
+        foreach (var key in keys)
+        {
+            list.AddRange(ExtractJsonImageByKey(html, key));
+        }
+
+        return list
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractVideoUrlsByExtensionPattern(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var list = new List<string>();
+        var absolutePattern = @"https?:\\?/\\?/[^""'<>\\s]+?\.(?:mp4|mov|m4v|webm|m3u8)(?:\?[^""'<>\\s]*)?";
+        foreach (Match match in Regex.Matches(html, absolutePattern, RegexOptions.IgnoreCase))
+        {
+            var raw = match.Value;
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                list.Add(UnescapeJsonUrl(raw));
+            }
+        }
+
+        var relativePattern = @"(?:\\?/)+[^""'<>\\s]+?\.(?:mp4|mov|m4v|webm|m3u8)(?:\?[^""'<>\\s]*)?";
+        foreach (Match match in Regex.Matches(html, relativePattern, RegexOptions.IgnoreCase))
+        {
+            var raw = match.Value;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var normalized = UnescapeJsonUrl(raw);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                list.Add(normalized);
+            }
+        }
+
+        return list
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private static bool IsTinyImageTag(string tag)
     {
         var widthRaw = ExtractTagAttribute(tag, "width");
@@ -466,6 +631,52 @@ public sealed class InstagramLinkMetaService
             .ToList();
     }
 
+    private static List<string> NormalizeVideoUrls(IEnumerable<string> urls, Uri? baseUri)
+    {
+        var result = new List<string>();
+        foreach (var raw in urls.Where(x => !string.IsNullOrWhiteSpace(x)).Take(80))
+        {
+            var value = (raw ?? string.Empty).Trim().Trim('"', '\'');
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+            if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("blob:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            value = WebUtility.HtmlDecode(value)?.Trim() ?? string.Empty;
+            if (value.StartsWith("//", StringComparison.Ordinal))
+            {
+                value = (baseUri?.Scheme ?? "https") + ":" + value;
+            }
+
+            if (Uri.TryCreate(value, UriKind.Absolute, out var absolute))
+            {
+                if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps)
+                {
+                    result.Add(absolute.GetLeftPart(UriPartial.Path) + absolute.Query);
+                }
+                continue;
+            }
+
+            if (baseUri is not null &&
+                Uri.TryCreate(baseUri, value, out var relative) &&
+                (relative.Scheme == Uri.UriSchemeHttp || relative.Scheme == Uri.UriSchemeHttps))
+            {
+                result.Add(relative.GetLeftPart(UriPartial.Path) + relative.Query);
+            }
+        }
+
+        return result
+            .Where(x => !IsLikelyInvalidVideoUrl(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+    }
+
     private static bool IsLikelyInvalidImageUrl(string url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -493,6 +704,38 @@ public sealed class InstagramLinkMetaService
                || path.Contains("loading", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsLikelyInvalidVideoUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return true;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return true;
+        }
+
+        var path = uri.AbsolutePath.ToLowerInvariant();
+        if (path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (path.Contains("logo", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("sprite", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("icon", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private record CacheEntry(DateTimeOffset Timestamp, LinkMetaResult Result);
 }
 
@@ -502,4 +745,5 @@ public sealed class LinkMetaResult
     public string? Description { get; set; }
     public string? PriceText { get; set; }
     public List<string> Images { get; set; } = new();
+    public List<string> Videos { get; set; } = new();
 }
