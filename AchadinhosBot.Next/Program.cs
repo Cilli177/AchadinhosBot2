@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Runtime.Versioning;
 using System.Drawing;
@@ -297,6 +298,7 @@ app.MapGet("/bio", async (
     ICatalogOfferStore catalogOfferStore,
     ILinkTrackingStore trackingStore,
     ISettingsStore settingsStore,
+    IOptions<WebhookOptions> webhookOptions,
     CancellationToken ct) =>
 {
     var settings = await settingsStore.GetAsync(ct);
@@ -346,7 +348,11 @@ app.MapGet("/bio", async (
         .Take(maxItems)
         .ToList();
 
-    var publicBaseUrl = $"{request.Scheme}://{request.Host}";
+    var publicBaseUrl = ResolvePublicBaseUrl(
+        bioSettings.PublicBaseUrl,
+        webhookOptions.Value.PublicBaseUrl,
+        request.Scheme,
+        request.Host.ToString());
     var trackedItems = new List<BioLinkItem>(baseItems.Count);
     foreach (var item in baseItems)
     {
@@ -1189,7 +1195,11 @@ app.MapPost("/webhook/instagram", async (
 
 var api = app.MapGroup("/api").RequireAuthorization("ReadAccess");
 
-api.MapGet("/settings", async (ISettingsStore store, CancellationToken ct) =>
+api.MapGet("/settings", async (
+    ISettingsStore store,
+    IOptions<WebhookOptions> webhookOptions,
+    HttpContext context,
+    CancellationToken ct) =>
 {
     var settings = await store.GetAsync(ct);
     if (!string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
@@ -1208,7 +1218,15 @@ api.MapGet("/settings", async (ISettingsStore store, CancellationToken ct) =>
     {
         settings.InstagramPublish.ManyChatApiKey = "********";
     }
-    return Results.Ok(settings);
+
+    var payload = JsonSerializer.SerializeToNode(settings)?.AsObject() ?? new JsonObject();
+    payload["publicBaseUrl"] = ResolvePublicBaseUrl(
+        settings.BioHub?.PublicBaseUrl,
+        webhookOptions.Value.PublicBaseUrl,
+        context.Request.Scheme,
+        context.Request.Host.ToString());
+
+    return Results.Json(payload);
 });
 
 api.MapPut("/settings", async (
@@ -2563,6 +2581,12 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
         NormalizeTrackingToken(bio.DefaultCampaign, null) is null)
     {
         yield return "BioHub.DefaultCampaign invalido.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(bio.PublicBaseUrl) &&
+        !TryNormalizePublicBaseUrl(bio.PublicBaseUrl, out _))
+    {
+        yield return "BioHub.PublicBaseUrl invalido. Use URL absoluta (http/https).";
     }
 }
 
@@ -5014,6 +5038,89 @@ static string BuildBioCurrentUrl(string publicBaseUrl, string source, string? ca
 
     var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
     return $"{publicBaseUrl.TrimEnd('/')}/bio{query}";
+}
+
+static string ResolvePublicBaseUrl(string? primaryPublicBaseUrl, string? secondaryPublicBaseUrl, string requestScheme, string requestHost)
+{
+    if (TryNormalizePublicBaseUrl(primaryPublicBaseUrl, out var primary))
+    {
+        return primary;
+    }
+
+    if (TryNormalizePublicBaseUrl(secondaryPublicBaseUrl, out var secondary))
+    {
+        return secondary;
+    }
+
+    if (TryReadBundledPublicBaseUrl(out var bundled))
+    {
+        return bundled;
+    }
+
+    if (string.IsNullOrWhiteSpace(requestHost))
+    {
+        return string.Empty;
+    }
+
+    var scheme = string.IsNullOrWhiteSpace(requestScheme) ? "https" : requestScheme.Trim();
+    return $"{scheme}://{requestHost}".TrimEnd('/');
+}
+
+static bool TryNormalizePublicBaseUrl(string? value, out string normalized)
+{
+    normalized = string.Empty;
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return false;
+    }
+
+    var trimmed = value.Trim().TrimEnd('/');
+    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    if (!string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    normalized = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+    return !string.IsNullOrWhiteSpace(normalized);
+}
+
+static bool TryReadBundledPublicBaseUrl(out string publicBaseUrl)
+{
+    publicBaseUrl = string.Empty;
+    var file = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    if (!File.Exists(file))
+    {
+        return false;
+    }
+
+    try
+    {
+        using var stream = File.OpenRead(file);
+        using var doc = JsonDocument.Parse(stream);
+        if (doc.RootElement.TryGetProperty("Webhook", out var webhook) &&
+            webhook.ValueKind == JsonValueKind.Object &&
+            webhook.TryGetProperty("PublicBaseUrl", out var baseUrlProp))
+        {
+            var raw = baseUrlProp.GetString();
+            if (TryNormalizePublicBaseUrl(raw, out var normalized))
+            {
+                publicBaseUrl = normalized;
+                return true;
+            }
+        }
+    }
+    catch
+    {
+        // keep default fallback path
+    }
+
+    return false;
 }
 
 static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, string source, string? campaign)

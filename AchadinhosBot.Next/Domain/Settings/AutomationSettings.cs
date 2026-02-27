@@ -140,6 +140,7 @@ public sealed class LinkResponderSettings
 public sealed class BioHubSettings
 {
     public bool Enabled { get; set; } = true;
+    public string PublicBaseUrl { get; set; } = string.Empty;
     public string BrandName { get; set; } = "Rei das Ofertas";
     public string Headline { get; set; } = "Achadinhos em destaque";
     public string Subheadline { get; set; } = "Toque no botão para abrir a oferta com o melhor link.";

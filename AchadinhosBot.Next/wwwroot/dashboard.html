@@ -1117,6 +1117,8 @@
             <input id="bioHubDefaultCampaign" placeholder="insta-feed" />
           </div>
         </div>
+        <label>Dominio publico dos links</label>
+        <input id="bioHubPublicBaseUrl" placeholder="https://achadinhos.reidasofertas.ia.br" />
         <div class="row" style="margin-top:12px;">
           <button class="secondary" onclick="saveBioHubSettings()">Salvar Bio Hub</button>
           <button class="secondary" onclick="refreshBioLinksPreview()">Atualizar links</button>
@@ -1828,6 +1830,8 @@ function renderSettings(s){
   if (bioHubDefaultSource) bioHubDefaultSource.value = bioHub.defaultSource || 'bio';
   const bioHubDefaultCampaign = document.getElementById('bioHubDefaultCampaign');
   if (bioHubDefaultCampaign) bioHubDefaultCampaign.value = bioHub.defaultCampaign || '';
+  const bioHubPublicBaseUrl = document.getElementById('bioHubPublicBaseUrl');
+  if (bioHubPublicBaseUrl) bioHubPublicBaseUrl.value = bioHub.publicBaseUrl || s.publicBaseUrl || '';
   const tgWaEnabled = document.getElementById('tgWaEnabled');
   if (tgWaEnabled) tgWaEnabled.checked = !!s.telegramToWhatsApp?.enabled;
   document.getElementById('waForwardEnabled').onchange = scheduleWhatsAppSave;
@@ -2399,7 +2403,10 @@ async function saveInstagramStorySettings(){
 }
 
 function buildBioLinksFromUi(){
-  const base = window.location.origin.replace(/\/$/, '');
+  const manualBase = (document.getElementById('bioHubPublicBaseUrl')?.value || '').trim();
+  const configuredBase = (manualBase || window.__settingsCache?.publicBaseUrl || '').trim();
+  const runtimeBase = (window.location.origin || '').trim();
+  const base = (configuredBase || runtimeBase).replace(/\/$/, '');
   const source = (document.getElementById('bioHubDefaultSource')?.value || 'bio').trim() || 'bio';
   const campaign = (document.getElementById('bioHubDefaultCampaign')?.value || '').trim();
   const feedCampaign = campaign || 'insta-feed';
@@ -2464,6 +2471,7 @@ async function saveBioHubSettings(){
   existing.bioHub.maxItems = parseInt(document.getElementById('bioHubMaxItems')?.value || '40', 10);
   existing.bioHub.defaultSource = document.getElementById('bioHubDefaultSource')?.value || 'bio';
   existing.bioHub.defaultCampaign = document.getElementById('bioHubDefaultCampaign')?.value || '';
+  existing.bioHub.publicBaseUrl = document.getElementById('bioHubPublicBaseUrl')?.value || '';
 
   try {
     await api('/api/settings', 'PUT', existing);
