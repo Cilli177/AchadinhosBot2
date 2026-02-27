@@ -1219,7 +1219,9 @@ api.MapGet("/settings", async (
         settings.InstagramPublish.ManyChatApiKey = "********";
     }
 
-    var payload = JsonSerializer.SerializeToNode(settings)?.AsObject() ?? new JsonObject();
+    var payload = JsonSerializer.SerializeToNode(
+        settings,
+        new JsonSerializerOptions(JsonSerializerDefaults.Web))?.AsObject() ?? new JsonObject();
     payload["publicBaseUrl"] = ResolvePublicBaseUrl(
         settings.BioHub?.PublicBaseUrl,
         webhookOptions.Value.PublicBaseUrl,
