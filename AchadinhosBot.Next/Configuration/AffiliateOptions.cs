@@ -30,6 +30,8 @@ public sealed class AffiliateOptions
 
     public string ShopeeSecret { get; init; } = string.Empty;
 
+    public AmazonProductApiOptions AmazonProductApi { get; init; } = new();
+
     public OfficialCouponApiOptions AmazonOfficialCoupons { get; init; } = new();
 
     public OfficialCouponApiOptions ShopeeOfficialCoupons { get; init; } = new();
@@ -37,6 +39,27 @@ public sealed class AffiliateOptions
     public OfficialCouponApiOptions SheinOfficialCoupons { get; init; } = new();
 
     public OfficialCouponApiOptions MercadoLivreOfficialCoupons { get; init; } = new();
+}
+
+public sealed class AmazonProductApiOptions
+{
+    public bool Enabled { get; init; }
+
+    public string AccessKey { get; init; } = string.Empty;
+
+    public string SecretKey { get; init; } = string.Empty;
+
+    public string PartnerTag { get; init; } = string.Empty;
+
+    public string PartnerType { get; init; } = "Associates";
+
+    public string Host { get; init; } = "webservices.amazon.com.br";
+
+    public string Region { get; init; } = "us-east-1";
+
+    public string Marketplace { get; init; } = "www.amazon.com.br";
+
+    public string Path { get; init; } = "/paapi5/getitems";
 }
 
 public sealed class OfficialCouponApiOptions

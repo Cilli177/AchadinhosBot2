@@ -20,6 +20,7 @@ using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Audit;
 using AchadinhosBot.Next.Infrastructure.Coupons;
+using AchadinhosBot.Next.Infrastructure.Amazon;
 using AchadinhosBot.Next.Infrastructure.Idempotency;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Logs;
@@ -138,6 +139,7 @@ builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(6
 builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60));
 
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
+builder.Services.AddSingleton<AmazonPaApiClient>();
 builder.Services.AddSingleton<IAffiliateCouponSyncService, AffiliateCouponSyncService>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, AmazonOfficialCouponProvider>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, ShopeeOfficialCouponProvider>();

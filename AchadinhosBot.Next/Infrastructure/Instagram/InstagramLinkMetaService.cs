@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Net;
+using AchadinhosBot.Next.Infrastructure.Amazon;
 
 namespace AchadinhosBot.Next.Infrastructure.Instagram;
 
@@ -9,11 +10,16 @@ public sealed class InstagramLinkMetaService
     private static readonly object CacheLock = new();
     private static readonly Dictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly ILogger<InstagramLinkMetaService> _logger;
 
-    public InstagramLinkMetaService(IHttpClientFactory httpClientFactory, ILogger<InstagramLinkMetaService> logger)
+    public InstagramLinkMetaService(
+        IHttpClientFactory httpClientFactory,
+        AmazonPaApiClient amazonPaApiClient,
+        ILogger<InstagramLinkMetaService> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _amazonPaApiClient = amazonPaApiClient;
         _logger = logger;
     }
 
@@ -24,6 +30,33 @@ public sealed class InstagramLinkMetaService
 
         try
         {
+            LinkMetaResult? amazonMeta = null;
+            if (Uri.TryCreate(link, UriKind.Absolute, out var uri) &&
+                IsAmazonHost(uri.Host) &&
+                _amazonPaApiClient.IsConfigured)
+            {
+                var asin = ExtractAmazonAsin(uri);
+                if (!string.IsNullOrWhiteSpace(asin))
+                {
+                    var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
+                    if (item is not null)
+                    {
+                        amazonMeta = new LinkMetaResult
+                        {
+                            Title = item.Title,
+                            PriceText = item.PriceDisplay,
+                            Images = item.Images ?? new List<string>()
+                        };
+
+                        if (!string.IsNullOrWhiteSpace(amazonMeta.Title) || amazonMeta.Images.Count > 0)
+                        {
+                            SetCache(link, amazonMeta);
+                            return amazonMeta;
+                        }
+                    }
+                }
+            }
+
             var client = _httpClientFactory.CreateClient("default");
             using var response = await client.GetAsync(link, ct);
             if (!response.IsSuccessStatusCode) return new LinkMetaResult();
@@ -32,6 +65,7 @@ public sealed class InstagramLinkMetaService
             var resolvedUri = response.RequestMessage?.RequestUri;
 
             var title = FirstNonEmpty(
+                amazonMeta?.Title ?? string.Empty,
                 ExtractMetaContent(html, "property", "og:title"),
                 ExtractMetaContent(html, "name", "twitter:title"),
                 ExtractTitleTag(html));
@@ -42,6 +76,10 @@ public sealed class InstagramLinkMetaService
                 ExtractMetaContent(html, "name", "twitter:description"));
 
             var images = new List<string>();
+            if (amazonMeta?.Images is { Count: > 0 })
+            {
+                images.AddRange(amazonMeta.Images);
+            }
             images.AddRange(ExtractMetaContents(html, "property", "og:image"));
             images.AddRange(ExtractMetaContents(html, "property", "og:image:url"));
             images.AddRange(ExtractMetaContents(html, "property", "og:image:secure_url"));
@@ -57,6 +95,7 @@ public sealed class InstagramLinkMetaService
             {
                 Title = WebUtility.HtmlDecode(title?.Trim() ?? string.Empty),
                 Description = WebUtility.HtmlDecode(description?.Trim() ?? string.Empty),
+                PriceText = amazonMeta?.PriceText,
                 Images = images
             };
             SetCache(link, result);
@@ -97,6 +136,50 @@ public sealed class InstagramLinkMetaService
 
     private static string FirstNonEmpty(params string[] values)
         => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? string.Empty;
+
+    private static bool IsAmazonHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        var normalized = host.Trim().ToLowerInvariant();
+        return normalized == "amazon.com"
+               || normalized == "amazon.com.br"
+               || normalized.EndsWith(".amazon.com", StringComparison.Ordinal)
+               || normalized.EndsWith(".amazon.com.br", StringComparison.Ordinal);
+    }
+
+    private static string? ExtractAmazonAsin(Uri uri)
+    {
+        var path = (uri.AbsolutePath ?? string.Empty).ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var patterns = new[]
+        {
+            @"/DP/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/AW/D/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(path, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (match.Success)
+            {
+                return match.Groups["asin"].Value;
+            }
+        }
+
+        var query = uri.Query ?? string.Empty;
+        var queryMatch = Regex.Match(query, @"(?:^|[?&])asin=(?<asin>[A-Za-z0-9]{10})(?:&|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return queryMatch.Success ? queryMatch.Groups["asin"].Value.ToUpperInvariant() : null;
+    }
 
     private static string ExtractTitleTag(string html)
     {
@@ -417,5 +500,6 @@ public sealed class LinkMetaResult
 {
     public string? Title { get; set; }
     public string? Description { get; set; }
+    public string? PriceText { get; set; }
     public List<string> Images { get; set; } = new();
 }
