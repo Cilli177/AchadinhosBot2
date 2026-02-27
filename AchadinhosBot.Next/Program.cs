@@ -14,6 +14,7 @@ using AchadinhosBot.Next.Endpoints;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Compliance;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Audit;
@@ -145,6 +146,7 @@ builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthServic
 builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
 builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
 builder.Services.AddSingleton<ILinkTrackingStore, LinkTrackingStore>();
+builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
 builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
 builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
@@ -292,6 +294,7 @@ app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 app.MapGet("/bio", async (
     HttpContext context,
     IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
     ILinkTrackingStore trackingStore,
     ISettingsStore settingsStore,
     CancellationToken ct) =>
@@ -314,10 +317,14 @@ app.MapGet("/bio", async (
     var maxItems = Math.Clamp(bioSettings.MaxItems, 5, 80);
 
     var drafts = await publishStore.ListAsync(ct);
+    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    var catalogByDraftId = await catalogOfferStore.GetByDraftIdAsync(ct);
+
     var baseItems = drafts
         .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
         .Select(d =>
         {
+            catalogByDraftId.TryGetValue(d.Id, out var catalogItem);
             var cta = d.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Link));
             var link = cta?.Link ?? ExtractFirstUrl(d.Caption);
             var title = !string.IsNullOrWhiteSpace(d.ProductName) ? d.ProductName : "Oferta";
@@ -328,7 +335,8 @@ app.MapGet("/bio", async (
                 Link = link?.Trim() ?? string.Empty,
                 OriginalLink = link?.Trim() ?? string.Empty,
                 Store = ResolveStoreNameFromUrl(link),
-                Keyword = cta?.Keyword?.Trim()
+                ItemNumber = catalogItem?.ItemNumber,
+                Keyword = FirstNonEmpty(catalogItem?.Keyword, cta?.Keyword?.Trim())
             };
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Link))
@@ -353,6 +361,48 @@ app.MapGet("/bio", async (
 
     var currentUrl = BuildBioCurrentUrl(publicBaseUrl, source, campaign);
     var html = BuildBioLinksPageHtml(trackedItems, currentUrl, bioSettings, source, campaign);
+    return Results.Content(html, "text/html; charset=utf-8");
+});
+
+app.MapGet("/catalogo", async (
+    HttpContext context,
+    IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var q = context.Request.Query["q"].ToString();
+    var drafts = await publishStore.ListAsync(ct);
+    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+
+    var items = await catalogOfferStore.ListAsync(q, 120, ct);
+    var request = context.Request;
+    var currentUrl = $"{request.Scheme}://{request.Host}/catalogo";
+    if (!string.IsNullOrWhiteSpace(q))
+    {
+        currentUrl += $"?q={Uri.EscapeDataString(q)}";
+    }
+
+    var html = BuildCatalogPageHtml(items, q, currentUrl);
+    return Results.Content(html, "text/html; charset=utf-8");
+});
+
+app.MapGet("/item/{query}", async (
+    string query,
+    HttpContext context,
+    IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var drafts = await publishStore.ListAsync(ct);
+    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    var item = await catalogOfferStore.FindByCodeAsync(query, ct);
+    if (item is null)
+    {
+        return Results.NotFound($"Item '{query}' nao encontrado.");
+    }
+
+    var baseCatalogUrl = $"{context.Request.Scheme}://{context.Request.Host}/catalogo";
+    var html = BuildCatalogItemPageHtml(item, baseCatalogUrl);
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
@@ -1224,6 +1274,42 @@ api.MapPut("/settings", async (
     await audit.WriteAsync("settings.updated", context.User.Identity?.Name ?? "unknown", new { autoReplies = payload.AutoReplies.Count }, ct);
     return Results.Ok(new { success = true });
 }).RequireAuthorization("AdminOnly");
+
+api.MapPost("/catalog/sync", async (
+    IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var drafts = await publishStore.ListAsync(ct);
+    var result = await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    await audit.WriteAsync("catalog.sync", context.User.Identity?.Name ?? "unknown", result, ct);
+    return Results.Ok(new
+    {
+        success = true,
+        result
+    });
+}).RequireAuthorization("AdminOnly");
+
+api.MapGet("/catalog/items", async (
+    [FromQuery] string? q,
+    [FromQuery] int? limit,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var items = await catalogOfferStore.ListAsync(q, limit ?? 200, ct);
+    return Results.Ok(new { items });
+});
+
+api.MapGet("/catalog/items/{query}", async (
+    string query,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var item = await catalogOfferStore.FindByCodeAsync(query, ct);
+    return item is null ? Results.NotFound() : Results.Ok(item);
+});
 
 api.MapPost("/integrations/whatsapp/connect", async (
     WhatsAppInstanceRequest payload,
@@ -4857,6 +4943,10 @@ static string BuildBioLinksPageHtml(
 
             sb.AppendLine("  <article class=\"card\">");
             sb.AppendLine($"    <div class=\"title\">{title}</div>");
+            if (item.ItemNumber.HasValue)
+            {
+                sb.AppendLine($"    <div class=\"meta\">Item: <strong>{item.ItemNumber.Value}</strong></div>");
+            }
             sb.AppendLine($"    <div class=\"meta\">Loja: <strong>{store}</strong></div>");
             sb.AppendLine($"    <div class=\"meta\">Publicado em {createdAt}" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" | Palavra: <strong>{keyword}</strong>") + "</div>");
             sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">{System.Net.WebUtility.HtmlEncode(buttonLabel)}</a>");
@@ -5067,6 +5157,135 @@ static string TruncateForLog(string? value, int maxLength)
 
     var trimmed = value.Trim();
     return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+}
+
+static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string? query, string currentUrl)
+{
+    var q = query?.Trim() ?? string.Empty;
+    var qEncoded = System.Net.WebUtility.HtmlEncode(q);
+    var currentUrlEncoded = System.Net.WebUtility.HtmlEncode(currentUrl);
+    var sb = new StringBuilder();
+    sb.AppendLine("<!doctype html>");
+    sb.AppendLine("<html lang=\"pt-BR\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("  <meta charset=\"utf-8\" />");
+    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+    sb.AppendLine("  <title>Catalogo de Ofertas</title>");
+    sb.AppendLine("  <style>");
+    sb.AppendLine("    :root{--bg:#f6f8ff;--text:#1d2842;--sub:#61718f;--line:#d7deef;--card:#ffffff;--btn:#2f73ef;--btnText:#fff;}");
+    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(175deg,#fbfcff 0%,var(--bg) 100%);color:var(--text)}");
+    sb.AppendLine("    .wrap{max-width:980px;margin:0 auto;padding:22px 14px 32px}");
+    sb.AppendLine("    .head{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}");
+    sb.AppendLine("    h1{margin:0 0 6px;font-size:1.4rem} p{margin:0;color:var(--sub)}");
+    sb.AppendLine("    form{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}");
+    sb.AppendLine("    input{flex:1;min-width:220px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}");
+    sb.AppendLine("    button{padding:10px 14px;border:0;border-radius:10px;background:var(--btn);color:var(--btnText);font-weight:700;cursor:pointer}");
+    sb.AppendLine("    .list{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}");
+    sb.AppendLine("    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}");
+    sb.AppendLine("    .code{font-size:.82rem;color:var(--sub);font-weight:700}");
+    sb.AppendLine("    .title{margin-top:6px;font-weight:700;line-height:1.35}");
+    sb.AppendLine("    .meta{margin-top:6px;color:var(--sub);font-size:.86rem}");
+    sb.AppendLine("    .price{margin-top:8px;font-size:1rem;font-weight:700}");
+    sb.AppendLine("    .thumb{margin-top:8px;width:100%;height:170px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}");
+    sb.AppendLine("    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}");
+    sb.AppendLine("    .link{display:inline-block;text-decoration:none;background:var(--btn);color:#fff;padding:8px 10px;border-radius:8px;font-weight:700}");
+    sb.AppendLine("    .ghost{display:inline-block;text-decoration:none;background:#eef3ff;color:#1f3e80;padding:8px 10px;border-radius:8px;font-weight:700}");
+    sb.AppendLine("    .foot{margin-top:14px;color:var(--sub);font-size:.82rem}");
+    sb.AppendLine("  </style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body><main class=\"wrap\">");
+    sb.AppendLine("  <section class=\"head\">");
+    sb.AppendLine("    <h1>Catalogo de ofertas</h1>");
+    sb.AppendLine("    <p>Busque pelo numero (ex: 42) ou palavra-chave do item.</p>");
+    sb.AppendLine("    <form method=\"get\" action=\"/catalogo\">");
+    sb.AppendLine($"      <input name=\"q\" value=\"{qEncoded}\" placeholder=\"Ex: 42, ITEM42, FONE\" />");
+    sb.AppendLine("      <button type=\"submit\">Buscar</button>");
+    sb.AppendLine("    </form>");
+    sb.AppendLine("  </section>");
+
+    if (items.Count == 0)
+    {
+        sb.AppendLine("  <div class=\"head\" style=\"margin-top:12px;\">Nenhum item encontrado.</div>");
+    }
+    else
+    {
+        sb.AppendLine("  <section class=\"list\">");
+        foreach (var item in items)
+        {
+            var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
+            var store = System.Net.WebUtility.HtmlEncode(item.Store);
+            var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
+            var link = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
+            var detail = $"/item/{item.ItemNumber}";
+            var detailLink = System.Net.WebUtility.HtmlEncode(detail);
+            var price = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+
+            sb.AppendLine("    <article class=\"card\">");
+            sb.AppendLine($"      <div class=\"code\">ITEM {item.ItemNumber} | Palavra: {keyword}</div>");
+            sb.AppendLine($"      <div class=\"title\">{title}</div>");
+            sb.AppendLine($"      <div class=\"meta\">Loja: {store}</div>");
+            sb.AppendLine($"      <div class=\"price\">{price}</div>");
+            if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+            {
+                var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl);
+                sb.AppendLine($"      <img class=\"thumb\" src=\"{image}\" alt=\"Item {item.ItemNumber}\" loading=\"lazy\" />");
+            }
+            sb.AppendLine("      <div class=\"actions\">");
+            sb.AppendLine($"        <a class=\"link\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
+            sb.AppendLine($"        <a class=\"ghost\" href=\"{detailLink}\">Ver detalhes</a>");
+            sb.AppendLine("      </div>");
+            sb.AppendLine("    </article>");
+        }
+        sb.AppendLine("  </section>");
+    }
+
+    sb.AppendLine($"  <div class=\"foot\">Link desta pagina: {currentUrlEncoded}</div>");
+    sb.AppendLine("</main></body></html>");
+    return sb.ToString();
+}
+
+static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
+{
+    var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
+    var store = System.Net.WebUtility.HtmlEncode(item.Store);
+    var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
+    var price = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+    var offerUrl = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
+    var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
+    var catalog = System.Net.WebUtility.HtmlEncode(catalogUrl);
+    var sb = new StringBuilder();
+    sb.AppendLine("<!doctype html>");
+    sb.AppendLine("<html lang=\"pt-BR\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("  <meta charset=\"utf-8\" />");
+    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+    sb.AppendLine($"  <title>Item {item.ItemNumber} - Catalogo</title>");
+    sb.AppendLine("  <style>");
+    sb.AppendLine("    :root{--bg:#f6f8ff;--text:#1d2842;--sub:#61718f;--line:#d7deef;--card:#fff;--btn:#2f73ef;--btnText:#fff}");
+    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;background:linear-gradient(175deg,#fbfcff 0%,var(--bg) 100%);color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif}");
+    sb.AppendLine("    .wrap{max-width:720px;margin:0 auto;padding:24px 14px 28px}");
+    sb.AppendLine("    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}");
+    sb.AppendLine("    h1{margin:0 0 8px;font-size:1.35rem}.meta{color:var(--sub);margin-top:5px}");
+    sb.AppendLine("    .price{margin-top:10px;font-size:1.1rem;font-weight:700}.thumb{margin-top:12px;width:100%;height:290px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}");
+    sb.AppendLine("    .actions{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}.btn{display:inline-block;text-decoration:none;padding:10px 12px;border-radius:10px;font-weight:700}");
+    sb.AppendLine("    .btn.primary{background:var(--btn);color:var(--btnText)}.btn.ghost{background:#eef3ff;color:#1f3e80}");
+    sb.AppendLine("  </style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body><main class=\"wrap\"><article class=\"card\">");
+    sb.AppendLine($"  <h1>Item {item.ItemNumber} - {title}</h1>");
+    sb.AppendLine($"  <div class=\"meta\">Loja: {store}</div>");
+    sb.AppendLine($"  <div class=\"meta\">Palavra-chave: <strong>{keyword}</strong></div>");
+    sb.AppendLine($"  <div class=\"price\">{price}</div>");
+    if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+    {
+        sb.AppendLine($"  <img class=\"thumb\" src=\"{image}\" alt=\"Item {item.ItemNumber}\" />");
+    }
+    sb.AppendLine("  <div class=\"actions\">");
+    sb.AppendLine($"    <a class=\"btn primary\" href=\"{offerUrl}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
+    sb.AppendLine($"    <a class=\"btn ghost\" href=\"{catalog}\">Voltar ao catalogo</a>");
+    sb.AppendLine("  </div>");
+    sb.AppendLine("</article></main></body></html>");
+    return sb.ToString();
 }
 
 static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)
@@ -8309,6 +8528,7 @@ internal sealed record BioLinkItem
     public string Link { get; init; } = string.Empty;
     public string OriginalLink { get; init; } = string.Empty;
     public string Store { get; init; } = "Loja";
+    public int? ItemNumber { get; init; }
     public string? Keyword { get; init; }
 }
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);

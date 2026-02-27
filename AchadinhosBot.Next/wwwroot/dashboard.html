@@ -1100,6 +1100,7 @@
         <div class="row" style="margin-top:12px;">
           <button class="secondary" onclick="saveBioHubSettings()">Salvar Bio Hub</button>
           <button class="secondary" onclick="refreshBioLinksPreview()">Atualizar links</button>
+          <button class="secondary" onclick="syncCatalogNow()">Sincronizar catalogo</button>
           <span id="bioHubStatus" class="status muted"></span>
         </div>
         <div class="table-wrap" style="margin-top:10px;">
@@ -2391,7 +2392,9 @@ function buildBioLinksFromUi(){
     { label: 'Instagram Bio', url: campaign ? `${linkBase}&camp=${encode(campaign)}` : linkBase },
     { label: 'Story CTA', url: `${base}/bio?src=instagram-story&camp=${encode(storyCampaign)}` },
     { label: 'ManyChat DM', url: `${base}/bio?src=manychat&camp=${encode(manychatCampaign)}` },
-    { label: 'Feed Comentario', url: `${base}/bio?src=instagram-feed&camp=${encode(feedCampaign)}` }
+    { label: 'Feed Comentario', url: `${base}/bio?src=instagram-feed&camp=${encode(feedCampaign)}` },
+    { label: 'Catalogo Site', url: `${base}/catalogo` },
+    { label: 'Item Exemplo', url: `${base}/item/42` }
   ];
 }
 
@@ -2452,6 +2455,28 @@ async function saveBioHubSettings(){
   } catch (e) {
     if (status) {
       status.textContent = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function syncCatalogNow(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('bioHubStatus');
+  if (status) {
+    status.textContent = 'Sincronizando catalogo...';
+    status.className = 'status warn';
+  }
+  try {
+    const res = await api('/api/catalog/sync', 'POST', {});
+    const result = res?.result || {};
+    if (status) {
+      status.textContent = `Catalogo sincronizado. Criados: ${result.created || 0}, atualizados: ${result.updated || 0}, ativos: ${result.totalActive || 0}.`;
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao sincronizar catalogo.';
       status.className = 'status bad';
     }
   }
