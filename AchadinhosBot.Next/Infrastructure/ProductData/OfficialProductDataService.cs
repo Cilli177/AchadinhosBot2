@@ -133,7 +133,7 @@ public sealed class OfficialProductDataService
 
     private async Task<OfficialProductDataResult?> TryGetMercadoLivreDataAsync(Uri uri, CancellationToken ct)
     {
-        var itemId = ExtractMercadoLivreItemId(uri);
+        var itemId = await TryResolveMercadoLivreItemIdAsync(uri, ct);
         if (string.IsNullOrWhiteSpace(itemId))
         {
             return null;
@@ -179,6 +179,42 @@ public sealed class OfficialProductDataService
             _logger.LogDebug(ex, "Falha ao obter dados oficiais do Mercado Livre.");
             return null;
         }
+    }
+
+    private async Task<string?> TryResolveMercadoLivreItemIdAsync(Uri uri, CancellationToken ct)
+    {
+        var itemId = ExtractMercadoLivreItemId(uri);
+        if (!string.IsNullOrWhiteSpace(itemId))
+        {
+            return itemId;
+        }
+
+        var resolved = await TryResolveFinalUrlAsync(uri.ToString(), ct);
+        if (!string.IsNullOrWhiteSpace(resolved) &&
+            Uri.TryCreate(resolved, UriKind.Absolute, out var resolvedUri))
+        {
+            itemId = ExtractMercadoLivreItemId(resolvedUri);
+            if (!string.IsNullOrWhiteSpace(itemId))
+            {
+                return itemId;
+            }
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            var html = await client.GetStringAsync(resolved ?? uri.ToString(), ct);
+            var fromHtml = ExtractMercadoLivreItemIdFromText(html);
+            if (!string.IsNullOrWhiteSpace(fromHtml))
+            {
+                return fromHtml;
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
     }
 
     private static OfficialProductDataResult? ParseMercadoLivreItemResponse(Uri uri, JsonDocument doc)
@@ -443,6 +479,17 @@ public sealed class OfficialProductDataService
     private static string? ExtractMercadoLivreItemId(Uri uri)
     {
         var text = $"{uri.AbsolutePath} {uri.Query}";
+        var match = Regex.Match(text, @"\bMLB[-_]?(?<id>\d{8,})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? $"MLB{match.Groups["id"].Value}" : null;
+    }
+
+    private static string? ExtractMercadoLivreItemIdFromText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
         var match = Regex.Match(text, @"\bMLB[-_]?(?<id>\d{8,})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return match.Success ? $"MLB{match.Groups["id"].Value}" : null;
     }
