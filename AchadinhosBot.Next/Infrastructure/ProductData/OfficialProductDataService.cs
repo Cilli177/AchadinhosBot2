@@ -1,8 +1,11 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Infrastructure.Amazon;
 using Microsoft.Extensions.Options;
@@ -12,17 +15,20 @@ namespace AchadinhosBot.Next.Infrastructure.ProductData;
 public sealed class OfficialProductDataService
 {
     private readonly AmazonPaApiClient _amazonPaApiClient;
+    private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
     private readonly AffiliateOptions _affiliateOptions;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<OfficialProductDataService> _logger;
 
     public OfficialProductDataService(
         AmazonPaApiClient amazonPaApiClient,
+        IMercadoLivreOAuthService mercadoLivreOAuthService,
         IOptions<AffiliateOptions> affiliateOptions,
         IHttpClientFactory httpClientFactory,
         ILogger<OfficialProductDataService> logger)
     {
         _amazonPaApiClient = amazonPaApiClient;
+        _mercadoLivreOAuthService = mercadoLivreOAuthService;
         _affiliateOptions = affiliateOptions.Value;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -136,7 +142,29 @@ public sealed class OfficialProductDataService
         try
         {
             var client = _httpClientFactory.CreateClient("default");
-            using var response = await client.GetAsync($"https://api.mercadolibre.com/items/{itemId}", ct);
+            var endpoint = $"https://api.mercadolibre.com/items/{itemId}";
+            var accessToken = await _mercadoLivreOAuthService.GetAccessTokenAsync(ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            if (!string.IsNullOrWhiteSpace(accessToken))
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            }
+
+            using var response = await client.SendAsync(request, ct);
+            if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
+            {
+                // Algumas políticas bloqueiam token inválido/expirado. Tenta chamada pública como fallback.
+                using var fallbackResponse = await client.GetAsync(endpoint, ct);
+                if (!fallbackResponse.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var fallbackBody = await fallbackResponse.Content.ReadAsStringAsync(ct);
+                using var fallbackDoc = JsonDocument.Parse(fallbackBody);
+                return ParseMercadoLivreItemResponse(uri, fallbackDoc);
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -144,54 +172,59 @@ public sealed class OfficialProductDataService
 
             var body = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-            {
-                return null;
-            }
-
-            var title = TryGetString(root, "title");
-            var currency = TryGetString(root, "currency_id");
-            var price = TryGetDecimal(root, "price");
-            var originalPrice = TryGetDecimal(root, "original_price");
-            var pictures = new List<string>();
-            if (root.TryGetProperty("pictures", out var picturesNode) && picturesNode.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in picturesNode.EnumerateArray().Take(10))
-                {
-                    var url = TryGetString(item, "secure_url") ?? TryGetString(item, "url");
-                    if (!string.IsNullOrWhiteSpace(url))
-                    {
-                        pictures.Add(url.Trim());
-                    }
-                }
-            }
-
-            var current = FormatCurrency(price, currency);
-            var previous = FormatCurrency(originalPrice, currency);
-            var discount = ComputeDiscount(originalPrice, price);
-
-            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(current) && pictures.Count == 0)
-            {
-                return null;
-            }
-
-            return new OfficialProductDataResult(
-                Store: "Mercado Livre",
-                Title: title,
-                CurrentPrice: current,
-                PreviousPrice: previous,
-                DiscountPercent: discount,
-                Images: pictures,
-                IsOfficial: true,
-                DataSource: "mercadolivre_items_api",
-                SourceUrl: uri.ToString());
+            return ParseMercadoLivreItemResponse(uri, doc);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Falha ao obter dados oficiais do Mercado Livre.");
             return null;
         }
+    }
+
+    private static OfficialProductDataResult? ParseMercadoLivreItemResponse(Uri uri, JsonDocument doc)
+    {
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var title = TryGetString(root, "title");
+        var currency = TryGetString(root, "currency_id");
+        var price = TryGetDecimal(root, "price");
+        var originalPrice = TryGetDecimal(root, "original_price");
+        var pictures = new List<string>();
+        if (root.TryGetProperty("pictures", out var picturesNode) && picturesNode.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in picturesNode.EnumerateArray().Take(10))
+            {
+                var url = TryGetString(item, "secure_url") ?? TryGetString(item, "url");
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    pictures.Add(url.Trim());
+                }
+            }
+        }
+
+        var current = FormatCurrency(price, currency);
+        var previous = FormatCurrency(originalPrice, currency);
+        var discount = ComputeDiscount(originalPrice, price);
+
+        if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(current) && pictures.Count == 0)
+        {
+            return null;
+        }
+
+        return new OfficialProductDataResult(
+            Store: "Mercado Livre",
+            Title: title,
+            CurrentPrice: current,
+            PreviousPrice: previous,
+            DiscountPercent: discount,
+            Images: pictures,
+            IsOfficial: true,
+            DataSource: "mercadolivre_items_api",
+            SourceUrl: uri.ToString());
     }
 
     private async Task<OfficialProductDataResult?> TryGetShopeeDataAsync(Uri uri, CancellationToken ct)

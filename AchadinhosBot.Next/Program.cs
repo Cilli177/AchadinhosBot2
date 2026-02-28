@@ -1399,6 +1399,7 @@ api.MapGet("/settings", async (
 api.MapGet("/diagnostics/apis", async (
     ISettingsStore store,
     IOptions<AffiliateOptions> affiliateOptions,
+    IMercadoLivreOAuthService mercadoLivreOAuthService,
     CancellationToken ct) =>
 {
     var settings = await store.GetAsync(ct);
@@ -1432,6 +1433,9 @@ api.MapGet("/diagnostics/apis", async (
         !string.IsNullOrWhiteSpace(affiliate.MercadoLivreClientSecret) &&
         !string.IsNullOrWhiteSpace(affiliate.MercadoLivreRefreshToken) &&
         !string.IsNullOrWhiteSpace(affiliate.MercadoLivreUserId);
+    var mercadoLivreOAuthStatus = mercadoLivreOAuthConfigured
+        ? await mercadoLivreOAuthService.GetStatusAsync(ct)
+        : null;
 
     var publish = settings.InstagramPublish ?? new InstagramPublishSettings();
     return Results.Ok(new
@@ -1467,7 +1471,9 @@ api.MapGet("/diagnostics/apis", async (
             },
             mercadoLivre = new
             {
-                oauthConfigured = mercadoLivreOAuthConfigured
+                oauthConfigured = mercadoLivreOAuthConfigured,
+                oauthValid = mercadoLivreOAuthStatus?.Success ?? false,
+                oauthMessage = mercadoLivreOAuthStatus?.Message
             }
         },
         integrations = new
