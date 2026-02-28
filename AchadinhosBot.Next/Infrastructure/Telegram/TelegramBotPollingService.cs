@@ -755,6 +755,62 @@ public sealed class TelegramBotPollingService : BackgroundService
                 return;
             }
 
+            case "removerimg":
+            case "removerimagem":
+            case "removeimg":
+            case "rmimg":
+            {
+                var parsed = ParseImageCommandArguments(command.Arguments);
+                var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+
+                if (parsed.Indexes.Count == 0)
+                {
+                    await SendMessageAsync(message.ChatId, $"Uso: /removerimg <id|ultimo> 1,3,5", ct);
+                    return;
+                }
+
+                var max = draft.ImageUrls?.Count ?? 0;
+                if (max == 0)
+                {
+                    await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} sem imagens para remover.", ct);
+                    return;
+                }
+
+                var toRemove = parsed.Indexes.Where(i => i >= 1 && i <= max).Distinct().OrderBy(i => i).ToList();
+                if (toRemove.Count == 0)
+                {
+                    await SendMessageAsync(message.ChatId, $"Indice invalido. Use valores entre 1 e {max}.", ct);
+                    return;
+                }
+
+                var before = (draft.ImageUrls ?? new List<string>()).ToList();
+                draft.ImageUrls = before
+                    .Where((_, idx) => !toRemove.Contains(idx + 1))
+                    .ToList();
+                draft.SelectedImageIndexes = draft.ImageUrls.Count > 0 ? new List<int> { 1 } : new List<int>();
+                draft.Status = "draft";
+                draft.Error = null;
+                await _publishStore.UpdateAsync(draft, ct);
+                await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "tg_draft_remove_images",
+                    Success = true,
+                    DraftId = draft.Id,
+                    Details = $"Removed={string.Join(",", toRemove)};Remaining={draft.ImageUrls.Count};Chat={message.ChatId}"
+                }, ct);
+
+                await SendMessageAsync(
+                    message.ChatId,
+                    $"Imagens removidas do draft {ShortDraftId(draft.Id)}: {string.Join(", ", toRemove)}.\nRestantes: {draft.ImageUrls.Count}.",
+                    ct);
+                return;
+            }
+
             case "titulo":
             case "title":
             {
@@ -938,6 +994,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             "/revisar [id|ultimo] - revisa draft",
             "/trocarimg [id|ultimo] - busca novas imagens do link do produto",
             "/img [id|ultimo] [1|1,2|2-4] - seleciona imagem(ns)",
+            "/removerimg [id|ultimo] 1,3,5 - remove imagem(ns) do draft",
             "/titulo [id|ultimo] <texto> - ajusta nome do produto",
             "/legenda [id|ultimo] <texto> - ajusta copy",
             "/aprovar [id|ultimo] - marca draft como aprovado",
@@ -947,9 +1004,10 @@ public sealed class TelegramBotPollingService : BackgroundService
             "/ping - teste rapido",
             "",
             "Conversacional:",
-            " - \"a imagem nao bate, troca a imagem do draft 2\"",
-            " - \"revisa o draft 1\"",
-            " - \"aprova o draft 1\"",
+            " - \"bot a imagem nao bate, troca a imagem do draft 2\"",
+            " - \"bot remover imagem 1,3 e 5 do draft 2\"",
+            " - \"bot revisa o draft 1\"",
+            " - \"bot aprova o draft 1\"",
             $"Chat atual: {chatId}"
         };
 
@@ -1122,7 +1180,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         }
 
         sb.AppendLine();
-        sb.AppendLine($"Acoes: /img {shortId} 1 | /trocarimg {shortId} | /titulo {shortId} ... | /legenda {shortId} ... | /aprovar {shortId} | /reprovar {shortId} motivo");
+        sb.AppendLine($"Acoes: /img {shortId} 1 | /removerimg {shortId} 1,3 | /trocarimg {shortId} | /titulo {shortId} ... | /legenda {shortId} ... | /aprovar {shortId} | /reprovar {shortId} motivo");
         return sb.ToString().Trim();
     }
 
@@ -1392,7 +1450,16 @@ public sealed class TelegramBotPollingService : BackgroundService
             return false;
         }
 
-        var parts = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var normalized = input.ToLowerInvariant().Trim();
+        normalized = normalized
+            .Replace(" e ", ",", StringComparison.Ordinal)
+            .Replace(";", ",", StringComparison.Ordinal)
+            .Replace("|", ",", StringComparison.Ordinal);
+        normalized = Regex.Replace(normalized, @"[^\d,\-\s]", " ", RegexOptions.CultureInvariant);
+        normalized = Regex.Replace(normalized, @"(?<=\d)\s+(?=\d)", ",", RegexOptions.CultureInvariant);
+        normalized = Regex.Replace(normalized, @"\s+", " ", RegexOptions.CultureInvariant).Trim();
+
+        var parts = normalized.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var part in parts)
         {
             if (part.Contains('-', StringComparison.Ordinal))
@@ -1502,10 +1569,23 @@ public sealed class TelegramBotPollingService : BackgroundService
             return true;
         }
 
-        var useImageMatch = Regex.Match(lower, @"(?:usar|selecionar|escolher)\s+imagem\s+(?<idx>\d+)", RegexOptions.CultureInvariant);
-        if (useImageMatch.Success && int.TryParse(useImageMatch.Groups["idx"].Value, out var imageIndex))
+        var removeImageMatch = Regex.Match(
+            lower,
+            @"(?:remover|remove|tirar|excluir|apagar)\s+(?:a\s+|as\s+)?imagem(?:ens)?\s+(?<idx>[\d,\-\se]+)",
+            RegexOptions.CultureInvariant);
+        if (removeImageMatch.Success && TryParseImageIndexes(removeImageMatch.Groups["idx"].Value, out var removeIndexes) && removeIndexes.Count > 0)
         {
-            command = new TelegramBotCommand("img", [draftRef, imageIndex.ToString()]);
+            command = new TelegramBotCommand("removerimg", [draftRef, string.Join(",", removeIndexes)]);
+            return true;
+        }
+
+        var useImageMatch = Regex.Match(
+            lower,
+            @"(?:usar|selecionar|escolher)\s+(?:a\s+|as\s+)?imagem(?:ens)?\s+(?<idx>[\d,\-\se]+)",
+            RegexOptions.CultureInvariant);
+        if (useImageMatch.Success && TryParseImageIndexes(useImageMatch.Groups["idx"].Value, out var selectedIndexes) && selectedIndexes.Count > 0)
+        {
+            command = new TelegramBotCommand("img", [draftRef, string.Join(",", selectedIndexes)]);
             return true;
         }
 
