@@ -1452,8 +1452,13 @@ public sealed class TelegramBotPollingService : BackgroundService
             return false;
         }
 
-        var lower = raw.ToLowerInvariant();
-        var draftRef = TryExtractDraftReference(raw) ?? "ultimo";
+        if (!TryNormalizeConversationalInput(raw, out var normalizedRaw))
+        {
+            return false;
+        }
+
+        var lower = normalizedRaw.ToLowerInvariant();
+        var draftRef = TryExtractDraftReference(normalizedRaw) ?? "ultimo";
 
         if (lower.Contains("imagem nao bate", StringComparison.OrdinalIgnoreCase)
             || lower.Contains("imagem não bate", StringComparison.OrdinalIgnoreCase)
@@ -1467,7 +1472,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         if (lower.Contains("reprova", StringComparison.OrdinalIgnoreCase)
             || lower.Contains("rejeita", StringComparison.OrdinalIgnoreCase))
         {
-            var reason = ExtractReasonText(raw);
+            var reason = ExtractReasonText(normalizedRaw);
             command = string.IsNullOrWhiteSpace(reason)
                 ? new TelegramBotCommand("reprovar", [draftRef])
                 : new TelegramBotCommand("reprovar", [draftRef, reason]);
@@ -1498,7 +1503,7 @@ public sealed class TelegramBotPollingService : BackgroundService
 
         if (lower.StartsWith("titulo ", StringComparison.OrdinalIgnoreCase) || lower.StartsWith("título ", StringComparison.OrdinalIgnoreCase))
         {
-            var textPart = ExtractTextAfterKeyword(raw, "titulo");
+            var textPart = ExtractTextAfterKeyword(normalizedRaw, "titulo");
             if (!string.IsNullOrWhiteSpace(textPart))
             {
                 command = new TelegramBotCommand("titulo", [draftRef, textPart]);
@@ -1508,12 +1513,53 @@ public sealed class TelegramBotPollingService : BackgroundService
 
         if (lower.StartsWith("legenda ", StringComparison.OrdinalIgnoreCase))
         {
-            var textPart = ExtractTextAfterKeyword(raw, "legenda");
+            var textPart = ExtractTextAfterKeyword(normalizedRaw, "legenda");
             if (!string.IsNullOrWhiteSpace(textPart))
             {
                 command = new TelegramBotCommand("legenda", [draftRef, textPart]);
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    private static bool TryNormalizeConversationalInput(string raw, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        var trimmed = raw.Trim();
+        var lower = trimmed.ToLowerInvariant();
+
+        // Evita misturar com conversa geral do grupo: modo conversacional
+        // so ativa com palavra de chamada explicita.
+        var wakePrefixes = new[]
+        {
+            "bot ",
+            "postagemstory ",
+            "assistente ",
+            "rei "
+        };
+
+        foreach (var prefix in wakePrefixes)
+        {
+            if (lower.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                normalized = trimmed[prefix.Length..].Trim();
+                return !string.IsNullOrWhiteSpace(normalized);
+            }
+        }
+
+        var mention = "@postagemstory_bot";
+        var mentionIndex = lower.IndexOf(mention, StringComparison.Ordinal);
+        if (mentionIndex >= 0)
+        {
+            normalized = trimmed.Replace("@PostagemStory_bot", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+            return !string.IsNullOrWhiteSpace(normalized);
         }
 
         return false;
