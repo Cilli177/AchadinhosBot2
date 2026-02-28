@@ -30,6 +30,8 @@ public sealed class AffiliateOptions
 
     public string ShopeeSecret { get; init; } = string.Empty;
 
+    public ShopeeProductApiOptions ShopeeProductApi { get; init; } = new();
+
     public AmazonProductApiOptions AmazonProductApi { get; init; } = new();
 
     public OfficialCouponApiOptions AmazonOfficialCoupons { get; init; } = new();
@@ -79,4 +81,17 @@ public sealed class OfficialCouponApiOptions
     public string BearerToken { get; init; } = string.Empty;
 
     public Dictionary<string, string> Headers { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class ShopeeProductApiOptions
+{
+    public bool Enabled { get; init; }
+
+    public long PartnerId { get; init; }
+
+    public string PartnerKey { get; init; } = string.Empty;
+
+    public long ShopId { get; init; }
+
+    public string Host { get; init; } = "https://partner.shopeemobile.com";
 }

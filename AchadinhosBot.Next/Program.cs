@@ -33,6 +33,7 @@ using AchadinhosBot.Next.Infrastructure.Monitoring;
 using AchadinhosBot.Next.Infrastructure.Security;
 using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Telegram;
+using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.WhatsApp;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -158,6 +159,7 @@ builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
 builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
 builder.Services.AddSingleton<InstagramLinkMetaService>();
+builder.Services.AddSingleton<OfficialProductDataService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
@@ -305,6 +307,7 @@ app.MapGet("/conversor", async (
     IAffiliateLinkService affiliateLinkService,
     InstagramLinkMetaService instagramMeta,
     IHttpClientFactory httpClientFactory,
+    OfficialProductDataService officialProductDataService,
     ILinkTrackingStore trackingStore,
     ISettingsStore settingsStore,
     IOptions<WebhookOptions> webhookOptions,
@@ -404,14 +407,17 @@ app.MapGet("/conversor", async (
 
                 var mergedTitle = ChooseBestConverterTitle(originalMeta.Title, convertedMeta.Title);
                 var mergedDescription = ChooseBestConverterDescription(originalMeta.Description, convertedMeta.Description);
+                var officialData = await officialProductDataService.TryGetBestAsync(normalizedInputUrl, convertedUrl, ct);
                 var mergedPrice = FirstNonEmpty(
+                    officialData?.CurrentPrice ?? string.Empty,
                     originalMeta.PriceText ?? string.Empty,
                     convertedMeta.PriceText ?? string.Empty,
                     ExtractPriceFromText(mergedDescription),
                     ExtractPriceFromText(originalMeta.Description),
                     ExtractPriceFromText(convertedMeta.Description),
                     "Preco sob consulta");
-                var mergedImages = (originalMeta.Images ?? new List<string>())
+                var mergedImages = (officialData?.Images ?? new List<string>())
+                    .Concat(originalMeta.Images ?? new List<string>())
                     .Concat(convertedMeta.Images ?? new List<string>())
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -421,10 +427,13 @@ app.MapGet("/conversor", async (
                 viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) || string.Equals(conversion.Store, "Unknown", StringComparison.OrdinalIgnoreCase)
                     ? ResolveStoreNameFromUrl(convertedUrl)
                     : conversion.Store.Trim();
-                viewModel.Title = FirstNonEmpty(mergedTitle, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
+                viewModel.Title = FirstNonEmpty(officialData?.Title ?? string.Empty, mergedTitle, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
                 viewModel.Description = mergedDescription?.Trim() ?? string.Empty;
                 viewModel.Price = FirstNonEmpty(mergedPrice, "Preco sob consulta") ?? "Preco sob consulta";
                 viewModel.ImageUrl = SelectBestConverterImage(mergedImages, viewModel.Title, viewModel.Description);
+                viewModel.PreviousPrice = officialData?.PreviousPrice ?? string.Empty;
+                viewModel.DiscountPercent = officialData?.DiscountPercent;
+                viewModel.DataSource = !string.IsNullOrWhiteSpace(officialData?.DataSource) ? officialData!.DataSource : "meta";
                 viewModel.ConvertedUrl = convertedUrl;
                 viewModel.TrackedUrl = trackedUrl;
                 viewModel.IsAffiliated = conversion.IsAffiliated;
@@ -5396,12 +5405,17 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         var store = System.Net.WebUtility.HtmlEncode(model.Store ?? "Loja");
         var title = System.Net.WebUtility.HtmlEncode(model.Title ?? "Oferta");
         var price = System.Net.WebUtility.HtmlEncode(model.Price ?? "Preco sob consulta");
+        var previousPrice = System.Net.WebUtility.HtmlEncode(model.PreviousPrice ?? string.Empty);
         var desc = System.Net.WebUtility.HtmlEncode(model.Description ?? string.Empty);
         var host = System.Net.WebUtility.HtmlEncode(model.ConversionHost ?? "-");
         var domainHost = System.Net.WebUtility.HtmlEncode(model.DomainHost ?? "-");
         var converted = System.Net.WebUtility.HtmlEncode(model.ConvertedUrl ?? string.Empty);
         var tracked = System.Net.WebUtility.HtmlEncode(model.TrackedUrl ?? string.Empty);
         var correction = System.Net.WebUtility.HtmlEncode(model.CorrectionNote ?? string.Empty);
+        var source = System.Net.WebUtility.HtmlEncode(model.DataSource ?? "meta");
+        var discountText = model.DiscountPercent.HasValue && model.DiscountPercent.Value > 0
+            ? System.Net.WebUtility.HtmlEncode($"{model.DiscountPercent.Value}% OFF")
+            : string.Empty;
         var shareText = $"{(string.IsNullOrWhiteSpace(model.Title) ? "Oferta" : model.Title)} | {(string.IsNullOrWhiteSpace(model.Price) ? "Preco sob consulta" : model.Price)}\nCompre aqui: {(string.IsNullOrWhiteSpace(model.TrackedUrl) ? model.ConvertedUrl : model.TrackedUrl)}";
         var shareTextEncoded = System.Net.WebUtility.HtmlEncode(shareText);
         var whatsAppShare = System.Net.WebUtility.HtmlEncode($"https://wa.me/?text={Uri.EscapeDataString(shareText)}");
@@ -5428,12 +5442,21 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         sb.AppendLine("      </div>");
         sb.AppendLine($"      <div class=\"title\">{title}</div>");
         sb.AppendLine($"      <div class=\"price\">{price}</div>");
+        if (!string.IsNullOrWhiteSpace(previousPrice))
+        {
+            sb.AppendLine($"      <div class=\"meta\">De: <span style=\"text-decoration:line-through;\">{previousPrice}</span></div>");
+        }
+        if (!string.IsNullOrWhiteSpace(discountText))
+        {
+            sb.AppendLine($"      <div class=\"meta\"><strong>{discountText}</strong></div>");
+        }
         if (!string.IsNullOrWhiteSpace(desc))
         {
             sb.AppendLine($"      <div class=\"desc\">{desc}</div>");
         }
         sb.AppendLine($"      <div class=\"meta\">Destino final: {host}</div>");
         sb.AppendLine($"      <div class=\"meta\">Link publico no seu dominio: {domainHost}</div>");
+        sb.AppendLine($"      <div class=\"meta\">Fonte de dados: {source}</div>");
         sb.AppendLine("      <div class=\"actions\">");
         sb.AppendLine($"        <a class=\"btn buy\" href=\"{tracked}\" target=\"_blank\" rel=\"noopener noreferrer\">Comprar com meu link</a>");
         sb.AppendLine($"        <a class=\"btn secondary\" href=\"{whatsAppShare}\" target=\"_blank\" rel=\"noopener noreferrer\">Compartilhar no WhatsApp</a>");
@@ -10070,12 +10093,15 @@ internal sealed record PublicLinkConverterViewModel
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string Price { get; set; } = string.Empty;
+    public string PreviousPrice { get; set; } = string.Empty;
+    public int? DiscountPercent { get; set; }
     public string ImageUrl { get; set; } = string.Empty;
     public bool IsAffiliated { get; set; }
     public string? ValidationError { get; set; }
     public string? CorrectionNote { get; set; }
     public string? ConversionHost { get; set; }
     public string? DomainHost { get; set; }
+    public string? DataSource { get; set; }
 }
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);
 internal sealed record InstagramBoostAdResult(bool Success, string? CampaignId, string? AdSetId, string? AdId, string? Error);
