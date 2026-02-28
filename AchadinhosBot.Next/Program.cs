@@ -304,6 +304,7 @@ app.MapGet("/conversor", async (
     HttpContext context,
     IAffiliateLinkService affiliateLinkService,
     InstagramLinkMetaService instagramMeta,
+    IHttpClientFactory httpClientFactory,
     ILinkTrackingStore trackingStore,
     ISettingsStore settingsStore,
     IOptions<WebhookOptions> webhookOptions,
@@ -348,30 +349,82 @@ app.MapGet("/conversor", async (
                 var tracked = await trackingStore.GetOrCreateAsync(convertedUrl, ct);
                 var trackedUrl = BuildTrackedRedirectUrl(publicBaseUrl, tracked.Id, "conversor", null);
 
-                LinkMetaResult meta;
+                LinkMetaResult convertedMeta;
                 try
                 {
-                    meta = await instagramMeta.GetMetaAsync(convertedUrl, ct);
-                    if (string.IsNullOrWhiteSpace(meta.Title) &&
-                        meta.Images.Count == 0 &&
-                        !string.Equals(convertedUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
-                    {
-                        meta = await instagramMeta.GetMetaAsync(normalizedInputUrl, ct);
-                    }
+                    convertedMeta = await instagramMeta.GetMetaAsync(convertedUrl, ct);
                 }
                 catch
                 {
-                    meta = new LinkMetaResult();
+                    convertedMeta = new LinkMetaResult();
                 }
+                var resolvedConvertedUrl = await TryResolveFinalUrlForMetaAsync(convertedUrl, httpClientFactory, ct);
+                if (!string.IsNullOrWhiteSpace(resolvedConvertedUrl) &&
+                    !string.Equals(resolvedConvertedUrl, convertedUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var resolvedConvertedMeta = await instagramMeta.GetMetaAsync(resolvedConvertedUrl, ct);
+                        convertedMeta = MergeConverterMeta(convertedMeta, resolvedConvertedMeta);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                LinkMetaResult originalMeta;
+                if (!string.Equals(convertedUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        originalMeta = await instagramMeta.GetMetaAsync(normalizedInputUrl, ct);
+                    }
+                    catch
+                    {
+                        originalMeta = new LinkMetaResult();
+                    }
+                    var resolvedOriginalUrl = await TryResolveFinalUrlForMetaAsync(normalizedInputUrl, httpClientFactory, ct);
+                    if (!string.IsNullOrWhiteSpace(resolvedOriginalUrl) &&
+                        !string.Equals(resolvedOriginalUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            var resolvedOriginalMeta = await instagramMeta.GetMetaAsync(resolvedOriginalUrl, ct);
+                            originalMeta = MergeConverterMeta(originalMeta, resolvedOriginalMeta);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+                else
+                {
+                    originalMeta = new LinkMetaResult();
+                }
+
+                var mergedTitle = ChooseBestConverterTitle(originalMeta.Title, convertedMeta.Title);
+                var mergedDescription = ChooseBestConverterDescription(originalMeta.Description, convertedMeta.Description);
+                var mergedPrice = FirstNonEmpty(
+                    originalMeta.PriceText ?? string.Empty,
+                    convertedMeta.PriceText ?? string.Empty,
+                    ExtractPriceFromText(mergedDescription),
+                    ExtractPriceFromText(originalMeta.Description),
+                    ExtractPriceFromText(convertedMeta.Description),
+                    "Preco sob consulta");
+                var mergedImages = (originalMeta.Images ?? new List<string>())
+                    .Concat(convertedMeta.Images ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
                 viewModel.Success = true;
                 viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) || string.Equals(conversion.Store, "Unknown", StringComparison.OrdinalIgnoreCase)
                     ? ResolveStoreNameFromUrl(convertedUrl)
                     : conversion.Store.Trim();
-                viewModel.Title = FirstNonEmpty(meta.Title ?? string.Empty, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
-                viewModel.Description = meta.Description?.Trim() ?? string.Empty;
-                viewModel.Price = FirstNonEmpty(meta.PriceText ?? string.Empty, ExtractPriceFromText(meta.Description), "Preco sob consulta") ?? "Preco sob consulta";
-                viewModel.ImageUrl = SelectBestConverterImage(meta.Images);
+                viewModel.Title = FirstNonEmpty(mergedTitle, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
+                viewModel.Description = mergedDescription?.Trim() ?? string.Empty;
+                viewModel.Price = FirstNonEmpty(mergedPrice, "Preco sob consulta") ?? "Preco sob consulta";
+                viewModel.ImageUrl = SelectBestConverterImage(mergedImages, viewModel.Title, viewModel.Description);
                 viewModel.ConvertedUrl = convertedUrl;
                 viewModel.TrackedUrl = trackedUrl;
                 viewModel.IsAffiliated = conversion.IsAffiliated;
@@ -5472,7 +5525,126 @@ static string? NormalizeConverterInputToUrl(string? input)
     return null;
 }
 
-static string SelectBestConverterImage(IReadOnlyList<string>? images)
+static async Task<string?> TryResolveFinalUrlForMetaAsync(string? url, IHttpClientFactory httpClientFactory, CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return null;
+    }
+
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return null;
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient("default");
+        using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        var finalUri = res.RequestMessage?.RequestUri;
+        if (finalUri is null)
+        {
+            return null;
+        }
+
+        return finalUri.ToString();
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static LinkMetaResult MergeConverterMeta(LinkMetaResult primary, LinkMetaResult secondary)
+{
+    return new LinkMetaResult
+    {
+        Title = ChooseBestConverterTitle(primary.Title, secondary.Title),
+        Description = ChooseBestConverterDescription(primary.Description, secondary.Description),
+        PriceText = FirstNonEmpty(primary.PriceText ?? string.Empty, secondary.PriceText ?? string.Empty),
+        Images = (primary.Images ?? new List<string>())
+            .Concat(secondary.Images ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList(),
+        Videos = (primary.Videos ?? new List<string>())
+            .Concat(secondary.Videos ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList()
+    };
+}
+
+static string ChooseBestConverterTitle(string? preferred, string? fallback)
+{
+    var candidates = new[] { preferred, fallback }
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => System.Net.WebUtility.HtmlDecode(x?.Trim()) ?? string.Empty)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (candidates.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    var ordered = candidates
+        .Select(title => new { Title = title, Score = ScoreConverterTitle(title) })
+        .OrderByDescending(x => x.Score)
+        .ThenByDescending(x => x.Title.Length)
+        .ToList();
+
+    return ordered[0].Title;
+}
+
+static string ChooseBestConverterDescription(string? preferred, string? fallback)
+{
+    var first = System.Net.WebUtility.HtmlDecode(preferred?.Trim()) ?? string.Empty;
+    var second = System.Net.WebUtility.HtmlDecode(fallback?.Trim()) ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(first)) return second;
+    if (string.IsNullOrWhiteSpace(second)) return first;
+    return second.Length > first.Length ? second : first;
+}
+
+static int ScoreConverterTitle(string title)
+{
+    if (string.IsNullOrWhiteSpace(title))
+    {
+        return 0;
+    }
+
+    var score = 0;
+    var normalized = title.Trim().ToLowerInvariant();
+    if (normalized.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+    {
+        score -= 60;
+    }
+
+    var words = Regex.Matches(normalized, @"[a-z0-9À-ÿ]{2,}", RegexOptions.CultureInvariant).Count;
+    score += Math.Min(words * 3, 45);
+    score += Math.Min(normalized.Length / 8, 30);
+
+    if (normalized.Contains("home", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("inicio", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("index", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("login", StringComparison.OrdinalIgnoreCase))
+    {
+        score -= 40;
+    }
+
+    if (normalized.Contains("produto", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("oferta", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("kit", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 8;
+    }
+
+    return score;
+}
+
+static string SelectBestConverterImage(IReadOnlyList<string>? images, string? title, string? description)
 {
     if (images is null || images.Count == 0)
     {
@@ -5490,16 +5662,95 @@ static string SelectBestConverterImage(IReadOnlyList<string>? images)
         return string.Empty;
     }
 
-    var preferred = valid.FirstOrDefault(x =>
-        x.Contains(".jpg", StringComparison.OrdinalIgnoreCase) ||
-        x.Contains(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-        x.Contains(".png", StringComparison.OrdinalIgnoreCase));
-    if (!string.IsNullOrWhiteSpace(preferred))
+    var keywords = ExtractConverterImageKeywords(title, description);
+    var ranked = valid
+        .Select(url => new { Url = url, Score = ScoreConverterImage(url, keywords) })
+        .OrderByDescending(x => x.Score)
+        .ToList();
+
+    return ranked[0].Url;
+}
+
+static int ScoreConverterImage(string url, IReadOnlyList<string> keywords)
+{
+    if (string.IsNullOrWhiteSpace(url))
     {
-        return preferred;
+        return int.MinValue;
     }
 
-    return valid[0];
+    var score = 0;
+    var lower = url.ToLowerInvariant();
+
+    if (lower.Contains(".jpg", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains(".png", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 120;
+    }
+    else if (lower.Contains(".webp", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 55;
+    }
+    else if (lower.Contains(".gif", StringComparison.OrdinalIgnoreCase))
+    {
+        score -= 40;
+    }
+
+    var badTokens = new[] { "logo", "icon", "avatar", "sprite", "placeholder", "favicon", "banner" };
+    if (badTokens.Any(t => lower.Contains(t, StringComparison.OrdinalIgnoreCase)))
+    {
+        score -= 120;
+    }
+
+    if (lower.Contains("product", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains("produto", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains("item", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 22;
+    }
+
+    foreach (var keyword in keywords.Take(5))
+    {
+        if (lower.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 15;
+        }
+    }
+
+    var widthMatch = Regex.Match(lower, @"(?:\?|&)(?:w|width)=(?<v>\d{1,4})", RegexOptions.CultureInvariant);
+    if (widthMatch.Success && int.TryParse(widthMatch.Groups["v"].Value, out var width) && width > 0 && width <= 180)
+    {
+        score -= 45;
+    }
+    var heightMatch = Regex.Match(lower, @"(?:\?|&)(?:h|height)=(?<v>\d{1,4})", RegexOptions.CultureInvariant);
+    if (heightMatch.Success && int.TryParse(heightMatch.Groups["v"].Value, out var height) && height > 0 && height <= 180)
+    {
+        score -= 45;
+    }
+
+    return score;
+}
+
+static List<string> ExtractConverterImageKeywords(string? title, string? description)
+{
+    var text = $"{title} {description}".ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return new List<string>();
+    }
+
+    var stop = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "para","com","sem","de","da","do","das","dos","e","em","na","no","um","uma","por","pra","pro",
+        "the","and","for","with","from","this","that","produto","oferta","link","loja","comprar","preco"
+    };
+
+    return Regex.Matches(text, @"[a-z0-9À-ÿ]{4,}", RegexOptions.CultureInvariant)
+        .Select(m => m.Value.Trim())
+        .Where(x => !stop.Contains(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Take(8)
+        .ToList();
 }
 
 static string ExtractPriceFromText(string? text)
