@@ -12,6 +12,7 @@ using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Media;
+using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.Telegram;
 using Microsoft.Extensions.Options;
 
@@ -29,6 +30,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     private readonly IInstagramPublishLogStore _publishLogStore;
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly InstagramLinkMetaService _instagramMeta;
+    private readonly OfficialProductDataService _officialProductDataService;
     private readonly IMediaStore _mediaStore;
     private readonly ICouponSelector _couponSelector;
     private readonly IWhatsAppGateway _whatsAppGateway;
@@ -47,6 +49,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         IInstagramPublishLogStore publishLogStore,
         IInstagramPostComposer instagramComposer,
         InstagramLinkMetaService instagramMeta,
+        OfficialProductDataService officialProductDataService,
         IMediaStore mediaStore,
         ICouponSelector couponSelector,
         IWhatsAppGateway whatsAppGateway,
@@ -64,6 +67,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         _publishLogStore = publishLogStore;
         _instagramComposer = instagramComposer;
         _instagramMeta = instagramMeta;
+        _officialProductDataService = officialProductDataService;
         _mediaStore = mediaStore;
         _couponSelector = couponSelector;
         _whatsAppGateway = whatsAppGateway;
@@ -126,6 +130,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                     ProductUrl = candidate.Url,
                     Store = candidate.Store,
                     ProductName = candidate.ProductName,
+                    ProductDataSource = candidate.DataSource,
                     ImageUrl = candidate.SelectedImageUrl,
                     ImageMatchScore = candidate.ImageMatchScore,
                     ImageMatchReason = candidate.ImageMatchReason,
@@ -146,7 +151,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 // e funcione com o atalho /ig revisar 1.
                 foreach (var candidate in selected.AsEnumerable().Reverse())
                 {
-                    var draft = await CreateDraftFromCandidateAsync(candidate, instaPostSettings, geminiSettings, normalizedPostType, cancellationToken);
+                    var draft = await CreateDraftFromCandidateAsync(candidate, instaPostSettings, instaPublishSettings, geminiSettings, normalizedPostType, cancellationToken);
                     if (draft is null)
                     {
                         continue;
@@ -157,6 +162,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                     if (selectedItem is not null)
                     {
                         selectedItem.DraftId = draft.Id;
+                        selectedItem.ProductDataSource = candidate.DataSource;
                         selectedItem.ImageUrl = candidate.SelectedImageUrl;
                         selectedItem.ImageMatchScore = candidate.ImageMatchScore;
                         selectedItem.ImageMatchReason = candidate.ImageMatchReason;
@@ -358,30 +364,55 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     private async Task<InstagramPublishDraft?> CreateDraftFromCandidateAsync(
         CandidateScore candidate,
         InstagramPostSettings settings,
+        InstagramPublishSettings publishSettings,
         GeminiSettings geminiSettings,
         string postType,
         CancellationToken ct)
     {
         try
         {
+            var requireOfficialData = publishSettings.AutoPilotRequireOfficialProductData;
+            var requireAiCaption = publishSettings.AutoPilotRequireAiCaption;
+            var minImageMatchScore = Math.Clamp(publishSettings.AutoPilotMinimumImageMatchScore, 0, 100);
+
             var candidateUrl = await ExpandCandidateUrlAsync(candidate.Url, ct);
             if (!string.IsNullOrWhiteSpace(candidateUrl))
             {
                 candidate.Url = candidateUrl;
             }
 
+            var officialData = await _officialProductDataService.TryGetBestAsync(candidate.Url, null, ct);
+            candidate.DataSource = !string.IsNullOrWhiteSpace(officialData?.DataSource) ? officialData!.DataSource : "meta";
+            if (requireOfficialData && officialData is null)
+            {
+                _logger.LogInformation("Skipping autopilot candidate without official product data: {Url}", candidate.Url);
+                await AppendAutoPilotSkipLogAsync(candidate, "missing_official_data", ct);
+                return null;
+            }
+
             var offerContext = $"Score {candidate.FinalScore} | vendas={candidate.SalesSignal} retorno={candidate.ReturnSignal} desconto={candidate.DiscountSignal}";
             settings.UseAi = true;
             var postText = await _instagramComposer.BuildAsync(candidate.Url, offerContext, settings, ct);
             var aiFailed = postText.StartsWith("Nao consegui gerar legenda com IA", StringComparison.OrdinalIgnoreCase);
+            if (aiFailed && requireAiCaption)
+            {
+                _logger.LogInformation("Skipping autopilot candidate because AI caption is required and generation failed: {Url}", candidate.Url);
+                await AppendAutoPilotSkipLogAsync(candidate, "ai_caption_failed", ct);
+                return null;
+            }
 
             var (captionsRaw, hashtagsRaw) = ExtractCaptionsAndHashtags(postText);
 
             var meta = await _instagramMeta.GetMetaAsync(candidate.Url, ct);
-            var productName = TryResolveRealProductName(meta.Title, candidate.ProductName, candidate.Url, candidate.Store);
+            var productName = TryResolveRealProductName(officialData?.Title, meta.Title, candidate.Url, candidate.Store);
+            if (string.IsNullOrWhiteSpace(productName))
+            {
+                productName = TryResolveRealProductName(meta.Title, candidate.ProductName, candidate.Url, candidate.Store);
+            }
             if (string.IsNullOrWhiteSpace(productName))
             {
                 _logger.LogInformation("Skipping autopilot candidate without reliable product title: {Url}", candidate.Url);
+                await AppendAutoPilotSkipLogAsync(candidate, "missing_product_title", ct);
                 return null;
             }
 
@@ -416,8 +447,26 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             }
 
             var hashtags = NormalizeHashtags(hashtagsRaw, candidate.Store, productName);
-            var imagesRaw = NormalizeExternalUrls(meta.Images, 10);
+            var imagesRaw = NormalizeExternalUrls(
+                (officialData?.Images ?? new List<string>())
+                    .Concat(meta.Images ?? new List<string>())
+                    .ToList(),
+                10);
             var imageSelection = await SelectBestImagesForProductAsync(productName, candidate.Store, imagesRaw, geminiSettings, ct);
+            if (minImageMatchScore > 0 &&
+                imageSelection.BestScore.HasValue &&
+                imageSelection.BestScore.Value < minImageMatchScore)
+            {
+                _logger.LogInformation(
+                    "Skipping autopilot candidate due to low image match score ({Score}/{Min}): {Url}",
+                    imageSelection.BestScore.Value,
+                    minImageMatchScore,
+                    candidate.Url);
+                candidate.ImageMatchScore = imageSelection.BestScore;
+                candidate.ImageMatchReason = imageSelection.BestReason;
+                await AppendAutoPilotSkipLogAsync(candidate, $"low_image_match:{imageSelection.BestScore.Value}/{minImageMatchScore}", ct);
+                return null;
+            }
             var images = await HostImagesAsJpegAsync(imageSelection.OrderedUrls, ct);
             if (images.Count == 0)
             {
@@ -462,7 +511,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 Action = "autopilot_draft_created",
                 Success = true,
                 DraftId = draft.Id,
-                Details = $"Score={candidate.FinalScore};Store={candidate.Store};Url={candidate.Url};Image={candidate.SelectedImageUrl};ImageMatch={candidate.ImageMatchScore}"
+                Details = $"Score={candidate.FinalScore};Store={candidate.Store};Url={candidate.Url};Image={candidate.SelectedImageUrl};ImageMatch={candidate.ImageMatchScore};DataSource={candidate.DataSource}"
             }, ct);
 
             return draft;
@@ -533,6 +582,16 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         return (sent, chatId.ToString());
     }
 
+    private async Task AppendAutoPilotSkipLogAsync(CandidateScore candidate, string reason, CancellationToken ct)
+    {
+        await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "autopilot_candidate_skipped",
+            Success = true,
+            Details = $"Reason={reason};Score={candidate.FinalScore};Store={candidate.Store};Url={candidate.Url};DataSource={candidate.DataSource};ImageMatch={candidate.ImageMatchScore}"
+        }, ct);
+    }
+
     private static string BuildApprovalMessage(IReadOnlyList<InstagramAutoPilotSelectionItem> selected, string postType)
     {
         var sb = new StringBuilder();
@@ -547,6 +606,10 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var shortDraft = item.DraftId is { Length: > 8 } ? item.DraftId[..8] : item.DraftId;
             sb.AppendLine($"{i + 1}) Produto: {FirstNotEmpty(item.ProductName, item.Store)}");
             sb.AppendLine($"Loja: {item.Store} | Score: {item.FinalScore} | Engajamento: {item.EngagementSignal}");
+            if (!string.IsNullOrWhiteSpace(item.ProductDataSource))
+            {
+                sb.AppendLine($"Fonte de dados: {item.ProductDataSource}");
+            }
             sb.AppendLine($"Draft: {shortDraft}");
             if (!string.IsNullOrWhiteSpace(item.ImageUrl))
             {
@@ -1879,6 +1942,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         public string Key { get; set; } = string.Empty;
         public string Url { get; set; } = string.Empty;
         public string Store { get; set; } = "Unknown";
+        public string DataSource { get; set; } = "meta";
         public string? ProductName { get; set; }
         public string? SelectedImageUrl { get; set; }
         public int? ImageMatchScore { get; set; }

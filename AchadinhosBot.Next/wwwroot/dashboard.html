@@ -965,6 +965,24 @@
         <input id="igPubManyChatWebhookUrl" placeholder="https://api.manychat.com/... ou webhook do fluxo" />
         <label>ManyChat API Key (opcional)</label>
         <input id="igPubManyChatApiKey" type="password" placeholder="Bearer token da integracao ManyChat" />
+        <section class="card" style="margin-top:12px;">
+          <h3>Autopilot - Qualidade e Confiabilidade</h3>
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="igAutoRequireOfficial" /><span class="slider"></span></label>
+            <span class="muted">Exigir fonte oficial de produto (API oficial)</span>
+          </div>
+          <label>Match mínimo imagem/produto (0-100)</label>
+          <input id="igAutoMinImageMatch" type="number" min="0" max="100" step="1" placeholder="80" />
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="igAutoRequireAi" /><span class="slider"></span></label>
+            <span class="muted">Exigir legenda gerada por IA (sem fallback genérico)</span>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button class="secondary" type="button" onclick="loadApiDiagnostics()">Ver status das APIs</button>
+            <span id="apiDiagStatus" class="status muted"></span>
+          </div>
+          <pre id="apiDiagResult" style="max-height:220px;overflow:auto;"></pre>
+        </section>
         <div class="row" style="margin-top:12px;">
           <button class="secondary" onclick="saveInstagramPublishSettings()">Salvar configuracoes</button>
           <button onclick="testInstagramPublish()">Testar conexao</button>
@@ -1849,6 +1867,12 @@ function renderSettings(s){
   if (igPubManyChatWebhookUrl) igPubManyChatWebhookUrl.value = igPub.manyChatWebhookUrl || '';
   const igPubManyChatApiKey = document.getElementById('igPubManyChatApiKey');
   if (igPubManyChatApiKey) igPubManyChatApiKey.value = igPub.manyChatApiKey ? '********' : '';
+  const igAutoRequireOfficial = document.getElementById('igAutoRequireOfficial');
+  if (igAutoRequireOfficial) igAutoRequireOfficial.checked = igPub.autoPilotRequireOfficialProductData ?? true;
+  const igAutoMinImageMatch = document.getElementById('igAutoMinImageMatch');
+  if (igAutoMinImageMatch) igAutoMinImageMatch.value = String(igPub.autoPilotMinimumImageMatchScore ?? 80);
+  const igAutoRequireAi = document.getElementById('igAutoRequireAi');
+  if (igAutoRequireAi) igAutoRequireAi.checked = igPub.autoPilotRequireAiCaption ?? true;
   const igStoryAutoEnabled = document.getElementById('igStoryAutoEnabled');
   if (igStoryAutoEnabled) igStoryAutoEnabled.checked = !!igPub.storyAutoPilotEnabled;
   const igStoryInterval = document.getElementById('igStoryInterval');
@@ -2409,6 +2433,9 @@ async function saveInstagramPublishSettings(){
   existing.instagramPublish.dmTemplate = document.getElementById('igPubDmTemplate')?.value || 'Oi {name}! Aqui esta seu link: {link}';
   existing.instagramPublish.manyChatWebhookUrl = document.getElementById('igPubManyChatWebhookUrl')?.value || '';
   existing.instagramPublish.manyChatApiKey = document.getElementById('igPubManyChatApiKey')?.value || '';
+  existing.instagramPublish.autoPilotRequireOfficialProductData = document.getElementById('igAutoRequireOfficial')?.checked ?? true;
+  existing.instagramPublish.autoPilotMinimumImageMatchScore = parseInt(document.getElementById('igAutoMinImageMatch')?.value || '80', 10) || 80;
+  existing.instagramPublish.autoPilotRequireAiCaption = document.getElementById('igAutoRequireAi')?.checked ?? true;
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -2456,6 +2483,37 @@ async function saveInstagramStorySettings(){
   } catch (e) {
     if (status) {
       status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function loadApiDiagnostics(){
+  const status = document.getElementById('apiDiagStatus');
+  const result = document.getElementById('apiDiagResult');
+  if (status) {
+    status.textContent = 'Carregando...';
+    status.className = 'status warn';
+  }
+  if (result) {
+    result.textContent = '';
+  }
+
+  try {
+    const payload = await api('/api/diagnostics/apis');
+    if (result) {
+      result.textContent = JSON.stringify(payload, null, 2);
+    }
+    if (status) {
+      status.textContent = 'Status atualizado.';
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (result) {
+      result.textContent = e?.data?.error || e?.message || 'Falha ao obter diagnostico.';
+    }
+    if (status) {
+      status.textContent = 'Erro ao carregar.';
       status.className = 'status bad';
     }
   }

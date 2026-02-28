@@ -1396,6 +1396,89 @@ api.MapGet("/settings", async (
     return Results.Json(payload);
 });
 
+api.MapGet("/diagnostics/apis", async (
+    ISettingsStore store,
+    IOptions<AffiliateOptions> affiliateOptions,
+    CancellationToken ct) =>
+{
+    var settings = await store.GetAsync(ct);
+    var affiliate = affiliateOptions.Value;
+
+    var gemini = settings.Gemini ?? new GeminiSettings();
+    var geminiKeys = new List<string>();
+    if (!string.IsNullOrWhiteSpace(gemini.ApiKey) && gemini.ApiKey != "********")
+    {
+        geminiKeys.Add(gemini.ApiKey.Trim());
+    }
+    if (gemini.ApiKeys is not null)
+    {
+        geminiKeys.AddRange(gemini.ApiKeys
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Where(x => x != "********"));
+    }
+
+    var openAiConfigured = !string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey) && settings.OpenAI.ApiKey != "********";
+    var amazonApi = affiliate.AmazonProductApi ?? new AmazonProductApiOptions();
+    var amazonConfigured = !string.IsNullOrWhiteSpace(amazonApi.AccessKey)
+        && !string.IsNullOrWhiteSpace(amazonApi.SecretKey)
+        && !string.IsNullOrWhiteSpace(amazonApi.PartnerTag);
+    var shopeeApi = affiliate.ShopeeProductApi ?? new ShopeeProductApiOptions();
+    var shopeeConfigured = shopeeApi.PartnerId > 0
+        && shopeeApi.ShopId > 0
+        && !string.IsNullOrWhiteSpace(shopeeApi.PartnerKey);
+    var mercadoLivreOAuthConfigured =
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreClientId) &&
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreClientSecret) &&
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreRefreshToken) &&
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreUserId);
+
+    var publish = settings.InstagramPublish ?? new InstagramPublishSettings();
+    return Results.Ok(new
+    {
+        app = new
+        {
+            instagramPublishEnabled = publish.Enabled,
+            autoPilotEnabled = publish.AutoPilotEnabled,
+            storyAutoPilotEnabled = publish.StoryAutoPilotEnabled,
+            strictMode = new
+            {
+                requireOfficialProductData = publish.AutoPilotRequireOfficialProductData,
+                minimumImageMatchScore = publish.AutoPilotMinimumImageMatchScore,
+                requireAiCaption = publish.AutoPilotRequireAiCaption
+            }
+        },
+        ai = new
+        {
+            openAiConfigured,
+            geminiKeysConfigured = geminiKeys.Distinct(StringComparer.Ordinal).Count()
+        },
+        officialProductApis = new
+        {
+            amazon = new
+            {
+                enabled = amazonApi.Enabled,
+                configured = amazonConfigured
+            },
+            shopee = new
+            {
+                enabled = shopeeApi.Enabled,
+                configured = shopeeConfigured
+            },
+            mercadoLivre = new
+            {
+                oauthConfigured = mercadoLivreOAuthConfigured
+            }
+        },
+        integrations = new
+        {
+            whatsappConnected = settings.Integrations?.WhatsApp?.Connected ?? false,
+            telegramConnected = settings.Integrations?.Telegram?.Connected ?? false,
+            mercadoLivreConnected = settings.Integrations?.MercadoLivre?.Connected ?? false
+        }
+    });
+});
+
 api.MapPut("/settings", async (
     AutomationSettings payload,
     ISettingsStore store,
@@ -2858,6 +2941,12 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     if (gemini.MaxOutputTokens is < 200 or > 4096)
     {
         yield return "Gemini.MaxOutputTokens deve estar entre 200 e 4096.";
+    }
+
+    var instaPublish = settings.InstagramPublish ?? new InstagramPublishSettings();
+    if (instaPublish.AutoPilotMinimumImageMatchScore is < 0 or > 100)
+    {
+        yield return "InstagramPublish.AutoPilotMinimumImageMatchScore deve estar entre 0 e 100.";
     }
 
     var contentCalendar = settings.ContentCalendar ?? new ContentCalendarSettings();

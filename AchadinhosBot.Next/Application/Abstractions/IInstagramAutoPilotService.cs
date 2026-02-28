@@ -40,6 +40,7 @@ public sealed class InstagramAutoPilotSelectionItem
     public string ProductUrl { get; set; } = string.Empty;
     public string Store { get; set; } = "Unknown";
     public string? ProductName { get; set; }
+    public string? ProductDataSource { get; set; }
     public string? ImageUrl { get; set; }
     public int? ImageMatchScore { get; set; }
     public string? ImageMatchReason { get; set; }

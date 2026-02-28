@@ -272,6 +272,9 @@ public sealed class InstagramPublishSettings
     public int AutoPilotWeightReturn { get; set; } = 30;
     public int AutoPilotWeightDiscount { get; set; } = 25;
     public int AutoPilotWeightRecency { get; set; } = 10;
+    public bool AutoPilotRequireOfficialProductData { get; set; } = true;
+    public int AutoPilotMinimumImageMatchScore { get; set; } = 80;
+    public bool AutoPilotRequireAiCaption { get; set; } = true;
     public bool AutoPilotSendForApproval { get; set; } = true;
     public string AutoPilotApprovalChannel { get; set; } = "telegram";
     public long AutoPilotApprovalTelegramChatId { get; set; }
