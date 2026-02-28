@@ -171,6 +171,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 var (sent, target) = await SendApprovalAsync(
                     result.Selected.Where(x => !string.IsNullOrWhiteSpace(x.DraftId)).ToList(),
                     request,
+                    settings,
                     instaPublishSettings,
                     approvalChannel,
                     storyMode,
@@ -372,11 +373,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var offerContext = $"Score {candidate.FinalScore} | vendas={candidate.SalesSignal} retorno={candidate.ReturnSignal} desconto={candidate.DiscountSignal}";
             settings.UseAi = true;
             var postText = await _instagramComposer.BuildAsync(candidate.Url, offerContext, settings, ct);
-            if (postText.StartsWith("Nao consegui gerar legenda com IA", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("Skipping autopilot candidate because AI caption generation failed: {Url}", candidate.Url);
-                return null;
-            }
+            var aiFailed = postText.StartsWith("Nao consegui gerar legenda com IA", StringComparison.OrdinalIgnoreCase);
 
             var (captionsRaw, hashtagsRaw) = ExtractCaptionsAndHashtags(postText);
 
@@ -392,16 +389,30 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var link = ExtractFirstUrl(postText) ?? candidate.Url;
             var keyword = BuildKeyword(productName, candidate.Store);
 
-            var captions = captionsRaw
-                .Select(FormatCaption)
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => EnsureCaptionContainsCta(x, keyword))
-                .Select(x => x.Length > 2200 ? x[..2200].TrimEnd() + "..." : x)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
+            var captions = new List<string>();
+            if (!aiFailed)
+            {
+                captions = captionsRaw
+                    .Select(FormatCaption)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => EnsureCaptionContainsCta(x, keyword))
+                    .Select(x => x.Length > 2200 ? x[..2200].TrimEnd() + "..." : x)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                if (captions.Count == 0)
+                {
+                    captions.Add(EnsureCaptionContainsCta(FormatCaption(postText), keyword));
+                }
+            }
+
             if (captions.Count == 0)
             {
-                captions.Add(EnsureCaptionContainsCta(FormatCaption(postText), keyword));
+                captions.Add(BuildAutoPilotFallbackCaption(productName, keyword, candidate.Store, postType));
+            }
+
+            if (aiFailed)
+            {
+                _logger.LogInformation("Autopilot using fallback caption because AI generation failed: {Url}", candidate.Url);
             }
 
             var hashtags = NormalizeHashtags(hashtagsRaw, candidate.Store, productName);
@@ -473,6 +484,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     private async Task<(bool Sent, string? Target)> SendApprovalAsync(
         IReadOnlyList<InstagramAutoPilotSelectionItem> selected,
         InstagramAutoPilotRunRequest request,
+        AutomationSettings rootSettings,
         InstagramPublishSettings settings,
         string channel,
         bool storyMode,
@@ -503,10 +515,15 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             return (send.Success, groupId);
         }
 
+        var forwardingChatId = rootSettings.TelegramForwarding?.DestinationChatId ?? 0;
         var chatId = request.ApprovalTelegramChatId
             ?? ((storyMode ? settings.StoryAutoPilotApprovalTelegramChatId : settings.AutoPilotApprovalTelegramChatId) != 0
                 ? (storyMode ? settings.StoryAutoPilotApprovalTelegramChatId : settings.AutoPilotApprovalTelegramChatId)
-                : _telegramOptions.LogsChatId);
+                : settings.AutoPilotApprovalTelegramChatId != 0
+                    ? settings.AutoPilotApprovalTelegramChatId
+                    : forwardingChatId != 0
+                        ? forwardingChatId
+                        : _telegramOptions.LogsChatId);
         if (chatId == 0)
         {
             return (false, null);
@@ -736,9 +753,18 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
 
     private static string ResolveApprovalChannel(InstagramAutoPilotRunRequest request, InstagramPublishSettings settings, bool storyMode)
     {
+        var storyChannel = storyMode ? settings.StoryAutoPilotApprovalChannel : null;
+        if (storyMode &&
+            string.Equals((storyChannel ?? string.Empty).Trim(), "whatsapp", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals((settings.AutoPilotApprovalChannel ?? string.Empty).Trim(), "telegram", StringComparison.OrdinalIgnoreCase))
+        {
+            storyChannel = settings.AutoPilotApprovalChannel;
+        }
+
         var value = FirstNotEmpty(
             request.ApprovalChannel,
-            storyMode ? settings.StoryAutoPilotApprovalChannel : settings.AutoPilotApprovalChannel,
+            storyChannel,
+            settings.AutoPilotApprovalChannel,
             "telegram");
         return value.Trim().ToLowerInvariant() switch
         {
@@ -747,6 +773,18 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             "whatsapp" => "whatsapp",
             _ => "telegram"
         };
+    }
+
+    private static string BuildAutoPilotFallbackCaption(string productName, string keyword, string store, string postType)
+    {
+        var safeProduct = string.IsNullOrWhiteSpace(productName) ? "Oferta do dia" : productName.Trim();
+        if (string.Equals(postType, "story", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"ITEM: {safeProduct}\nLink na bio.\nComente \"{keyword}\" para receber o link.";
+        }
+
+        var safeStore = string.IsNullOrWhiteSpace(store) ? "loja parceira" : store.Trim();
+        return $"{safeProduct} em destaque na {safeStore}.\nComente \"{keyword}\" para receber o link.";
     }
 
     private static string NormalizeAutoPilotPostType(string? input)
