@@ -19,6 +19,7 @@ public sealed class TelegramBotPollingService : BackgroundService
     private readonly ISettingsStore _settingsStore;
     private readonly ILinkTrackingStore _linkTrackingStore;
     private readonly IConversionLogStore _conversionLogStore;
+    private readonly IInstagramAutoPilotService _instagramAutoPilotService;
     private readonly WebhookOptions _webhookOptions;
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly InstagramConversationStore _instagramStore;
@@ -26,6 +27,7 @@ public sealed class TelegramBotPollingService : BackgroundService
     private long _offset;
     private long? _botUserId;
     private string? _botUsername;
+    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private readonly ConcurrentDictionary<long, DateTimeOffset> _chatCooldown = new();
     private static readonly TimeSpan ChatCooldownWindow = TimeSpan.FromSeconds(1);
 
@@ -37,6 +39,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         ISettingsStore settingsStore,
         ILinkTrackingStore linkTrackingStore,
         IConversionLogStore conversionLogStore,
+        IInstagramAutoPilotService instagramAutoPilotService,
         IOptions<WebhookOptions> webhookOptions,
         IInstagramPostComposer instagramComposer,
         InstagramConversationStore instagramStore,
@@ -49,6 +52,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         _settingsStore = settingsStore;
         _linkTrackingStore = linkTrackingStore;
         _conversionLogStore = conversionLogStore;
+        _instagramAutoPilotService = instagramAutoPilotService;
         _webhookOptions = webhookOptions.Value;
         _instagramComposer = instagramComposer;
         _instagramStore = instagramStore;
@@ -259,6 +263,12 @@ public sealed class TelegramBotPollingService : BackgroundService
         }
 
         var settings = await _settingsStore.GetAsync(ct);
+        if (TryParseBotCommand(update.Message.Text, _botUsername, out var botCommand))
+        {
+            await HandleBotCommandAsync(update.Message, botCommand, settings, ct);
+            return;
+        }
+
         if (IsInstagramBotResponse(update.Message.Text))
         {
             return;
@@ -535,6 +545,264 @@ public sealed class TelegramBotPollingService : BackgroundService
            || string.Equals(chatType, "supergroup", StringComparison.OrdinalIgnoreCase)
            || string.Equals(chatType, "channel", StringComparison.OrdinalIgnoreCase);
 
+    private async Task HandleBotCommandAsync(TelegramMessage message, TelegramBotCommand command, AutomationSettings settings, CancellationToken ct)
+    {
+        if (!IsBotCommandAuthorized(message.ChatId, settings))
+        {
+            await SendMessageAsync(message.ChatId, "Este chat nao esta autorizado para comandos de automacao.", ct);
+            return;
+        }
+
+        switch (command.Name)
+        {
+            case "start":
+            case "help":
+                await SendMessageAsync(message.ChatId, BuildHelpMessage(message.ChatId), ct);
+                return;
+
+            case "chatid":
+                await SendMessageAsync(message.ChatId, $"Chat ID: {message.ChatId}", ct);
+                return;
+
+            case "ping":
+                await SendMessageAsync(message.ChatId, "pong", ct);
+                return;
+
+            case "status":
+                await SendMessageAsync(message.ChatId, BuildStatusMessage(settings), ct);
+                return;
+
+            case "story":
+            case "autostory":
+            {
+                var options = ParseAutoPilotCommandOptions(command.Arguments);
+                await SendMessageAsync(message.ChatId, "Executando autostory...", ct);
+                var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
+                {
+                    PostType = "story",
+                    TopCount = options.TopCount,
+                    SendForApproval = true,
+                    ApprovalChannel = "telegram",
+                    ApprovalTelegramChatId = message.ChatId,
+                    DryRun = options.DryRun,
+                    ForceIncludeExisting = options.ForceIncludeExisting
+                }, ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                return;
+            }
+
+            case "post":
+            case "autopilot":
+            {
+                var options = ParseAutoPilotCommandOptions(command.Arguments);
+                await SendMessageAsync(message.ChatId, "Executando autopilot de post...", ct);
+                var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
+                {
+                    PostType = "feed",
+                    TopCount = options.TopCount,
+                    SendForApproval = true,
+                    ApprovalChannel = "telegram",
+                    ApprovalTelegramChatId = message.ChatId,
+                    DryRun = options.DryRun,
+                    ForceIncludeExisting = options.ForceIncludeExisting
+                }, ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                return;
+            }
+
+            default:
+                await SendMessageAsync(message.ChatId, "Comando nao reconhecido. Use /help", ct);
+                return;
+        }
+    }
+
+    private bool IsBotCommandAuthorized(long chatId, AutomationSettings settings)
+    {
+        var allowed = new HashSet<long>();
+
+        if (_options.DestinationChatId != 0) allowed.Add(_options.DestinationChatId);
+        if (_options.LogsChatId != 0) allowed.Add(_options.LogsChatId);
+
+        var forwarding = settings.TelegramForwarding?.DestinationChatId ?? 0;
+        if (forwarding != 0) allowed.Add(forwarding);
+
+        var instaPost = settings.InstagramPosts;
+        foreach (var id in instaPost?.TelegramChatIds ?? [])
+        {
+            if (id != 0) allowed.Add(id);
+        }
+
+        var responder = settings.LinkResponder;
+        foreach (var id in responder?.TelegramChatIds ?? [])
+        {
+            if (id != 0) allowed.Add(id);
+        }
+
+        var instaPublish = settings.InstagramPublish;
+        if ((instaPublish?.AutoPilotApprovalTelegramChatId ?? 0) != 0)
+        {
+            allowed.Add(instaPublish!.AutoPilotApprovalTelegramChatId);
+        }
+        if ((instaPublish?.StoryAutoPilotApprovalTelegramChatId ?? 0) != 0)
+        {
+            allowed.Add(instaPublish!.StoryAutoPilotApprovalTelegramChatId);
+        }
+
+        return allowed.Count > 0 && allowed.Contains(chatId);
+    }
+
+    private string BuildStatusMessage(AutomationSettings settings)
+    {
+        var uptime = DateTimeOffset.UtcNow - _startedAt;
+        var instaPublish = settings.InstagramPublish ?? new InstagramPublishSettings();
+        var responder = settings.LinkResponder ?? new LinkResponderSettings();
+        var lines = new List<string>
+        {
+            "STATUS BOT",
+            $"Uptime: {uptime:dd\\.hh\\:mm\\:ss}",
+            $"Bot: {(!string.IsNullOrWhiteSpace(_options.BotToken) ? "configurado" : "nao configurado")}",
+            $"Link responder telegram: {(responder.Enabled && responder.AllowTelegramBot ? "ON" : "OFF")}",
+            $"Autopilot feed: {(instaPublish.AutoPilotEnabled ? "ON" : "OFF")} (intervalo {instaPublish.AutoPilotIntervalMinutes}m)",
+            $"Autostory: {(instaPublish.StoryAutoPilotEnabled ? "ON" : "OFF")} (intervalo {instaPublish.StoryAutoPilotIntervalMinutes}m)",
+            $"Aprovacao feed: {instaPublish.AutoPilotApprovalChannel} ({instaPublish.AutoPilotApprovalTelegramChatId})",
+            $"Aprovacao story: {instaPublish.StoryAutoPilotApprovalChannel} ({instaPublish.StoryAutoPilotApprovalTelegramChatId})"
+        };
+
+        return string.Join('\n', lines);
+    }
+
+    private static string BuildHelpMessage(long chatId)
+    {
+        var lines = new List<string>
+        {
+            "COMANDOS DISPONIVEIS",
+            "/help - mostra este menu",
+            "/status - status do bot e autopilots",
+            "/chatid - mostra o id do chat atual",
+            "/story [top] [dry] [force] - roda autostory (ex.: /story 2)",
+            "/post [top] [dry] [force] - roda autopilot feed (ex.: /post 3)",
+            "/ping - teste rapido",
+            $"Chat atual: {chatId}"
+        };
+
+        return string.Join('\n', lines);
+    }
+
+    private static string BuildAutoPilotResultMessage(InstagramAutoPilotRunResult result)
+    {
+        var lines = new List<string>
+        {
+            $"Resultado {result.PostType}",
+            $"Sucesso: {(result.Success ? "sim" : "nao")}",
+            $"Selecionados: {result.SelectedCount}",
+            $"Drafts: {result.DraftsCreated}",
+            $"Aprovacao enviada: {(result.ApprovalSent ? "sim" : "nao")}",
+            $"Canal aprovacao: {result.ApprovalChannel ?? "-"}",
+            $"Destino aprovacao: {result.ApprovalTarget ?? "-"}"
+        };
+
+        if (result.Selected.Count > 0)
+        {
+            lines.Add("Top selecionados:");
+            var top = result.Selected.Take(3).ToList();
+            for (var i = 0; i < top.Count; i++)
+            {
+                var item = top[i];
+                var title = string.IsNullOrWhiteSpace(item.ProductName) ? "(sem nome)" : item.ProductName;
+                lines.Add($"{i + 1}. {title}");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.Message))
+        {
+            lines.Add(result.Message);
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static AutoPilotCommandOptions ParseAutoPilotCommandOptions(string[] arguments)
+    {
+        int? topCount = null;
+        var dryRun = false;
+        var forceIncludeExisting = false;
+
+        foreach (var arg in arguments)
+        {
+            if (string.IsNullOrWhiteSpace(arg))
+            {
+                continue;
+            }
+
+            if (!topCount.HasValue && int.TryParse(arg, out var parsedTop))
+            {
+                topCount = Math.Clamp(parsedTop, 1, 10);
+                continue;
+            }
+
+            if (string.Equals(arg, "dry", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(arg, "--dry", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(arg, "teste", StringComparison.OrdinalIgnoreCase))
+            {
+                dryRun = true;
+                continue;
+            }
+
+            if (string.Equals(arg, "force", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(arg, "--force", StringComparison.OrdinalIgnoreCase))
+            {
+                forceIncludeExisting = true;
+            }
+        }
+
+        return new AutoPilotCommandOptions(topCount, dryRun, forceIncludeExisting);
+    }
+
+    private static bool TryParseBotCommand(string text, string? botUsername, out TelegramBotCommand command)
+    {
+        command = new TelegramBotCommand(string.Empty, []);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith('/'))
+        {
+            return false;
+        }
+
+        var pieces = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (pieces.Length == 0)
+        {
+            return false;
+        }
+
+        var rawHead = pieces[0];
+        var commandToken = rawHead;
+        var mentionIdx = rawHead.IndexOf('@');
+        if (mentionIdx > 0)
+        {
+            var mention = rawHead[(mentionIdx + 1)..];
+            if (!string.IsNullOrWhiteSpace(botUsername)
+                && !string.Equals(mention, botUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            commandToken = rawHead[..mentionIdx];
+        }
+
+        var name = commandToken.TrimStart('/').Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        var args = pieces.Skip(1).ToArray();
+        command = new TelegramBotCommand(name, args);
+        return true;
+    }
+
     private static string BuildResponderMessage(LinkResponderSettings responder, string convertedText)
     {
         var template = responder.ReplyTemplate;
@@ -600,6 +868,8 @@ public sealed class TelegramBotPollingService : BackgroundService
     private static readonly Regex UrlRegex = new(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private sealed record TrackingResult(string Text, List<string> TrackingIds);
+    private sealed record TelegramBotCommand(string Name, string[] Arguments);
+    private sealed record AutoPilotCommandOptions(int? TopCount, bool DryRun, bool ForceIncludeExisting);
 
     private static string GetTrackingSuffix(string baseUrl)
     {
