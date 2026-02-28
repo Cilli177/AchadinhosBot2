@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Instagram;
+using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using Microsoft.Extensions.Options;
@@ -20,6 +22,9 @@ public sealed class TelegramBotPollingService : BackgroundService
     private readonly ILinkTrackingStore _linkTrackingStore;
     private readonly IConversionLogStore _conversionLogStore;
     private readonly IInstagramAutoPilotService _instagramAutoPilotService;
+    private readonly IInstagramPublishStore _publishStore;
+    private readonly IInstagramPublishLogStore _publishLogStore;
+    private readonly InstagramLinkMetaService _instagramMeta;
     private readonly WebhookOptions _webhookOptions;
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly InstagramConversationStore _instagramStore;
@@ -40,6 +45,9 @@ public sealed class TelegramBotPollingService : BackgroundService
         ILinkTrackingStore linkTrackingStore,
         IConversionLogStore conversionLogStore,
         IInstagramAutoPilotService instagramAutoPilotService,
+        IInstagramPublishStore publishStore,
+        IInstagramPublishLogStore publishLogStore,
+        InstagramLinkMetaService instagramMeta,
         IOptions<WebhookOptions> webhookOptions,
         IInstagramPostComposer instagramComposer,
         InstagramConversationStore instagramStore,
@@ -53,6 +61,9 @@ public sealed class TelegramBotPollingService : BackgroundService
         _linkTrackingStore = linkTrackingStore;
         _conversionLogStore = conversionLogStore;
         _instagramAutoPilotService = instagramAutoPilotService;
+        _publishStore = publishStore;
+        _publishLogStore = publishLogStore;
+        _instagramMeta = instagramMeta;
         _webhookOptions = webhookOptions.Value;
         _instagramComposer = instagramComposer;
         _instagramStore = instagramStore;
@@ -266,6 +277,11 @@ public sealed class TelegramBotPollingService : BackgroundService
         if (TryParseBotCommand(update.Message.Text, _botUsername, out var botCommand))
         {
             await HandleBotCommandAsync(update.Message, botCommand, settings, ct);
+            return;
+        }
+        if (TryParseConversationalCommand(update.Message.Text, out var conversationalCommand))
+        {
+            await HandleBotCommandAsync(update.Message, conversationalCommand, settings, ct);
             return;
         }
 
@@ -572,6 +588,237 @@ public sealed class TelegramBotPollingService : BackgroundService
                 await SendMessageAsync(message.ChatId, BuildStatusMessage(settings), ct);
                 return;
 
+            case "lista":
+            case "listar":
+            case "list":
+            case "drafts":
+            case "rascunhos":
+            {
+                var limit = 8;
+                if (command.Arguments.Length > 0 && int.TryParse(command.Arguments[0], out var parsedLimit))
+                {
+                    limit = Math.Clamp(parsedLimit, 1, 20);
+                }
+
+                await SendMessageAsync(message.ChatId, await BuildDraftListMessageAsync(limit, ct), ct);
+                return;
+            }
+
+            case "draft":
+            case "revisar":
+            case "review":
+            case "ver":
+            {
+                var draftRef = command.Arguments.FirstOrDefault();
+                var (draft, error) = await ResolveDraftAsync(draftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+
+                await SendMessageAsync(message.ChatId, BuildDraftReviewMessage(draft), ct);
+                return;
+            }
+
+            case "aprovar":
+            case "approve":
+            case "confirmar":
+            {
+                var draftRef = command.Arguments.FirstOrDefault();
+                var (draft, error) = await ResolveDraftAsync(draftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+
+                draft.Status = "approved";
+                draft.Error = null;
+                await _publishStore.UpdateAsync(draft, ct);
+                await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "tg_draft_approved",
+                    Success = true,
+                    DraftId = draft.Id,
+                    Details = $"Chat={message.ChatId}"
+                }, ct);
+
+                var shortId = ShortDraftId(draft.Id);
+                await SendMessageAsync(
+                    message.ChatId,
+                    $"Draft {shortId} aprovado para publicacao.\nStatus: approved\nDica: revise imagem/legenda com /revisar {shortId}.",
+                    ct);
+                return;
+            }
+
+            case "reprovar":
+            case "reject":
+            {
+                var parsed = ParseDraftTextArguments(command.Arguments);
+                var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+
+                var reason = string.IsNullOrWhiteSpace(parsed.Text) ? "Reprovado via bot." : parsed.Text.Trim();
+                draft.Status = "rejected";
+                draft.Error = reason;
+                await _publishStore.UpdateAsync(draft, ct);
+                await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "tg_draft_rejected",
+                    Success = true,
+                    DraftId = draft.Id,
+                    Error = reason,
+                    Details = $"Chat={message.ChatId}"
+                }, ct);
+
+                await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} reprovado.\nMotivo: {reason}", ct);
+                return;
+            }
+
+            case "trocarimg":
+            case "trocarimagem":
+            case "trocar-imagem":
+            {
+                var draftRef = command.Arguments.FirstOrDefault();
+                var (draft, error) = await ResolveDraftAsync(draftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+
+                var replaceResult = await ReplaceDraftImageAsync(draft, message.ChatId, ct);
+                await SendMessageAsync(message.ChatId, replaceResult, ct);
+                return;
+            }
+
+            case "img":
+            case "imagem":
+            {
+                var parsed = ParseImageCommandArguments(command.Arguments);
+                var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+
+                if (parsed.Indexes.Count == 0)
+                {
+                    await SendMessageAsync(message.ChatId, BuildDraftImageListMessage(draft), ct);
+                    return;
+                }
+
+                var max = draft.ImageUrls?.Count ?? 0;
+                if (max == 0)
+                {
+                    await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} sem imagens. Use /trocarimg {ShortDraftId(draft.Id)}.", ct);
+                    return;
+                }
+
+                var selected = parsed.Indexes.Where(i => i >= 1 && i <= max).Distinct().OrderBy(i => i).ToList();
+                if (selected.Count == 0)
+                {
+                    await SendMessageAsync(message.ChatId, $"Indice invalido. Use valores entre 1 e {max}.", ct);
+                    return;
+                }
+
+                draft.SelectedImageIndexes = selected;
+                draft.Status = "draft";
+                draft.Error = null;
+                await _publishStore.UpdateAsync(draft, ct);
+                await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "tg_draft_select_images",
+                    Success = true,
+                    DraftId = draft.Id,
+                    Details = $"Indexes={string.Join(",", selected)};Chat={message.ChatId}"
+                }, ct);
+
+                await SendMessageAsync(
+                    message.ChatId,
+                    $"Imagem(ns) selecionada(s) no draft {ShortDraftId(draft.Id)}: {string.Join(", ", selected)}.\nUse /revisar {ShortDraftId(draft.Id)} para validar.",
+                    ct);
+                return;
+            }
+
+            case "titulo":
+            case "title":
+            {
+                var parsed = ParseDraftTextArguments(command.Arguments);
+                var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(parsed.Text))
+                {
+                    await SendMessageAsync(message.ChatId, "Uso: /titulo <draft|ultimo> <novo titulo>", ct);
+                    return;
+                }
+
+                draft.ProductName = parsed.Text.Trim();
+                draft.Status = "draft";
+                draft.Error = null;
+                await _publishStore.UpdateAsync(draft, ct);
+                await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "tg_draft_set_title",
+                    Success = true,
+                    DraftId = draft.Id,
+                    Details = $"TitleLength={draft.ProductName.Length};Chat={message.ChatId}"
+                }, ct);
+
+                await SendMessageAsync(message.ChatId, $"Titulo atualizado no draft {ShortDraftId(draft.Id)}.", ct);
+                return;
+            }
+
+            case "legenda":
+            case "caption":
+            {
+                var parsed = ParseDraftTextArguments(command.Arguments);
+                var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
+                if (draft is null)
+                {
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(parsed.Text))
+                {
+                    await SendMessageAsync(message.ChatId, "Uso: /legenda <draft|ultimo> <texto da legenda>", ct);
+                    return;
+                }
+
+                var caption = parsed.Text.Trim();
+                if (caption.Length > 2200)
+                {
+                    caption = caption[..2200].TrimEnd() + "...";
+                }
+
+                draft.Caption = caption;
+                draft.CaptionOptions = new List<string> { caption };
+                draft.SelectedCaptionIndex = 1;
+                draft.Status = "draft";
+                draft.Error = null;
+                await _publishStore.UpdateAsync(draft, ct);
+                await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "tg_draft_set_caption",
+                    Success = true,
+                    DraftId = draft.Id,
+                    Details = $"CaptionLength={caption.Length};Chat={message.ChatId}"
+                }, ct);
+
+                await SendMessageAsync(message.ChatId, $"Legenda atualizada no draft {ShortDraftId(draft.Id)}.", ct);
+                return;
+            }
+
             case "story":
             case "autostory":
             {
@@ -611,7 +858,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             }
 
             default:
-                await SendMessageAsync(message.ChatId, "Comando nao reconhecido. Use /help", ct);
+                await SendMessageAsync(message.ChatId, "Comando nao reconhecido. Use /help para ver os comandos de revisao e autopilot.", ct);
                 return;
         }
     }
@@ -679,9 +926,22 @@ public sealed class TelegramBotPollingService : BackgroundService
             "/help - mostra este menu",
             "/status - status do bot e autopilots",
             "/chatid - mostra o id do chat atual",
+            "/lista [n] - lista drafts mais recentes",
+            "/revisar [id|ultimo] - revisa draft",
+            "/trocarimg [id|ultimo] - busca novas imagens do link do produto",
+            "/img [id|ultimo] [1|1,2|2-4] - seleciona imagem(ns)",
+            "/titulo [id|ultimo] <texto> - ajusta nome do produto",
+            "/legenda [id|ultimo] <texto> - ajusta copy",
+            "/aprovar [id|ultimo] - marca draft como aprovado",
+            "/reprovar [id|ultimo] <motivo> - marca draft como reprovado",
             "/story [top] [dry] [force] - roda autostory (ex.: /story 2)",
             "/post [top] [dry] [force] - roda autopilot feed (ex.: /post 3)",
             "/ping - teste rapido",
+            "",
+            "Conversacional:",
+            " - \"a imagem nao bate, troca a imagem do draft 2\"",
+            " - \"revisa o draft 1\"",
+            " - \"aprova o draft 1\"",
             $"Chat atual: {chatId}"
         };
 
@@ -719,6 +979,607 @@ public sealed class TelegramBotPollingService : BackgroundService
         }
 
         return string.Join('\n', lines);
+    }
+
+    private async Task<string> BuildDraftListMessageAsync(int limit, CancellationToken ct)
+    {
+        var items = await _publishStore.ListAsync(ct);
+        var ordered = items
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 20))
+            .ToList();
+
+        if (ordered.Count == 0)
+        {
+            return "Nenhum rascunho encontrado.";
+        }
+
+        var lines = new List<string> { $"RASCUNHOS RECENTES ({ordered.Count})" };
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var draft = ordered[i];
+            var product = string.IsNullOrWhiteSpace(draft.ProductName) ? "(sem produto)" : draft.ProductName.Trim();
+            if (product.Length > 70)
+            {
+                product = product[..70].TrimEnd() + "...";
+            }
+
+            lines.Add($"{i + 1}. {ShortDraftId(draft.Id)} | {draft.Status} | {NormalizePostType(draft.PostType)} | {product}");
+        }
+
+        lines.Add("Comandos: /revisar 1 | /aprovar 1 | /reprovar 1 motivo | /trocarimg 1");
+        return string.Join('\n', lines);
+    }
+
+    private async Task<(InstagramPublishDraft? Draft, string? Error)> ResolveDraftAsync(string? idOrAlias, CancellationToken ct)
+    {
+        var items = await _publishStore.ListAsync(ct);
+        if (items.Count == 0)
+        {
+            return (null, "Nenhum rascunho encontrado.");
+        }
+
+        var key = (idOrAlias ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(key) || string.Equals(key, "ultimo", StringComparison.OrdinalIgnoreCase))
+        {
+            return (items.OrderByDescending(x => x.CreatedAt).First(), null);
+        }
+
+        if (int.TryParse(key, out var indexRef) && indexRef > 0)
+        {
+            var ordered = items
+                .OrderByDescending(x => x.CreatedAt)
+                .ToList();
+            if (indexRef <= ordered.Count)
+            {
+                return (ordered[indexRef - 1], null);
+            }
+
+            return (null, $"Indice {indexRef} fora do intervalo. Existem {ordered.Count} rascunhos.");
+        }
+
+        var exact = items.FirstOrDefault(x => string.Equals(x.Id, key, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null)
+        {
+            return (exact, null);
+        }
+
+        var partials = items
+            .Where(x => x.Id.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x => x.CreatedAt)
+            .ToList();
+        if (partials.Count == 1)
+        {
+            return (partials[0], null);
+        }
+        if (partials.Count > 1)
+        {
+            return (null, "ID parcial ambiguo. Envie mais caracteres do draft.");
+        }
+
+        return (null, $"Rascunho '{key}' nao encontrado.");
+    }
+
+    private static string BuildDraftReviewMessage(InstagramPublishDraft draft)
+    {
+        var sb = new StringBuilder();
+        var shortId = ShortDraftId(draft.Id);
+
+        sb.AppendLine($"Draft: {draft.Id}");
+        sb.AppendLine($"Alias curto: {shortId}");
+        sb.AppendLine($"Status: {draft.Status}");
+        sb.AppendLine($"Tipo: {NormalizePostType(draft.PostType)}");
+        sb.AppendLine($"Criado em: {draft.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC");
+        if (!string.IsNullOrWhiteSpace(draft.ProductName))
+        {
+            sb.AppendLine($"Produto: {draft.ProductName}");
+        }
+
+        var imageCount = draft.ImageUrls?.Count ?? 0;
+        sb.AppendLine($"Imagens: {imageCount}");
+        var selectedIndexes = SanitizeSelectedIndexes(draft.SelectedImageIndexes, imageCount);
+        if (selectedIndexes.Count > 0)
+        {
+            sb.AppendLine($"Selecionadas: {string.Join(", ", selectedIndexes)}");
+        }
+        else if (imageCount > 0)
+        {
+            sb.AppendLine("Selecionadas: todas");
+        }
+
+        if (!string.IsNullOrWhiteSpace(draft.Error))
+        {
+            sb.AppendLine($"Observacao: {draft.Error}");
+        }
+
+        var caption = draft.Caption ?? string.Empty;
+        if (caption.Length > 500)
+        {
+            caption = caption[..500].TrimEnd() + "...";
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Legenda atual:");
+        sb.AppendLine(string.IsNullOrWhiteSpace(caption) ? "(vazia)" : caption);
+
+        if (imageCount > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Imagens (top 5):");
+            var list = (draft.ImageUrls ?? new List<string>()).Take(5).ToList();
+            for (var i = 0; i < list.Count; i++)
+            {
+                sb.AppendLine($"{i + 1}) {list[i]}");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"Acoes: /img {shortId} 1 | /trocarimg {shortId} | /titulo {shortId} ... | /legenda {shortId} ... | /aprovar {shortId} | /reprovar {shortId} motivo");
+        return sb.ToString().Trim();
+    }
+
+    private static string BuildDraftImageListMessage(InstagramPublishDraft draft)
+    {
+        var shortId = ShortDraftId(draft.Id);
+        if (draft.ImageUrls.Count == 0)
+        {
+            return $"Draft {shortId} sem imagens. Use /trocarimg {shortId}.";
+        }
+
+        var selectedIndexes = SanitizeSelectedIndexes(draft.SelectedImageIndexes, draft.ImageUrls.Count);
+        var sb = new StringBuilder();
+        sb.AppendLine($"Imagens do draft {shortId}:");
+        for (var i = 0; i < draft.ImageUrls.Count; i++)
+        {
+            sb.AppendLine($"{i + 1}) {draft.ImageUrls[i]}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"Selecionadas: {(selectedIndexes.Count > 0 ? string.Join(", ", selectedIndexes) : "todas")}");
+        sb.AppendLine($"Escolher: /img {shortId} 1 ou /img {shortId} 1,2");
+        return sb.ToString().Trim();
+    }
+
+    private async Task<string> ReplaceDraftImageAsync(InstagramPublishDraft draft, long chatId, CancellationToken ct)
+    {
+        var sourceLink = draft.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Link))?.Link
+                         ?? ExtractFirstUrl(draft.Caption)
+                         ?? ExtractFirstUrl(string.Join(" ", draft.CaptionOptions ?? new List<string>()));
+        if (string.IsNullOrWhiteSpace(sourceLink))
+        {
+            return $"Draft {ShortDraftId(draft.Id)} sem link de origem para buscar novas imagens.";
+        }
+
+        var meta = await _instagramMeta.GetMetaAsync(sourceLink, ct);
+        var discovered = NormalizeExternalUrls(meta.Images, 18)
+            .OrderByDescending(url => ScoreImageCandidate(url, draft.ProductName))
+            .ToList();
+
+        if (discovered.Count == 0)
+        {
+            return "Nao encontrei novas imagens no link de origem.";
+        }
+
+        var merged = NormalizeExternalUrls(discovered.Concat(draft.ImageUrls ?? new List<string>()), 20);
+        draft.ImageUrls = merged;
+        draft.SelectedImageIndexes = merged.Count > 0 ? new List<int> { 1 } : new List<int>();
+        draft.Status = "draft";
+        draft.Error = null;
+
+        await _publishStore.UpdateAsync(draft, ct);
+        await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "tg_draft_replace_image",
+            Success = true,
+            DraftId = draft.Id,
+            Details = $"Source={sourceLink};Images={merged.Count};Chat={chatId}"
+        }, ct);
+
+        var preview = merged.FirstOrDefault();
+        var score = preview is null ? 0 : ScoreImageCandidate(preview, draft.ProductName);
+        return string.Join('\n', new[]
+        {
+            $"Imagem principal atualizada no draft {ShortDraftId(draft.Id)}.",
+            $"Total de imagens: {merged.Count}",
+            $"Score estimado da imagem principal: {score}/100",
+            preview is null ? "Sem preview de URL." : $"Preview: {preview}",
+            $"Se quiser outra imagem: /img {ShortDraftId(draft.Id)} 2"
+        });
+    }
+
+    private static int ScoreImageCandidate(string imageUrl, string? productName)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl))
+        {
+            return 0;
+        }
+
+        var score = 45;
+        if (imageUrl.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+            || imageUrl.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || imageUrl.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 20;
+        }
+        if (imageUrl.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))
+        {
+            score -= 10;
+        }
+
+        if (imageUrl.Contains("logo", StringComparison.OrdinalIgnoreCase)
+            || imageUrl.Contains("icon", StringComparison.OrdinalIgnoreCase)
+            || imageUrl.Contains("avatar", StringComparison.OrdinalIgnoreCase))
+        {
+            score -= 25;
+        }
+
+        var tokens = ExtractMeaningfulTokens(productName, 3);
+        var loweredUrl = imageUrl.ToLowerInvariant();
+        var matched = tokens.Count(token => loweredUrl.Contains(token, StringComparison.OrdinalIgnoreCase));
+        score += Math.Min(matched * 6, 30);
+
+        return Math.Clamp(score, 1, 100);
+    }
+
+    private static HashSet<string> ExtractMeaningfulTokens(string? text, int minLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return Regex.Matches(text.ToLowerInvariant(), @"[a-z0-9]+", RegexOptions.CultureInvariant)
+            .Select(match => match.Value.Trim())
+            .Where(token => token.Length >= minLength)
+            .Where(token => !CommonStopWords.Contains(token))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? ExtractFirstUrl(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var match = UrlRegex.Match(text);
+        return match.Success ? match.Value : null;
+    }
+
+    private static List<string> NormalizeExternalUrls(IEnumerable<string>? urls, int maxItems)
+    {
+        if (urls is null)
+        {
+            return new List<string>();
+        }
+
+        return urls
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Where(IsLikelyImageUrl)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(1, maxItems))
+            .ToList();
+    }
+
+    private static bool IsLikelyImageUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var abs = value.ToLowerInvariant();
+        if (abs.Contains(".mp4") || abs.Contains(".webm") || abs.Contains(".mov"))
+        {
+            return false;
+        }
+
+        return abs.Contains(".jpg")
+               || abs.Contains(".jpeg")
+               || abs.Contains(".png")
+               || abs.Contains(".webp")
+               || abs.Contains("image")
+               || abs.Contains("img");
+    }
+
+    private static List<int> SanitizeSelectedIndexes(IEnumerable<int>? indexes, int maxCount)
+    {
+        if (indexes is null || maxCount <= 0)
+        {
+            return new List<int>();
+        }
+
+        return indexes
+            .Where(i => i >= 1 && i <= maxCount)
+            .Distinct()
+            .OrderBy(i => i)
+            .ToList();
+    }
+
+    private static string NormalizePostType(string? postType)
+    {
+        var value = (postType ?? "feed").Trim().ToLowerInvariant();
+        return value is "feed" or "story" ? value : "feed";
+    }
+
+    private static string ShortDraftId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return "desconhecido";
+        }
+
+        return id.Length > 8 ? id[..8] : id;
+    }
+
+    private static DraftTextArguments ParseDraftTextArguments(string[] arguments)
+    {
+        if (arguments.Length == 0)
+        {
+            return new DraftTextArguments("ultimo", string.Empty);
+        }
+
+        if (arguments.Length == 1)
+        {
+            if (LooksLikeDraftReference(arguments[0]))
+            {
+                return new DraftTextArguments(arguments[0], string.Empty);
+            }
+
+            return new DraftTextArguments("ultimo", arguments[0]);
+        }
+
+        if (LooksLikeDraftReference(arguments[0]))
+        {
+            return new DraftTextArguments(arguments[0], string.Join(' ', arguments.Skip(1)).Trim());
+        }
+
+        return new DraftTextArguments("ultimo", string.Join(' ', arguments).Trim());
+    }
+
+    private static ImageCommandArguments ParseImageCommandArguments(string[] arguments)
+    {
+        if (arguments.Length == 0)
+        {
+            return new ImageCommandArguments("ultimo", new List<int>());
+        }
+
+        if (arguments.Length == 1)
+        {
+            if (TryParseImageIndexes(arguments[0], out var indexes))
+            {
+                return new ImageCommandArguments("ultimo", indexes);
+            }
+
+            return new ImageCommandArguments(arguments[0], new List<int>());
+        }
+
+        var draftRef = arguments[0];
+        var indexRaw = string.Join(' ', arguments.Skip(1)).Trim();
+        if (!TryParseImageIndexes(indexRaw, out var parsed))
+        {
+            parsed = new List<int>();
+        }
+
+        return new ImageCommandArguments(draftRef, parsed);
+    }
+
+    private static bool TryParseImageIndexes(string input, out List<int> indexes)
+    {
+        indexes = new List<int>();
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        var parts = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            if (part.Contains('-', StringComparison.Ordinal))
+            {
+                var range = part.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (range.Length == 2
+                    && int.TryParse(range[0], out var start)
+                    && int.TryParse(range[1], out var end))
+                {
+                    if (end < start)
+                    {
+                        (start, end) = (end, start);
+                    }
+
+                    for (var i = start; i <= end; i++)
+                    {
+                        indexes.Add(i);
+                    }
+                    continue;
+                }
+            }
+
+            if (int.TryParse(part, out var single))
+            {
+                indexes.Add(single);
+            }
+        }
+
+        indexes = indexes.Distinct().OrderBy(x => x).ToList();
+        return indexes.Count > 0;
+    }
+
+    private static bool LooksLikeDraftReference(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var token = value.Trim().ToLowerInvariant();
+        if (token == "ultimo")
+        {
+            return true;
+        }
+
+        if (int.TryParse(token, out var index) && index > 0)
+        {
+            return true;
+        }
+
+        return Regex.IsMatch(token, "^[a-z0-9]{4,32}$", RegexOptions.CultureInvariant);
+    }
+
+    private static bool TryParseConversationalCommand(string text, out TelegramBotCommand command)
+    {
+        command = new TelegramBotCommand(string.Empty, []);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var raw = text.Trim();
+        if (raw.StartsWith('/'))
+        {
+            return false;
+        }
+
+        var lower = raw.ToLowerInvariant();
+        var draftRef = TryExtractDraftReference(raw) ?? "ultimo";
+
+        if (lower.Contains("imagem nao bate", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("imagem não bate", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("troca imagem", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("trocar imagem", StringComparison.OrdinalIgnoreCase))
+        {
+            command = new TelegramBotCommand("trocarimg", [draftRef]);
+            return true;
+        }
+
+        if (lower.Contains("reprova", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("rejeita", StringComparison.OrdinalIgnoreCase))
+        {
+            var reason = ExtractReasonText(raw);
+            command = string.IsNullOrWhiteSpace(reason)
+                ? new TelegramBotCommand("reprovar", [draftRef])
+                : new TelegramBotCommand("reprovar", [draftRef, reason]);
+            return true;
+        }
+
+        if (lower.Contains("aprova", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("confirma", StringComparison.OrdinalIgnoreCase))
+        {
+            command = new TelegramBotCommand("aprovar", [draftRef]);
+            return true;
+        }
+
+        if (lower.Contains("revisa", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("mostrar draft", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("ver draft", StringComparison.OrdinalIgnoreCase))
+        {
+            command = new TelegramBotCommand("revisar", [draftRef]);
+            return true;
+        }
+
+        var useImageMatch = Regex.Match(lower, @"(?:usar|selecionar|escolher)\s+imagem\s+(?<idx>\d+)", RegexOptions.CultureInvariant);
+        if (useImageMatch.Success && int.TryParse(useImageMatch.Groups["idx"].Value, out var imageIndex))
+        {
+            command = new TelegramBotCommand("img", [draftRef, imageIndex.ToString()]);
+            return true;
+        }
+
+        if (lower.StartsWith("titulo ", StringComparison.OrdinalIgnoreCase) || lower.StartsWith("título ", StringComparison.OrdinalIgnoreCase))
+        {
+            var textPart = ExtractTextAfterKeyword(raw, "titulo");
+            if (!string.IsNullOrWhiteSpace(textPart))
+            {
+                command = new TelegramBotCommand("titulo", [draftRef, textPart]);
+                return true;
+            }
+        }
+
+        if (lower.StartsWith("legenda ", StringComparison.OrdinalIgnoreCase))
+        {
+            var textPart = ExtractTextAfterKeyword(raw, "legenda");
+            if (!string.IsNullOrWhiteSpace(textPart))
+            {
+                command = new TelegramBotCommand("legenda", [draftRef, textPart]);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string? TryExtractDraftReference(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var lowered = text.ToLowerInvariant();
+        if (lowered.Contains("ultimo", StringComparison.OrdinalIgnoreCase))
+        {
+            return "ultimo";
+        }
+
+        var match = Regex.Match(
+            lowered,
+            @"(?:draft|rascunho|post)\s*(?<id>[a-z0-9]{4,32}|\d+)",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        if (match.Success)
+        {
+            return match.Groups["id"].Value;
+        }
+
+        return null;
+    }
+
+    private static string ExtractReasonText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var match = Regex.Match(
+            text,
+            @"(?:motivo|porque|por que|:)\s*(?<reason>.+)$",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        if (match.Success)
+        {
+            return match.Groups["reason"].Value.Trim();
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractTextAfterKeyword(string text, string keyword)
+    {
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(keyword))
+        {
+            return string.Empty;
+        }
+
+        var idx = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+        {
+            return string.Empty;
+        }
+
+        var remaining = text[(idx + keyword.Length)..].Trim();
+        remaining = remaining.Trim(':', '-', '=', ' ');
+        return remaining;
     }
 
     private static AutoPilotCommandOptions ParseAutoPilotCommandOptions(string[] arguments)
@@ -866,9 +1727,16 @@ public sealed class TelegramBotPollingService : BackgroundService
     }
 
     private static readonly Regex UrlRegex = new(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly HashSet<string> CommonStopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "de", "da", "do", "das", "dos", "para", "com", "sem", "por", "na", "no",
+        "e", "ou", "a", "o", "as", "os", "em", "um", "uma", "kit", "produto"
+    };
 
     private sealed record TrackingResult(string Text, List<string> TrackingIds);
     private sealed record TelegramBotCommand(string Name, string[] Arguments);
+    private sealed record DraftTextArguments(string DraftRef, string Text);
+    private sealed record ImageCommandArguments(string DraftRef, List<int> Indexes);
     private sealed record AutoPilotCommandOptions(int? TopCount, bool DryRun, bool ForceIncludeExisting);
 
     private static string GetTrackingSuffix(string baseUrl)
