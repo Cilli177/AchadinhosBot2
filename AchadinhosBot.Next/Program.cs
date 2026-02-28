@@ -5240,52 +5240,81 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
 {
     var input = System.Net.WebUtility.HtmlEncode(model.Input ?? string.Empty);
     var current = System.Net.WebUtility.HtmlEncode(currentUrl);
+    var hasInput = !string.IsNullOrWhiteSpace(model.Input);
     var sb = new StringBuilder();
     sb.AppendLine("<!doctype html>");
     sb.AppendLine("<html lang=\"pt-BR\">");
     sb.AppendLine("<head>");
     sb.AppendLine("  <meta charset=\"utf-8\" />");
     sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
-    sb.AppendLine("  <title>Conversor de Links - Rei das Ofertas</title>");
+    sb.AppendLine("  <title>Conversor Inteligente de Links - Rei das Ofertas</title>");
+    sb.AppendLine("  <meta name=\"robots\" content=\"noindex,nofollow\" />");
     sb.AppendLine("  <style>");
-    sb.AppendLine("    :root{--bg:#fffaf1;--bg2:#f6f3ff;--card:#ffffff;--line:#eadfc9;--text:#1e1a12;--muted:#6d614f;--cta:#e46e2f;--ctaText:#fff;--ok:#157347;--warn:#8f2d2d}");
-    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif;background:radial-gradient(circle at 10% 10%,#ffe8cc 0%,#fff8ee 35%,#f7f4ff 100%)}");
-    sb.AppendLine("    .wrap{max-width:980px;margin:0 auto;padding:22px 14px 40px}");
-    sb.AppendLine("    .hero{padding:18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,#fffdf8 0%,#ffffff 55%,#fff7e8 100%)}");
-    sb.AppendLine("    h1{margin:0 0 8px;font-size:1.45rem} p{margin:0;color:var(--muted)}");
-    sb.AppendLine("    .form{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}");
-    sb.AppendLine("    .form input{flex:1;min-width:250px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);font-size:.95rem}");
-    sb.AppendLine("    .form button{padding:11px 16px;border:0;border-radius:10px;background:var(--cta);color:var(--ctaText);font-weight:800;cursor:pointer}");
-    sb.AppendLine("    .hint{margin-top:10px;font-size:.83rem;color:var(--muted)}");
-    sb.AppendLine("    .panel{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card)}");
-    sb.AppendLine("    .status{font-weight:800}.status.ok{color:var(--ok)}.status.error{color:var(--warn)}");
-    sb.AppendLine("    .result{margin-top:14px;display:grid;grid-template-columns:minmax(220px,320px) 1fr;gap:14px}");
-    sb.AppendLine("    .media{border:1px solid var(--line);border-radius:14px;background:#fff;min-height:230px;display:flex;align-items:center;justify-content:center;overflow:hidden}");
+    sb.AppendLine("    :root{--bg:#f4f7fb;--bg2:#eef3ff;--card:#ffffff;--line:#d8e1ef;--text:#132034;--muted:#58708f;--brand:#0f8a5f;--brandText:#ffffff;--accent:#1459c7;--accentText:#ffffff;--ok:#157347;--warn:#a02828;--chip:#edf4ff}");
+    sb.AppendLine("    *{box-sizing:border-box}");
+    sb.AppendLine("    body{margin:0;color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif;background:radial-gradient(circle at 0% 0%,#d9ecff 0%,#f7fbff 30%,#f3f8ff 100%)}");
+    sb.AppendLine("    .wrap{max-width:1040px;margin:0 auto;padding:22px 14px 42px}");
+    sb.AppendLine("    .hero{padding:18px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,#ffffff 0%,#f3f9ff 55%,#eef6ff 100%)}");
+    sb.AppendLine("    .badge{display:inline-block;padding:4px 10px;border-radius:999px;background:#e6f8f0;color:#0e7a54;font-size:.78rem;font-weight:800}");
+    sb.AppendLine("    h1{margin:10px 0 6px;font-size:1.52rem;line-height:1.24}");
+    sb.AppendLine("    .subtitle{margin:0;color:var(--muted);max-width:760px}");
+    sb.AppendLine("    .form{margin-top:15px;display:flex;gap:10px;flex-wrap:wrap}");
+    sb.AppendLine("    .form input{flex:1;min-width:260px;padding:12px 12px;border-radius:12px;border:1px solid var(--line);font-size:.95rem;background:#fff}");
+    sb.AppendLine("    .form button{padding:12px 18px;border:0;border-radius:12px;background:var(--brand);color:var(--brandText);font-weight:800;cursor:pointer}");
+    sb.AppendLine("    .metaRow{margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}");
+    sb.AppendLine("    .hint{font-size:.82rem;color:var(--muted)}");
+    sb.AppendLine("    .copyMini{border:1px solid var(--line);background:#fff;padding:6px 10px;border-radius:9px;cursor:pointer;font-weight:700;color:#2f4768}");
+    sb.AppendLine("    .panel{margin-top:14px;padding:14px;border-radius:14px;border:1px solid var(--line);background:var(--card)}");
+    sb.AppendLine("    .status{font-weight:800}");
+    sb.AppendLine("    .status.ok{color:var(--ok)}");
+    sb.AppendLine("    .status.error{color:var(--warn)}");
+    sb.AppendLine("    .steps{margin:8px 0 0;padding-left:18px;color:var(--muted);line-height:1.5;font-size:.92rem}");
+    sb.AppendLine("    .result{margin-top:14px;display:grid;grid-template-columns:minmax(260px,360px) 1fr;gap:14px}");
+    sb.AppendLine("    .media{border:1px solid var(--line);border-radius:14px;background:#fff;min-height:250px;display:flex;align-items:center;justify-content:center;overflow:hidden}");
     sb.AppendLine("    .media img{width:100%;height:100%;object-fit:cover;display:block}");
-    sb.AppendLine("    .media .empty{padding:16px;color:var(--muted);font-size:.88rem;text-align:center}");
+    sb.AppendLine("    .media .empty{padding:16px;color:var(--muted);font-size:.9rem;text-align:center}");
     sb.AppendLine("    .card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px}");
-    sb.AppendLine("    .store{display:inline-block;padding:5px 9px;border-radius:999px;background:#fff1e7;color:#9a4a1f;font-size:.8rem;font-weight:800}");
-    sb.AppendLine("    .title{margin-top:8px;font-size:1.2rem;line-height:1.3;font-weight:800}");
-    sb.AppendLine("    .price{margin-top:8px;font-size:1.05rem;font-weight:800}");
-    sb.AppendLine("    .desc{margin-top:8px;color:var(--muted);line-height:1.4}");
-    sb.AppendLine("    .meta{margin-top:10px;font-size:.85rem;color:var(--muted)}");
+    sb.AppendLine("    .topLine{display:flex;gap:8px;flex-wrap:wrap;align-items:center}");
+    sb.AppendLine("    .store{display:inline-block;padding:5px 10px;border-radius:999px;background:var(--chip);color:#24476f;font-size:.79rem;font-weight:800}");
+    sb.AppendLine("    .aff{display:inline-block;padding:5px 10px;border-radius:999px;background:#e9f7ef;color:#0f6c48;font-size:.79rem;font-weight:800}");
+    sb.AppendLine("    .title{margin-top:8px;font-size:1.18rem;line-height:1.34;font-weight:800}");
+    sb.AppendLine("    .price{margin-top:8px;font-size:1.08rem;font-weight:800;color:#1a4a96}");
+    sb.AppendLine("    .desc{margin-top:8px;color:var(--muted);line-height:1.45}");
+    sb.AppendLine("    .meta{margin-top:9px;font-size:.84rem;color:var(--muted)}");
     sb.AppendLine("    .actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}");
-    sb.AppendLine("    .btn{display:inline-block;text-decoration:none;padding:10px 12px;border-radius:10px;font-weight:800}");
-    sb.AppendLine("    .btn.buy{background:var(--cta);color:var(--ctaText)}");
-    sb.AppendLine("    .btn.ghost{background:#f4f1ff;color:#3d2f88}");
-    sb.AppendLine("    .urlbox{margin-top:10px;padding:9px 10px;border:1px dashed var(--line);border-radius:10px;background:#fffdf8;font-family:Consolas,'Courier New',monospace;font-size:.8rem;word-break:break-all}");
-    sb.AppendLine("    @media (max-width:760px){.result{grid-template-columns:1fr}.media{min-height:200px}}");
+    sb.AppendLine("    .btn{display:inline-block;text-decoration:none;padding:10px 12px;border-radius:10px;font-weight:800;border:0;cursor:pointer}");
+    sb.AppendLine("    .btn.buy{background:var(--brand);color:var(--brandText)}");
+    sb.AppendLine("    .btn.secondary{background:var(--accent);color:var(--accentText)}");
+    sb.AppendLine("    .btn.ghost{background:#f4f8ff;color:#214162;border:1px solid var(--line)}");
+    sb.AppendLine("    .urlGrid{margin-top:12px;display:grid;gap:8px}");
+    sb.AppendLine("    .urlRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}");
+    sb.AppendLine("    textarea.urlbox{width:100%;min-height:54px;resize:vertical;padding:8px 10px;border:1px dashed var(--line);border-radius:10px;background:#fbfdff;font-family:Consolas,'Courier New',monospace;font-size:.8rem;line-height:1.34;color:#1f2a3a}");
+    sb.AppendLine("    .copyBtn{padding:9px 11px;border:1px solid var(--line);background:#fff;border-radius:10px;font-weight:800;color:#264467;cursor:pointer;min-width:92px}");
+    sb.AppendLine("    .toast{margin-top:10px;font-size:.84rem;color:#1f5f42;font-weight:700;min-height:18px}");
+    sb.AppendLine("    @media (max-width:760px){");
+    sb.AppendLine("      .result{grid-template-columns:1fr}");
+    sb.AppendLine("      .media{min-height:220px}");
+    sb.AppendLine("      .urlRow{grid-template-columns:1fr}");
+    sb.AppendLine("      .copyBtn{width:100%}");
+    sb.AppendLine("    }");
     sb.AppendLine("  </style>");
     sb.AppendLine("</head>");
     sb.AppendLine("<body><main class=\"wrap\">");
     sb.AppendLine("  <section class=\"hero\">");
-    sb.AppendLine("    <h1>Conversor de Links de Afiliado</h1>");
-    sb.AppendLine("    <p>Cole um link de oferta e gere uma versao afiliada com visual pronto para compra.</p>");
+    sb.AppendLine("    <span class=\"badge\">Ferramenta oficial de conversao</span>");
+    sb.AppendLine("    <h1>Conversor de Link de Afiliado</h1>");
+    sb.AppendLine("    <p class=\"subtitle\">Cole qualquer link de oferta. O sistema converte, valida e gera um link pronto para compartilhar com sua audiencia.</p>");
     sb.AppendLine("    <form class=\"form\" method=\"get\" action=\"/conversor\">");
-    sb.AppendLine($"      <input name=\"url\" value=\"{input}\" placeholder=\"Ex: https://amzn.to/...\" />");
+    sb.AppendLine($"      <input id=\"converterInput\" name=\"url\" value=\"{input}\" placeholder=\"Ex: https://amzn.to/...\" autocomplete=\"off\" />");
     sb.AppendLine("      <button type=\"submit\">Converter agora</button>");
     sb.AppendLine("    </form>");
-    sb.AppendLine($"    <div class=\"hint\">Pagina atual: {current}</div>");
+    sb.AppendLine("    <div class=\"metaRow\">");
+    sb.AppendLine($"      <span class=\"hint\">Link desta pagina: {current}</span>");
+    sb.AppendLine("      <button type=\"button\" class=\"copyMini\" onclick=\"copyById('pageLink','Link da pagina')\">Copiar pagina</button>");
+    sb.AppendLine("      <textarea id=\"pageLink\" style=\"display:none;\">");
+    sb.AppendLine(current);
+    sb.AppendLine("      </textarea>");
+    sb.AppendLine("    </div>");
     sb.AppendLine("  </section>");
 
     if (!string.IsNullOrWhiteSpace(model.Error))
@@ -5293,10 +5322,19 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         sb.AppendLine("  <section class=\"panel\">");
         sb.AppendLine($"    <div class=\"status error\">Falha na conversao</div>");
         sb.AppendLine($"    <div class=\"meta\">{System.Net.WebUtility.HtmlEncode(model.Error)}</div>");
+        if (!string.IsNullOrWhiteSpace(model.OriginalUrl))
+        {
+            sb.AppendLine($"    <div class=\"meta\">URL analisada: {System.Net.WebUtility.HtmlEncode(model.OriginalUrl)}</div>");
+        }
         if (!string.IsNullOrWhiteSpace(model.ValidationError))
         {
             sb.AppendLine($"    <div class=\"meta\">Validacao: {System.Net.WebUtility.HtmlEncode(model.ValidationError)}</div>");
         }
+        sb.AppendLine("    <ol class=\"steps\">");
+        sb.AppendLine("      <li>Confirme se o link abre normalmente no navegador.</li>");
+        sb.AppendLine("      <li>Tente o link completo da loja (nao apenas texto sem URL).</li>");
+        sb.AppendLine("      <li>Se persistir, envie outro link da mesma oferta.</li>");
+        sb.AppendLine("    </ol>");
         sb.AppendLine("  </section>");
     }
     else if (model.Success)
@@ -5311,9 +5349,13 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         var converted = System.Net.WebUtility.HtmlEncode(model.ConvertedUrl ?? string.Empty);
         var tracked = System.Net.WebUtility.HtmlEncode(model.TrackedUrl ?? string.Empty);
         var correction = System.Net.WebUtility.HtmlEncode(model.CorrectionNote ?? string.Empty);
+        var shareText = $"{(string.IsNullOrWhiteSpace(model.Title) ? "Oferta" : model.Title)} | {(string.IsNullOrWhiteSpace(model.Price) ? "Preco sob consulta" : model.Price)}\nCompre aqui: {(string.IsNullOrWhiteSpace(model.TrackedUrl) ? model.ConvertedUrl : model.TrackedUrl)}";
+        var shareTextEncoded = System.Net.WebUtility.HtmlEncode(shareText);
+        var whatsAppShare = System.Net.WebUtility.HtmlEncode($"https://wa.me/?text={Uri.EscapeDataString(shareText)}");
 
         sb.AppendLine("  <section class=\"panel\">");
         sb.AppendLine($"    <div class=\"status ok\">Link convertido com sucesso ({(model.IsAffiliated ? "afiliado validado" : "sem validacao de afiliado")})</div>");
+        sb.AppendLine("    <div class=\"meta\">Use o botao de compra ou compartilhe o texto pronto com seu publico.</div>");
         sb.AppendLine("  </section>");
         sb.AppendLine("  <section class=\"result\">");
         sb.AppendLine("    <div class=\"media\">");
@@ -5327,7 +5369,10 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         }
         sb.AppendLine("    </div>");
         sb.AppendLine("    <article class=\"card\">");
-        sb.AppendLine($"      <span class=\"store\">{store}</span>");
+        sb.AppendLine("      <div class=\"topLine\">");
+        sb.AppendLine($"        <span class=\"store\">{store}</span>");
+        sb.AppendLine($"        <span class=\"aff\">{(model.IsAffiliated ? "Afiliado confirmado" : "Afiliado sem validacao")}</span>");
+        sb.AppendLine("      </div>");
         sb.AppendLine($"      <div class=\"title\">{title}</div>");
         sb.AppendLine($"      <div class=\"price\">{price}</div>");
         if (!string.IsNullOrWhiteSpace(desc))
@@ -5338,10 +5383,24 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         sb.AppendLine($"      <div class=\"meta\">Link publico no seu dominio: {domainHost}</div>");
         sb.AppendLine("      <div class=\"actions\">");
         sb.AppendLine($"        <a class=\"btn buy\" href=\"{tracked}\" target=\"_blank\" rel=\"noopener noreferrer\">Comprar com meu link</a>");
+        sb.AppendLine($"        <a class=\"btn secondary\" href=\"{whatsAppShare}\" target=\"_blank\" rel=\"noopener noreferrer\">Compartilhar no WhatsApp</a>");
         sb.AppendLine($"        <a class=\"btn ghost\" href=\"{converted}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir link convertido</a>");
         sb.AppendLine("      </div>");
-        sb.AppendLine($"      <div class=\"urlbox\">Link no dominio: {tracked}</div>");
-        sb.AppendLine($"      <div class=\"urlbox\">Link convertido: {converted}</div>");
+        sb.AppendLine("      <div class=\"urlGrid\">");
+        sb.AppendLine("        <div class=\"urlRow\">");
+        sb.AppendLine($"          <textarea id=\"trackedLink\" class=\"urlbox\" readonly>{tracked}</textarea>");
+        sb.AppendLine("          <button type=\"button\" class=\"copyBtn\" onclick=\"copyById('trackedLink','Link publico')\">Copiar link</button>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"urlRow\">");
+        sb.AppendLine($"          <textarea id=\"convertedLink\" class=\"urlbox\" readonly>{converted}</textarea>");
+        sb.AppendLine("          <button type=\"button\" class=\"copyBtn\" onclick=\"copyById('convertedLink','Link convertido')\">Copiar convertido</button>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"urlRow\">");
+        sb.AppendLine($"          <textarea id=\"shareText\" class=\"urlbox\" readonly>{shareTextEncoded}</textarea>");
+        sb.AppendLine("          <button type=\"button\" class=\"copyBtn\" onclick=\"copyById('shareText','Texto de divulgacao')\">Copiar texto</button>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("      </div>");
+        sb.AppendLine("      <div id=\"copyToast\" class=\"toast\"></div>");
         if (!string.IsNullOrWhiteSpace(correction))
         {
             sb.AppendLine($"      <div class=\"meta\">Ajuste aplicado: {correction}</div>");
@@ -5349,7 +5408,44 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         sb.AppendLine("    </article>");
         sb.AppendLine("  </section>");
     }
+    else if (!hasInput)
+    {
+        sb.AppendLine("  <section class=\"panel\">");
+        sb.AppendLine("    <div class=\"status\">Como usar</div>");
+        sb.AppendLine("    <ol class=\"steps\">");
+        sb.AppendLine("      <li>Cole o link original de produto no campo acima.</li>");
+        sb.AppendLine("      <li>Clique em <strong>Converter agora</strong>.</li>");
+        sb.AppendLine("      <li>Copie o <strong>Link publico</strong> ou o <strong>Texto de divulgacao</strong>.</li>");
+        sb.AppendLine("      <li>Envie para seu publico em grupos, stories ou bio.</li>");
+        sb.AppendLine("    </ol>");
+        sb.AppendLine("  </section>");
+    }
 
+    sb.AppendLine("  <script>");
+    sb.AppendLine("    function showCopyToast(msg){");
+    sb.AppendLine("      var el=document.getElementById('copyToast');");
+    sb.AppendLine("      if(!el){return;}");
+    sb.AppendLine("      el.textContent=msg+' copiado com sucesso.';");
+    sb.AppendLine("      clearTimeout(window.__copyToastTimer);");
+    sb.AppendLine("      window.__copyToastTimer=setTimeout(function(){el.textContent='';},2200);");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function copyById(id,label){");
+    sb.AppendLine("      var el=document.getElementById(id);");
+    sb.AppendLine("      if(!el){return;}");
+    sb.AppendLine("      var value=('value' in el)?el.value:el.textContent;");
+    sb.AppendLine("      if(!value){return;}");
+    sb.AppendLine("      if(navigator.clipboard && window.isSecureContext){");
+    sb.AppendLine("        navigator.clipboard.writeText(value).then(function(){showCopyToast(label);}).catch(function(){fallbackCopy(el,label);});");
+    sb.AppendLine("      } else {");
+    sb.AppendLine("        fallbackCopy(el,label);");
+    sb.AppendLine("      }");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function fallbackCopy(el,label){");
+    sb.AppendLine("      if(el.select){el.select();el.setSelectionRange(0,99999);} ");
+    sb.AppendLine("      document.execCommand('copy');");
+    sb.AppendLine("      showCopyToast(label);");
+    sb.AppendLine("    }");
+    sb.AppendLine("  </script>");
     sb.AppendLine("</main></body></html>");
     return sb.ToString();
 }
