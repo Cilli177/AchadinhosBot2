@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
@@ -34,7 +36,9 @@ public sealed class TelegramBotPollingService : BackgroundService
     private string? _botUsername;
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private readonly ConcurrentDictionary<long, DateTimeOffset> _chatCooldown = new();
+    private readonly ConcurrentDictionary<long, List<AssistantMessage>> _assistantHistory = new();
     private static readonly TimeSpan ChatCooldownWindow = TimeSpan.FromSeconds(1);
+    private const int AssistantHistoryMaxMessages = 12;
 
     public TelegramBotPollingService(
         IHttpClientFactory httpClientFactory,
@@ -284,12 +288,29 @@ public sealed class TelegramBotPollingService : BackgroundService
             await HandleBotCommandAsync(update.Message, conversationalCommand, settings, ct);
             return;
         }
-        if (TryNormalizeConversationalInput(update.Message.Text, out _))
+        if (TryNormalizeConversationalInput(update.Message.Text, out var conversationalInput))
         {
-            await SendMessageAsync(
-                update.Message.ChatId,
-                "Recebi sua mensagem, mas nao entendi a acao.\nUse /help ou exemplos: /revisar 1, /trocarimg 1, /aprovar 1.",
-                ct);
+            if (!IsBotCommandAuthorized(update.Message.ChatId, settings))
+            {
+                await SendMessageAsync(update.Message.ChatId, "Este chat nao esta autorizado para comandos de automacao.", ct);
+                return;
+            }
+
+            var aiReply = await TryGenerateAssistantReplyAsync(update.Message.ChatId, conversationalInput, settings, ct);
+            if (!string.IsNullOrWhiteSpace(aiReply))
+            {
+                foreach (var chunk in SplitLongMessages(aiReply, 3500))
+                {
+                    await SendMessageAsync(update.Message.ChatId, chunk, ct);
+                }
+            }
+            else
+            {
+                await SendMessageAsync(
+                    update.Message.ChatId,
+                    "Recebi sua mensagem, mas nao consegui responder com IA agora.\nUse /help para comandos ou ajuste as chaves OpenAI/Gemini.",
+                    ct);
+            }
             return;
         }
 
@@ -595,6 +616,41 @@ public sealed class TelegramBotPollingService : BackgroundService
             case "status":
                 await SendMessageAsync(message.ChatId, BuildStatusMessage(settings), ct);
                 return;
+
+            case "assist":
+            case "ai":
+            case "ask":
+            {
+                var prompt = string.Join(' ', command.Arguments).Trim();
+                if (string.IsNullOrWhiteSpace(prompt))
+                {
+                    await SendMessageAsync(message.ChatId, "Uso: /assist <mensagem>\nEx.: /assist remove as imagens 1,3 e 5 do draft 2", ct);
+                    return;
+                }
+
+                var aiReply = await TryGenerateAssistantReplyAsync(message.ChatId, prompt, settings, ct);
+                if (string.IsNullOrWhiteSpace(aiReply))
+                {
+                    await SendMessageAsync(message.ChatId, "Nao consegui responder com IA agora. Verifique chaves OpenAI/Gemini e tente novamente.", ct);
+                    return;
+                }
+
+                foreach (var chunk in SplitLongMessages(aiReply, 3500))
+                {
+                    await SendMessageAsync(message.ChatId, chunk, ct);
+                }
+                return;
+            }
+
+            case "assistclear":
+            case "clearassist":
+            case "limparamemoria":
+            case "limparcontexto":
+            {
+                _assistantHistory.TryRemove(message.ChatId, out _);
+                await SendMessageAsync(message.ChatId, "Contexto da conversa com IA foi limpo para este chat.", ct);
+                return;
+            }
 
             case "lista":
             case "listar":
@@ -990,6 +1046,8 @@ public sealed class TelegramBotPollingService : BackgroundService
             "/help - mostra este menu",
             "/status - status do bot e autopilots",
             "/chatid - mostra o id do chat atual",
+            "/assist <mensagem> - conversa com IA",
+            "/assistclear - limpa contexto da IA neste chat",
             "/lista [n] - lista drafts mais recentes",
             "/revisar [id|ultimo] - revisa draft",
             "/trocarimg [id|ultimo] - busca novas imagens do link do produto",
@@ -1008,6 +1066,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             " - \"bot remover imagem 1,3 e 5 do draft 2\"",
             " - \"bot revisa o draft 1\"",
             " - \"bot aprova o draft 1\"",
+            " - \"bot essa imagem nao combina com o produto, o que voce sugere?\"",
             $"Chat atual: {chatId}"
         };
 
@@ -1798,6 +1857,414 @@ public sealed class TelegramBotPollingService : BackgroundService
         return true;
     }
 
+    private async Task<string?> TryGenerateAssistantReplyAsync(long chatId, string userInput, AutomationSettings settings, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(userInput))
+        {
+            return null;
+        }
+
+        var providerRaw = settings.InstagramPosts?.AiProvider ?? "openai";
+        var provider = providerRaw.Trim().ToLowerInvariant();
+        var providers = provider switch
+        {
+            "gemini" => new[] { "gemini", "openai" },
+            "both" => new[] { "openai", "gemini" },
+            _ => new[] { "openai", "gemini" }
+        };
+
+        var history = GetAssistantHistorySnapshot(chatId);
+        string? reply = null;
+
+        foreach (var item in providers)
+        {
+            if (string.Equals(item, "openai", StringComparison.Ordinal))
+            {
+                reply = await TryGenerateAssistantReplyOpenAiAsync(history, userInput, settings.OpenAI, ct);
+            }
+            else if (string.Equals(item, "gemini", StringComparison.Ordinal))
+            {
+                reply = await TryGenerateAssistantReplyGeminiAsync(history, userInput, settings.Gemini, ct);
+            }
+
+            if (!string.IsNullOrWhiteSpace(reply))
+            {
+                break;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(reply))
+        {
+            return null;
+        }
+
+        AppendAssistantHistory(chatId, "user", userInput);
+        AppendAssistantHistory(chatId, "assistant", reply);
+        return reply;
+    }
+
+    private async Task<string?> TryGenerateAssistantReplyOpenAiAsync(
+        IReadOnlyList<AssistantMessage> history,
+        string userInput,
+        OpenAISettings settings,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(settings.ApiKey) || settings.ApiKey == "********")
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(settings.Model) ? "gpt-4o-mini" : settings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com/v1" : settings.BaseUrl.Trim();
+
+        var input = new List<object>
+        {
+            new
+            {
+                role = "system",
+                content = BuildAssistantSystemPrompt()
+            }
+        };
+
+        foreach (var msg in history.TakeLast(AssistantHistoryMaxMessages))
+        {
+            if (string.IsNullOrWhiteSpace(msg.Content))
+            {
+                continue;
+            }
+
+            var role = string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
+            input.Add(new { role, content = msg.Content });
+        }
+
+        input.Add(new { role = "user", content = userInput });
+
+        var payload = new
+        {
+            model,
+            input,
+            temperature = Math.Clamp(settings.Temperature, 0, 1),
+            max_output_tokens = Math.Clamp(settings.MaxOutputTokens <= 0 ? 500 : settings.MaxOutputTokens, 200, 1200)
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("openai");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            using var response = await client.PostAsync(
+                $"{baseUrl.TrimEnd('/')}/responses",
+                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Assistant OpenAI erro {Status}: {Body}", response.StatusCode, body);
+                return null;
+            }
+
+            return ExtractOpenAiOutputText(body);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Assistant OpenAI falhou");
+            return null;
+        }
+    }
+
+    private async Task<string?> TryGenerateAssistantReplyGeminiAsync(
+        IReadOnlyList<AssistantMessage> history,
+        string userInput,
+        GeminiSettings settings,
+        CancellationToken ct)
+    {
+        var apiKeys = GetGeminiApiKeys(settings);
+        if (apiKeys.Count == 0)
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(settings.Model) ? "gemini-2.5-flash" : settings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : settings.BaseUrl.Trim();
+        var prompt = BuildGeminiAssistantPrompt(history, userInput);
+
+        var payload = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[] { new { text = prompt } }
+                }
+            },
+            generationConfig = new
+            {
+                maxOutputTokens = Math.Clamp(settings.MaxOutputTokens <= 0 ? 700 : settings.MaxOutputTokens, 200, 1200)
+            }
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("gemini");
+            for (var i = 0; i < apiKeys.Count; i++)
+            {
+                var key = apiKeys[i];
+                var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(key)}";
+                using var response = await client.PostAsync(url, new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), ct);
+                var body = await response.Content.ReadAsStringAsync(ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var canTryNext = i < apiKeys.Count - 1 && ShouldTryNextGeminiKey(response.StatusCode, body);
+                    if (canTryNext)
+                    {
+                        continue;
+                    }
+
+                    _logger.LogWarning("Assistant Gemini erro {Status}: {Body}", response.StatusCode, body);
+                    return null;
+                }
+
+                return ExtractGeminiOutputText(body);
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Assistant Gemini falhou");
+            return null;
+        }
+    }
+
+    private static string BuildAssistantSystemPrompt()
+    {
+        return
+            "Voce e o assistente operacional do Rei das Ofertas.\n" +
+            "Responda sempre em portugues do Brasil, objetivo e pratico.\n" +
+            "Seu foco: revisar drafts de post/story, qualidade de imagem x produto, CTA, legenda, e operacao do autopilot.\n" +
+            "Quando a pessoa pedir acao operacional, responda com passos curtos e comando exato para executar no bot.\n" +
+            "Quando nao houver informacao suficiente, faca no maximo 1 pergunta objetiva.";
+    }
+
+    private static string BuildGeminiAssistantPrompt(IReadOnlyList<AssistantMessage> history, string userInput)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(BuildAssistantSystemPrompt());
+        sb.AppendLine();
+        foreach (var msg in history.TakeLast(AssistantHistoryMaxMessages))
+        {
+            var actor = string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "Assistente" : "Usuario";
+            sb.AppendLine($"{actor}: {msg.Content}");
+        }
+        sb.AppendLine($"Usuario: {userInput}");
+        sb.AppendLine("Assistente:");
+        return sb.ToString();
+    }
+
+    private IReadOnlyList<AssistantMessage> GetAssistantHistorySnapshot(long chatId)
+    {
+        if (!_assistantHistory.TryGetValue(chatId, out var history))
+        {
+            return Array.Empty<AssistantMessage>();
+        }
+
+        lock (history)
+        {
+            return history.ToList();
+        }
+    }
+
+    private void AppendAssistantHistory(long chatId, string role, string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return;
+        }
+
+        var history = _assistantHistory.GetOrAdd(chatId, _ => new List<AssistantMessage>());
+        lock (history)
+        {
+            history.Add(new AssistantMessage(role, content.Trim()));
+            var overflow = history.Count - AssistantHistoryMaxMessages;
+            if (overflow > 0)
+            {
+                history.RemoveRange(0, overflow);
+            }
+        }
+    }
+
+    private static List<string> GetGeminiApiKeys(GeminiSettings settings)
+    {
+        var keys = new List<string>();
+        if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+        {
+            keys.Add(settings.ApiKey.Trim());
+        }
+
+        if (settings.ApiKeys is not null)
+        {
+            foreach (var key in settings.ApiKeys)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                var trimmed = key.Trim();
+                if (trimmed == "********")
+                {
+                    continue;
+                }
+
+                keys.Add(trimmed);
+            }
+        }
+
+        return keys
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static bool ShouldTryNextGeminiKey(HttpStatusCode statusCode, string? body)
+    {
+        var status = (int)statusCode;
+        if (status is 401 or 403 or 429 or 500 or 502 or 503 or 504)
+        {
+            return true;
+        }
+
+        if (status == 400 && !string.IsNullOrWhiteSpace(body))
+        {
+            return body.Contains("RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase)
+                   || body.Contains("quota", StringComparison.OrdinalIgnoreCase)
+                   || body.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static string? ExtractOpenAiOutputText(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("output", out var output) || output.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var sb = new StringBuilder();
+            foreach (var item in output.EnumerateArray())
+            {
+                if (!item.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var part in content.EnumerateArray())
+                {
+                    if (part.TryGetProperty("type", out var typeNode)
+                        && string.Equals(typeNode.GetString(), "output_text", StringComparison.OrdinalIgnoreCase)
+                        && part.TryGetProperty("text", out var textNode))
+                    {
+                        var text = textNode.GetString();
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            sb.AppendLine(text);
+                        }
+                    }
+                }
+            }
+
+            var parsed = sb.ToString().Trim();
+            return string.IsNullOrWhiteSpace(parsed) ? null : parsed;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ExtractGeminiOutputText(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var candidate in candidates.EnumerateArray())
+            {
+                if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+                if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                var sb = new StringBuilder();
+                foreach (var part in parts.EnumerateArray())
+                {
+                    if (part.TryGetProperty("text", out var textNode))
+                    {
+                        sb.Append(textNode.GetString());
+                    }
+                }
+
+                var text = sb.ToString().Trim();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IEnumerable<string> SplitLongMessages(string text, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            yield break;
+        }
+
+        var normalized = text.Replace("\r\n", "\n");
+        if (normalized.Length <= maxLength)
+        {
+            yield return normalized;
+            yield break;
+        }
+
+        var start = 0;
+        while (start < normalized.Length)
+        {
+            var remaining = normalized.Length - start;
+            var take = Math.Min(maxLength, remaining);
+            var chunk = normalized.Substring(start, take);
+            if (take == maxLength)
+            {
+                var split = chunk.LastIndexOf('\n');
+                if (split > maxLength / 3)
+                {
+                    chunk = chunk[..split];
+                    take = split + 1;
+                }
+            }
+
+            yield return chunk.Trim();
+            start += take;
+        }
+    }
+
     private static string BuildResponderMessage(LinkResponderSettings responder, string convertedText)
     {
         var template = responder.ReplyTemplate;
@@ -1872,6 +2339,7 @@ public sealed class TelegramBotPollingService : BackgroundService
     private sealed record DraftTextArguments(string DraftRef, string Text);
     private sealed record ImageCommandArguments(string DraftRef, List<int> Indexes);
     private sealed record AutoPilotCommandOptions(int? TopCount, bool DryRun, bool ForceIncludeExisting);
+    private sealed record AssistantMessage(string Role, string Content);
 
     private static string GetTrackingSuffix(string baseUrl)
     {
