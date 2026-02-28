@@ -284,6 +284,14 @@ public sealed class TelegramBotPollingService : BackgroundService
             await HandleBotCommandAsync(update.Message, conversationalCommand, settings, ct);
             return;
         }
+        if (TryNormalizeConversationalInput(update.Message.Text, out _))
+        {
+            await SendMessageAsync(
+                update.Message.ChatId,
+                "Recebi sua mensagem, mas nao entendi a acao.\nUse /help ou exemplos: /revisar 1, /trocarimg 1, /aprovar 1.",
+                ct);
+            return;
+        }
 
         if (IsInstagramBotResponse(update.Message.Text))
         {
