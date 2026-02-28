@@ -296,6 +296,13 @@ public sealed class TelegramBotPollingService : BackgroundService
                 return;
             }
 
+            var aiCommand = await TryResolveAssistantCommandAsync(conversationalInput, settings, ct);
+            if (aiCommand is not null)
+            {
+                await HandleBotCommandAsync(update.Message, aiCommand, settings, ct);
+                return;
+            }
+
             var aiReply = await TryGenerateAssistantReplyAsync(update.Message.ChatId, conversationalInput, settings, ct);
             if (!string.IsNullOrWhiteSpace(aiReply))
             {
@@ -620,6 +627,8 @@ public sealed class TelegramBotPollingService : BackgroundService
             case "assist":
             case "ai":
             case "ask":
+            case "codex":
+            case "assistente":
             {
                 var prompt = string.Join(' ', command.Arguments).Trim();
                 if (string.IsNullOrWhiteSpace(prompt))
@@ -1047,6 +1056,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             "/status - status do bot e autopilots",
             "/chatid - mostra o id do chat atual",
             "/assist <mensagem> - conversa com IA",
+            "/codex <mensagem> - alias de /assist",
             "/assistclear - limpa contexto da IA neste chat",
             "/lista [n] - lista drafts mais recentes",
             "/revisar [id|ultimo] - revisa draft",
@@ -1066,6 +1076,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             " - \"bot remover imagem 1,3 e 5 do draft 2\"",
             " - \"bot revisa o draft 1\"",
             " - \"bot aprova o draft 1\"",
+            " - \"bot roda autostory top 2 dry\"",
             " - \"bot essa imagem nao combina com o produto, o que voce sugere?\"",
             $"Chat atual: {chatId}"
         };
@@ -1855,6 +1866,299 @@ public sealed class TelegramBotPollingService : BackgroundService
         var args = pieces.Skip(1).ToArray();
         command = new TelegramBotCommand(name, args);
         return true;
+    }
+
+    private async Task<TelegramBotCommand?> TryResolveAssistantCommandAsync(string userInput, AutomationSettings settings, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(userInput))
+        {
+            return null;
+        }
+
+        var providerRaw = settings.InstagramPosts?.AiProvider ?? "openai";
+        var provider = providerRaw.Trim().ToLowerInvariant();
+        var providers = provider switch
+        {
+            "gemini" => new[] { "gemini", "openai" },
+            "both" => new[] { "openai", "gemini" },
+            _ => new[] { "openai", "gemini" }
+        };
+
+        foreach (var item in providers)
+        {
+            string? raw = null;
+            if (string.Equals(item, "openai", StringComparison.Ordinal))
+            {
+                raw = await TryResolveAssistantCommandOpenAiAsync(userInput, settings.OpenAI, ct);
+            }
+            else if (string.Equals(item, "gemini", StringComparison.Ordinal))
+            {
+                raw = await TryResolveAssistantCommandGeminiAsync(userInput, settings.Gemini, ct);
+            }
+
+            if (TryParseAssistantCommand(raw, out var command))
+            {
+                return command;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<string?> TryResolveAssistantCommandOpenAiAsync(string userInput, OpenAISettings settings, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(settings.ApiKey) || settings.ApiKey == "********")
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(settings.Model) ? "gpt-4o-mini" : settings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com/v1" : settings.BaseUrl.Trim();
+        var prompt = BuildAssistantCommandPrompt(userInput);
+        var payload = new
+        {
+            model,
+            input = new object[]
+            {
+                new
+                {
+                    role = "system",
+                    content = "Converta pedidos em JSON para comando de bot. Responda somente JSON valido."
+                },
+                new
+                {
+                    role = "user",
+                    content = prompt
+                }
+            },
+            temperature = 0.1,
+            max_output_tokens = 260
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("openai");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            using var response = await client.PostAsync(
+                $"{baseUrl.TrimEnd('/')}/responses",
+                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            return ExtractOpenAiOutputText(body);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<string?> TryResolveAssistantCommandGeminiAsync(string userInput, GeminiSettings settings, CancellationToken ct)
+    {
+        var keys = GetGeminiApiKeys(settings);
+        if (keys.Count == 0)
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(settings.Model) ? "gemini-2.5-flash" : settings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : settings.BaseUrl.Trim();
+        var prompt = BuildAssistantCommandPrompt(userInput);
+        var payload = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[] { new { text = prompt } }
+                }
+            },
+            generationConfig = new
+            {
+                maxOutputTokens = 320
+            }
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("gemini");
+            for (var i = 0; i < keys.Count; i++)
+            {
+                var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(keys[i])}";
+                using var response = await client.PostAsync(url, new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), ct);
+                var body = await response.Content.ReadAsStringAsync(ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var canTryNext = i < keys.Count - 1 && ShouldTryNextGeminiKey(response.StatusCode, body);
+                    if (canTryNext)
+                    {
+                        continue;
+                    }
+                    return null;
+                }
+
+                return ExtractGeminiOutputText(body);
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static string BuildAssistantCommandPrompt(string userInput)
+    {
+        return
+            "Tarefa: analisar mensagem e devolver somente JSON com intencao de comando.\n" +
+            "Acoes validas: none, help, status, chatid, ping, lista, revisar, aprovar, reprovar, trocarimg, img, removerimg, titulo, legenda, story, post, assistclear.\n" +
+            "Campos JSON:\n" +
+            "{\n" +
+            "  \"action\": \"none|...\",\n" +
+            "  \"draftRef\": \"ultimo|numero|id_curto\",\n" +
+            "  \"indexes\": [1,2],\n" +
+            "  \"text\": \"motivo/titulo/legenda\",\n" +
+            "  \"topCount\": 1,\n" +
+            "  \"dryRun\": false,\n" +
+            "  \"force\": false\n" +
+            "}\n" +
+            "Regras:\n" +
+            "- Se nao for pedido de acao, use action=none.\n" +
+            "- Para story/post, interpretar 'dry' ou 'teste' em dryRun=true.\n" +
+            "- Para img/removerimg, preencher indexes.\n" +
+            "- Se faltar draftRef, usar 'ultimo'.\n" +
+            "- Responda somente JSON, sem markdown.\n\n" +
+            $"Mensagem: {userInput}";
+    }
+
+    private static bool TryParseAssistantCommand(string? raw, out TelegramBotCommand? command)
+    {
+        command = null;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        var json = ExtractJsonObject(raw);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var action = GetString(root, "action")?.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(action) || action == "none")
+            {
+                return false;
+            }
+
+            var draftRef = GetString(root, "draftRef");
+            if (string.IsNullOrWhiteSpace(draftRef))
+            {
+                draftRef = "ultimo";
+            }
+            var text = GetString(root, "text")?.Trim() ?? string.Empty;
+            var indexes = new List<int>();
+            if (root.TryGetProperty("indexes", out var idxNode) && idxNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in idxNode.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var parsed) && parsed > 0)
+                    {
+                        indexes.Add(parsed);
+                    }
+                }
+            }
+
+            int? topCount = null;
+            if (root.TryGetProperty("topCount", out var topNode) && topNode.ValueKind == JsonValueKind.Number && topNode.TryGetInt32(out var top))
+            {
+                topCount = Math.Clamp(top, 1, 10);
+            }
+
+            var dryRun = root.TryGetProperty("dryRun", out var dryNode) && dryNode.ValueKind == JsonValueKind.True;
+            var force = root.TryGetProperty("force", out var forceNode) && forceNode.ValueKind == JsonValueKind.True;
+
+            command = action switch
+            {
+                "help" => new TelegramBotCommand("help", []),
+                "status" => new TelegramBotCommand("status", []),
+                "chatid" => new TelegramBotCommand("chatid", []),
+                "ping" => new TelegramBotCommand("ping", []),
+                "lista" => topCount.HasValue
+                    ? new TelegramBotCommand("lista", [topCount.Value.ToString()])
+                    : new TelegramBotCommand("lista", []),
+                "revisar" => new TelegramBotCommand("revisar", [draftRef]),
+                "aprovar" => new TelegramBotCommand("aprovar", [draftRef]),
+                "reprovar" => string.IsNullOrWhiteSpace(text)
+                    ? new TelegramBotCommand("reprovar", [draftRef])
+                    : new TelegramBotCommand("reprovar", [draftRef, text]),
+                "trocarimg" => new TelegramBotCommand("trocarimg", [draftRef]),
+                "img" when indexes.Count > 0 => new TelegramBotCommand("img", [draftRef, string.Join(",", indexes.Distinct().OrderBy(x => x))]),
+                "removerimg" when indexes.Count > 0 => new TelegramBotCommand("removerimg", [draftRef, string.Join(",", indexes.Distinct().OrderBy(x => x))]),
+                "titulo" when !string.IsNullOrWhiteSpace(text) => new TelegramBotCommand("titulo", [draftRef, text]),
+                "legenda" when !string.IsNullOrWhiteSpace(text) => new TelegramBotCommand("legenda", [draftRef, text]),
+                "story" => BuildAutoPilotCommand("story", topCount, dryRun, force),
+                "post" => BuildAutoPilotCommand("post", topCount, dryRun, force),
+                "assistclear" => new TelegramBotCommand("assistclear", []),
+                _ => null
+            };
+
+            return command is not null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static TelegramBotCommand BuildAutoPilotCommand(string name, int? topCount, bool dryRun, bool force)
+    {
+        var args = new List<string>();
+        if (topCount.HasValue)
+        {
+            args.Add(topCount.Value.ToString());
+        }
+        if (dryRun)
+        {
+            args.Add("dry");
+        }
+        if (force)
+        {
+            args.Add("force");
+        }
+
+        return new TelegramBotCommand(name, args.ToArray());
+    }
+
+    private static string? ExtractJsonObject(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+        if (start < 0 || end <= start)
+        {
+            return null;
+        }
+
+        return text[start..(end + 1)];
     }
 
     private async Task<string?> TryGenerateAssistantReplyAsync(long chatId, string userInput, AutomationSettings settings, CancellationToken ct)
