@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Configuration;
 using Microsoft.Extensions.Options;
 
@@ -35,24 +34,24 @@ public sealed class AmazonCreatorApiClient
                    && !string.IsNullOrWhiteSpace(api.ClientSecret)
                    && !string.IsNullOrWhiteSpace(api.TokenEndpoint)
                    && Uri.TryCreate(api.TokenEndpoint.Trim(), UriKind.Absolute, out _)
-                   && !string.IsNullOrWhiteSpace(api.LinkEndpoint)
-                   && Uri.TryCreate(api.LinkEndpoint.Trim(), UriKind.Absolute, out _);
+                   && !string.IsNullOrWhiteSpace(api.CatalogEndpoint)
+                   && Uri.TryCreate(api.CatalogEndpoint.Trim(), UriKind.Absolute, out _)
+                   && !string.IsNullOrWhiteSpace(api.Version);
         }
     }
 
-    public async Task<AmazonCreatorApiLinkResult?> CreateAffiliateLinkAsync(
-        Uri productUrl,
+    public async Task<AmazonCreatorApiItemResult?> GetItemAsync(
+        string asin,
         string partnerTag,
-        string? asin,
         CancellationToken ct)
     {
-        if (!IsConfigured)
+        if (!IsConfigured || string.IsNullOrWhiteSpace(asin) || string.IsNullOrWhiteSpace(partnerTag))
         {
             return null;
         }
 
         var api = _affiliateOptions.AmazonCreatorApi ?? new AmazonCreatorApiOptions();
-        if (!Uri.TryCreate(api.LinkEndpoint.Trim(), UriKind.Absolute, out var linkEndpoint))
+        if (!Uri.TryCreate(api.CatalogEndpoint.Trim(), UriKind.Absolute, out var catalogEndpoint))
         {
             return null;
         }
@@ -63,24 +62,45 @@ public sealed class AmazonCreatorApiClient
             return null;
         }
 
-        var method = ResolveHttpMethod(api.Method);
-        var requestUri = linkEndpoint;
-        var payload = string.Empty;
+        var marketplace = string.IsNullOrWhiteSpace(api.Marketplace)
+            ? "www.amazon.com.br"
+            : api.Marketplace.Trim();
+        var version = api.Version.Trim();
+        var resources = (api.Resources ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (resources.Length == 0)
+        {
+            resources = new[]
+            {
+                "itemInfo.title",
+                "images.primary.large",
+                "images.primary.medium",
+                "images.variants.large",
+                "images.variants.medium",
+                "offersV2.listings.price"
+            };
+        }
 
-        if (method == HttpMethod.Get)
+        var payload = JsonSerializer.Serialize(new
         {
-            requestUri = AppendCommonQuery(linkEndpoint, productUrl, partnerTag, asin);
-        }
-        else
-        {
-            payload = BuildPayload(api.PayloadJson, productUrl.ToString(), partnerTag, asin);
-        }
+            itemIds = new[] { asin.Trim().ToUpperInvariant() },
+            partnerTag = partnerTag.Trim(),
+            marketplace,
+            resources
+        });
 
         try
         {
             var client = _httpClientFactory.CreateClient("default");
-            using var request = new HttpRequestMessage(method, requestUri);
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var request = new HttpRequestMessage(HttpMethod.Post, catalogEndpoint)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}, Version {version}");
+            request.Headers.TryAddWithoutValidation("x-marketplace", marketplace);
 
             foreach (var header in api.Headers)
             {
@@ -89,7 +109,8 @@ public sealed class AmazonCreatorApiClient
                     continue;
                 }
 
-                if (string.Equals(header.Key, "Authorization", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(header.Key, "Authorization", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(header.Key, "x-marketplace", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -97,32 +118,25 @@ public sealed class AmazonCreatorApiClient
                 request.Headers.TryAddWithoutValidation(header.Key.Trim(), header.Value.Trim());
             }
 
-            if (method != HttpMethod.Get)
-            {
-                request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
-            }
-
             using var response = await client.SendAsync(request, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
-                    "Amazon Creator API failed. Status={Status} Body={Body}",
+                    "Amazon Creator API getItems failed. Status={Status} Body={Body}",
                     (int)response.StatusCode,
                     TrimBody(body));
                 return null;
             }
 
-            var resultUrl = ExtractResultUrl(body, api.ResultUrlPaths);
-            if (string.IsNullOrWhiteSpace(resultUrl))
+            var item = ParseItem(body);
+            if (item is null)
             {
-                _logger.LogWarning(
-                    "Amazon Creator API response sem URL rastreavel. Body={Body}",
-                    TrimBody(body));
+                _logger.LogWarning("Amazon Creator API resposta sem item valido. Body={Body}", TrimBody(body));
                 return null;
             }
 
-            return new AmazonCreatorApiLinkResult(resultUrl.Trim(), "Link oficial via Creator API.");
+            return item;
         }
         catch (Exception ex)
         {
@@ -156,9 +170,7 @@ public sealed class AmazonCreatorApiClient
 
             var values = new List<KeyValuePair<string, string>>
             {
-                new("grant_type", "client_credentials"),
-                new("client_id", api.ClientId.Trim()),
-                new("client_secret", api.ClientSecret.Trim())
+                new("grant_type", "client_credentials")
             };
             if (!string.IsNullOrWhiteSpace(api.Scope))
             {
@@ -170,13 +182,14 @@ public sealed class AmazonCreatorApiClient
             {
                 Content = new FormUrlEncodedContent(values)
             };
+            request.Headers.TryAddWithoutValidation("Authorization", $"Basic {BuildBasicCredential(api.ClientId, api.ClientSecret)}");
 
             using var response = await client.SendAsync(request, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
-                    "Amazon OAuth token request failed. Status={Status} Body={Body}",
+                    "Amazon Creator OAuth token request failed. Status={Status} Body={Body}",
                     (int)response.StatusCode,
                     TrimBody(body));
                 return null;
@@ -184,7 +197,7 @@ public sealed class AmazonCreatorApiClient
 
             if (!TryParseTokenResponse(body, out var token, out var expiresInSeconds))
             {
-                _logger.LogWarning("Amazon OAuth token response invalido. Body={Body}", TrimBody(body));
+                _logger.LogWarning("Amazon Creator OAuth token response invalido. Body={Body}", TrimBody(body));
                 return null;
             }
 
@@ -194,7 +207,7 @@ public sealed class AmazonCreatorApiClient
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Amazon OAuth token request crashed.");
+            _logger.LogWarning(ex, "Amazon Creator OAuth token request crashed.");
             return null;
         }
         finally
@@ -203,52 +216,147 @@ public sealed class AmazonCreatorApiClient
         }
     }
 
-    private static Uri AppendCommonQuery(Uri endpoint, Uri productUrl, string partnerTag, string? asin)
+    private static AmazonCreatorApiItemResult? ParseItem(string body)
     {
-        var pairs = ParseQuery(endpoint.Query);
-        pairs["url"] = productUrl.ToString();
-        pairs["link"] = productUrl.ToString();
-        pairs["partnerTag"] = partnerTag;
-        pairs["tag"] = partnerTag;
-        if (!string.IsNullOrWhiteSpace(asin))
+        if (string.IsNullOrWhiteSpace(body))
         {
-            pairs["asin"] = asin.Trim();
+            return null;
         }
 
-        var encodedQuery = BuildQueryString(pairs);
-        var builder = new UriBuilder(endpoint)
+        try
         {
-            Query = encodedQuery
-        };
-        return builder.Uri;
+            using var doc = JsonDocument.Parse(body);
+            if (!TryGetElement(doc.RootElement, out var items, "itemsResult", "items") ||
+                items.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var first = items.EnumerateArray().FirstOrDefault();
+            if (first.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var title = TryGetString(first, "itemInfo", "title", "displayValue");
+            var detailPageUrl = TryGetString(first, "detailPageUrl")
+                                ?? TryGetString(first, "detailPageURL");
+
+            var price = TryGetString(first, "offersV2", "listings", "0", "price", "displayAmount")
+                        ?? TryGetString(first, "offers", "listings", "0", "price", "displayAmount");
+
+            var images = new List<string>();
+            AddImage(images, TryGetString(first, "images", "primary", "large", "url"));
+            AddImage(images, TryGetString(first, "images", "primary", "medium", "url"));
+
+            if (TryGetElement(first, out var variants, "images", "variants") && variants.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var variant in variants.EnumerateArray().Take(8))
+                {
+                    AddImage(images, TryGetString(variant, "large", "url"));
+                    AddImage(images, TryGetString(variant, "medium", "url"));
+                }
+            }
+
+            images = images.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (string.IsNullOrWhiteSpace(detailPageUrl))
+            {
+                return null;
+            }
+
+            return new AmazonCreatorApiItemResult(
+                title?.Trim(),
+                detailPageUrl.Trim(),
+                price?.Trim(),
+                images);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
-    private static string BuildPayload(string template, string url, string partnerTag, string? asin)
+    private static bool TryGetElement(JsonElement source, out JsonElement element, params string[] path)
     {
-        var content = string.IsNullOrWhiteSpace(template)
-            ? "{\"url\":\"{{url}}\",\"partnerTag\":\"{{partnerTag}}\"}"
-            : template;
+        element = source;
+        foreach (var part in path)
+        {
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                if (!int.TryParse(part, out var index))
+                {
+                    return false;
+                }
 
-        content = content
-            .Replace("{{url}}", EscapeJson(url), StringComparison.Ordinal)
-            .Replace("{{partnerTag}}", EscapeJson(partnerTag), StringComparison.Ordinal)
-            .Replace("{{asin}}", EscapeJson(asin ?? string.Empty), StringComparison.Ordinal);
-        return content;
+                var item = element.EnumerateArray().Skip(index).FirstOrDefault();
+                if (item.ValueKind == JsonValueKind.Undefined)
+                {
+                    return false;
+                }
+
+                element = item;
+                continue;
+            }
+
+            if (element.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (!TryGetPropertyIgnoreCase(element, part, out var nested))
+            {
+                return false;
+            }
+
+            element = nested;
+        }
+
+        return true;
     }
 
-    private static HttpMethod ResolveHttpMethod(string? method)
+    private static string? TryGetString(JsonElement source, params string[] path)
     {
-        if (string.IsNullOrWhiteSpace(method))
+        if (!TryGetElement(source, out var element, path))
         {
-            return HttpMethod.Post;
+            return null;
         }
 
-        if (HttpMethod.Get.Method.Equals(method.Trim(), StringComparison.OrdinalIgnoreCase))
+        return element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement source, string propertyName, out JsonElement value)
+    {
+        foreach (var property in source.EnumerateObject())
         {
-            return HttpMethod.Get;
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
         }
 
-        return HttpMethod.Post;
+        value = default;
+        return false;
+    }
+
+    private static void AddImage(List<string> images, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return;
+        }
+
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+        {
+            return;
+        }
+
+        images.Add(value.Trim());
     }
 
     private static bool TryParseTokenResponse(string body, out string token, out int expiresInSeconds)
@@ -264,7 +372,7 @@ public sealed class AmazonCreatorApiClient
         try
         {
             using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("access_token", out var tokenNode) ||
+            if (!TryGetPropertyIgnoreCase(doc.RootElement, "access_token", out var tokenNode) ||
                 tokenNode.ValueKind != JsonValueKind.String)
             {
                 return false;
@@ -276,7 +384,7 @@ public sealed class AmazonCreatorApiClient
                 return false;
             }
 
-            if (doc.RootElement.TryGetProperty("expires_in", out var expiresNode))
+            if (TryGetPropertyIgnoreCase(doc.RootElement, "expires_in", out var expiresNode))
             {
                 if (expiresNode.ValueKind == JsonValueKind.Number && expiresNode.TryGetInt32(out var numeric))
                 {
@@ -297,164 +405,10 @@ public sealed class AmazonCreatorApiClient
         }
     }
 
-    private static string? ExtractResultUrl(string body, List<string>? resultUrlPaths)
+    private static string BuildBasicCredential(string clientId, string clientSecret)
     {
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-
-            if (resultUrlPaths is not null)
-            {
-                foreach (var rawPath in resultUrlPaths.Where(x => !string.IsNullOrWhiteSpace(x)))
-                {
-                    var path = rawPath.Trim();
-                    if (TryGetPath(root, path.Split('.', StringSplitOptions.RemoveEmptyEntries), out var node) &&
-                        node.ValueKind == JsonValueKind.String)
-                    {
-                        var value = node.GetString();
-                        if (IsAbsoluteHttpUrl(value))
-                        {
-                            return value;
-                        }
-                    }
-                }
-            }
-
-            var discovered = FindFirstHttpUrlByKeyHint(root);
-            if (IsAbsoluteHttpUrl(discovered))
-            {
-                return discovered;
-            }
-        }
-        catch
-        {
-            // fallback regex below
-        }
-
-        var match = Regex.Match(body, @"https?://[^\s""'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        return match.Success && IsAbsoluteHttpUrl(match.Value) ? match.Value : null;
-    }
-
-    private static string? FindFirstHttpUrlByKeyHint(JsonElement root)
-    {
-        if (root.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var property in root.EnumerateObject())
-            {
-                if (property.Value.ValueKind == JsonValueKind.String)
-                {
-                    var name = property.Name;
-                    var value = property.Value.GetString();
-                    if (name.Contains("url", StringComparison.OrdinalIgnoreCase) && IsAbsoluteHttpUrl(value))
-                    {
-                        return value;
-                    }
-                }
-
-                var nested = FindFirstHttpUrlByKeyHint(property.Value);
-                if (!string.IsNullOrWhiteSpace(nested))
-                {
-                    return nested;
-                }
-            }
-        }
-        else if (root.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in root.EnumerateArray())
-            {
-                var nested = FindFirstHttpUrlByKeyHint(item);
-                if (!string.IsNullOrWhiteSpace(nested))
-                {
-                    return nested;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private static bool TryGetPath(JsonElement source, IReadOnlyList<string> path, out JsonElement node)
-    {
-        node = source;
-        foreach (var part in path)
-        {
-            if (node.ValueKind == JsonValueKind.Array && int.TryParse(part, out var index))
-            {
-                var value = node.EnumerateArray().Skip(index).FirstOrDefault();
-                if (value.ValueKind == JsonValueKind.Undefined)
-                {
-                    return false;
-                }
-
-                node = value;
-                continue;
-            }
-
-            if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty(part, out node))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsAbsoluteHttpUrl(string? value)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
-
-        return uri.Scheme is "http" or "https";
-    }
-
-    private static Dictionary<string, string> ParseQuery(string query)
-    {
-        var output = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(query))
-        {
-            return output;
-        }
-
-        var input = query.TrimStart('?');
-        foreach (var pair in input.Split('&', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var parts = pair.Split('=', 2);
-            var key = Uri.UnescapeDataString(parts[0]).Trim();
-            if (string.IsNullOrWhiteSpace(key))
-            {
-                continue;
-            }
-
-            var value = parts.Length > 1 ? Uri.UnescapeDataString(parts[1]).Trim() : string.Empty;
-            output[key] = value;
-        }
-
-        return output;
-    }
-
-    private static string BuildQueryString(Dictionary<string, string> query)
-    {
-        return string.Join("&", query.Select(pair =>
-            $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value ?? string.Empty)}"));
-    }
-
-    private static string EscapeJson(string value)
-    {
-        if (value is null)
-        {
-            return string.Empty;
-        }
-
-        var json = JsonSerializer.Serialize(value);
-        return json.Length >= 2 ? json[1..^1] : value;
+        var raw = $"{clientId?.Trim() ?? string.Empty}:{clientSecret?.Trim() ?? string.Empty}";
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(raw));
     }
 
     private static string TrimBody(string body)
@@ -468,6 +422,8 @@ public sealed class AmazonCreatorApiClient
     }
 }
 
-public sealed record AmazonCreatorApiLinkResult(
-    string Url,
-    string? Note);
+public sealed record AmazonCreatorApiItemResult(
+    string? Title,
+    string? DetailPageUrl,
+    string? PriceDisplay,
+    List<string> Images);

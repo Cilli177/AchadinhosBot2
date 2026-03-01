@@ -1429,7 +1429,8 @@ api.MapGet("/diagnostics/apis", async (
     var amazonCreatorConfigured = !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientId)
         && !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientSecret)
         && !string.IsNullOrWhiteSpace(amazonCreatorApi.TokenEndpoint)
-        && !string.IsNullOrWhiteSpace(amazonCreatorApi.LinkEndpoint);
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.CatalogEndpoint)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.Version);
     var shopeeApi = affiliate.ShopeeProductApi ?? new ShopeeProductApiOptions();
     var shopeeConfigured = shopeeApi.PartnerId > 0
         && shopeeApi.ShopId > 0

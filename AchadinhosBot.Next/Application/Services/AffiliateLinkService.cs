@@ -1888,16 +1888,18 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         CancellationToken cancellationToken)
     {
         var asin = ExtractAmazonAsin(resolved);
-        var result = await _amazonCreatorApiClient.CreateAffiliateLinkAsync(resolved, partnerTag, asin, cancellationToken);
-        if (result is null || string.IsNullOrWhiteSpace(result.Url))
+        if (string.IsNullOrWhiteSpace(asin))
         {
-            return (false, null, false, "Creator API nao retornou link rastreavel.", "Creator API sem link");
+            return (false, null, false, "ASIN nao encontrado na URL Amazon.", "ASIN nao encontrado");
         }
 
-        var note = string.IsNullOrWhiteSpace(asin)
-            ? (result.Note ?? "Link oficial via Creator API.")
-            : (result.Note ?? $"Link oficial via Creator API (ASIN {asin}).");
-        return (true, result.Url.Trim(), true, note, null);
+        var item = await _amazonCreatorApiClient.GetItemAsync(asin, partnerTag, cancellationToken);
+        if (item is null || string.IsNullOrWhiteSpace(item.DetailPageUrl))
+        {
+            return (false, null, false, $"Creator API nao retornou link para ASIN {asin}.", "Creator API sem link de detalhe");
+        }
+
+        return (true, item.DetailPageUrl.Trim(), true, $"Link oficial via Creator API (ASIN {asin}).", null);
     }
 
     private async Task<(bool Success, string? Url, bool CorrectionApplied, string? Note, string? Error)> ConvertAmazonWithOfficialApiAsync(

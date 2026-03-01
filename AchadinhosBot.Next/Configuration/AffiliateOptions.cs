@@ -53,26 +53,24 @@ public sealed class AmazonCreatorApiOptions
 
     public string ClientSecret { get; init; } = string.Empty;
 
-    public string TokenEndpoint { get; init; } = "https://api.amazon.com/auth/o2/token";
+    public string TokenEndpoint { get; init; } = "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token";
 
-    public string Scope { get; init; } = string.Empty;
+    public string Scope { get; init; } = "creatorsapi/default";
 
-    public string LinkEndpoint { get; init; } = string.Empty;
+    public string CatalogEndpoint { get; init; } = "https://creatorsapi.amazon/catalog/v1/getItems";
 
-    public string Method { get; init; } = "POST";
+    public string Version { get; init; } = "3.1";
 
-    public string PayloadJson { get; init; } = "{\"url\":\"{{url}}\",\"partnerTag\":\"{{partnerTag}}\"}";
+    public string Marketplace { get; init; } = "www.amazon.com.br";
 
-    public List<string> ResultUrlPaths { get; init; } = new()
+    public List<string> Resources { get; init; } = new()
     {
-        "shortUrl",
-        "short_url",
-        "url",
-        "trackingUrl",
-        "tracking_url",
-        "data.shortUrl",
-        "data.short_url",
-        "data.url"
+        "itemInfo.title",
+        "images.primary.large",
+        "images.primary.medium",
+        "images.variants.large",
+        "images.variants.medium",
+        "offersV2.listings.price"
     };
 
     public Dictionary<string, string> Headers { get; init; } = new(StringComparer.OrdinalIgnoreCase);
