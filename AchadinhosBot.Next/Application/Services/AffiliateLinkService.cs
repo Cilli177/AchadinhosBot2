@@ -88,6 +88,21 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 }
             }
 
+            var expectedTag = ResolveAmazonPartnerTag();
+            if (!IsAmazonPartnerTagValid(expectedTag))
+            {
+                _logger.LogWarning("Conversao Amazon bloqueada: PartnerTag nao configurada/valida. Original={OriginalUrl}", uri.ToString());
+                return new AffiliateLinkResult(
+                    false,
+                    null,
+                    "Amazon",
+                    false,
+                    "PartnerTag Amazon nao configurada",
+                    "Configure a PartnerTag da Amazon para converter links com afiliacao.",
+                    false,
+                    null);
+            }
+
             if (_amazonPaApiClient.IsConfigured)
             {
                 var official = await ConvertAmazonWithOfficialApiAsync(resolved, cancellationToken);
@@ -109,7 +124,6 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
             }
 
-            var expectedTag = ResolveAmazonPartnerTag();
             var originalQuery = ParseQuery(resolved.Query);
             originalQuery.TryGetValue("tag", out var existingTag);
             var amazon = ApplyOrReplaceQuery(RemoveQueryKey(resolved, "tag"), "tag", expectedTag);
@@ -1884,6 +1898,24 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return (_options.AmazonTag ?? string.Empty).Trim();
     }
 
+    private static bool IsAmazonPartnerTagValid(string? partnerTag)
+    {
+        if (string.IsNullOrWhiteSpace(partnerTag))
+        {
+            return false;
+        }
+
+        var normalized = partnerTag.Trim();
+        if (string.Equals(normalized, "CHANGE_ME_AMAZON_TAG", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // PartnerTag comum termina com sufixo de marketplace (ex.: -20 no BR).
+        return Regex.IsMatch(normalized, @"^[A-Za-z0-9][A-Za-z0-9-]{2,}$", RegexOptions.CultureInvariant)
+               && normalized.Contains('-', StringComparison.Ordinal);
+    }
+
     private async Task<(bool IsAffiliated, string? Error)> ValidateAffiliateAsync(string store, string url, CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
@@ -1895,10 +1927,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var amazonExpectedTag = ResolveAmazonPartnerTag();
         (bool IsAffiliated, string? Error) result = store switch
         {
-            "Amazon" => query.TryGetValue("tag", out var tag)
+            "Amazon" => IsAmazonPartnerTagValid(amazonExpectedTag)
+                        && query.TryGetValue("tag", out var tag)
                         && string.Equals(tag, amazonExpectedTag, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
-                : (false, $"Tag Amazon invÃ¡lida (esperado: {amazonExpectedTag})"),
+                : (false, IsAmazonPartnerTagValid(amazonExpectedTag)
+                    ? $"Tag Amazon invÃ¡lida (esperado: {amazonExpectedTag})"
+                    : "PartnerTag Amazon nao configurada"),
             "Mercado Livre" => (IsMercadoLivreProductUri(uri) || IsMercadoLivreSocialOrShortUri(uri))
                                 && query.TryGetValue("matt_tool", out var tool)
                                 && query.TryGetValue("matt_word", out var word)
