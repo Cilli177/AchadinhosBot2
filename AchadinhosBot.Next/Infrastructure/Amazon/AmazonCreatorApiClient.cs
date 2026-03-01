@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using AchadinhosBot.Next.Configuration;
 using Microsoft.Extensions.Options;
+using System.Net;
 
 namespace AchadinhosBot.Next.Infrastructure.Amazon;
 
@@ -168,42 +169,37 @@ public sealed class AmazonCreatorApiClient
                 return null;
             }
 
-            var values = new List<KeyValuePair<string, string>>
+            var preferBodyCredentials = string.Equals(tokenEndpoint.Host, "api.amazon.com", StringComparison.OrdinalIgnoreCase);
+            var authModes = preferBodyCredentials
+                ? new[] { TokenAuthMode.BodyClientCredentials, TokenAuthMode.BasicHeader }
+                : new[] { TokenAuthMode.BasicHeader, TokenAuthMode.BodyClientCredentials };
+
+            TokenRequestResult? lastFailure = null;
+            var client = _httpClientFactory.CreateClient("default");
+            foreach (var mode in authModes)
             {
-                new("grant_type", "client_credentials")
-            };
-            if (!string.IsNullOrWhiteSpace(api.Scope))
-            {
-                values.Add(new KeyValuePair<string, string>("scope", api.Scope.Trim()));
+                var result = await RequestAccessTokenAsync(client, tokenEndpoint, api, mode, ct);
+                if (!result.Success || string.IsNullOrWhiteSpace(result.AccessToken))
+                {
+                    lastFailure = result;
+                    continue;
+                }
+
+                _accessToken = result.AccessToken.Trim();
+                _accessTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, result.ExpiresInSeconds));
+                return _accessToken;
             }
 
-            var client = _httpClientFactory.CreateClient("default");
-            using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
-            {
-                Content = new FormUrlEncodedContent(values)
-            };
-            request.Headers.TryAddWithoutValidation("Authorization", $"Basic {BuildBasicCredential(api.ClientId, api.ClientSecret)}");
-
-            using var response = await client.SendAsync(request, ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
-            if (!response.IsSuccessStatusCode)
+            if (lastFailure is not null)
             {
                 _logger.LogWarning(
-                    "Amazon Creator OAuth token request failed. Status={Status} Body={Body}",
-                    (int)response.StatusCode,
-                    TrimBody(body));
-                return null;
+                    "Amazon Creator OAuth token request failed. Endpoint={Endpoint} Status={Status} Body={Body}",
+                    tokenEndpoint.ToString(),
+                    (int)lastFailure.StatusCode,
+                    TrimBody(lastFailure.ResponseBody ?? string.Empty));
             }
 
-            if (!TryParseTokenResponse(body, out var token, out var expiresInSeconds))
-            {
-                _logger.LogWarning("Amazon Creator OAuth token response invalido. Body={Body}", TrimBody(body));
-                return null;
-            }
-
-            _accessToken = token;
-            _accessTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, expiresInSeconds));
-            return _accessToken;
+            return null;
         }
         catch (Exception ex)
         {
@@ -214,6 +210,51 @@ public sealed class AmazonCreatorApiClient
         {
             _tokenLock.Release();
         }
+    }
+
+    private async Task<TokenRequestResult> RequestAccessTokenAsync(
+        HttpClient client,
+        Uri tokenEndpoint,
+        AmazonCreatorApiOptions api,
+        TokenAuthMode mode,
+        CancellationToken ct)
+    {
+        var values = new List<KeyValuePair<string, string>>
+        {
+            new("grant_type", "client_credentials")
+        };
+        if (!string.IsNullOrWhiteSpace(api.Scope))
+        {
+            values.Add(new KeyValuePair<string, string>("scope", api.Scope.Trim()));
+        }
+        if (mode == TokenAuthMode.BodyClientCredentials)
+        {
+            values.Add(new KeyValuePair<string, string>("client_id", api.ClientId.Trim()));
+            values.Add(new KeyValuePair<string, string>("client_secret", api.ClientSecret.Trim()));
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
+        {
+            Content = new FormUrlEncodedContent(values)
+        };
+        if (mode == TokenAuthMode.BasicHeader)
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", $"Basic {BuildBasicCredential(api.ClientId, api.ClientSecret)}");
+        }
+
+        using var response = await client.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            return new TokenRequestResult(false, null, 0, response.StatusCode, body);
+        }
+
+        if (!TryParseTokenResponse(body, out var token, out var expiresInSeconds))
+        {
+            return new TokenRequestResult(false, null, 0, response.StatusCode, body);
+        }
+
+        return new TokenRequestResult(true, token, expiresInSeconds, response.StatusCode, body);
     }
 
     private static AmazonCreatorApiItemResult? ParseItem(string body)
@@ -420,6 +461,19 @@ public sealed class AmazonCreatorApiClient
 
         return body.Length <= 800 ? body : body[..800];
     }
+
+    private enum TokenAuthMode
+    {
+        BasicHeader = 0,
+        BodyClientCredentials = 1
+    }
+
+    private sealed record TokenRequestResult(
+        bool Success,
+        string? AccessToken,
+        int ExpiresInSeconds,
+        HttpStatusCode StatusCode,
+        string? ResponseBody);
 }
 
 public sealed record AmazonCreatorApiItemResult(

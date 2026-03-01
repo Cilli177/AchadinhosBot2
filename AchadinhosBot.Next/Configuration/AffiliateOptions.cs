@@ -53,7 +53,7 @@ public sealed class AmazonCreatorApiOptions
 
     public string ClientSecret { get; init; } = string.Empty;
 
-    public string TokenEndpoint { get; init; } = "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token";
+    public string TokenEndpoint { get; init; } = "https://api.amazon.com/auth/o2/token";
 
     public string Scope { get; init; } = "creatorsapi/default";
 
