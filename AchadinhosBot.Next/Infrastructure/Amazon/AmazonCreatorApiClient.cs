@@ -67,6 +67,7 @@ public sealed class AmazonCreatorApiClient
             ? "www.amazon.com.br"
             : api.Marketplace.Trim();
         var version = api.Version.Trim();
+        var isV3 = IsV3Version(version);
         var resources = (api.Resources ?? new List<string>())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.Trim())
@@ -88,6 +89,7 @@ public sealed class AmazonCreatorApiClient
         var payload = JsonSerializer.Serialize(new
         {
             itemIds = new[] { asin.Trim().ToUpperInvariant() },
+            itemIdType = "ASIN",
             partnerTag = partnerTag.Trim(),
             marketplace,
             resources
@@ -100,7 +102,10 @@ public sealed class AmazonCreatorApiClient
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
             };
-            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}, Version {version}");
+            var authorization = isV3
+                ? $"Bearer {token}"
+                : $"Bearer {token}, Version {version}";
+            request.Headers.TryAddWithoutValidation("Authorization", authorization);
             request.Headers.TryAddWithoutValidation("x-marketplace", marketplace);
 
             foreach (var header in api.Headers)
@@ -169,9 +174,10 @@ public sealed class AmazonCreatorApiClient
                 return null;
             }
 
-            var preferBodyCredentials = string.Equals(tokenEndpoint.Host, "api.amazon.com", StringComparison.OrdinalIgnoreCase);
-            var authModes = preferBodyCredentials
-                ? new[] { TokenAuthMode.BodyClientCredentials, TokenAuthMode.BasicHeader }
+            var version = api.Version?.Trim() ?? string.Empty;
+            var isV3 = IsV3Version(version) || string.Equals(tokenEndpoint.Host, "api.amazon.com", StringComparison.OrdinalIgnoreCase);
+            var authModes = isV3
+                ? new[] { TokenAuthMode.JsonBodyClientCredentials, TokenAuthMode.BodyClientCredentials, TokenAuthMode.BasicHeader }
                 : new[] { TokenAuthMode.BasicHeader, TokenAuthMode.BodyClientCredentials };
 
             TokenRequestResult? lastFailure = null;
@@ -219,28 +225,7 @@ public sealed class AmazonCreatorApiClient
         TokenAuthMode mode,
         CancellationToken ct)
     {
-        var values = new List<KeyValuePair<string, string>>
-        {
-            new("grant_type", "client_credentials")
-        };
-        if (!string.IsNullOrWhiteSpace(api.Scope))
-        {
-            values.Add(new KeyValuePair<string, string>("scope", api.Scope.Trim()));
-        }
-        if (mode == TokenAuthMode.BodyClientCredentials)
-        {
-            values.Add(new KeyValuePair<string, string>("client_id", api.ClientId.Trim()));
-            values.Add(new KeyValuePair<string, string>("client_secret", api.ClientSecret.Trim()));
-        }
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
-        {
-            Content = new FormUrlEncodedContent(values)
-        };
-        if (mode == TokenAuthMode.BasicHeader)
-        {
-            request.Headers.TryAddWithoutValidation("Authorization", $"Basic {BuildBasicCredential(api.ClientId, api.ClientSecret)}");
-        }
+        using var request = BuildTokenRequest(tokenEndpoint, api, mode);
 
         using var response = await client.SendAsync(request, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
@@ -255,6 +240,50 @@ public sealed class AmazonCreatorApiClient
         }
 
         return new TokenRequestResult(true, token, expiresInSeconds, response.StatusCode, body);
+    }
+
+    private static HttpRequestMessage BuildTokenRequest(
+        Uri tokenEndpoint,
+        AmazonCreatorApiOptions api,
+        TokenAuthMode mode)
+    {
+        var scope = ResolveScope(api);
+        var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint);
+
+        if (mode == TokenAuthMode.JsonBodyClientCredentials)
+        {
+            var payload = JsonSerializer.Serialize(new
+            {
+                grant_type = "client_credentials",
+                client_id = api.ClientId.Trim(),
+                client_secret = api.ClientSecret.Trim(),
+                scope
+            });
+            request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+            return request;
+        }
+
+        var values = new List<KeyValuePair<string, string>>
+        {
+            new("grant_type", "client_credentials")
+        };
+        if (!string.IsNullOrWhiteSpace(scope))
+        {
+            values.Add(new KeyValuePair<string, string>("scope", scope));
+        }
+        if (mode == TokenAuthMode.BodyClientCredentials)
+        {
+            values.Add(new KeyValuePair<string, string>("client_id", api.ClientId.Trim()));
+            values.Add(new KeyValuePair<string, string>("client_secret", api.ClientSecret.Trim()));
+        }
+
+        request.Content = new FormUrlEncodedContent(values);
+        if (mode == TokenAuthMode.BasicHeader)
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", $"Basic {BuildBasicCredential(api.ClientId, api.ClientSecret)}");
+        }
+
+        return request;
     }
 
     private static AmazonCreatorApiItemResult? ParseItem(string body)
@@ -462,10 +491,31 @@ public sealed class AmazonCreatorApiClient
         return body.Length <= 800 ? body : body[..800];
     }
 
+    private static bool IsV3Version(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return false;
+        }
+
+        return version.Trim().StartsWith("3.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveScope(AmazonCreatorApiOptions api)
+    {
+        if (!string.IsNullOrWhiteSpace(api.Scope))
+        {
+            return api.Scope.Trim();
+        }
+
+        return IsV3Version(api.Version) ? "creatorsapi::default" : "creatorsapi/default";
+    }
+
     private enum TokenAuthMode
     {
         BasicHeader = 0,
-        BodyClientCredentials = 1
+        BodyClientCredentials = 1,
+        JsonBodyClientCredentials = 2
     }
 
     private sealed record TokenRequestResult(

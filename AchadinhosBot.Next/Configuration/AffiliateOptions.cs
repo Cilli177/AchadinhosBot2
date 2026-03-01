@@ -55,7 +55,7 @@ public sealed class AmazonCreatorApiOptions
 
     public string TokenEndpoint { get; init; } = "https://api.amazon.com/auth/o2/token";
 
-    public string Scope { get; init; } = "creatorsapi/default";
+    public string Scope { get; init; } = "creatorsapi::default";
 
     public string CatalogEndpoint { get; init; } = "https://creatorsapi.amazon/catalog/v1/getItems";
 
