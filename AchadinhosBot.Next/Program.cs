@@ -143,6 +143,7 @@ builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(6
 builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60));
 
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
+builder.Services.AddSingleton<AmazonCreatorApiClient>();
 builder.Services.AddSingleton<AmazonPaApiClient>();
 builder.Services.AddSingleton<IAffiliateCouponSyncService, AffiliateCouponSyncService>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, AmazonOfficialCouponProvider>();
@@ -1421,9 +1422,14 @@ api.MapGet("/diagnostics/apis", async (
 
     var openAiConfigured = !string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey) && settings.OpenAI.ApiKey != "********";
     var amazonApi = affiliate.AmazonProductApi ?? new AmazonProductApiOptions();
-    var amazonConfigured = !string.IsNullOrWhiteSpace(amazonApi.AccessKey)
+    var amazonCreatorApi = affiliate.AmazonCreatorApi ?? new AmazonCreatorApiOptions();
+    var amazonPaConfigured = !string.IsNullOrWhiteSpace(amazonApi.AccessKey)
         && !string.IsNullOrWhiteSpace(amazonApi.SecretKey)
         && !string.IsNullOrWhiteSpace(amazonApi.PartnerTag);
+    var amazonCreatorConfigured = !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientId)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientSecret)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.TokenEndpoint)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.LinkEndpoint);
     var shopeeApi = affiliate.ShopeeProductApi ?? new ShopeeProductApiOptions();
     var shopeeConfigured = shopeeApi.PartnerId > 0
         && shopeeApi.ShopId > 0
@@ -1461,8 +1467,21 @@ api.MapGet("/diagnostics/apis", async (
         {
             amazon = new
             {
-                enabled = amazonApi.Enabled,
-                configured = amazonConfigured
+                enabled = amazonApi.Enabled || amazonCreatorApi.Enabled,
+                configured = amazonPaConfigured || amazonCreatorConfigured,
+                provider = amazonCreatorApi.Enabled
+                    ? "creator-api"
+                    : (amazonApi.Enabled ? "pa-api" : "fallback"),
+                creatorApi = new
+                {
+                    enabled = amazonCreatorApi.Enabled,
+                    configured = amazonCreatorConfigured
+                },
+                paApi = new
+                {
+                    enabled = amazonApi.Enabled,
+                    configured = amazonPaConfigured
+                }
             },
             shopee = new
             {

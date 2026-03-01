@@ -34,6 +34,8 @@ public sealed class AffiliateOptions
 
     public AmazonProductApiOptions AmazonProductApi { get; init; } = new();
 
+    public AmazonCreatorApiOptions AmazonCreatorApi { get; init; } = new();
+
     public OfficialCouponApiOptions AmazonOfficialCoupons { get; init; } = new();
 
     public OfficialCouponApiOptions ShopeeOfficialCoupons { get; init; } = new();
@@ -41,6 +43,39 @@ public sealed class AffiliateOptions
     public OfficialCouponApiOptions SheinOfficialCoupons { get; init; } = new();
 
     public OfficialCouponApiOptions MercadoLivreOfficialCoupons { get; init; } = new();
+}
+
+public sealed class AmazonCreatorApiOptions
+{
+    public bool Enabled { get; init; }
+
+    public string ClientId { get; init; } = string.Empty;
+
+    public string ClientSecret { get; init; } = string.Empty;
+
+    public string TokenEndpoint { get; init; } = "https://api.amazon.com/auth/o2/token";
+
+    public string Scope { get; init; } = string.Empty;
+
+    public string LinkEndpoint { get; init; } = string.Empty;
+
+    public string Method { get; init; } = "POST";
+
+    public string PayloadJson { get; init; } = "{\"url\":\"{{url}}\",\"partnerTag\":\"{{partnerTag}}\"}";
+
+    public List<string> ResultUrlPaths { get; init; } = new()
+    {
+        "shortUrl",
+        "short_url",
+        "url",
+        "trackingUrl",
+        "tracking_url",
+        "data.shortUrl",
+        "data.short_url",
+        "data.url"
+    };
+
+    public Dictionary<string, string> Headers { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class AmazonProductApiOptions

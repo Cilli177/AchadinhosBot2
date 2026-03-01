@@ -15,6 +15,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 {
     private readonly AffiliateOptions _options;
     private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
+    private readonly AmazonCreatorApiClient _amazonCreatorApiClient;
     private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly ILogger<AffiliateLinkService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -24,12 +25,14 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     public AffiliateLinkService(
         IOptions<AffiliateOptions> options,
         IMercadoLivreOAuthService mercadoLivreOAuthService,
+        AmazonCreatorApiClient amazonCreatorApiClient,
         AmazonPaApiClient amazonPaApiClient,
         ILogger<AffiliateLinkService> logger,
         IHttpClientFactory httpClientFactory)
     {
         _options = options.Value;
         _mercadoLivreOAuthService = mercadoLivreOAuthService;
+        _amazonCreatorApiClient = amazonCreatorApiClient;
         _amazonPaApiClient = amazonPaApiClient;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
@@ -103,25 +106,66 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     null);
             }
 
+            var officialErrors = new List<string>();
+
+            if (_amazonCreatorApiClient.IsConfigured)
+            {
+                var creator = await ConvertAmazonWithCreatorApiAsync(resolved, expectedTag, cancellationToken);
+                if (creator.Success && !string.IsNullOrWhiteSpace(creator.Url))
+                {
+                    var creatorValidation = await ValidateAffiliateAsync("Amazon", creator.Url, cancellationToken);
+                    if (!creatorValidation.IsAffiliated)
+                    {
+                        var validationError = creatorValidation.Error ?? "Link Creator API sem validacao de afiliado.";
+                        _logger.LogWarning("Verificacao Amazon Creator API falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), creator.Url, validationError);
+                        officialErrors.Add($"Creator API: {validationError}");
+                    }
+                    else
+                    {
+                        var creatorShort = await ShortenAsync(creator.Url, cancellationToken) ?? creator.Url;
+                        LogStore("Amazon", uri.ToString(), creatorShort);
+                        return new AffiliateLinkResult(true, creatorShort, "Amazon", true, null, null, creator.CorrectionApplied, creator.Note);
+                    }
+                }
+                else
+                {
+                    var creatorError = creator.Error ?? "Falha sem detalhe.";
+                    _logger.LogWarning("Conversao Amazon via Creator API falhou. Original={OriginalUrl} Erro={Error}", uri.ToString(), creatorError);
+                    officialErrors.Add($"Creator API: {creatorError}");
+                }
+            }
+
             if (_amazonPaApiClient.IsConfigured)
             {
                 var official = await ConvertAmazonWithOfficialApiAsync(resolved, cancellationToken);
-                if (!official.Success || string.IsNullOrWhiteSpace(official.Url))
+                if (official.Success && !string.IsNullOrWhiteSpace(official.Url))
                 {
-                    _logger.LogWarning("Conversao Amazon via API oficial falhou. Original={OriginalUrl} Erro={Error}", uri.ToString(), official.Error);
-                    return new AffiliateLinkResult(false, null, "Amazon", false, official.Error, "Falha na conversao oficial Amazon", false, official.Note);
+                    var officialValidation = await ValidateAffiliateAsync("Amazon", official.Url, cancellationToken);
+                    if (!officialValidation.IsAffiliated)
+                    {
+                        var validationError = officialValidation.Error ?? "Link PA-API sem validacao de afiliado.";
+                        _logger.LogWarning("Verificacao Amazon PA-API falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), official.Url, validationError);
+                        officialErrors.Add($"PA-API: {validationError}");
+                    }
+                    else
+                    {
+                        var officialShort = await ShortenAsync(official.Url, cancellationToken) ?? official.Url;
+                        LogStore("Amazon", uri.ToString(), officialShort);
+                        return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
+                    }
                 }
-
-                var officialValidation = await ValidateAffiliateAsync("Amazon", official.Url, cancellationToken);
-                if (!officialValidation.IsAffiliated)
+                else
                 {
-                    _logger.LogWarning("Verificacao Amazon oficial falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), official.Url, officialValidation.Error);
-                    return new AffiliateLinkResult(false, null, "Amazon", false, officialValidation.Error, "Link oficial Amazon invalido", false, official.Note);
+                    var paError = official.Error ?? "Falha sem detalhe.";
+                    _logger.LogWarning("Conversao Amazon via PA-API falhou. Original={OriginalUrl} Erro={Error}", uri.ToString(), paError);
+                    officialErrors.Add($"PA-API: {paError}");
                 }
+            }
 
-                var officialShort = await ShortenAsync(official.Url, cancellationToken) ?? official.Url;
-                LogStore("Amazon", uri.ToString(), officialShort);
-                return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
+            if (officialErrors.Count > 0)
+            {
+                var errorText = string.Join(" | ", officialErrors.Distinct(StringComparer.OrdinalIgnoreCase));
+                return new AffiliateLinkResult(false, null, "Amazon", false, errorText, "Falha na conversao oficial Amazon", false, null);
             }
 
             var originalQuery = ParseQuery(resolved.Query);
@@ -1836,6 +1880,24 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     private void LogStore(string store, string input, string output)
     {
         _logger.LogInformation("{Store} convertido: {Input} => {Output}", store, input, output);
+    }
+
+    private async Task<(bool Success, string? Url, bool CorrectionApplied, string? Note, string? Error)> ConvertAmazonWithCreatorApiAsync(
+        Uri resolved,
+        string partnerTag,
+        CancellationToken cancellationToken)
+    {
+        var asin = ExtractAmazonAsin(resolved);
+        var result = await _amazonCreatorApiClient.CreateAffiliateLinkAsync(resolved, partnerTag, asin, cancellationToken);
+        if (result is null || string.IsNullOrWhiteSpace(result.Url))
+        {
+            return (false, null, false, "Creator API nao retornou link rastreavel.", "Creator API sem link");
+        }
+
+        var note = string.IsNullOrWhiteSpace(asin)
+            ? (result.Note ?? "Link oficial via Creator API.")
+            : (result.Note ?? $"Link oficial via Creator API (ASIN {asin}).");
+        return (true, result.Url.Trim(), true, note, null);
     }
 
     private async Task<(bool Success, string? Url, bool CorrectionApplied, string? Note, string? Error)> ConvertAmazonWithOfficialApiAsync(
