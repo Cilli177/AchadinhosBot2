@@ -814,5 +814,55 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
 
         return null;
     }
+
+    public async Task<WhatsAppSendResult> DeleteMessageAsync(string? instanceName, string chatId, string messageId, bool isGroup, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_options.BaseUrl))
+                return new WhatsAppSendResult(false, "Evolution BaseUrl não configurada");
+            if (string.IsNullOrWhiteSpace(_options.ApiKey))
+                return new WhatsAppSendResult(false, "Evolution ApiKey não configurada");
+            if (string.IsNullOrWhiteSpace(chatId) || string.IsNullOrWhiteSpace(messageId))
+                return new WhatsAppSendResult(false, "ChatId ou MessageId inválidos");
+
+            var client = _httpClientFactory.CreateClient("evolution");
+            client.BaseAddress = new Uri(_options.BaseUrl);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+            if (!client.DefaultRequestHeaders.Contains("apikey")) client.DefaultRequestHeaders.Add("apikey", _options.ApiKey);
+            if (!client.DefaultRequestHeaders.Contains("x-api-key")) client.DefaultRequestHeaders.Add("x-api-key", _options.ApiKey);
+
+            var targetInstance = string.IsNullOrWhiteSpace(instanceName) ? _options.InstanceName : instanceName.Trim();
+            if (string.IsNullOrWhiteSpace(targetInstance))
+                return new WhatsAppSendResult(false, "InstanceName da Evolution não configurado");
+
+            var payload = new
+            {
+                number = chatId,
+                messageId = messageId,
+                isGroup = isGroup
+            };
+
+            var request = new HttpRequestMessage(HttpMethod.Delete, $"/chat/deleteMessage/{targetInstance}")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+            var res = await client.SendAsync(request, cancellationToken);
+            var body = await res.Content.ReadAsStringAsync(cancellationToken);
+
+            if (res.IsSuccessStatusCode)
+            {
+                return new WhatsAppSendResult(true, "Mensagem deletada");
+            }
+
+            _logger.LogWarning("Falha ao deletar mensagem Evolution: {Status} {Body}", res.StatusCode, body);
+            return new WhatsAppSendResult(false, $"Status: {res.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao deletar mensagem Evolution");
+            return new WhatsAppSendResult(false, $"Erro: {ex.Message}");
+        }
+    }
 }
 

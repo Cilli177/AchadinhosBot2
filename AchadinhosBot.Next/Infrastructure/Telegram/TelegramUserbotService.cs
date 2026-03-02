@@ -899,6 +899,20 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         OriginChatId = originId,
                         DestinationChatId = originId
                     }, CancellationToken.None);
+
+                    // Sprint 1: Auto-Responder Inteligente (Clean Chat)
+                    // Remove a mensagem original do membro após postar a conversão bonita
+                    if (IsTelegramGroupPeer(msg.peer_id))
+                    {
+                        try
+                        {
+                            await _client.DeleteMessages(originPeer, new[] { msg.id });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Falha ao apagar mensagem original do usuário via Telegram Responder. Peer={Peer} MsgId={MsgId}", originId, msg.id);
+                        }
+                    }
                 }
                 else if (!IsTelegramGroupPeer(msg.peer_id) && !string.IsNullOrWhiteSpace(responder.ReplyOnFailure))
                 {

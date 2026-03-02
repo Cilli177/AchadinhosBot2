@@ -1237,6 +1237,20 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                     OriginChatRef = msg.ChatId,
                     DestinationChatRef = msg.ChatId
                 }, ct);
+                
+                // Sprint 1: Auto-Responder Inteligente (Clean Chat)
+                // Remove a mensagem original do membro após postar a conversão bonita
+                if (!string.IsNullOrWhiteSpace(msg.MessageId))
+                {
+                    var isGroup = IsWhatsAppGroupChat(msg.ChatId);
+                    var delResult = await gateway.DeleteMessageAsync(responderInstance, msg.ChatId, msg.MessageId, isGroup, ct);
+                    if (!delResult.Success)
+                    {
+                        logger.LogWarning("Não foi possível apagar a mensagem original do membro {SenderId} no chat {ChatId}: {Error}", 
+                            msg.SenderId, msg.ChatId, delResult.Message);
+                    }
+                }
+
                 responderProcessed++;
             }
             else if (!IsWhatsAppGroupChat(msg.ChatId) && !string.IsNullOrWhiteSpace(responder.ReplyOnFailure))
