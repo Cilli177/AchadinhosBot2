@@ -302,8 +302,11 @@
         <button data-tab="ops" onclick="showSection('ops')">Operação</button>
         <button data-tab="route" onclick="showSection('route')">Telegram -> WhatsApp</button>
         <button data-tab="linkresponder" onclick="showSection('linkresponder')">Resposta de link</button>
+        <button data-tab="mercadolivre" onclick="showSection('mercadolivre')">Mercado Livre</button>
         <button data-tab="instagram" onclick="showSection('instagram')">Instagram</button>
         <button data-tab="instagram-publish" onclick="showSection('instagram-publish')">Instagram Publicar</button>
+        <button data-tab="instagram-story" onclick="showSection('instagram-story')">Instagram Story</button>
+        <button data-tab="bio-growth" onclick="showSection('bio-growth')">Bio & Growth</button>
         <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>
         <button data-tab="logs" onclick="showSection('logs')">
           Logs
@@ -330,6 +333,7 @@
         <span id="chipTelegramBot" class="chip warn">Telegram Bot: Não conectado</span>
         <span id="chipUserbot" class="chip warn">Telegram Userbot: Conectando...</span>
         <span id="chipWhatsApp" class="chip warn">WhatsApp: Não conectado</span>
+        <span id="chipMercadoLivre" class="chip warn">Mercado Livre: Não validado</span>
       </div>
       <div class="pill">Ambiente: Development</div>
     </div>
@@ -365,6 +369,26 @@
         </section>
 
         <section class="card">
+          <h2>Telegram Userbot (Reconexão)</h2>
+          <p class="muted">Use quando o Telegram pedir código SMS/Telegram ou senha 2FA.</p>
+          <label>Telefone (opcional)</label>
+          <input id="userbotAuthPhone" placeholder="+5513999999999" />
+          <label>Código de verificação (opcional)</label>
+          <input id="userbotAuthCode" type="password" placeholder="12345" />
+          <label>Senha 2FA (opcional)</label>
+          <input id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="userbotForceReconnect" checked /><span class="slider"></span></label>
+            <span class="muted">Forçar reconexão após aplicar</span>
+          </div>
+          <div class="row">
+            <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e reconectar</button>
+          </div>
+          <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>
+          <p class="muted">As credenciais desta área ficam apenas em memória da sessão atual.</p>
+        </section>
+
+        <section class="card">
           <h2>WhatsApp (Evolution API)</h2>
           <label>Instance Name</label>
           <input id="waInstanceName" placeholder="ZapOfertas" />
@@ -392,6 +416,16 @@
           <p id="whatsappStatus" class="status warn">Não conectado</p>
           <img id="qrImage" class="qr hidden" alt="QR code WhatsApp" />
           <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>
+        </section>
+
+        <section class="card">
+          <h2>Mercado Livre (OAuth)</h2>
+          <p class="muted">Valida client_id, refresh_token e conta vinculada.</p>
+          <div class="row">
+            <button id="btnMercadoLivreConnect" onclick="connectMercadoLivre()">Testar conexão</button>
+            <span id="mercadoLivreStatus" class="status warn">Não validado</span>
+          </div>
+          <p class="muted">Usa variáveis do bloco Affiliate no backend.</p>
         </section>
       </div>
       </div>
@@ -450,13 +484,21 @@
           <div id="userbotChats" class="muted">Nenhum grupo carregado.</div>
         </section>
 
-                <section class="card">
+        <section class="card">
           <h2>WhatsApp Grupos (Origem)</h2>
           <p class="muted">Selecione de quais grupos o bot deve capturar ofertas.</p>
           <div class="row">
             <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>
             <button class="secondary" onclick="loadWhatsAppGroups()">Recarregar</button>
           </div>
+          <div class="row">
+            <select id="waRoutePicker" style="max-width:260px;" onchange="switchWhatsAppRoute()"></select>
+            <button class="secondary" onclick="addWhatsAppRoute()">+ Nova rota</button>
+            <button class="secondary" onclick="removeWhatsAppRoute()">Excluir rota</button>
+          </div>
+          <label>Nome da rota</label>
+          <input id="waRouteName" placeholder="Rota principal" oninput="renameWhatsAppRoute()" />
+          <div class="muted">As rotas abaixo substituem a rota única quando houver pelo menos 1 rota configurada.</div>
           <div class="row">
             <input id="waSourceSearch" placeholder="Buscar grupo por nome ou ID" />
             <span class="muted">Selecionados: <strong id="waSourceSelectedCount">0</strong></span>
@@ -614,10 +656,80 @@
       </section>
       </div>
 
+      <div id="section-mercadolivre" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Compliance Mercado Livre</h2>
+        <p class="muted">Controle de bloqueio em automações, whitelist de canais e fila de aprovação manual.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar compliance Mercado Livre</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompBlockAuto" /><span class="slider"></span></label>
+          <span class="muted">Bloquear fluxo automático com links Mercado Livre</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompRequireApproval" /><span class="slider"></span></label>
+          <span class="muted">Exigir aprovação manual para Mercado Livre</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompWhitelistEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar whitelist de canais</span>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="mlCompBlockUnknown" /><span class="slider"></span></label>
+          <span class="muted">Bloquear quando canal não for identificado</span>
+        </div>
+        <label>Canais permitidos (um por linha)</label>
+        <textarea id="mlCompAllowedChannels" rows="4" placeholder="1203630@g.us&#10;manychat-teste@c.us&#10;-100123456789"></textarea>
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveMercadoLivreCompliance()">Salvar compliance</button>
+          <span id="mlCompSaveStatus" class="status muted"></span>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Pendências Mercado Livre</h2>
+        <div class="row">
+          <select id="mlPendingStatus" style="max-width:220px;">
+            <option value="pending">Pendente</option>
+            <option value="approved">Aprovado</option>
+            <option value="rejected">Rejeitado</option>
+            <option value="">Todos</option>
+          </select>
+          <button onclick="loadMercadoLivrePending()">Carregar</button>
+          <span id="mlPendingCount" class="status muted"></span>
+        </div>
+        <div class="table-wrap" style="margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Data/Hora</th>
+                <th>Status</th>
+                <th>Origem</th>
+                <th>Canal</th>
+                <th>Razão</th>
+                <th>URLs</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="mlPendingBody"></tbody>
+          </table>
+        </div>
+      </section>
+      </div>
+
       <div id="section-route" class="hidden">
       <section class="card" style="margin-top:16px;">
         <h2>Rota Telegram -> WhatsApp</h2>
         <p class="muted">Escolha grupos de origem no Telegram e destinos no WhatsApp para envio direto.</p>
+        <div class="row">
+          <select id="tgWaRoutePicker" style="max-width:260px;" onchange="switchTgWaRoute()"></select>
+          <button class="secondary" onclick="addTgWaRoute()">+ Nova rota</button>
+          <button class="secondary" onclick="removeTgWaRoute()">Excluir rota</button>
+        </div>
+        <label>Nome da rota</label>
+        <input id="tgWaRouteName" placeholder="Rota Telegram principal" oninput="renameTgWaRoute()" />
         <div class="row">
           <label class="switch"><input type="checkbox" id="tgWaEnabled" /><span class="slider"></span></label>
           <span class="muted">Rota ativa</span>
@@ -753,9 +865,14 @@
         </section>
         <section class="card">
           <h3>Gemini</h3>
-          <input id="geminiApiKey" type="password" placeholder="Chave Gemini (AIza...)" />
+          <label>Chaves API (uma por linha)</label>
+          <div id="geminiApiKeyRows"></div>
+          <div class="row" style="margin-top:8px;">
+            <button class="secondary" type="button" onclick="addGeminiApiKeyRow()">+ Adicionar chave</button>
+          </div>
           <div class="row">
             <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />
+            <input id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
           </div>
         </section>
         <label>Variações de legenda</label>
@@ -848,6 +965,24 @@
         <input id="igPubManyChatWebhookUrl" placeholder="https://api.manychat.com/... ou webhook do fluxo" />
         <label>ManyChat API Key (opcional)</label>
         <input id="igPubManyChatApiKey" type="password" placeholder="Bearer token da integracao ManyChat" />
+        <section class="card" style="margin-top:12px;">
+          <h3>Autopilot - Qualidade e Confiabilidade</h3>
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="igAutoRequireOfficial" /><span class="slider"></span></label>
+            <span class="muted">Exigir fonte oficial de produto (API oficial)</span>
+          </div>
+          <label>Match mínimo imagem/produto (0-100)</label>
+          <input id="igAutoMinImageMatch" type="number" min="0" max="100" step="1" placeholder="80" />
+          <div class="row">
+            <label class="switch"><input type="checkbox" id="igAutoRequireAi" /><span class="slider"></span></label>
+            <span class="muted">Exigir legenda gerada por IA (sem fallback genérico)</span>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button class="secondary" type="button" onclick="loadApiDiagnostics()">Ver status das APIs</button>
+            <span id="apiDiagStatus" class="status muted"></span>
+          </div>
+          <pre id="apiDiagResult" style="max-height:220px;overflow:auto;"></pre>
+        </section>
         <div class="row" style="margin-top:12px;">
           <button class="secondary" onclick="saveInstagramPublishSettings()">Salvar configuracoes</button>
           <button onclick="testInstagramPublish()">Testar conexao</button>
@@ -916,6 +1051,144 @@
           <button class="secondary" onclick="clearInstagramPublishLogs()">Limpar</button>
         </div>
         <div id="igPubLogs" class="log-table"></div>
+      </section>
+      </div>
+
+      <div id="section-instagram-story" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Instagram Story - AutoPilot</h2>
+        <p class="muted">Configuração dedicada para Story com canal/grupo de aprovação separado do feed.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igStoryAutoEnabled" /><span class="slider"></span></label>
+          <span class="muted">Ativar AutoStory automático</span>
+        </div>
+        <div class="row">
+          <div style="flex:1;">
+            <label>Intervalo (minutos)</label>
+            <input id="igStoryInterval" type="number" min="15" max="1440" step="1" placeholder="240" />
+          </div>
+          <div style="flex:1;">
+            <label>Top produtos por rodada</label>
+            <input id="igStoryTopCount" type="number" min="1" max="10" step="1" placeholder="2" />
+          </div>
+        </div>
+        <div class="row">
+          <div style="flex:1;">
+            <label>Janela de análise (horas)</label>
+            <input id="igStoryLookback" type="number" min="6" max="168" step="1" placeholder="24" />
+          </div>
+          <div style="flex:1;">
+            <label>Repetição mínima (horas)</label>
+            <input id="igStoryRepeatWindow" type="number" min="6" max="240" step="1" placeholder="24" />
+          </div>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="igStorySendApproval" /><span class="slider"></span></label>
+          <span class="muted">Enviar para aprovação antes de publicar</span>
+        </div>
+        <label>Canal de aprovação</label>
+        <select id="igStoryApprovalChannel">
+          <option value="whatsapp">WhatsApp</option>
+          <option value="telegram">Telegram</option>
+        </select>
+        <label>Telegram Chat ID (se canal = Telegram)</label>
+        <input id="igStoryApprovalTelegramChatId" type="number" step="1" placeholder="-1001234567890" />
+        <label>WhatsApp Group ID (se canal = WhatsApp)</label>
+        <input id="igStoryApprovalWhatsAppGroupId" placeholder="1203630...@g.us" />
+        <label>Instância WhatsApp (opcional)</label>
+        <input id="igStoryApprovalWhatsAppInstance" placeholder="ZapOfertas" />
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveInstagramStorySettings()">Salvar AutoStory</button>
+          <button onclick="runInstagramAutoStory(false)">Rodar AutoStory agora</button>
+          <button class="secondary" onclick="runInstagramAutoStory(true)">Dry-run</button>
+          <span id="igStoryStatus" class="status muted"></span>
+        </div>
+      </section>
+      </div>
+
+      <div id="section-bio-growth" class="hidden">
+      <section class="card" style="margin-top:16px;">
+        <h2>Bio Hub (Link unico)</h2>
+        <p class="muted">Configure a landing da bio para usar o mesmo link em Instagram, Stories e ManyChat.</p>
+        <div class="row">
+          <label class="switch"><input type="checkbox" id="bioHubEnabled" /><span class="slider"></span></label>
+          <span class="muted">Bio hub ativo</span>
+        </div>
+        <label>Marca</label>
+        <input id="bioHubBrandName" placeholder="Rei das Ofertas" />
+        <label>Titulo</label>
+        <input id="bioHubHeadline" placeholder="Achadinhos em destaque" />
+        <label>Subtitulo</label>
+        <input id="bioHubSubheadline" placeholder="Toque no botao para abrir a oferta." />
+        <div class="row">
+          <div style="flex:1;">
+            <label>Texto do botao</label>
+            <input id="bioHubButtonLabel" placeholder="Abrir oferta" />
+          </div>
+          <div style="flex:1;">
+            <label>Maximo de itens</label>
+            <input id="bioHubMaxItems" type="number" min="5" max="80" step="1" placeholder="40" />
+          </div>
+        </div>
+        <div class="row">
+          <div style="flex:1;">
+            <label>Origem padrao</label>
+            <input id="bioHubDefaultSource" placeholder="bio" />
+          </div>
+          <div style="flex:1;">
+            <label>Campanha padrao</label>
+            <input id="bioHubDefaultCampaign" placeholder="insta-feed" />
+          </div>
+        </div>
+        <label>Dominio publico dos links</label>
+        <input id="bioHubPublicBaseUrl" placeholder="https://achadinhos.reidasofertas.ia.br" />
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary" onclick="saveBioHubSettings()">Salvar Bio Hub</button>
+          <button class="secondary" onclick="refreshBioLinksPreview()">Atualizar links</button>
+          <button class="secondary" onclick="syncCatalogNow()">Sincronizar catalogo</button>
+          <span id="bioHubStatus" class="status muted"></span>
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Uso</th>
+                <th>Link</th>
+                <th>Ação</th>
+              </tr>
+            </thead>
+            <tbody id="bioLinksTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:16px;">
+        <h2>Funnel de Cliques</h2>
+        <p class="muted">Resumo por origem/campanha para decidir o que entra no feed e story.</p>
+        <div class="row">
+          <select id="bioFunnelHours">
+            <option value="24">Ultimas 24h</option>
+            <option value="72">Ultimas 72h</option>
+            <option value="168" selected>Ultimos 7 dias</option>
+            <option value="336">Ultimos 14 dias</option>
+          </select>
+          <button class="secondary" onclick="loadBioFunnel()">Atualizar funnel</button>
+          <span id="bioFunnelStatus" class="status muted"></span>
+        </div>
+        <div class="grid" style="margin-top:10px;">
+          <div class="card" style="padding:12px;">
+            <h3 style="margin:0 0 6px;">Totais</h3>
+            <pre id="bioFunnelTotals">Sem dados.</pre>
+          </div>
+          <div class="card" style="padding:12px;">
+            <h3 style="margin:0 0 6px;">Top Origens</h3>
+            <pre id="bioFunnelSources">Sem dados.</pre>
+          </div>
+        </div>
+        <div class="card" style="padding:12px;margin-top:10px;">
+          <h3 style="margin:0 0 6px;">Top Campanhas</h3>
+          <pre id="bioFunnelCampaigns">Sem dados.</pre>
+        </div>
       </section>
       </div>
 
@@ -1062,7 +1335,7 @@ async function api(url, method='GET', body=null){
   });
 
   let data = {};
-  try { data = await res.json(); } catch {}
+  try { data = await res.json(); } catch (error) { console.debug('Resposta sem JSON para', url, error); }
   if (!res.ok) throw { status: res.status, data };
   return data;
 }
@@ -1079,7 +1352,7 @@ function showAuthState(authenticated, username='', role=''){
 }
 
 function showSection(name){
-  const sections = ['ops','connections','route','linkresponder','instagram','instagram-publish','autoreplies','logs','playground','debug'];
+  const sections = ['ops','connections','route','linkresponder','mercadolivre','instagram','instagram-publish','instagram-story','bio-growth','autoreplies','logs','playground','debug'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -1096,6 +1369,9 @@ function showSection(name){
     loadResponderLogs();
     loadResponderClicks();
   }
+  if (name === 'mercadolivre') {
+    loadMercadoLivrePending();
+  }
   if (name === 'instagram') {
     loadInstaAiLogs();
   }
@@ -1103,6 +1379,10 @@ function showSection(name){
     loadInstagramDrafts();
     loadInstagramComments();
     loadInstagramPublishLogs();
+  }
+  if (name === 'bio-growth') {
+    refreshBioLinksPreview();
+    loadBioFunnel();
   }
 }
 
@@ -1126,6 +1406,49 @@ function shortId(text){
   const s = String(text || '');
   if (s.length <= 18) return s;
   return `${s.slice(0, 6)}…${s.slice(-6)}`;
+}
+
+function getGeminiApiKeyRowsFromDom(){
+  return Array.from(document.querySelectorAll('#geminiApiKeyRows input[data-gemini-key="1"]'))
+    .map(input => String(input.value || '').trim());
+}
+
+function renderGeminiApiKeyRows(values){
+  const container = document.getElementById('geminiApiKeyRows');
+  if (!container) return;
+  const rows = (values || [])
+    .map(v => String(v || '').trim());
+  const effective = rows.length > 0 ? rows : [''];
+  container.innerHTML = effective.map((value, index) => `
+    <div class="row" style="margin-top:8px;">
+      <input type="password" data-gemini-key="1" placeholder="Chave Gemini ${index + 1} (AIza...)" value="${escapeHtml(value)}" />
+      <button class="secondary" type="button" onclick="removeGeminiApiKeyRow(${index})">- Remover</button>
+    </div>
+  `).join('');
+}
+
+function addGeminiApiKeyRow(){
+  const current = getGeminiApiKeyRowsFromDom();
+  current.push('');
+  renderGeminiApiKeyRows(current);
+}
+
+function removeGeminiApiKeyRow(index){
+  const current = getGeminiApiKeyRowsFromDom();
+  if (current.length <= 1) {
+    renderGeminiApiKeyRows(['']);
+    return;
+  }
+
+  const safeIndex = Math.max(0, Math.min(index, current.length - 1));
+  current.splice(safeIndex, 1);
+  renderGeminiApiKeyRows(current);
+}
+
+function collectGeminiApiKeysFromUi(){
+  return getGeminiApiKeyRowsFromDom()
+    .map(v => v.trim())
+    .filter(Boolean);
 }
 
 function renderSourceBadge(source){
@@ -1187,7 +1510,9 @@ function downloadInstaImages(encoded){
     const urls = JSON.parse(decodeURIComponent(encoded));
     if (!Array.isArray(urls) || urls.length === 0) return;
     urls.forEach(u => window.open(u, '_blank'));
-  } catch {}
+  } catch (error) {
+    console.warn('Falha ao abrir imagens do Instagram.', error);
+  }
 }
 
 async function copyInstaImages(encoded){
@@ -1195,7 +1520,9 @@ async function copyInstaImages(encoded){
     const urls = JSON.parse(decodeURIComponent(encoded));
     if (!Array.isArray(urls) || urls.length === 0) return;
     await navigator.clipboard.writeText(urls.join('\n'));
-  } catch {}
+  } catch (error) {
+    console.warn('Falha ao copiar URLs de imagens do Instagram.', error);
+  }
 }
 
 function applyInstaPromptPreset(){
@@ -1329,8 +1656,19 @@ function renderSettings(s){
     : 'Não conectado';
   document.getElementById('whatsappStatus').className = 'status ' + (s.integrations.whatsApp.connected ? 'ok':'warn');
 
+  const ml = s.integrations?.mercadoLivre || {};
+  const mlConnected = !!ml.connected;
+  const mlStatus = document.getElementById('mercadoLivreStatus');
+  if (mlStatus) {
+    mlStatus.textContent = mlConnected
+      ? `Conectado (${ml.identifier || 'sem id'})`
+      : 'Não validado';
+    mlStatus.className = 'status ' + (mlConnected ? 'ok' : 'warn');
+  }
+
   setChipStatus('chipTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot: Conectado' : 'Telegram Bot: Offline', s.integrations.telegram.connected ? 'ok' : 'warn');
   setChipStatus('chipWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp: Conectado' : 'WhatsApp: Offline', s.integrations.whatsApp.connected ? 'ok' : 'warn');
+  setChipStatus('chipMercadoLivre', mlConnected ? 'Mercado Livre: Conectado' : 'Mercado Livre: Nao validado', mlConnected ? 'ok' : 'warn');
   setChipStatus('chipUserbot', 'Telegram Userbot: Conectando...', 'warn');
   setHealthBadge('healthTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot OK' : 'Telegram Bot Offline', s.integrations.telegram.connected ? 'ok' : 'bad');
   setHealthBadge('healthWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp OK' : 'WhatsApp Offline', s.integrations.whatsApp.connected ? 'ok' : 'bad');
@@ -1388,6 +1726,19 @@ function renderSettings(s){
   if (responderTracking) responderTracking.checked = responder.trackingEnabled ?? true;
   const responderFooter = document.getElementById('responderFooter');
   if (responderFooter) responderFooter.value = responder.footerText || '';
+  const mlCompliance = s.mercadoLivreCompliance || {};
+  const mlCompEnabled = document.getElementById('mlCompEnabled');
+  if (mlCompEnabled) mlCompEnabled.checked = !!mlCompliance.enabled;
+  const mlCompBlockAuto = document.getElementById('mlCompBlockAuto');
+  if (mlCompBlockAuto) mlCompBlockAuto.checked = mlCompliance.blockAutoFlows ?? true;
+  const mlCompRequireApproval = document.getElementById('mlCompRequireApproval');
+  if (mlCompRequireApproval) mlCompRequireApproval.checked = mlCompliance.requireManualApproval ?? true;
+  const mlCompWhitelistEnabled = document.getElementById('mlCompWhitelistEnabled');
+  if (mlCompWhitelistEnabled) mlCompWhitelistEnabled.checked = !!mlCompliance.enforceChannelWhitelist;
+  const mlCompBlockUnknown = document.getElementById('mlCompBlockUnknown');
+  if (mlCompBlockUnknown) mlCompBlockUnknown.checked = mlCompliance.blockWhenChannelUnknown ?? true;
+  const mlCompAllowedChannels = document.getElementById('mlCompAllowedChannels');
+  if (mlCompAllowedChannels) mlCompAllowedChannels.value = (mlCompliance.allowedChannels || []).join('\n');
   const insta = s.instagramPosts || {};
   const instaEnabled = document.getElementById('instaEnabled');
   if (instaEnabled) instaEnabled.checked = insta.enabled ?? true;
@@ -1473,10 +1824,18 @@ function renderSettings(s){
   if (instaImageDownload) instaImageDownload.checked = !!insta.useImageDownload;
 
   const gemini = s.gemini || {};
-  const geminiKey = document.getElementById('geminiApiKey');
-  if (geminiKey) geminiKey.value = gemini.apiKey ? '********' : '';
+  const maskedKeys = Array.isArray(gemini.apiKeys) ? gemini.apiKeys : [];
+  if (maskedKeys.length > 0) {
+    renderGeminiApiKeyRows(maskedKeys);
+  } else if (gemini.apiKey) {
+    renderGeminiApiKeyRows(['********']);
+  } else {
+    renderGeminiApiKeyRows(['']);
+  }
   const geminiModel = document.getElementById('geminiModel');
   if (geminiModel) geminiModel.value = gemini.model || 'gemini-2.5-flash';
+  const geminiMaxTokens = document.getElementById('geminiMaxTokens');
+  if (geminiMaxTokens) geminiMaxTokens.value = String(gemini.maxOutputTokens ?? 1200);
   const igPub = s.instagramPublish || {};
   const igPubEnabled = document.getElementById('igPubEnabled');
   if (igPubEnabled) igPubEnabled.checked = igPub.enabled ?? true;
@@ -1508,6 +1867,51 @@ function renderSettings(s){
   if (igPubManyChatWebhookUrl) igPubManyChatWebhookUrl.value = igPub.manyChatWebhookUrl || '';
   const igPubManyChatApiKey = document.getElementById('igPubManyChatApiKey');
   if (igPubManyChatApiKey) igPubManyChatApiKey.value = igPub.manyChatApiKey ? '********' : '';
+  const igAutoRequireOfficial = document.getElementById('igAutoRequireOfficial');
+  if (igAutoRequireOfficial) igAutoRequireOfficial.checked = igPub.autoPilotRequireOfficialProductData ?? true;
+  const igAutoMinImageMatch = document.getElementById('igAutoMinImageMatch');
+  if (igAutoMinImageMatch) igAutoMinImageMatch.value = String(igPub.autoPilotMinimumImageMatchScore ?? 80);
+  const igAutoRequireAi = document.getElementById('igAutoRequireAi');
+  if (igAutoRequireAi) igAutoRequireAi.checked = igPub.autoPilotRequireAiCaption ?? true;
+  const igStoryAutoEnabled = document.getElementById('igStoryAutoEnabled');
+  if (igStoryAutoEnabled) igStoryAutoEnabled.checked = !!igPub.storyAutoPilotEnabled;
+  const igStoryInterval = document.getElementById('igStoryInterval');
+  if (igStoryInterval) igStoryInterval.value = String(igPub.storyAutoPilotIntervalMinutes ?? 240);
+  const igStoryTopCount = document.getElementById('igStoryTopCount');
+  if (igStoryTopCount) igStoryTopCount.value = String(igPub.storyAutoPilotTopCount ?? 2);
+  const igStoryLookback = document.getElementById('igStoryLookback');
+  if (igStoryLookback) igStoryLookback.value = String(igPub.storyAutoPilotLookbackHours ?? 24);
+  const igStoryRepeatWindow = document.getElementById('igStoryRepeatWindow');
+  if (igStoryRepeatWindow) igStoryRepeatWindow.value = String(igPub.storyAutoPilotRepeatWindowHours ?? 24);
+  const igStorySendApproval = document.getElementById('igStorySendApproval');
+  if (igStorySendApproval) igStorySendApproval.checked = igPub.storyAutoPilotSendForApproval ?? true;
+  const igStoryApprovalChannel = document.getElementById('igStoryApprovalChannel');
+  if (igStoryApprovalChannel) igStoryApprovalChannel.value = igPub.storyAutoPilotApprovalChannel || 'whatsapp';
+  const igStoryApprovalTelegramChatId = document.getElementById('igStoryApprovalTelegramChatId');
+  if (igStoryApprovalTelegramChatId) igStoryApprovalTelegramChatId.value = String(igPub.storyAutoPilotApprovalTelegramChatId ?? 0);
+  const igStoryApprovalWhatsAppGroupId = document.getElementById('igStoryApprovalWhatsAppGroupId');
+  if (igStoryApprovalWhatsAppGroupId) igStoryApprovalWhatsAppGroupId.value = igPub.storyAutoPilotApprovalWhatsAppGroupId || '';
+  const igStoryApprovalWhatsAppInstance = document.getElementById('igStoryApprovalWhatsAppInstance');
+  if (igStoryApprovalWhatsAppInstance) igStoryApprovalWhatsAppInstance.value = igPub.storyAutoPilotApprovalWhatsAppInstanceName || '';
+  const bioHub = s.bioHub || {};
+  const bioHubEnabled = document.getElementById('bioHubEnabled');
+  if (bioHubEnabled) bioHubEnabled.checked = bioHub.enabled ?? true;
+  const bioHubBrandName = document.getElementById('bioHubBrandName');
+  if (bioHubBrandName) bioHubBrandName.value = bioHub.brandName || 'Rei das Ofertas';
+  const bioHubHeadline = document.getElementById('bioHubHeadline');
+  if (bioHubHeadline) bioHubHeadline.value = bioHub.headline || 'Achadinhos em destaque';
+  const bioHubSubheadline = document.getElementById('bioHubSubheadline');
+  if (bioHubSubheadline) bioHubSubheadline.value = bioHub.subheadline || 'Toque no botao para abrir a oferta.';
+  const bioHubButtonLabel = document.getElementById('bioHubButtonLabel');
+  if (bioHubButtonLabel) bioHubButtonLabel.value = bioHub.buttonLabel || 'Abrir oferta';
+  const bioHubMaxItems = document.getElementById('bioHubMaxItems');
+  if (bioHubMaxItems) bioHubMaxItems.value = String(bioHub.maxItems ?? 40);
+  const bioHubDefaultSource = document.getElementById('bioHubDefaultSource');
+  if (bioHubDefaultSource) bioHubDefaultSource.value = bioHub.defaultSource || 'bio';
+  const bioHubDefaultCampaign = document.getElementById('bioHubDefaultCampaign');
+  if (bioHubDefaultCampaign) bioHubDefaultCampaign.value = bioHub.defaultCampaign || '';
+  const bioHubPublicBaseUrl = document.getElementById('bioHubPublicBaseUrl');
+  if (bioHubPublicBaseUrl) bioHubPublicBaseUrl.value = bioHub.publicBaseUrl || s.publicBaseUrl || '';
   const tgWaEnabled = document.getElementById('tgWaEnabled');
   if (tgWaEnabled) tgWaEnabled.checked = !!s.telegramToWhatsApp?.enabled;
   document.getElementById('waForwardEnabled').onchange = scheduleWhatsAppSave;
@@ -1529,6 +1933,7 @@ function renderSettings(s){
 
   document.getElementById('debug').textContent = JSON.stringify(s, null, 2);
   document.getElementById('statStatus').textContent = 'Online';
+  refreshBioLinksPreview();
 }
 
 async function loadSettings(){
@@ -1671,6 +2076,148 @@ function parseWhatsAppManualIds(id){
   return text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
 }
 
+function parseLines(id){
+  const text = document.getElementById(id)?.value || '';
+  return text
+    .split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
+async function saveMercadoLivreCompliance(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('mlCompSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.mercadoLivreCompliance = existing.mercadoLivreCompliance || {};
+  existing.mercadoLivreCompliance.enabled = document.getElementById('mlCompEnabled')?.checked ?? false;
+  existing.mercadoLivreCompliance.blockAutoFlows = document.getElementById('mlCompBlockAuto')?.checked ?? true;
+  existing.mercadoLivreCompliance.requireManualApproval = document.getElementById('mlCompRequireApproval')?.checked ?? true;
+  existing.mercadoLivreCompliance.enforceChannelWhitelist = document.getElementById('mlCompWhitelistEnabled')?.checked ?? false;
+  existing.mercadoLivreCompliance.blockWhenChannelUnknown = document.getElementById('mlCompBlockUnknown')?.checked ?? true;
+  existing.mercadoLivreCompliance.allowedChannels = parseLines('mlCompAllowedChannels');
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Compliance salvo.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+    await loadMercadoLivrePending();
+  } catch (e) {
+    if (status) {
+      const message = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
+      status.textContent = message;
+      status.className = 'status bad';
+    }
+  }
+}
+
+function renderMercadoLivrePending(items){
+  const tbody = document.getElementById('mlPendingBody');
+  const count = document.getElementById('mlPendingCount');
+  if (!tbody) return;
+
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pendências.</td></tr>';
+    if (count) count.textContent = '0 item(s)';
+    return;
+  }
+
+  if (count) count.textContent = `${items.length} item(ns)`;
+  tbody.innerHTML = items.map(item => {
+    const status = String(item.status || '').toLowerCase();
+    const badgeClass = status === 'pending' ? 'warn' : (status === 'approved' ? 'ok' : 'bad');
+    const urls = (item.extractedUrls || []).join('\n');
+    const channel = [item.originChatRef || item.originChatId || '-', item.destinationChatRef || item.destinationChatId || '-'].join(' -> ');
+    const actions = status === 'pending'
+      ? `<button class="secondary" onclick="approveMercadoLivrePending('${item.id}')">Aprovar</button>
+         <button class="danger" onclick="rejectMercadoLivrePending('${item.id}')">Rejeitar</button>`
+      : `<span class="muted">${escapeHtml(item.reviewedBy || '-')}</span>`;
+
+    return `
+      <tr>
+        <td>${formatTs(item.createdAt)}</td>
+        <td><span class="badge ${badgeClass}">${escapeHtml(item.status || '-')}</span></td>
+        <td>${escapeHtml(item.source || '-')}</td>
+        <td><small>${escapeHtml(channel)}</small></td>
+        <td><small>${escapeHtml(item.reason || '-')}</small></td>
+        <td><small>${escapeHtml(urls || '-')}</small></td>
+        <td>
+          ${actions}
+          ${item.convertedText ? `<button class="copy-btn" data-copy="${encodeURIComponent(item.convertedText)}">Copiar convertido</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  document.querySelectorAll('#mlPendingBody .copy-btn').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      const text = decodeURIComponent(ev.currentTarget.getAttribute('data-copy') || '');
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    });
+  });
+}
+
+async function loadMercadoLivrePending(){
+  try {
+    const status = document.getElementById('mlPendingStatus')?.value ?? 'pending';
+    const query = new URLSearchParams();
+    if (status) query.set('status', status);
+    query.set('limit', '300');
+    const payload = await api('/api/mercadolivre/pending?' + query.toString());
+    renderMercadoLivrePending(payload.items || []);
+  } catch {
+    renderMercadoLivrePending([]);
+  }
+}
+
+async function approveMercadoLivrePending(id){
+  if (currentRole !== 'admin') return;
+  const note = prompt('Observação de aprovação (opcional):', '') || '';
+  const sendNow = confirm('Enviar o texto aprovado para o(s) destino(s) agora?');
+  try {
+    const result = await api(`/api/mercadolivre/pending/${id}/approve`, 'POST', { note, sendNow });
+    await loadMercadoLivrePending();
+    await loadConversionLogs();
+    if (sendNow) {
+      const sent = result?.sentTargets ?? 0;
+      const failures = (result?.sendFailures || []).length;
+      if (failures > 0) {
+        alert(`Aprovado. Envio: ${sent} sucesso(s), ${failures} falha(s).`);
+      }
+    }
+  } catch (e) {
+    alert(e?.data?.error || e?.message || 'Erro ao aprovar pendência.');
+  }
+}
+
+async function rejectMercadoLivrePending(id){
+  if (currentRole !== 'admin') return;
+  const note = prompt('Motivo da rejeição (opcional):', '') || '';
+  try {
+    await api(`/api/mercadolivre/pending/${id}/reject`, 'POST', { note });
+    await loadMercadoLivrePending();
+  } catch (e) {
+    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendência.');
+  }
+}
+
 async function saveSettings(){
   if (currentRole !== 'admin') return;
 
@@ -1721,16 +2268,20 @@ async function saveTelegramToWhatsAppRoute(){
   }
 
   const existing = await api('/api/settings');
+  persistActiveTgWaRouteFromUi();
+  const routes = (window.__tgWaRoutes || []).map(route => ({
+    name: (route.name || 'Rota Telegram -> WhatsApp').trim() || 'Rota Telegram -> WhatsApp',
+    enabled: !!route.enabled,
+    sourceChatIds: Array.from(new Set((route.sourceChatIds || []).map(Number).filter(x => Number.isFinite(x)))),
+    destinationGroupIds: Array.from(new Set((route.destinationGroupIds || []).map(String).filter(Boolean)))
+  }));
+  existing.telegramToWhatsAppRoutes = routes;
+
   existing.telegramToWhatsApp = existing.telegramToWhatsApp || {};
-  existing.telegramToWhatsApp.enabled = document.getElementById('tgWaEnabled')?.checked ?? false;
-
-  const srcSelected = Array.from((window.__tgWaSelection?.source || new Set()).values()).map(Number);
-  const srcManual = parseManualIdsById('tgWaSourceManual');
-  existing.telegramToWhatsApp.sourceChatIds = Array.from(new Set([...srcSelected, ...srcManual]));
-
-  const destSelected = Array.from((window.__tgWaSelection?.dest || new Set()).values());
-  const destManual = parseWhatsAppManualIds('tgWaDestManual');
-  existing.telegramToWhatsApp.destinationGroupIds = Array.from(new Set([...destSelected, ...destManual]));
+  const firstRoute = routes[0];
+  existing.telegramToWhatsApp.enabled = firstRoute ? !!firstRoute.enabled : false;
+  existing.telegramToWhatsApp.sourceChatIds = firstRoute ? firstRoute.sourceChatIds : [];
+  existing.telegramToWhatsApp.destinationGroupIds = firstRoute ? firstRoute.destinationGroupIds : [];
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -1836,8 +2387,11 @@ async function saveInstagramSettings(){
   existing.openAI.maxOutputTokens = parseInt(document.getElementById('openaiMaxTokens')?.value || '700', 10);
 
   existing.gemini = existing.gemini || {};
-  existing.gemini.apiKey = document.getElementById('geminiApiKey')?.value || '';
+  const geminiKeys = collectGeminiApiKeysFromUi();
+  existing.gemini.apiKey = geminiKeys[0] || '';
+  existing.gemini.apiKeys = geminiKeys;
   existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
+  existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -1879,6 +2433,9 @@ async function saveInstagramPublishSettings(){
   existing.instagramPublish.dmTemplate = document.getElementById('igPubDmTemplate')?.value || 'Oi {name}! Aqui esta seu link: {link}';
   existing.instagramPublish.manyChatWebhookUrl = document.getElementById('igPubManyChatWebhookUrl')?.value || '';
   existing.instagramPublish.manyChatApiKey = document.getElementById('igPubManyChatApiKey')?.value || '';
+  existing.instagramPublish.autoPilotRequireOfficialProductData = document.getElementById('igAutoRequireOfficial')?.checked ?? true;
+  existing.instagramPublish.autoPilotMinimumImageMatchScore = parseInt(document.getElementById('igAutoMinImageMatch')?.value || '80', 10) || 80;
+  existing.instagramPublish.autoPilotRequireAiCaption = document.getElementById('igAutoRequireAi')?.checked ?? true;
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -1890,6 +2447,267 @@ async function saveInstagramPublishSettings(){
   } catch (e) {
     if (status) {
       status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function saveInstagramStorySettings(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('igStoryStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.instagramPublish = existing.instagramPublish || {};
+  existing.instagramPublish.storyAutoPilotEnabled = document.getElementById('igStoryAutoEnabled')?.checked ?? false;
+  existing.instagramPublish.storyAutoPilotIntervalMinutes = parseInt(document.getElementById('igStoryInterval')?.value || '240', 10);
+  existing.instagramPublish.storyAutoPilotTopCount = parseInt(document.getElementById('igStoryTopCount')?.value || '2', 10);
+  existing.instagramPublish.storyAutoPilotLookbackHours = parseInt(document.getElementById('igStoryLookback')?.value || '24', 10);
+  existing.instagramPublish.storyAutoPilotRepeatWindowHours = parseInt(document.getElementById('igStoryRepeatWindow')?.value || '24', 10);
+  existing.instagramPublish.storyAutoPilotSendForApproval = document.getElementById('igStorySendApproval')?.checked ?? true;
+  existing.instagramPublish.storyAutoPilotApprovalChannel = document.getElementById('igStoryApprovalChannel')?.value || 'whatsapp';
+  existing.instagramPublish.storyAutoPilotApprovalTelegramChatId = parseInt(document.getElementById('igStoryApprovalTelegramChatId')?.value || '0', 10) || 0;
+  existing.instagramPublish.storyAutoPilotApprovalWhatsAppGroupId = document.getElementById('igStoryApprovalWhatsAppGroupId')?.value || '';
+  existing.instagramPublish.storyAutoPilotApprovalWhatsAppInstanceName = document.getElementById('igStoryApprovalWhatsAppInstance')?.value || '';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'AutoStory salvo.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function loadApiDiagnostics(){
+  const status = document.getElementById('apiDiagStatus');
+  const result = document.getElementById('apiDiagResult');
+  if (status) {
+    status.textContent = 'Carregando...';
+    status.className = 'status warn';
+  }
+  if (result) {
+    result.textContent = '';
+  }
+
+  try {
+    const payload = await api('/api/diagnostics/apis');
+    if (result) {
+      result.textContent = JSON.stringify(payload, null, 2);
+    }
+    if (status) {
+      status.textContent = 'Status atualizado.';
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (result) {
+      result.textContent = e?.data?.error || e?.message || 'Falha ao obter diagnostico.';
+    }
+    if (status) {
+      status.textContent = 'Erro ao carregar.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+function buildBioLinksFromUi(){
+  const manualBase = (document.getElementById('bioHubPublicBaseUrl')?.value || '').trim();
+  const configuredBase = (manualBase || window.__settingsCache?.publicBaseUrl || '').trim();
+  const runtimeBase = (window.location.origin || '').trim();
+  const base = (configuredBase || runtimeBase).replace(/\/$/, '');
+  const source = (document.getElementById('bioHubDefaultSource')?.value || 'bio').trim() || 'bio';
+  const campaign = (document.getElementById('bioHubDefaultCampaign')?.value || '').trim();
+  const feedCampaign = campaign || 'insta-feed';
+  const storyCampaign = campaign || 'insta-story';
+  const manychatCampaign = campaign || 'manychat';
+  const encode = encodeURIComponent;
+
+  const linkBase = `${base}/bio?src=${encode(source)}`;
+  return [
+    { label: 'Instagram Bio', url: campaign ? `${linkBase}&camp=${encode(campaign)}` : linkBase },
+    { label: 'Story CTA', url: `${base}/bio?src=instagram-story&camp=${encode(storyCampaign)}` },
+    { label: 'ManyChat DM', url: `${base}/bio?src=manychat&camp=${encode(manychatCampaign)}` },
+    { label: 'Feed Comentario', url: `${base}/bio?src=instagram-feed&camp=${encode(feedCampaign)}` },
+    { label: 'Catalogo Site', url: `${base}/catalogo` },
+    { label: 'Item Exemplo', url: `${base}/item/42` }
+  ];
+}
+
+function copyToClipboard(text){
+  if (!text) return;
+  navigator.clipboard.writeText(text).catch(() => {
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    document.body.removeChild(area);
+  });
+}
+
+function refreshBioLinksPreview(){
+  const body = document.getElementById('bioLinksTableBody');
+  if (!body) return;
+  const items = buildBioLinksFromUi();
+  body.innerHTML = items.map((item, index) => `
+    <tr>
+      <td>${escapeHtml(item.label)}</td>
+      <td><small>${escapeHtml(item.url)}</small></td>
+      <td>
+        <button class="secondary" onclick="window.open(decodeURIComponent('${encodeURIComponent(item.url)}'), '_blank')">Abrir</button>
+        <button class="secondary" onclick="copyToClipboard(decodeURIComponent('${encodeURIComponent(item.url)}'))">Copiar</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function saveBioHubSettings(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('bioHubStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.bioHub = existing.bioHub || {};
+  existing.bioHub.enabled = document.getElementById('bioHubEnabled')?.checked ?? true;
+  existing.bioHub.brandName = document.getElementById('bioHubBrandName')?.value || 'Rei das Ofertas';
+  existing.bioHub.headline = document.getElementById('bioHubHeadline')?.value || 'Achadinhos em destaque';
+  existing.bioHub.subheadline = document.getElementById('bioHubSubheadline')?.value || 'Toque no botao para abrir a oferta.';
+  existing.bioHub.buttonLabel = document.getElementById('bioHubButtonLabel')?.value || 'Abrir oferta';
+  existing.bioHub.maxItems = parseInt(document.getElementById('bioHubMaxItems')?.value || '40', 10);
+  existing.bioHub.defaultSource = document.getElementById('bioHubDefaultSource')?.value || 'bio';
+  existing.bioHub.defaultCampaign = document.getElementById('bioHubDefaultCampaign')?.value || '';
+  existing.bioHub.publicBaseUrl = document.getElementById('bioHubPublicBaseUrl')?.value || '';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Bio Hub salvo.';
+      status.className = 'status ok';
+    }
+    refreshBioLinksPreview();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function syncCatalogNow(){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('bioHubStatus');
+  if (status) {
+    status.textContent = 'Sincronizando catalogo...';
+    status.className = 'status warn';
+  }
+  try {
+    const res = await api('/api/catalog/sync', 'POST', {});
+    const result = res?.result || {};
+    if (status) {
+      status.textContent = `Catalogo sincronizado. Criados: ${result.created || 0}, atualizados: ${result.updated || 0}, ativos: ${result.totalActive || 0}.`;
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao sincronizar catalogo.';
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function loadBioFunnel(){
+  const status = document.getElementById('bioFunnelStatus');
+  const totals = document.getElementById('bioFunnelTotals');
+  const sources = document.getElementById('bioFunnelSources');
+  const campaigns = document.getElementById('bioFunnelCampaigns');
+  const hours = document.getElementById('bioFunnelHours')?.value || '168';
+  if (status) {
+    status.textContent = 'Carregando...';
+    status.className = 'status warn';
+  }
+
+  try {
+    const data = await api(`/api/logs/funnel?hours=${encodeURIComponent(hours)}`);
+    const total = data?.totals || {};
+    if (totals) {
+      totals.textContent = [
+        `Janela: ${data?.windowHours || hours}h`,
+        `Cliques: ${total.clicks ?? 0}`,
+        `Conversoes: ${total.conversions ?? 0}`,
+        `Conversoes OK: ${total.successfulConversions ?? 0}`,
+        `Conversoes afiliadas: ${total.affiliatedConversions ?? 0}`
+      ].join('\\n');
+    }
+
+    if (sources) {
+      const lines = (data?.bySource || []).slice(0, 8).map(x => `${x.source}: ${x.clicks} cliques (${x.uniqueLinks} links)`);
+      sources.textContent = lines.length ? lines.join('\\n') : 'Sem cliques no periodo.';
+    }
+
+    if (campaigns) {
+      const lines = (data?.byCampaign || []).slice(0, 10).map(x => `${x.campaign}: ${x.clicks} cliques (${x.uniqueLinks} links)`);
+      campaigns.textContent = lines.length ? lines.join('\\n') : 'Sem campanhas no periodo.';
+    }
+
+    if (status) {
+      status.textContent = 'Funnel atualizado.';
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao carregar funnel.';
+      status.className = 'status bad';
+    }
+    if (totals) totals.textContent = 'Falha ao carregar.';
+    if (sources) sources.textContent = 'Falha ao carregar.';
+    if (campaigns) campaigns.textContent = 'Falha ao carregar.';
+  }
+}
+
+async function runInstagramAutoStory(dryRun){
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('igStoryStatus');
+  if (status) {
+    status.textContent = dryRun ? 'Executando dry-run...' : 'Executando AutoStory...';
+    status.className = 'status warn';
+  }
+
+  const payload = {
+    postType: 'story',
+    topCount: parseInt(document.getElementById('igStoryTopCount')?.value || '2', 10),
+    lookbackHours: parseInt(document.getElementById('igStoryLookback')?.value || '24', 10),
+    repeatWindowHours: parseInt(document.getElementById('igStoryRepeatWindow')?.value || '24', 10),
+    sendForApproval: document.getElementById('igStorySendApproval')?.checked ?? true,
+    approvalChannel: document.getElementById('igStoryApprovalChannel')?.value || 'whatsapp',
+    approvalTelegramChatId: parseInt(document.getElementById('igStoryApprovalTelegramChatId')?.value || '0', 10) || 0,
+    approvalWhatsAppGroupId: document.getElementById('igStoryApprovalWhatsAppGroupId')?.value || '',
+    approvalWhatsAppInstanceName: document.getElementById('igStoryApprovalWhatsAppInstance')?.value || '',
+    dryRun: !!dryRun
+  };
+
+  try {
+    const res = await api('/api/instagram/autostory/run', 'POST', payload);
+    if (status) {
+      status.textContent = res?.message || 'AutoStory executado.';
+      status.className = res?.success ? 'status ok' : 'status bad';
+    }
+    await loadInstagramDrafts();
+    await loadInstagramPublishLogs();
+  } catch (e) {
+    if (status) {
+      status.textContent = e?.data?.error || e?.message || 'Erro ao executar AutoStory.';
       status.className = 'status bad';
     }
   }
@@ -1976,7 +2794,9 @@ async function copyToClipboardSafe(text){
       await navigator.clipboard.writeText(text);
       return true;
     }
-  } catch {}
+  } catch (error) {
+    console.warn('Falha ao copiar para clipboard (API).', error);
+  }
 
   const temp = document.createElement('textarea');
   temp.value = text;
@@ -2193,7 +3013,7 @@ function parseLines(id){
 async function connectTelegram(){
   setButtonBusy('btnTelegramConnect', true, 'Validando...');
   try {
-    const r = await api('/api/telegram/connect', 'POST', {});
+    const r = await api('/api/integrations/telegram/connect', 'POST', {});
     document.getElementById('telegramStatus').textContent = r.success
       ? `Conectado (${r.username || 'ok'})`
       : `Erro: ${r.message || 'Falha na conexão'}`;
@@ -2204,6 +3024,28 @@ async function connectTelegram(){
   }
   await loadSettings();
   setButtonBusy('btnTelegramConnect', false);
+}
+
+async function connectMercadoLivre(){
+  setButtonBusy('btnMercadoLivreConnect', true, 'Validando...');
+  try {
+    const r = await api('/api/integrations/mercadolivre/connect', 'POST', {});
+    const status = document.getElementById('mercadoLivreStatus');
+    if (status) {
+      status.textContent = r.success
+        ? `Conectado (${r.userId || 'sem id'})`
+        : `Falha: ${r.message || 'OAuth nao configurado'}`;
+      status.className = 'status ' + (r.success ? 'ok' : 'bad');
+    }
+  } catch (e) {
+    const status = document.getElementById('mercadoLivreStatus');
+    if (status) {
+      status.textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisicao'}`;
+      status.className = 'status bad';
+    }
+  }
+  await loadSettings();
+  setButtonBusy('btnMercadoLivreConnect', false);
 }
 
 async function connectWhatsApp(){
@@ -2264,6 +3106,61 @@ async function runPlayground(){
   const text = document.getElementById('playgroundText').value;
   const result = await api('/api/playground/preview', 'POST', { text });
   document.getElementById('playgroundResult').textContent = JSON.stringify(result, null, 2);
+}
+
+async function applyUserbotAuth(){
+  const statusEl = document.getElementById('userbotAuthStatus');
+  if (currentRole !== 'admin') {
+    if (statusEl) {
+      statusEl.textContent = 'Permissão insuficiente para atualizar credenciais.';
+      statusEl.className = 'status bad';
+    }
+    return;
+  }
+
+  const phoneRaw = (document.getElementById('userbotAuthPhone')?.value || '').trim();
+  const codeRaw = (document.getElementById('userbotAuthCode')?.value || '').trim();
+  const passwordRaw = (document.getElementById('userbotAuthPassword')?.value || '').trim();
+  const forceReconnect = !!document.getElementById('userbotForceReconnect')?.checked;
+
+  const payload = {
+    phoneNumber: phoneRaw ? phoneRaw : null,
+    verificationCode: codeRaw ? codeRaw : null,
+    password: passwordRaw ? passwordRaw : null,
+    forceReconnect
+  };
+
+  if (!payload.phoneNumber && !payload.verificationCode && !payload.password && !payload.forceReconnect) {
+    if (statusEl) {
+      statusEl.textContent = 'Informe ao menos um campo ou marque reconexão.';
+      statusEl.className = 'status bad';
+    }
+    return;
+  }
+
+  setButtonBusy('btnUserbotAuthApply', true, 'Aplicando...');
+  if (statusEl) {
+    statusEl.textContent = 'Enviando credenciais...';
+    statusEl.className = 'status warn';
+  }
+
+  try {
+    const res = await api('/api/telegram/userbot/auth', 'POST', payload);
+    if (statusEl) {
+      statusEl.textContent = res?.message || 'Credenciais aplicadas.';
+      statusEl.className = 'status ok';
+    }
+    const codeEl = document.getElementById('userbotAuthCode');
+    if (codeEl) codeEl.value = '';
+    setTimeout(loadUserbotChats, 1200);
+  } catch (e) {
+    if (statusEl) {
+      statusEl.textContent = e?.data?.message || e?.data?.error || e?.message || 'Falha ao atualizar credenciais.';
+      statusEl.className = 'status bad';
+    }
+  } finally {
+    setButtonBusy('btnUserbotAuthApply', false);
+  }
 }
 
 function renderUserbotChats(payload, settings){
@@ -2439,12 +3336,15 @@ function showAllUserbotChats(){
 }
 
 function renderWhatsAppGroups(payload, settings){
-  const sourceSet = new Set((settings?.whatsAppForwarding?.sourceChatIds || []).map(String));
-  const destSet = new Set((settings?.whatsAppForwarding?.destinationGroupIds || []).map(String));
-
-  window.__waSelection = window.__waSelection || { source: new Set(), dest: new Set() };
-  window.__waSelection.source = sourceSet;
-  window.__waSelection.dest = destSet;
+  const routes = (window.__waRoutes && window.__waRoutes.length > 0)
+    ? window.__waRoutes
+    : buildWhatsAppRoutes(settings || window.__settingsCache || {});
+  window.__waRoutes = routes;
+  if (typeof window.__waRouteIndex !== 'number' || window.__waRouteIndex < 0 || window.__waRouteIndex >= routes.length) {
+    window.__waRouteIndex = 0;
+  }
+  renderWhatsAppRoutePicker();
+  applyActiveWhatsAppRouteToUi();
 
   renderWhatsAppList({
     containerId: 'waSourceGroups',
@@ -2470,14 +3370,267 @@ function renderWhatsAppGroups(payload, settings){
 function renderTelegramToWhatsAppRoute(){
   const settings = window.__settingsCache;
   if (!settings) return;
-  const sourceIds = (settings.telegramToWhatsApp?.sourceChatIds || []).map(String);
-  const destIds = (settings.telegramToWhatsApp?.destinationGroupIds || []).map(String);
-  window.__tgWaSelection = {
-    source: new Set(sourceIds),
-    dest: new Set(destIds)
-  };
+  window.__tgWaRoutes = buildTgWaRoutes(settings);
+  if (typeof window.__tgWaRouteIndex !== 'number' || window.__tgWaRouteIndex < 0 || window.__tgWaRouteIndex >= window.__tgWaRoutes.length) {
+    window.__tgWaRouteIndex = 0;
+  }
+  renderTgWaRoutePicker();
+  applyActiveTgWaRouteToUi();
   renderTgWaSourceList();
   renderTgWaDestList();
+}
+
+function buildWhatsAppRoutes(settings){
+  const routes = (settings?.whatsAppForwardingRoutes || []).map(r => ({
+    name: (r?.name || 'Rota WhatsApp').trim(),
+    enabled: !!r?.enabled,
+    processFromMeOnly: r?.processFromMeOnly ?? true,
+    sourceChatIds: Array.from(new Set((r?.sourceChatIds || []).map(String).filter(Boolean))),
+    destinationGroupIds: Array.from(new Set((r?.destinationGroupIds || []).map(String).filter(Boolean))),
+    appendSheinCode: r?.appendSheinCode ?? true,
+    sendMediaEnabled: r?.sendMediaEnabled ?? true,
+    footerText: r?.footerText || '',
+    instanceName: (r?.instanceName || '').trim() || null
+  }));
+  if (routes.length > 0) return routes;
+
+  const legacy = settings?.whatsAppForwarding || {};
+  return [{
+    name: 'Rota principal',
+    enabled: !!legacy.enabled,
+    processFromMeOnly: legacy.processFromMeOnly ?? true,
+    sourceChatIds: Array.from(new Set((legacy.sourceChatIds || []).map(String).filter(Boolean))),
+    destinationGroupIds: Array.from(new Set((legacy.destinationGroupIds || []).map(String).filter(Boolean))),
+    appendSheinCode: legacy.appendSheinCode ?? true,
+    sendMediaEnabled: legacy.sendMediaEnabled ?? true,
+    footerText: legacy.footerText || '',
+    instanceName: (legacy.instanceName || '').trim() || null
+  }];
+}
+
+function getActiveWhatsAppRoute(){
+  const routes = window.__waRoutes || [];
+  if (routes.length === 0) return null;
+  const idx = Math.max(0, Math.min(window.__waRouteIndex || 0, routes.length - 1));
+  window.__waRouteIndex = idx;
+  return routes[idx];
+}
+
+function persistActiveWhatsAppRouteFromUi(){
+  const route = getActiveWhatsAppRoute();
+  if (!route) return;
+  route.name = (document.getElementById('waRouteName')?.value || route.name || 'Rota WhatsApp').trim() || 'Rota WhatsApp';
+  route.enabled = document.getElementById('waForwardEnabled')?.checked ?? false;
+  route.processFromMeOnly = document.getElementById('waFromMeOnly')?.checked ?? true;
+  route.appendSheinCode = document.getElementById('waAppendShein')?.checked ?? true;
+  route.sendMediaEnabled = document.getElementById('waSendMedia')?.checked ?? true;
+  route.footerText = document.getElementById('waFooter')?.value || '';
+  route.instanceName = (document.getElementById('waInstanceName')?.value || '').trim() || null;
+  const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
+  const sourceManual = parseWhatsAppManualIds('waManualSourceIds');
+  route.sourceChatIds = Array.from(new Set([...sourceSelected, ...sourceManual]));
+  const destSelected = Array.from((window.__waSelection?.dest || new Set()).values());
+  const destManual = parseWhatsAppManualIds('waManualIds');
+  route.destinationGroupIds = Array.from(new Set([...destSelected, ...destManual]));
+}
+
+function applyActiveWhatsAppRouteToUi(){
+  const route = getActiveWhatsAppRoute();
+  if (!route) return;
+  const routeName = document.getElementById('waRouteName');
+  if (routeName) routeName.value = route.name || 'Rota WhatsApp';
+  const waForwardEnabled = document.getElementById('waForwardEnabled');
+  if (waForwardEnabled) waForwardEnabled.checked = !!route.enabled;
+  const waFromMeOnly = document.getElementById('waFromMeOnly');
+  if (waFromMeOnly) waFromMeOnly.checked = route.processFromMeOnly ?? true;
+  const waAppendShein = document.getElementById('waAppendShein');
+  if (waAppendShein) waAppendShein.checked = route.appendSheinCode ?? true;
+  const waSendMedia = document.getElementById('waSendMedia');
+  if (waSendMedia) waSendMedia.checked = route.sendMediaEnabled ?? true;
+  const waFooter = document.getElementById('waFooter');
+  if (waFooter) waFooter.value = route.footerText || '';
+  const waInstanceName = document.getElementById('waInstanceName');
+  if (waInstanceName) waInstanceName.value = route.instanceName || '';
+  window.__waSelection = {
+    source: new Set((route.sourceChatIds || []).map(String)),
+    dest: new Set((route.destinationGroupIds || []).map(String))
+  };
+}
+
+function renderWhatsAppRoutePicker(){
+  const picker = document.getElementById('waRoutePicker');
+  if (!picker) return;
+  const routes = window.__waRoutes || [];
+  picker.innerHTML = routes.map((route, idx) => `<option value="${idx}">${route.name || `Rota ${idx + 1}`}</option>`).join('');
+  picker.value = String(window.__waRouteIndex || 0);
+}
+
+function switchWhatsAppRoute(){
+  persistActiveWhatsAppRouteFromUi();
+  const picker = document.getElementById('waRoutePicker');
+  const idx = Number(picker?.value || 0);
+  const routes = window.__waRoutes || [];
+  if (routes.length === 0) return;
+  window.__waRouteIndex = Math.max(0, Math.min(idx, routes.length - 1));
+  applyActiveWhatsAppRouteToUi();
+  if (window.__waPayload) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
+  }
+}
+
+function addWhatsAppRoute(){
+  persistActiveWhatsAppRouteFromUi();
+  window.__waRoutes = window.__waRoutes || [];
+  window.__waRoutes.push({
+    name: `Rota ${window.__waRoutes.length + 1}`,
+    enabled: true,
+    processFromMeOnly: document.getElementById('waFromMeOnly')?.checked ?? true,
+    sourceChatIds: [],
+    destinationGroupIds: [],
+    appendSheinCode: document.getElementById('waAppendShein')?.checked ?? true,
+    sendMediaEnabled: document.getElementById('waSendMedia')?.checked ?? true,
+    footerText: document.getElementById('waFooter')?.value || '',
+    instanceName: (document.getElementById('waInstanceName')?.value || '').trim() || null
+  });
+  window.__waRouteIndex = window.__waRoutes.length - 1;
+  renderWhatsAppRoutePicker();
+  applyActiveWhatsAppRouteToUi();
+  if (window.__waPayload) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
+  }
+}
+
+function removeWhatsAppRoute(){
+  window.__waRoutes = window.__waRoutes || [];
+  if (window.__waRoutes.length <= 1) {
+    alert('Mantenha pelo menos 1 rota.');
+    return;
+  }
+  const idx = Math.max(0, Math.min(window.__waRouteIndex || 0, window.__waRoutes.length - 1));
+  window.__waRoutes.splice(idx, 1);
+  window.__waRouteIndex = Math.max(0, idx - 1);
+  renderWhatsAppRoutePicker();
+  applyActiveWhatsAppRouteToUi();
+  if (window.__waPayload) {
+    renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
+  }
+}
+
+function renameWhatsAppRoute(){
+  const route = getActiveWhatsAppRoute();
+  if (!route) return;
+  route.name = (document.getElementById('waRouteName')?.value || route.name || 'Rota WhatsApp').trim() || 'Rota WhatsApp';
+  renderWhatsAppRoutePicker();
+}
+
+function buildTgWaRoutes(settings){
+  const routes = (settings?.telegramToWhatsAppRoutes || []).map(r => ({
+    name: (r?.name || 'Rota Telegram -> WhatsApp').trim(),
+    enabled: !!r?.enabled,
+    sourceChatIds: Array.from(new Set((r?.sourceChatIds || []).map(Number).filter(x => Number.isFinite(x)))),
+    destinationGroupIds: Array.from(new Set((r?.destinationGroupIds || []).map(String).filter(Boolean)))
+  }));
+  if (routes.length > 0) return routes;
+
+  const legacy = settings?.telegramToWhatsApp || {};
+  return [{
+    name: 'Rota Telegram principal',
+    enabled: !!legacy.enabled,
+    sourceChatIds: Array.from(new Set((legacy.sourceChatIds || []).map(Number).filter(x => Number.isFinite(x)))),
+    destinationGroupIds: Array.from(new Set((legacy.destinationGroupIds || []).map(String).filter(Boolean)))
+  }];
+}
+
+function getActiveTgWaRoute(){
+  const routes = window.__tgWaRoutes || [];
+  if (routes.length === 0) return null;
+  const idx = Math.max(0, Math.min(window.__tgWaRouteIndex || 0, routes.length - 1));
+  window.__tgWaRouteIndex = idx;
+  return routes[idx];
+}
+
+function persistActiveTgWaRouteFromUi(){
+  const route = getActiveTgWaRoute();
+  if (!route) return;
+  route.name = (document.getElementById('tgWaRouteName')?.value || route.name || 'Rota Telegram -> WhatsApp').trim() || 'Rota Telegram -> WhatsApp';
+  route.enabled = document.getElementById('tgWaEnabled')?.checked ?? false;
+  const srcSelected = Array.from((window.__tgWaSelection?.source || new Set()).values()).map(Number).filter(x => Number.isFinite(x));
+  const srcManual = parseManualIdsById('tgWaSourceManual');
+  route.sourceChatIds = Array.from(new Set([...srcSelected, ...srcManual]));
+  const destSelected = Array.from((window.__tgWaSelection?.dest || new Set()).values());
+  const destManual = parseWhatsAppManualIds('tgWaDestManual');
+  route.destinationGroupIds = Array.from(new Set([...destSelected, ...destManual]));
+}
+
+function applyActiveTgWaRouteToUi(){
+  const route = getActiveTgWaRoute();
+  if (!route) return;
+  const routeName = document.getElementById('tgWaRouteName');
+  if (routeName) routeName.value = route.name || 'Rota Telegram -> WhatsApp';
+  const tgWaEnabled = document.getElementById('tgWaEnabled');
+  if (tgWaEnabled) tgWaEnabled.checked = !!route.enabled;
+  window.__tgWaSelection = {
+    source: new Set((route.sourceChatIds || []).map(String)),
+    dest: new Set((route.destinationGroupIds || []).map(String))
+  };
+}
+
+function renderTgWaRoutePicker(){
+  const picker = document.getElementById('tgWaRoutePicker');
+  if (!picker) return;
+  const routes = window.__tgWaRoutes || [];
+  picker.innerHTML = routes.map((route, idx) => `<option value="${idx}">${route.name || `Rota ${idx + 1}`}</option>`).join('');
+  picker.value = String(window.__tgWaRouteIndex || 0);
+}
+
+function switchTgWaRoute(){
+  persistActiveTgWaRouteFromUi();
+  const picker = document.getElementById('tgWaRoutePicker');
+  const idx = Number(picker?.value || 0);
+  const routes = window.__tgWaRoutes || [];
+  if (routes.length === 0) return;
+  window.__tgWaRouteIndex = Math.max(0, Math.min(idx, routes.length - 1));
+  applyActiveTgWaRouteToUi();
+  renderTgWaSourceList();
+  renderTgWaDestList();
+}
+
+function addTgWaRoute(){
+  persistActiveTgWaRouteFromUi();
+  window.__tgWaRoutes = window.__tgWaRoutes || [];
+  window.__tgWaRoutes.push({
+    name: `Rota ${window.__tgWaRoutes.length + 1}`,
+    enabled: true,
+    sourceChatIds: [],
+    destinationGroupIds: []
+  });
+  window.__tgWaRouteIndex = window.__tgWaRoutes.length - 1;
+  renderTgWaRoutePicker();
+  applyActiveTgWaRouteToUi();
+  renderTgWaSourceList();
+  renderTgWaDestList();
+}
+
+function removeTgWaRoute(){
+  window.__tgWaRoutes = window.__tgWaRoutes || [];
+  if (window.__tgWaRoutes.length <= 1) {
+    alert('Mantenha pelo menos 1 rota.');
+    return;
+  }
+  const idx = Math.max(0, Math.min(window.__tgWaRouteIndex || 0, window.__tgWaRoutes.length - 1));
+  window.__tgWaRoutes.splice(idx, 1);
+  window.__tgWaRouteIndex = Math.max(0, idx - 1);
+  renderTgWaRoutePicker();
+  applyActiveTgWaRouteToUi();
+  renderTgWaSourceList();
+  renderTgWaDestList();
+}
+
+function renameTgWaRoute(){
+  const route = getActiveTgWaRoute();
+  if (!route) return;
+  route.name = (document.getElementById('tgWaRouteName')?.value || route.name || 'Rota Telegram -> WhatsApp').trim() || 'Rota Telegram -> WhatsApp';
+  renderTgWaRoutePicker();
 }
 
 function renderTgWaSourceList(){
@@ -2777,21 +3930,30 @@ async function saveWhatsAppSelection(){
   }
 
   const existing = await api('/api/settings');
-  existing.whatsAppForwarding = existing.whatsAppForwarding || {};
-  existing.whatsAppForwarding.enabled = document.getElementById('waForwardEnabled').checked;
-  existing.whatsAppForwarding.processFromMeOnly = document.getElementById('waFromMeOnly').checked;
-  existing.whatsAppForwarding.footerText = document.getElementById('waFooter').value || '';
-  existing.whatsAppForwarding.appendSheinCode = document.getElementById('waAppendShein').checked;
-  const waSendMedia = document.getElementById('waSendMedia');
-  if (waSendMedia) existing.whatsAppForwarding.sendMediaEnabled = waSendMedia.checked;
+  persistActiveWhatsAppRouteFromUi();
+  const routes = (window.__waRoutes || []).map(route => ({
+    name: (route.name || 'Rota WhatsApp').trim() || 'Rota WhatsApp',
+    enabled: !!route.enabled,
+    processFromMeOnly: route.processFromMeOnly ?? true,
+    sourceChatIds: Array.from(new Set((route.sourceChatIds || []).map(String).filter(Boolean))),
+    destinationGroupIds: Array.from(new Set((route.destinationGroupIds || []).map(String).filter(Boolean))),
+    appendSheinCode: route.appendSheinCode ?? true,
+    sendMediaEnabled: route.sendMediaEnabled ?? true,
+    footerText: route.footerText || '',
+    instanceName: (route.instanceName || '').trim() || null
+  }));
+  existing.whatsAppForwardingRoutes = routes;
 
-  const selected = Array.from((window.__waSelection?.dest || new Set()).values());
-  const manual = parseWhatsAppManualIds('waManualIds');
-  existing.whatsAppForwarding.destinationGroupIds = Array.from(new Set([...selected, ...manual]));
-  const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
-  const sourceManual = parseWhatsAppManualIds('waManualSourceIds');
-  existing.whatsAppForwarding.sourceChatIds = Array.from(new Set([...sourceSelected, ...sourceManual]));
-  existing.whatsAppForwarding.instanceName = (document.getElementById('waInstanceName').value || '').trim() || null;
+  existing.whatsAppForwarding = existing.whatsAppForwarding || {};
+  const firstRoute = routes[0];
+  existing.whatsAppForwarding.enabled = firstRoute ? !!firstRoute.enabled : false;
+  existing.whatsAppForwarding.processFromMeOnly = firstRoute ? (firstRoute.processFromMeOnly ?? true) : true;
+  existing.whatsAppForwarding.footerText = firstRoute ? (firstRoute.footerText || '') : '';
+  existing.whatsAppForwarding.appendSheinCode = firstRoute ? (firstRoute.appendSheinCode ?? true) : true;
+  existing.whatsAppForwarding.sendMediaEnabled = firstRoute ? (firstRoute.sendMediaEnabled ?? true) : true;
+  existing.whatsAppForwarding.destinationGroupIds = firstRoute ? firstRoute.destinationGroupIds : [];
+  existing.whatsAppForwarding.sourceChatIds = firstRoute ? firstRoute.sourceChatIds : [];
+  existing.whatsAppForwarding.instanceName = firstRoute ? firstRoute.instanceName : null;
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -2831,7 +3993,9 @@ async function loadWhatsAppGroups(){
     let settings = null;
     try {
       settings = await api('/api/settings');
-    } catch {}
+    } catch (fallbackError) {
+      console.debug('Nao foi possivel carregar settings no fallback.', fallbackError);
+    }
     if (settings) {
       renderWhatsAppGroups({ groups: [] }, settings);
     }

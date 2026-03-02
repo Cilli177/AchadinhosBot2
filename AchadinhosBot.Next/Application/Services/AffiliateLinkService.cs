@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Net;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Infrastructure.Amazon;
 using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Application.Services;
@@ -13,14 +14,26 @@ namespace AchadinhosBot.Next.Application.Services;
 public sealed class AffiliateLinkService : IAffiliateLinkService
 {
     private readonly AffiliateOptions _options;
+    private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
+    private readonly AmazonCreatorApiClient _amazonCreatorApiClient;
+    private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly ILogger<AffiliateLinkService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private static readonly TimeSpan ExpandCacheTtl = TimeSpan.FromMinutes(10);
     private static readonly ConcurrentDictionary<string, ExpandCacheEntry> ExpandCache = new(StringComparer.OrdinalIgnoreCase);
 
-    public AffiliateLinkService(IOptions<AffiliateOptions> options, ILogger<AffiliateLinkService> logger, IHttpClientFactory httpClientFactory)
+    public AffiliateLinkService(
+        IOptions<AffiliateOptions> options,
+        IMercadoLivreOAuthService mercadoLivreOAuthService,
+        AmazonCreatorApiClient amazonCreatorApiClient,
+        AmazonPaApiClient amazonPaApiClient,
+        ILogger<AffiliateLinkService> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _options = options.Value;
+        _mercadoLivreOAuthService = mercadoLivreOAuthService;
+        _amazonCreatorApiClient = amazonCreatorApiClient;
+        _amazonPaApiClient = amazonPaApiClient;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
     }
@@ -29,10 +42,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     {
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri))
         {
-            return new AffiliateLinkResult(false, null, "Unknown", false, null, "URL inválida", false, null);
+            return new AffiliateLinkResult(false, null, "Unknown", false, null, "URL invÃ¡lida", false, null);
         }
 
-        var host = uri.Host.ToLowerInvariant();
+        var host = NormalizeHost(uri.Host);
         return await ConvertWithExpansionAsync(uri, host, cancellationToken);
     }
 
@@ -49,7 +62,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         {
             return converted.Error is not null
                 ? converted
-                : new AffiliateLinkResult(false, null, "Unknown", false, null, "Não foi possível expandir o link", false, null);
+                : new AffiliateLinkResult(false, null, "Unknown", false, null, "NÃ£o foi possÃ­vel expandir o link", false, null);
         }
 
         var expandedHost = expanded.Host.ToLowerInvariant();
@@ -57,7 +70,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         {
             return converted.Error is not null
                 ? converted
-                : new AffiliateLinkResult(false, null, "Unknown", false, null, "Conversão não suportada", false, null);
+                : new AffiliateLinkResult(false, null, "Unknown", false, null, "ConversÃ£o nÃ£o suportada", false, null);
         }
 
         return await ConvertInternalAsync(expanded, expandedHost, cancellationToken);
@@ -78,18 +91,97 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 }
             }
 
+            var expectedTag = ResolveAmazonPartnerTag();
+            if (!IsAmazonPartnerTagValid(expectedTag))
+            {
+                _logger.LogWarning("Conversao Amazon bloqueada: PartnerTag nao configurada/valida. Original={OriginalUrl}", uri.ToString());
+                return new AffiliateLinkResult(
+                    false,
+                    null,
+                    "Amazon",
+                    false,
+                    "PartnerTag Amazon nao configurada",
+                    "Configure a PartnerTag da Amazon para converter links com afiliacao.",
+                    false,
+                    null);
+            }
+
+            var officialErrors = new List<string>();
+
+            var creatorEnabled = false; // bloqueado temporariamente: manter conversao interna sem Creator API
+
+            if (creatorEnabled)
+            {
+                var creator = await ConvertAmazonWithCreatorApiAsync(resolved, expectedTag, cancellationToken);
+                if (creator.Success && !string.IsNullOrWhiteSpace(creator.Url))
+                {
+                    var creatorValidation = await ValidateAffiliateAsync("Amazon", creator.Url, cancellationToken);
+                    if (!creatorValidation.IsAffiliated)
+                    {
+                        var validationError = creatorValidation.Error ?? "Link Creator API sem validacao de afiliado.";
+                        _logger.LogWarning("Verificacao Amazon Creator API falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), creator.Url, validationError);
+                        officialErrors.Add($"Creator API: {validationError}");
+                    }
+                    else
+                    {
+                        var creatorShort = await ShortenAsync(creator.Url, cancellationToken) ?? creator.Url;
+                        LogStore("Amazon", uri.ToString(), creatorShort);
+                        return new AffiliateLinkResult(true, creatorShort, "Amazon", true, null, null, creator.CorrectionApplied, creator.Note);
+                    }
+                }
+                else
+                {
+                    var creatorError = creator.Error ?? "Falha sem detalhe.";
+                    _logger.LogWarning("Conversao Amazon via Creator API falhou. Original={OriginalUrl} Erro={Error}", uri.ToString(), creatorError);
+                    officialErrors.Add($"Creator API: {creatorError}");
+                }
+            }
+
+            if (_amazonPaApiClient.IsConfigured)
+            {
+                var official = await ConvertAmazonWithOfficialApiAsync(resolved, cancellationToken);
+                if (official.Success && !string.IsNullOrWhiteSpace(official.Url))
+                {
+                    var officialValidation = await ValidateAffiliateAsync("Amazon", official.Url, cancellationToken);
+                    if (!officialValidation.IsAffiliated)
+                    {
+                        var validationError = officialValidation.Error ?? "Link PA-API sem validacao de afiliado.";
+                        _logger.LogWarning("Verificacao Amazon PA-API falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), official.Url, validationError);
+                        officialErrors.Add($"PA-API: {validationError}");
+                    }
+                    else
+                    {
+                        var officialShort = await ShortenAsync(official.Url, cancellationToken) ?? official.Url;
+                        LogStore("Amazon", uri.ToString(), officialShort);
+                        return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
+                    }
+                }
+                else
+                {
+                    var paError = official.Error ?? "Falha sem detalhe.";
+                    _logger.LogWarning("Conversao Amazon via PA-API falhou. Original={OriginalUrl} Erro={Error}", uri.ToString(), paError);
+                    officialErrors.Add($"PA-API: {paError}");
+                }
+            }
+
+            if (officialErrors.Count > 0)
+            {
+                var errorText = string.Join(" | ", officialErrors.Distinct(StringComparer.OrdinalIgnoreCase));
+                return new AffiliateLinkResult(false, null, "Amazon", false, errorText, "Falha na conversao oficial Amazon", false, null);
+            }
+
             var originalQuery = ParseQuery(resolved.Query);
             originalQuery.TryGetValue("tag", out var existingTag);
-            var amazon = ApplyOrReplaceQuery(RemoveQueryKey(resolved, "tag"), "tag", _options.AmazonTag);
+            var amazon = ApplyOrReplaceQuery(RemoveQueryKey(resolved, "tag"), "tag", expectedTag);
             var correctionApplied = string.IsNullOrWhiteSpace(existingTag)
-                || !string.Equals(existingTag, _options.AmazonTag, StringComparison.OrdinalIgnoreCase);
-            var correctionNote = correctionApplied ? $"Tag Amazon corrigida ({existingTag ?? "vazio"} -> {_options.AmazonTag})" : null;
+                || !string.Equals(existingTag, expectedTag, StringComparison.OrdinalIgnoreCase);
+            var correctionNote = correctionApplied ? $"Tag Amazon corrigida ({existingTag ?? "vazio"} -> {expectedTag})" : null;
 
             var validation = await ValidateAffiliateAsync("Amazon", amazon, cancellationToken);
             if (!validation.IsAffiliated)
             {
-                _logger.LogWarning("Verificação Amazon falhou após correção. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), amazon, validation.Error);
-                return new AffiliateLinkResult(false, null, "Amazon", false, validation.Error, "Link convertido sem afiliado válido", correctionApplied, correctionNote);
+                _logger.LogWarning("Verificacao Amazon falhou apos correcao. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), amazon, validation.Error);
+                return new AffiliateLinkResult(false, null, "Amazon", false, validation.Error, "Link convertido sem afiliado valido", correctionApplied, correctionNote);
             }
 
             if (correctionApplied)
@@ -97,9 +189,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Amazon sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), amazon);
             }
 
-            var shortened = await ShortenAsync(amazon, cancellationToken);
-            LogStore("Amazon", uri.ToString(), shortened);
-            return new AffiliateLinkResult(true, shortened, "Amazon", true, null, null, correctionApplied, correctionNote);
+            var fallbackShort = await ShortenAsync(amazon, cancellationToken) ?? amazon;
+            LogStore("Amazon", uri.ToString(), fallbackShort);
+            return new AffiliateLinkResult(true, fallbackShort, "Amazon", true, null, null, correctionApplied, correctionNote);
         }
 
         if (host.Contains("shein.com"))
@@ -115,8 +207,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             var validation = await ValidateAffiliateAsync("Shein", shein, cancellationToken);
             if (!validation.IsAffiliated)
             {
-                _logger.LogWarning("Verificação Shein falhou após correção. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shein, validation.Error);
-                return new AffiliateLinkResult(false, null, "Shein", false, validation.Error, "Link convertido sem afiliado válido", correctionApplied, correctionNote);
+                _logger.LogWarning("VerificaÃ§Ã£o Shein falhou apÃ³s correÃ§Ã£o. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shein, validation.Error);
+                return new AffiliateLinkResult(false, null, "Shein", false, validation.Error, "Link convertido sem afiliado vÃ¡lido", correctionApplied, correctionNote);
             }
 
             if (correctionApplied)
@@ -128,7 +220,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return new AffiliateLinkResult(true, shein, "Shein", true, null, null, correctionApplied, correctionNote);
         }
 
-        if (IsMercadoLivreHost(host))
+        if (IsMercadoLivreHost(host)
+            || uri.AbsoluteUri.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsoluteUri.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase))
         {
             var ml = await ConvertMercadoLivreAsync(uri, cancellationToken);
             if (!string.IsNullOrWhiteSpace(ml))
@@ -138,8 +232,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 var validation = await ValidateAffiliateAsync("Mercado Livre", sanitized, cancellationToken);
                 if (!validation.IsAffiliated)
                 {
-                    _logger.LogWarning("Verificação Mercado Livre falhou após correção. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), sanitized, validation.Error);
-                    return new AffiliateLinkResult(false, null, "Mercado Livre", false, validation.Error, "Link convertido sem afiliado válido", ensured.CorrectionApplied, ensured.CorrectionNote);
+                    _logger.LogWarning("VerificaÃ§Ã£o Mercado Livre falhou apÃ³s correÃ§Ã£o. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), sanitized, validation.Error);
+                    return new AffiliateLinkResult(false, null, "Mercado Livre", false, validation.Error, "Link convertido sem afiliado vÃ¡lido", ensured.CorrectionApplied, ensured.CorrectionNote);
                 }
 
                 if (ensured.CorrectionApplied)
@@ -147,10 +241,20 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     _logger.LogWarning("Mercado Livre sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), sanitized);
                 }
 
-                var shortened = await ShortenAsync(sanitized, cancellationToken);
+                var shortened = await ShortenAsync(sanitized, cancellationToken) ?? sanitized;
                 LogStore("Mercado Livre", uri.ToString(), shortened);
                 return new AffiliateLinkResult(true, shortened, "Mercado Livre", true, null, null, ensured.CorrectionApplied, ensured.CorrectionNote);
             }
+
+            return new AffiliateLinkResult(
+                false,
+                null,
+                "Mercado Livre",
+                false,
+                "Produto nÃ£o identificado",
+                "Nao foi possivel identificar um produto valido do Mercado Livre para afiliacao.",
+                false,
+                null);
         }
 
         if (IsShopeeHost(host))
@@ -161,8 +265,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 var validation = await ValidateAffiliateAsync("Shopee", shopee, cancellationToken);
                 if (!validation.IsAffiliated)
                 {
-                    _logger.LogWarning("Verificação Shopee falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shopee, validation.Error);
-                    return new AffiliateLinkResult(false, null, "Shopee", false, validation.Error, "Link convertido sem afiliado válido", false, null);
+                    _logger.LogWarning("VerificaÃ§Ã£o Shopee falhou. Original={OriginalUrl} Url={Url} Erro={Error}", uri.ToString(), shopee, validation.Error);
+                    return new AffiliateLinkResult(false, null, "Shopee", false, validation.Error, "Link convertido sem afiliado vÃ¡lido", false, null);
                 }
 
                 LogStore("Shopee", uri.ToString(), shopee);
@@ -170,15 +274,31 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
         }
 
-        _logger.LogDebug("Host não suportado para afiliação: {Host}", host);
-        return new AffiliateLinkResult(false, null, "Unknown", false, null, $"Host não suportado: {host}", false, null);
+        _logger.LogDebug("Host nÃ£o suportado para afiliaÃ§Ã£o: {Host}", host);
+        return new AffiliateLinkResult(false, null, "Unknown", false, null, $"Host nÃ£o suportado: {host}", false, null);
     }
 
     private static bool IsAmazonHost(string host)
-        => host == "amazon.com" || host == "amazon.com.br" || host == "amzn.to" || host.EndsWith(".amazon.com") || host.EndsWith(".amazon.com.br");
+    {
+        var normalized = NormalizeHost(host);
+        return normalized == "amazon.com"
+               || normalized == "amazon.com.br"
+               || normalized == "amzn.to"
+               || normalized == "a.co"
+               || normalized == "amzlink.to"
+               || normalized == "amzn.divulgador.link"
+               || normalized.EndsWith(".amazon.com", StringComparison.OrdinalIgnoreCase)
+               || normalized.EndsWith(".amazon.com.br", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsAmazonShortHost(string host)
-        => host == "amzn.to" || host == "a.co";
+    {
+        var normalized = NormalizeHost(host);
+        return normalized == "amzn.to"
+               || normalized == "a.co"
+               || normalized == "amzlink.to"
+               || normalized == "amzn.divulgador.link";
+    }
 
     private static readonly string[] SheinRemoveKeys =
     {
@@ -235,10 +355,46 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     }
 
     private static bool IsMercadoLivreHost(string host)
-        => host.Contains("mercadolivre.com") || host.Contains("mercadolivre.com.br") || host.Contains("mercadolibre.com");
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        // Remove caracteres invisÃ­veis/estranhos que podem vir de redirecionamentos.
+        var normalized = NormalizeHost(host);
+
+        return normalized.Contains("mercadolivre.com", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("mercadolivre.com.br", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("mercadolibre.com", StringComparison.OrdinalIgnoreCase)
+               || normalized.Equals("meli.la", StringComparison.OrdinalIgnoreCase)
+               || normalized.Equals("meli.co", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsShopeeHost(string host)
-        => host.Contains("shopee.com") || host.Contains("shopee.com.br");
+    {
+        var normalized = NormalizeHost(host);
+        return normalized.Contains("shopee.com", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("shopee.com.br", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("shopeemobile.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return string.Empty;
+        }
+
+        var normalized = new string(host
+            .Trim()
+            .Trim('.')
+            .ToLowerInvariant()
+            .Where(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-')
+            .ToArray());
+
+        return normalized.Trim('.');
+    }
 
     private async Task<string?> ConvertMercadoLivreAsync(Uri uri, CancellationToken cancellationToken)
     {
@@ -263,19 +419,30 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
         }
 
+        var resolvedUrl = resolvedUri.ToString();
+        var isSocialUrl = IsMercadoLivreSocial(resolvedUrl);
+        var hasIdInResolvedPath = !string.IsNullOrWhiteSpace(ExtractMercadoLivreId(resolvedUri.AbsolutePath));
+
         if (string.IsNullOrWhiteSpace(mlbId))
         {
             if (!string.Equals(resolvedUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
             {
-                mlbId = await ExtractMercadoLivreIdFromHtmlAsync(resolvedUri.ToString(), cancellationToken);
+                // Para URLs sociais, nÃ£o aceitar MLB "solto" do HTML (gera falso positivo).
+                mlbId = await ExtractMercadoLivreIdFromHtmlAsync(resolvedUrl, cancellationToken, allowLooseMatch: !isSocialUrl);
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(mlbId) && isSocialUrl && !hasIdInResolvedPath)
+        {
+            // Garante que links sociais sÃ³ virem produto quando houver evidÃªncia forte.
+            mlbId = null;
         }
 
         if (string.IsNullOrWhiteSpace(mlbId))
         {
-            if (IsMercadoLivreSocial(resolvedUri.ToString()))
+            if (isSocialUrl)
             {
-                var productUri = await ExtractMercadoLivreProductLinkFromHtmlAsync(resolvedUri.ToString(), cancellationToken);
+                var productUri = await ResolveMercadoLivreProductFromSocialAsync(resolvedUri, cancellationToken);
                 if (productUri is not null)
                 {
                     resolvedUri = productUri;
@@ -287,30 +454,108 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     mlbId = ExtractMercadoLivreId(resolvedUri.ToString());
                     if (string.IsNullOrWhiteSpace(mlbId))
                     {
-                        mlbId = await ExtractMercadoLivreIdFromHtmlAsync(resolvedUri.ToString(), cancellationToken);
+                        mlbId = await ExtractMercadoLivreIdFromHtmlAsync(resolvedUri.ToString(), cancellationToken, allowLooseMatch: false);
                     }
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(mlbId) && IsMercadoLivreSocial(resolvedUri.ToString()))
+            if (string.IsNullOrWhiteSpace(mlbId))
             {
-                var fallback = CleanMercadoLivreSocial(resolvedUri.ToString());
-                var sep = fallback.Contains('?') ? "&" : "?";
-                return $"{fallback}{sep}matt_tool={_options.MercadoLivreMattTool}&matt_word={_options.MercadoLivreMattWord}";
-            }
+                if (IsMercadoLivreSocialOrShortUri(resolvedUri))
+                {
+                    // Fallback para links sociais/curtos do ML quando o ID do item nÃ£o
+                    // estÃ¡ disponÃ­vel no HTML/redirect. MantÃ©m rastreio com parÃ¢metros
+                    // de afiliaÃ§Ã£o no prÃ³prio link social.
+                    var social = CleanMercadoLivreSocial(resolvedUri.ToString());
+                    var ensuredFallback = EnsureMercadoLivreAffiliate(social, uri.ToString());
+                    return ensuredFallback.Url;
+                }
 
+                return null;
+            }
+        }
+
+        var itemValidation = await ValidateMercadoLivreItemWithApiAsync(mlbId, cancellationToken);
+        if (itemValidation == MercadoLivreItemValidation.Invalid)
+        {
+            _logger.LogWarning("Mercado Livre item invÃ¡lido ou nÃ£o encontrado via API. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
             return null;
+        }
+        if (itemValidation == MercadoLivreItemValidation.Unknown)
+        {
+            _logger.LogWarning("ValidaÃ§Ã£o de item Mercado Livre inconclusiva via API. Prosseguindo com heurÃ­stica. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
         }
 
         var query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["matt_tool"] = _options.MercadoLivreMattTool,
-            ["matt_word"] = _options.MercadoLivreMattWord
+            ["matt_tool"] = MercadoLivreMattTool,
+            ["matt_word"] = MercadoLivreMattWord
         };
 
         var url = $"https://produto.mercadolivre.com.br/MLB-{mlbId}";
         var full = ApplyQuery(url, query);
         return full;
+    }
+
+    private async Task<Uri?> ResolveMercadoLivreProductFromSocialAsync(Uri socialUri, CancellationToken cancellationToken)
+    {
+        var productUri = await ExtractMercadoLivreProductLinkFromHtmlAsync(socialUri.ToString(), cancellationToken);
+        if (productUri is null)
+        {
+            productUri = await ResolveMercadoLivreProductFromSocialRefAsync(socialUri, cancellationToken);
+        }
+
+        if (productUri is null)
+        {
+            return null;
+        }
+
+        return await FollowMercadoLivreProductCandidateAsync(productUri, cancellationToken);
+    }
+
+    private async Task<Uri?> FollowMercadoLivreProductCandidateAsync(Uri candidateUri, CancellationToken cancellationToken)
+    {
+        var current = candidateUri;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            if (TryExtractGoUrl(current, out var goUri) && goUri is not null)
+            {
+                current = goUri;
+            }
+
+            if (IsMercadoLivreProductUri(current))
+            {
+                return current;
+            }
+
+            if (IsMercadoLivreSocial(current.ToString()))
+            {
+                var nested = await ExtractMercadoLivreProductLinkFromHtmlAsync(current.ToString(), cancellationToken);
+                if (nested is not null && !string.Equals(nested.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    current = nested;
+                    continue;
+                }
+
+                var viaRef = await ResolveMercadoLivreProductFromSocialRefAsync(current, cancellationToken);
+                if (viaRef is not null && !string.Equals(viaRef.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    current = viaRef;
+                    continue;
+                }
+            }
+
+            var expanded = await ExpandUrlAsync(current, cancellationToken);
+            if (expanded is not null && !string.Equals(expanded.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                current = expanded;
+                continue;
+            }
+
+            break;
+        }
+
+        return IsMercadoLivreProductUri(current) ? current : null;
     }
 
     private AffiliateCorrectionResult EnsureMercadoLivreAffiliate(string url, string originalUrl)
@@ -329,12 +574,12 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return new AffiliateCorrectionResult(url, false, null);
         }
 
-        var fixedTool = _options.MercadoLivreMattTool;
-        var fixedWord = _options.MercadoLivreMattWord;
+        var fixedTool = MercadoLivreMattTool;
+        var fixedWord = MercadoLivreMattWord;
         if (string.IsNullOrWhiteSpace(fixedTool) || string.IsNullOrWhiteSpace(fixedWord))
         {
-            _logger.LogWarning("Mercado Livre afiliado ausente no link e opções vazias. Original={OriginalUrl}", originalUrl);
-            return new AffiliateCorrectionResult(url, false, "Afiliado ausente e opções vazias");
+            _logger.LogWarning("Mercado Livre afiliado ausente no link e opÃ§Ãµes vazias. Original={OriginalUrl}", originalUrl);
+            return new AffiliateCorrectionResult(url, false, "Afiliado ausente e opÃ§Ãµes vazias");
         }
 
         query["matt_tool"] = fixedTool;
@@ -352,7 +597,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     {
         if (string.IsNullOrWhiteSpace(_options.ShopeeAppId) || string.IsNullOrWhiteSpace(_options.ShopeeSecret))
         {
-            _logger.LogWarning("Shopee AppId/Secret não configurados");
+            _logger.LogWarning("Shopee AppId/Secret nÃ£o configurados");
             return null;
         }
 
@@ -362,7 +607,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             var payload = BuildShopeePayload(uri.ToString());
             if (payload is null)
             {
-                _logger.LogWarning("Shopee payload não configurado. Informe a query GraphQL do projeto antigo.");
+                _logger.LogWarning("Shopee payload nÃ£o configurado. Informe a query GraphQL do projeto antigo.");
                 return null;
             }
 
@@ -420,6 +665,140 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return null;
     }
 
+    private async Task<Uri?> ResolveMercadoLivreProductFromSocialRefAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!IsMercadoLivreSocial(uri.ToString()))
+            {
+                return null;
+            }
+
+            using var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = true,
+                CookieContainer = new CookieContainer()
+            };
+            using var client = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
+            client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+
+            var current = uri;
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, current);
+                using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+                if (res.Headers.Location is not null)
+                {
+                    var next = res.Headers.Location;
+                    if (!next.IsAbsoluteUri)
+                    {
+                        next = new Uri(current, next);
+                    }
+
+                    if (TryExtractGoUrl(next, out var goUri) && goUri is not null)
+                    {
+                        next = goUri;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(ExtractMercadoLivreId(next.ToString())))
+                    {
+                        return next;
+                    }
+
+                    current = next;
+                    continue;
+                }
+
+                var contentType = res.Content.Headers.ContentType?.MediaType ?? string.Empty;
+                if (contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+                {
+                    var html = await res.Content.ReadAsStringAsync(cancellationToken);
+                    var ctaCandidate = ExtractMercadoLivreUrlNearProductCta(html, current.ToString());
+                    if (ctaCandidate is not null)
+                    {
+                        if (TryExtractGoUrl(ctaCandidate, out var ctaGoUri) && ctaGoUri is not null)
+                        {
+                            ctaCandidate = ctaGoUri;
+                        }
+
+                        if (IsMercadoLivreProductUri(ctaCandidate))
+                        {
+                            return ctaCandidate;
+                        }
+
+                        if (!string.Equals(ctaCandidate.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            current = ctaCandidate;
+                            continue;
+                        }
+                    }
+
+                    var bestAnchorHref = FindBestMercadoLivreAnchorHref(html);
+                    if (!string.IsNullOrWhiteSpace(bestAnchorHref))
+                    {
+                        var candidate = ToAbsolute(current.ToString(), bestAnchorHref);
+                        if (candidate is not null)
+                        {
+                            if (TryExtractGoUrl(candidate, out var goUriFromAnchor) && goUriFromAnchor is not null)
+                            {
+                                candidate = goUriFromAnchor;
+                            }
+
+                            if (IsMercadoLivreProductUri(candidate))
+                            {
+                                return candidate;
+                            }
+
+                            if (!string.Equals(candidate.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                            {
+                                current = candidate;
+                                continue;
+                            }
+                        }
+                    }
+
+                    var discovered = ExtractFirstUrl(html);
+                    var best = ExtractBestUrlFromHtml(html, current.ToString())
+                               ?? (Uri.TryCreate(discovered, UriKind.Absolute, out var discoveredUriOld) ? discoveredUriOld : null);
+                    if (best is not null)
+                    {
+                        var discoveredUri = best;
+                        if (TryExtractGoUrl(discoveredUri, out var goUriFromHtml) && goUriFromHtml is not null)
+                        {
+                            discoveredUri = goUriFromHtml;
+                        }
+
+                        if (IsMercadoLivreProductUri(discoveredUri))
+                        {
+                            return discoveredUri;
+                        }
+
+                        if (!string.Equals(discoveredUri.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            current = discoveredUri;
+                            continue;
+                        }
+                    }
+                }
+
+                break;
+            }
+        }
+        catch
+        {
+            // Best effort only.
+        }
+
+        return null;
+    }
+
     private static string ComputeShopeeSignature(string appId, string secret, long timestamp, string bodyJson)
     {
         var raw = $"{appId}{timestamp}{bodyJson}{secret}";
@@ -430,6 +809,11 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private async Task<string?> ShortenAsync(string url, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
         try
         {
             var client = _httpClientFactory.CreateClient("default");
@@ -538,7 +922,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private async Task<string?> ExtractMercadoLivreIdFromHtmlAsync(string url, CancellationToken cancellationToken)
+    private async Task<string?> ExtractMercadoLivreIdFromHtmlAsync(string url, CancellationToken cancellationToken, bool allowLooseMatch = true)
     {
         try
         {
@@ -550,10 +934,15 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             var html = await res.Content.ReadAsStringAsync(cancellationToken);
-            return ExtractMercadoLivreId(html)
-                ?? ExtractMercadoLivreIdFromDeepLink(html)
+            var id = ExtractMercadoLivreIdFromDeepLink(html)
                 ?? ExtractMercadoLivreIdFromProductLink(html)
                 ?? ExtractMercadoLivreIdFromJson(html);
+            if (!string.IsNullOrWhiteSpace(id))
+            {
+                return id;
+            }
+
+            return allowLooseMatch ? ExtractMercadoLivreId(html) : null;
         }
         catch
         {
@@ -580,11 +969,46 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 return new Uri(direct.Value);
             }
 
-            var button = Regex.Match(html, "<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>\\s*Ir\\s+para\\s+produto\\s*</a>", RegexOptions.IgnoreCase);
-            if (button.Success)
+            var ctaUrl = ExtractMercadoLivreUrlNearProductCta(html, url);
+            if (ctaUrl is not null)
             {
-                var href = WebUtility.HtmlDecode(button.Groups[1].Value);
-                return ToAbsolute(url, href);
+                return ctaUrl;
+            }
+
+            var buttonText = Regex.Match(
+                html,
+                "<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>(?:(?!</a>).)*?Ir\\s+para\\s+(?:o\\s+)?produto(?:(?!</a>).)*?</a>",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (buttonText.Success)
+            {
+                var href = WebUtility.HtmlDecode(buttonText.Groups[1].Value);
+                var resolved = ToAbsolute(url, href);
+                if (resolved is not null)
+                {
+                    return resolved;
+                }
+            }
+
+            var buttonAttr = Regex.Match(
+                html,
+                "<a[^>]+(?:aria-label|title)=[\"'][^\"']*ir\\s+para\\s+(?:o\\s+)?produto[^\"']*[\"'][^>]*href=[\"']([^\"']+)[\"']",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (!buttonAttr.Success)
+            {
+                buttonAttr = Regex.Match(
+                    html,
+                    "<a[^>]+href=[\"']([^\"']+)[\"'][^>]*(?:aria-label|title)=[\"'][^\"']*ir\\s+para\\s+(?:o\\s+)?produto[^\"']*[\"']",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            }
+
+            if (buttonAttr.Success)
+            {
+                var href = WebUtility.HtmlDecode(buttonAttr.Groups[1].Value);
+                var resolved = ToAbsolute(url, href);
+                if (resolved is not null)
+                {
+                    return resolved;
+                }
             }
 
             var hrefMatch = Regex.Match(html, "href=[\"']([^\"']*MLB-?\\d+[^\"']*)[\"']", RegexOptions.IgnoreCase);
@@ -600,6 +1024,16 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 var link = permalink.Groups[1].Value.Replace("\\/", "/");
                 return new Uri(link);
             }
+
+            var bestAnchorHref = FindBestMercadoLivreAnchorHref(html);
+            if (!string.IsNullOrWhiteSpace(bestAnchorHref))
+            {
+                var resolved = ToAbsolute(url, WebUtility.HtmlDecode(bestAnchorHref));
+                if (resolved is not null)
+                {
+                    return resolved;
+                }
+            }
         }
         catch
         {
@@ -607,6 +1041,155 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         return null;
+    }
+
+    private static string? FindBestMercadoLivreAnchorHref(string html)
+    {
+        var anchorMatches = Regex.Matches(
+            html,
+            "<a\\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        string? bestHref = null;
+        var bestScore = int.MinValue;
+        foreach (Match match in anchorMatches)
+        {
+            var href = WebUtility.HtmlDecode(match.Groups[1].Value);
+            if (string.IsNullOrWhiteSpace(href))
+            {
+                continue;
+            }
+
+            var score = ScoreMercadoLivreAnchorCandidate(href, match.Groups[2].Value);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestHref = href;
+            }
+        }
+
+        return bestScore >= 60 ? bestHref : null;
+    }
+
+    private static int ScoreMercadoLivreAnchorCandidate(string href, string innerHtml)
+    {
+        var score = 0;
+        var normalizedHref = href.ToLowerInvariant();
+        var plainText = Regex.Replace(WebUtility.HtmlDecode(innerHtml), "<.*?>", " ").Trim().ToLowerInvariant();
+
+        if (normalizedHref.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) ||
+            normalizedHref.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 15;
+        }
+
+        if (Regex.IsMatch(normalizedHref, @"mlb-?\d{6,}", RegexOptions.IgnoreCase))
+        {
+            score += 90;
+        }
+
+        if (normalizedHref.Contains("/p/", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 40;
+        }
+
+        if (plainText.Contains("ir para o produto", StringComparison.OrdinalIgnoreCase) ||
+            plainText.Contains("ir para produto", StringComparison.OrdinalIgnoreCase) ||
+            plainText.Contains("ver produto", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 80;
+        }
+
+        if (normalizedHref.Contains("/social/", StringComparison.OrdinalIgnoreCase) ||
+            normalizedHref.Contains("/lists", StringComparison.OrdinalIgnoreCase) ||
+            normalizedHref.Contains("/loja/", StringComparison.OrdinalIgnoreCase))
+        {
+            score -= 120;
+        }
+
+        return score;
+    }
+
+    private static Uri? ExtractMercadoLivreUrlNearProductCta(string html, string baseUrl)
+    {
+        var decoded = WebUtility.HtmlDecode(html);
+        var ctaIndex = FindProductCtaIndex(decoded);
+        if (ctaIndex < 0)
+        {
+            return null;
+        }
+
+        Uri? bestCandidate = null;
+        var bestScore = int.MinValue;
+        foreach (Match match in Regex.Matches(decoded, @"https?:\\\\/\\\\/[^""'<>\s]+|https?://[^""'<>\s]+", RegexOptions.IgnoreCase))
+        {
+            var rawUrl = match.Value.Replace("\\/", "/", StringComparison.OrdinalIgnoreCase);
+            var candidate = ToAbsolute(baseUrl, rawUrl);
+            if (candidate is null)
+            {
+                continue;
+            }
+
+            var score = 0;
+            if (IsMercadoLivreHost(candidate.Host))
+            {
+                score += 20;
+            }
+
+            if (IsMercadoLivreProductUri(candidate))
+            {
+                score += 120;
+            }
+
+            if (candidate.AbsolutePath.Contains("/p/", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 35;
+            }
+
+            if (IsMercadoLivreSocial(candidate.ToString()))
+            {
+                score -= 120;
+            }
+
+            var distance = Math.Abs(match.Index - ctaIndex);
+            if (distance <= 400)
+            {
+                score += 60;
+            }
+            else if (distance <= 1200)
+            {
+                score += 25;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestCandidate = candidate;
+            }
+        }
+
+        return bestScore >= 80 ? bestCandidate : null;
+    }
+
+    private static int FindProductCtaIndex(string text)
+    {
+        var patterns = new[]
+        {
+            "ir para o produto",
+            "ir para produto",
+            "ver produto"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var idx = text.IndexOf(pattern, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                return idx;
+            }
+        }
+
+        return -1;
     }
 
     private static Uri? ToAbsolute(string baseUrl, string href)
@@ -641,7 +1224,123 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return Task.FromResult(cached);
         }
 
-        return ExpandUrlRecursiveAsync(uri.ToString(), 0, cancellationToken);
+        return ExpandUrlSmartAsync(uri, cancellationToken);
+    }
+
+    private async Task<Uri?> ExpandUrlSmartAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        var smart = await ExpandShortLinkWithRedirectHintsAsync(uri, cancellationToken);
+        if (smart is not null)
+        {
+            CacheExpansion(uri.ToString(), smart);
+            return smart;
+        }
+
+        return await ExpandUrlRecursiveAsync(uri.ToString(), 0, cancellationToken);
+    }
+
+    private async Task<Uri?> ExpandShortLinkWithRedirectHintsAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = true,
+                CookieContainer = new CookieContainer()
+            };
+            using var client = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+
+            var current = uri;
+            Uri? bestCandidate = null;
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                bestCandidate = PreferBestCandidate(bestCandidate, current);
+                if (IsStrongAffiliateCandidate(current))
+                {
+                    return current;
+                }
+
+                using var req = new HttpRequestMessage(HttpMethod.Get, current);
+                using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+                if (res.Headers.Location is not null)
+                {
+                    var next = res.Headers.Location;
+                    if (!next.IsAbsoluteUri)
+                    {
+                        next = new Uri(current, next);
+                    }
+
+                    if (TryExtractGoUrl(next, out var goUri) && goUri is not null)
+                    {
+                        next = goUri;
+                    }
+
+                    bestCandidate = PreferBestCandidate(bestCandidate, next);
+                    if (IsStrongAffiliateCandidate(next))
+                    {
+                        return next;
+                    }
+
+                    if (!string.Equals(next.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        current = next;
+                        continue;
+                    }
+                }
+
+                var contentType = res.Content.Headers.ContentType?.MediaType ?? string.Empty;
+                if (contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+                {
+                    var html = await res.Content.ReadAsStringAsync(cancellationToken);
+                    var discovered = ExtractBestUrlFromHtml(html, current.ToString());
+                    if (discovered is not null)
+                    {
+                        if (TryExtractGoUrl(discovered, out var discoveredGoUri) && discoveredGoUri is not null)
+                        {
+                            discovered = discoveredGoUri;
+                        }
+
+                        bestCandidate = PreferBestCandidate(bestCandidate, discovered);
+                        if (IsStrongAffiliateCandidate(discovered))
+                        {
+                            return discovered;
+                        }
+
+                        if (!string.Equals(discovered.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            current = discovered;
+                            continue;
+                        }
+                    }
+                }
+
+                var requestUri = res.RequestMessage?.RequestUri;
+                if (requestUri is not null)
+                {
+                    bestCandidate = PreferBestCandidate(bestCandidate, requestUri);
+                    if (IsStrongAffiliateCandidate(requestUri))
+                    {
+                        return requestUri;
+                    }
+                }
+
+                break;
+            }
+
+            return bestCandidate;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<Uri?> ExpandUrlRecursiveAsync(string url, int depth, CancellationToken cancellationToken)
@@ -671,8 +1370,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             if (contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase))
             {
                 var html = await res.Content.ReadAsStringAsync(cancellationToken);
-                var discovered = ExtractFirstUrl(html);
-                if (Uri.TryCreate(discovered, UriKind.Absolute, out var discoveredUri))
+                var discoveredUri = ExtractBestUrlFromHtml(html, url);
+                if (discoveredUri is not null)
                 {
                     var expanded = await ExpandUrlRecursiveAsync(discoveredUri.ToString(), depth + 1, cancellationToken);
                     CacheExpansion(url, expanded);
@@ -795,6 +1494,65 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return link.Success ? link.Value : null;
     }
 
+    private static Uri? ExtractBestUrlFromHtml(string html, string baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return null;
+        }
+
+        var candidates = new List<string>();
+        void AddMatch(string pattern)
+        {
+            foreach (Match match in Regex.Matches(html, pattern, RegexOptions.IgnoreCase))
+            {
+                if (match.Groups.Count > 1)
+                {
+                    candidates.Add(WebUtility.HtmlDecode(match.Groups[1].Value));
+                }
+                else if (match.Success)
+                {
+                    candidates.Add(WebUtility.HtmlDecode(match.Value));
+                }
+            }
+        }
+
+        AddMatch("<link[^>]+rel=[\"']canonical[\"'][^>]+href=[\"']([^\"']+)[\"']");
+        AddMatch("<meta[^>]+property=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']");
+        AddMatch("<meta[^>]+name=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']");
+        AddMatch("http-equiv=[\"']refresh[\"'][^>]*content=[\"'][^\"']*url=([^\"'>]+)");
+        AddMatch("location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']");
+        AddMatch("location\\.replace\\(\\s*[\"']([^\"']+)[\"']\\s*\\)");
+        AddMatch("window\\.location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']");
+        AddMatch("top\\.location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']");
+        AddMatch("https?://[^\\s\"'<>]+");
+
+        Uri? best = null;
+        var bestScore = int.MinValue;
+        foreach (var candidateRaw in candidates)
+        {
+            var candidate = ToAbsolute(baseUrl, candidateRaw);
+            if (candidate is null)
+            {
+                continue;
+            }
+
+            if (TryExtractGoUrl(candidate, out var goUri) && goUri is not null)
+            {
+                candidate = goUri;
+            }
+
+            var score = ScoreAffiliateCandidate(candidate);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+
+        return bestScore > 0 ? best : null;
+    }
+
     private static string? ExtractMercadoLivreIdFromJson(string html)
     {
         var match = Regex.Match(html, "\"(permalink|canonical)\"\\s*:\\s*\"(https?:\\\\/\\\\/[^\\\"]+)\"", RegexOptions.IgnoreCase);
@@ -827,17 +1585,78 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private static string CleanMercadoLivreSocial(string url)
     {
-        var cleaned = Regex.Replace(url, @"[?&]matt_tool=[^&]+", "", RegexOptions.IgnoreCase);
-        cleaned = Regex.Replace(cleaned, @"[?&]matt_word=[^&]+", "", RegexOptions.IgnoreCase);
-
-        if (!cleaned.Contains('?') && cleaned.Contains('&'))
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            var idx = cleaned.IndexOf('&');
-            cleaned = cleaned[..idx] + "?" + cleaned[(idx + 1)..];
+            var cleanedRaw = Regex.Replace(url, @"[?&](matt_tool|matt_word|ref|forceInApp)=[^&]+", "", RegexOptions.IgnoreCase);
+            cleanedRaw = Regex.Replace(cleanedRaw, @"\?&", "?", RegexOptions.IgnoreCase);
+            cleanedRaw = Regex.Replace(cleanedRaw, @"&&+", "&", RegexOptions.IgnoreCase);
+            cleanedRaw = cleanedRaw.TrimEnd('?', '&');
+            return cleanedRaw;
         }
 
-        return cleaned;
+        var query = ParseQuery(uri.Query);
+        query.Remove("matt_tool");
+        query.Remove("matt_word");
+        query.Remove("ref");
+        query.Remove("forceInApp");
+
+        var encodedQuery = string.Join("&", query.Select(p => $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value)}"));
+        var ub = new UriBuilder(uri) { Query = encodedQuery };
+        return ub.Uri.ToString();
     }
+
+    private static (bool IsAffiliated, string? Error) ValidateShopeeAffiliate(Uri uri, Dictionary<string, string> query)
+    {
+        var host = uri.Host.ToLowerInvariant();
+        var isShopeeDomain = host.Contains("shopee", StringComparison.OrdinalIgnoreCase)
+                             || host.Contains("shope.ee", StringComparison.OrdinalIgnoreCase)
+                             || host.Contains("shp.ee", StringComparison.OrdinalIgnoreCase);
+
+        if (!isShopeeDomain)
+        {
+            return (false, "Dominio Shopee invalido para afiliacao.");
+        }
+
+        if (HasShopeeAffiliateMarker(query) || IsShopeeShortAffiliateHost(host))
+        {
+            return (true, null);
+        }
+
+        return (false, "Link Shopee sem marcador claro de afiliacao.");
+    }
+
+    private static bool HasShopeeAffiliateMarker(Dictionary<string, string> query)
+    {
+        if (query.Count == 0)
+        {
+            return false;
+        }
+
+        var markerKeys = new[]
+        {
+            "smtt",
+            "uls_trackid",
+            "affiliateid",
+            "affiliate_id",
+            "af_click_lookback",
+            "deep_and_deferred"
+        };
+
+        foreach (var key in markerKeys)
+        {
+            if (query.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsShopeeShortAffiliateHost(string host)
+        => host.Equals("shp.ee", StringComparison.OrdinalIgnoreCase)
+           || host.Equals("shope.ee", StringComparison.OrdinalIgnoreCase)
+           || host.Equals("s.shopee.com.br", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsShortLink(string url)
     {
@@ -853,7 +1672,119 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                || url.Contains("divulgador.link", StringComparison.OrdinalIgnoreCase)
                || url.Contains("mercadolivre.com/sec", StringComparison.OrdinalIgnoreCase)
                || url.Contains("mercadolivre.com.br/sec", StringComparison.OrdinalIgnoreCase)
-               || url.Contains("meli.co", StringComparison.OrdinalIgnoreCase);
+               || url.Contains("meli.co", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("amzlink.to", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsStrongAffiliateCandidate(Uri uri)
+        => ScoreAffiliateCandidate(uri) >= 80;
+
+    private static Uri PreferBestCandidate(Uri? current, Uri candidate)
+    {
+        if (current is null)
+        {
+            return candidate;
+        }
+
+        return ScoreAffiliateCandidate(candidate) > ScoreAffiliateCandidate(current)
+            ? candidate
+            : current;
+    }
+
+    private static int ScoreAffiliateCandidate(Uri uri)
+    {
+        var score = 0;
+        var host = NormalizeHost(uri.Host);
+        var url = uri.ToString();
+        var path = uri.AbsolutePath ?? string.Empty;
+        var query = ParseQuery(uri.Query);
+
+        if (IsLikelyMediaHost(host))
+        {
+            score -= 140;
+        }
+
+        if (IsLikelyMediaPath(path))
+        {
+            score -= 120;
+        }
+
+        if (IsAmazonHost(host))
+        {
+            score += 70;
+            if (path.Contains("/dp/", StringComparison.OrdinalIgnoreCase) ||
+                path.Contains("/gp/product/", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 45;
+            }
+            if (query.TryGetValue("tag", out var tag) && !string.IsNullOrWhiteSpace(tag))
+            {
+                score += 20;
+            }
+        }
+
+        if (IsMercadoLivreHost(host))
+        {
+            score += 70;
+            if (IsMercadoLivreProductUri(uri))
+            {
+                score += 50;
+            }
+            if (IsMercadoLivreSocialOrShortUri(uri))
+            {
+                score += 15;
+            }
+            if (query.TryGetValue("matt_tool", out var tool) && !string.IsNullOrWhiteSpace(tool) &&
+                query.TryGetValue("matt_word", out var word) && !string.IsNullOrWhiteSpace(word))
+            {
+                score += 20;
+            }
+        }
+
+        if (IsShopeeHost(host))
+        {
+            score += 65;
+        }
+
+        if (host.Contains("shein.com", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 65;
+            if (query.TryGetValue("url_from", out var shein) && !string.IsNullOrWhiteSpace(shein))
+            {
+                score += 20;
+            }
+        }
+
+        if (IsShortLink(url))
+        {
+            score += 10;
+        }
+
+        return score;
+    }
+
+    private static bool IsLikelyMediaHost(string host)
+    {
+        return host.Contains("images-amazon.com", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("ssl-images-amazon.com", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("media-amazon.com", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("mmg.whatsapp.net", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLikelyMediaPath(string path)
+        => Regex.IsMatch(path ?? string.Empty, @"\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|mp4|webm|m3u8|pdf)$", RegexOptions.IgnoreCase);
+
+    private static bool IsMercadoLivreSocialOrShortUri(Uri uri)
+    {
+        var host = NormalizeHost(uri.Host);
+        if (host.Equals("meli.la", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("meli.co", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IsMercadoLivreSocial(uri.ToString());
     }
 
     private static bool TryExtractGoUrl(Uri uri, out Uri? goUri)
@@ -893,38 +1824,207 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return false;
     }
 
+    private async Task<MercadoLivreItemValidation> ValidateMercadoLivreItemWithApiAsync(string mlbId, CancellationToken cancellationToken)
+    {
+        var numericIdMatch = Regex.Match(mlbId, @"(\d{6,})", RegexOptions.IgnoreCase);
+        var numericId = numericIdMatch.Success ? numericIdMatch.Groups[1].Value : null;
+        if (string.IsNullOrWhiteSpace(numericId))
+        {
+            return MercadoLivreItemValidation.Invalid;
+        }
+
+        var itemId = $"MLB{numericId}";
+        var token = await _mercadoLivreOAuthService.GetAccessTokenAsync(cancellationToken);
+        var status = await QueryMercadoLivreItemStatusAsync(itemId, token, cancellationToken);
+        if ((status == HttpStatusCode.Unauthorized || status == HttpStatusCode.Forbidden) &&
+            !string.IsNullOrWhiteSpace(token))
+        {
+            status = await QueryMercadoLivreItemStatusAsync(itemId, null, cancellationToken);
+        }
+
+        return status switch
+        {
+            HttpStatusCode.OK => MercadoLivreItemValidation.Valid,
+            HttpStatusCode.NotFound => MercadoLivreItemValidation.Invalid,
+            HttpStatusCode.Gone => MercadoLivreItemValidation.Invalid,
+            HttpStatusCode.BadRequest => MercadoLivreItemValidation.Invalid,
+            _ => MercadoLivreItemValidation.Unknown
+        };
+    }
+
+    private async Task<HttpStatusCode> QueryMercadoLivreItemStatusAsync(string itemId, string? accessToken, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.mercadolibre.com/items/{itemId}");
+            if (!string.IsNullOrWhiteSpace(accessToken))
+            {
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            }
+
+            using var res = await client.SendAsync(req, cancellationToken);
+            return res.StatusCode;
+        }
+        catch
+        {
+            return HttpStatusCode.ServiceUnavailable;
+        }
+    }
+
+    private enum MercadoLivreItemValidation
+    {
+        Unknown = 0,
+        Valid = 1,
+        Invalid = 2
+    }
+
     private void LogStore(string store, string input, string output)
     {
         _logger.LogInformation("{Store} convertido: {Input} => {Output}", store, input, output);
+    }
+
+    private async Task<(bool Success, string? Url, bool CorrectionApplied, string? Note, string? Error)> ConvertAmazonWithCreatorApiAsync(
+        Uri resolved,
+        string partnerTag,
+        CancellationToken cancellationToken)
+    {
+        var asin = ExtractAmazonAsin(resolved);
+        if (string.IsNullOrWhiteSpace(asin))
+        {
+            return (false, null, false, "ASIN nao encontrado na URL Amazon.", "ASIN nao encontrado");
+        }
+
+        var item = await _amazonCreatorApiClient.GetItemAsync(asin, partnerTag, cancellationToken);
+        if (item is null || string.IsNullOrWhiteSpace(item.DetailPageUrl))
+        {
+            return (false, null, false, $"Creator API nao retornou link para ASIN {asin}.", "Creator API sem link de detalhe");
+        }
+
+        return (true, item.DetailPageUrl.Trim(), true, $"Link oficial via Creator API (ASIN {asin}).", null);
+    }
+
+    private async Task<(bool Success, string? Url, bool CorrectionApplied, string? Note, string? Error)> ConvertAmazonWithOfficialApiAsync(
+        Uri resolved,
+        CancellationToken cancellationToken)
+    {
+        var asin = ExtractAmazonAsin(resolved);
+        if (string.IsNullOrWhiteSpace(asin))
+        {
+            return (false, null, false, "ASIN nao encontrado na URL Amazon.", "ASIN nao encontrado");
+        }
+
+        var item = await _amazonPaApiClient.GetItemAsync(asin, cancellationToken);
+        if (item is null || string.IsNullOrWhiteSpace(item.DetailPageUrl))
+        {
+            return (false, null, false, $"PA-API nao retornou link para ASIN {asin}.", "PA-API sem link de detalhe");
+        }
+
+        return (true, item.DetailPageUrl.Trim(), true, $"Link oficial via PA-API (ASIN {asin}).", null);
+    }
+
+    private static string? ExtractAmazonAsin(Uri uri)
+    {
+        var path = (uri.AbsolutePath ?? string.Empty).ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var patterns = new[]
+        {
+            @"/DP/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/AW/D/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(path, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (match.Success)
+            {
+                return match.Groups["asin"].Value;
+            }
+        }
+
+        var query = uri.Query ?? string.Empty;
+        var queryMatch = Regex.Match(query, @"(?:^|[?&])asin=(?<asin>[A-Za-z0-9]{10})(?:&|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return queryMatch.Success ? queryMatch.Groups["asin"].Value.ToUpperInvariant() : null;
+    }
+
+    private string ResolveAmazonPartnerTag()
+    {
+        var configured = _options.AmazonProductApi?.PartnerTag;
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.Trim();
+        }
+
+        return (_options.AmazonTag ?? string.Empty).Trim();
+    }
+
+    private static bool IsAmazonPartnerTagValid(string? partnerTag)
+    {
+        if (string.IsNullOrWhiteSpace(partnerTag))
+        {
+            return false;
+        }
+
+        var normalized = partnerTag.Trim();
+        if (string.Equals(normalized, "CHANGE_ME_AMAZON_TAG", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // PartnerTag comum termina com sufixo de marketplace (ex.: -20 no BR).
+        return Regex.IsMatch(normalized, @"^[A-Za-z0-9][A-Za-z0-9-]{2,}$", RegexOptions.CultureInvariant)
+               && normalized.Contains('-', StringComparison.Ordinal);
     }
 
     private async Task<(bool IsAffiliated, string? Error)> ValidateAffiliateAsync(string store, string url, CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            return (false, "URL convertida inválida");
+            return (false, "URL convertida invÃ¡lida");
         }
 
         var query = ParseQuery(uri.Query);
+        var amazonExpectedTag = ResolveAmazonPartnerTag();
         (bool IsAffiliated, string? Error) result = store switch
         {
-            "Amazon" => query.TryGetValue("tag", out var tag)
-                        && string.Equals(tag, _options.AmazonTag, StringComparison.OrdinalIgnoreCase)
+            "Amazon" => IsAmazonPartnerTagValid(amazonExpectedTag)
+                        && query.TryGetValue("tag", out var tag)
+                        && string.Equals(tag, amazonExpectedTag, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
-                : (false, $"Tag Amazon inválida (esperado: {_options.AmazonTag})"),
-            "Mercado Livre" => query.TryGetValue("matt_tool", out var tool)
+                : (false, IsAmazonPartnerTagValid(amazonExpectedTag)
+                    ? $"Tag Amazon invÃ¡lida (esperado: {amazonExpectedTag})"
+                    : "PartnerTag Amazon nao configurada"),
+            "Mercado Livre" => (IsMercadoLivreProductUri(uri) || IsMercadoLivreSocialOrShortUri(uri))
+                                && query.TryGetValue("matt_tool", out var tool)
                                 && query.TryGetValue("matt_word", out var word)
-                                && string.Equals(tool, _options.MercadoLivreMattTool, StringComparison.OrdinalIgnoreCase)
-                                && string.Equals(word, _options.MercadoLivreMattWord, StringComparison.OrdinalIgnoreCase)
+                                && string.Equals(tool, MercadoLivreMattTool, StringComparison.OrdinalIgnoreCase)
+                                && string.Equals(word, MercadoLivreMattWord, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
-                : (false, "Parâmetros Mercado Livre inválidos"),
+                : (false, "Link Mercado Livre invalido (produto nao identificado ou parametros de afiliado ausentes)."),
             "Shein" => query.TryGetValue("url_from", out var shein)
                        && string.Equals(shein, _options.SheinId, StringComparison.OrdinalIgnoreCase)
                 ? (true, null)
-                : (false, $"Código Shein inválido (esperado: {_options.SheinId})"),
-            "Shopee" => (true, null),
+                : (false, $"CÃ³digo Shein invÃ¡lido (esperado: {_options.SheinId})"),
+            "Shopee" => ValidateShopeeAffiliate(uri, query),
             _ => (true, null)
         };
+
+        if (result.IsAffiliated &&
+            string.Equals(store, "Mercado Livre", StringComparison.OrdinalIgnoreCase) &&
+            IsMercadoLivreOAuthRequired())
+        {
+            var oauth = await _mercadoLivreOAuthService.GetStatusAsync(cancellationToken);
+            if (!oauth.Success)
+            {
+                result = (false, $"OAuth Mercado Livre invÃƒÂ¡lido: {oauth.Message}");
+            }
+        }
 
         if (!result.IsAffiliated && IsShortLink(url))
         {
@@ -937,4 +2037,66 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
         return result;
     }
+
+    private string MercadoLivreMattTool => ResolveString(
+        _options.MercadoLivreMattTool,
+        ReadEnv("AFFILIATE__MERCADOLIVRE_MATT_TOOL", "AFFILIATE__MERCADOLIVREMATTTOOL", "AFFILIATE__ML_MATT_TOOL"));
+
+    private string MercadoLivreMattWord => ResolveString(
+        _options.MercadoLivreMattWord,
+        ReadEnv("AFFILIATE__MERCADOLIVRE_MATT_WORD", "AFFILIATE__MERCADOLIVREMATTWORD", "AFFILIATE__ML_MATT_WORD"));
+
+    private bool IsMercadoLivreOAuthRequired()
+    {
+        if (_options.MercadoLivreRequireOAuth)
+        {
+            return true;
+        }
+
+        var raw = ReadEnv("AFFILIATE__MERCADOLIVRE_REQUIRE_OAUTH", "AFFILIATE__MERCADOLIVREREQUIREOAUTH");
+        return bool.TryParse(raw, out var parsed) && parsed;
+    }
+
+    private static string ResolveString(params string?[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+
+    private static string? ReadEnv(params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = Environment.GetEnvironmentVariable(key);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsMercadoLivreProductUri(Uri uri)
+    {
+        var host = uri.Host.ToLowerInvariant();
+        var path = uri.AbsolutePath;
+
+        if (host.Contains("produto.mercadolivre", StringComparison.OrdinalIgnoreCase) &&
+            Regex.IsMatch(path, @"MLB-?\d{6,}", RegexOptions.IgnoreCase))
+        {
+            return true;
+        }
+
+        if (Regex.IsMatch(path, @"MLB-?\d{6,}", RegexOptions.IgnoreCase))
+        {
+            return true;
+        }
+
+        // Formato canonico curto de produto: /p/MLB123...
+        if (Regex.IsMatch(path, @"^/p/[A-Z]{3}\d+", RegexOptions.IgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
 }
+

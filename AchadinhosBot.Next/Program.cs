@@ -2,30 +2,48 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Globalization;
+using System.Runtime.Versioning;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Net.Http.Headers;
+using System.IO;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Endpoints;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Instagram;
+using AchadinhosBot.Next.Domain.Content;
+using AchadinhosBot.Next.Domain.Compliance;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Audit;
+using AchadinhosBot.Next.Infrastructure.Coupons;
+using AchadinhosBot.Next.Infrastructure.Amazon;
 using AchadinhosBot.Next.Infrastructure.Idempotency;
 using AchadinhosBot.Next.Infrastructure.Instagram;
+using AchadinhosBot.Next.Infrastructure.Content;
 using AchadinhosBot.Next.Infrastructure.Logs;
+using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.Media;
+using AchadinhosBot.Next.Infrastructure.Monitoring;
 using AchadinhosBot.Next.Infrastructure.Security;
 using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Telegram;
+using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.WhatsApp;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+
+LoadDotEnvIfPresent();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,6 +51,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
+
+// Persistir chaves de DataProtection em pasta local acessível ao sandbox
+var dpKeysPath = Path.Combine(AppContext.BaseDirectory, ".runtime", "localappdata", "DataProtection-Keys");
+Directory.CreateDirectory(dpKeysPath);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dpKeysPath));
 
 // Mantem a API de pe mesmo que algum worker opcional (ex: Telegram) falhe.
 builder.Services.Configure<HostOptions>(options =>
@@ -57,6 +81,10 @@ builder.Services
     .Bind(builder.Configuration.GetSection("Telegram"))
     .ValidateDataAnnotations();
 
+var telegramStartupOptions = builder.Configuration.GetSection("Telegram").Get<TelegramOptions>() ?? new TelegramOptions();
+var startTelegramBotWorker = !string.IsNullOrWhiteSpace(telegramStartupOptions.BotToken);
+var startTelegramUserbotWorker = telegramStartupOptions.ApiId > 0 && !string.IsNullOrWhiteSpace(telegramStartupOptions.ApiHash);
+
 builder.Services
     .AddOptions<AuthOptions>()
     .Bind(builder.Configuration.GetSection("Auth"))
@@ -67,6 +95,10 @@ builder.Services
     .AddOptions<EvolutionOptions>()
     .Bind(builder.Configuration.GetSection("Evolution"))
     .ValidateDataAnnotations();
+
+builder.Services
+    .AddOptions<HeartbeatOptions>()
+    .Bind(builder.Configuration.GetSection("Heartbeat"));
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -114,37 +146,65 @@ builder.Services.AddHttpClient("default", c =>
     CookieContainer = new System.Net.CookieContainer()
 });
 builder.Services.AddHttpClient("evolution", c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddHttpClient("evolution-groups", c => c.Timeout = TimeSpan.FromSeconds(120));
 builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60));
 
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
+builder.Services.AddSingleton<AmazonCreatorApiClient>();
+builder.Services.AddSingleton<AmazonPaApiClient>();
+builder.Services.AddSingleton<IAffiliateCouponSyncService, AffiliateCouponSyncService>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, AmazonOfficialCouponProvider>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, ShopeeOfficialCouponProvider>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, SheinOfficialCouponProvider>();
+builder.Services.AddSingleton<IAffiliateCouponProvider, MercadoLivreOfficialCouponProvider>();
+builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
 builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
+builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
 builder.Services.AddSingleton<ILinkTrackingStore, LinkTrackingStore>();
+builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
+builder.Services.AddSingleton<IContentCalendarStore, CsvContentCalendarStore>();
 builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
 builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
 builder.Services.AddSingleton<InstagramLinkMetaService>();
+builder.Services.AddSingleton<OfficialProductDataService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
 builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
 builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
+builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
+builder.Services.AddSingleton<ContentCalendarAutomationService>();
 builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
+builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalStore>();
 builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 builder.Services.AddSingleton<IWhatsAppGateway, EvolutionWhatsAppGateway>();
-builder.Services.AddSingleton<IMediaStore, InMemoryMediaStore>();
+builder.Services.AddSingleton<IMediaStore, FileMediaStore>();
 builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
 builder.Services.AddSingleton<WhatsAppHelpMenuStore>();
 builder.Services.AddSingleton<ITelegramGateway, TelegramBotApiGateway>();
-builder.Services.AddHostedService<TelegramBotPollingService>();
+builder.Services.AddSingleton<TelegramAlertSender>();
+if (startTelegramBotWorker)
+{
+    builder.Services.AddHostedService<TelegramBotPollingService>();
+}
+
 builder.Services.AddSingleton<ITelegramUserbotService, TelegramUserbotService>();
-builder.Services.AddHostedService(provider => (TelegramUserbotService)provider.GetRequiredService<ITelegramUserbotService>());
+if (startTelegramUserbotWorker)
+{
+    builder.Services.AddHostedService(provider => (TelegramUserbotService)provider.GetRequiredService<ITelegramUserbotService>());
+}
+
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<IIdempotencyStore, MemoryIdempotencyStore>();
 builder.Services.AddSingleton<LoginAttemptStore>();
 builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
+builder.Services.AddHostedService<UptimeHeartbeatService>();
+builder.Services.AddHostedService<InstagramAutoPilotWorker>();
+builder.Services.AddHostedService<ContentCalendarWorker>();
 
 var app = builder.Build();
 
@@ -248,42 +308,208 @@ app.MapGet("/auth/me", (HttpContext context) =>
     });
 });
 
-app.MapPost("/converter", async (
-    ConvertRequest payload,
+app.MapConverterEndpoint();
+app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
+
+app.MapGet("/conversor", async (
     HttpContext context,
-    IMessageProcessor processor,
-    IOptions<WebhookOptions> options,
+    IAffiliateLinkService affiliateLinkService,
+    InstagramLinkMetaService instagramMeta,
+    IHttpClientFactory httpClientFactory,
+    OfficialProductDataService officialProductDataService,
+    ILinkTrackingStore trackingStore,
+    ICouponSelector couponSelector,
+    ISettingsStore settingsStore,
+    IOptions<WebhookOptions> webhookOptions,
     CancellationToken ct) =>
 {
-    if (!context.Request.Headers.TryGetValue("x-api-key", out var provided) || provided != options.Value.ApiKey)
+    var request = context.Request;
+    var input = request.Query["url"].ToString();
+    var viewModel = new PublicLinkConverterViewModel
     {
-        return Results.Json(new { success = false, error = "forbidden" }, statusCode: StatusCodes.Status403Forbidden);
+        Input = input?.Trim() ?? string.Empty
+    };
+
+    if (!string.IsNullOrWhiteSpace(viewModel.Input))
+    {
+        var normalizedInputUrl = NormalizeConverterInputToUrl(viewModel.Input);
+        if (string.IsNullOrWhiteSpace(normalizedInputUrl))
+        {
+            viewModel.Error = "Cole um link valido para converter.";
+        }
+        else
+        {
+            viewModel.OriginalUrl = normalizedInputUrl;
+            var conversion = await affiliateLinkService.ConvertAsync(normalizedInputUrl, ct);
+            if (!conversion.Success || string.IsNullOrWhiteSpace(conversion.ConvertedUrl))
+            {
+                viewModel.Error = string.IsNullOrWhiteSpace(conversion.Error)
+                    ? "Nao foi possivel converter esse link agora."
+                    : conversion.Error;
+                viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) ? "Loja" : conversion.Store;
+                viewModel.IsAffiliated = conversion.IsAffiliated;
+            }
+            else
+            {
+                var convertedUrl = conversion.ConvertedUrl.Trim();
+                var settings = await settingsStore.GetAsync(ct);
+                var publicBaseUrl = ResolvePublicBaseUrl(
+                    settings.BioHub?.PublicBaseUrl,
+                    webhookOptions.Value.PublicBaseUrl,
+                    request.Scheme,
+                    request.Host.ToString());
+
+                var tracked = await trackingStore.GetOrCreateAsync(convertedUrl, ct);
+                var trackedUrl = BuildTrackedRedirectUrl(publicBaseUrl, tracked.Id, "conversor", null);
+
+                LinkMetaResult convertedMeta;
+                try
+                {
+                    convertedMeta = await instagramMeta.GetMetaAsync(convertedUrl, ct);
+                }
+                catch
+                {
+                    convertedMeta = new LinkMetaResult();
+                }
+                var resolvedConvertedUrl = await TryResolveFinalUrlForMetaAsync(convertedUrl, httpClientFactory, ct);
+                if (!string.IsNullOrWhiteSpace(resolvedConvertedUrl) &&
+                    !string.Equals(resolvedConvertedUrl, convertedUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var resolvedConvertedMeta = await instagramMeta.GetMetaAsync(resolvedConvertedUrl, ct);
+                        convertedMeta = MergeConverterMeta(convertedMeta, resolvedConvertedMeta);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                LinkMetaResult originalMeta;
+                if (!string.Equals(convertedUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        originalMeta = await instagramMeta.GetMetaAsync(normalizedInputUrl, ct);
+                    }
+                    catch
+                    {
+                        originalMeta = new LinkMetaResult();
+                    }
+                    var resolvedOriginalUrl = await TryResolveFinalUrlForMetaAsync(normalizedInputUrl, httpClientFactory, ct);
+                    if (!string.IsNullOrWhiteSpace(resolvedOriginalUrl) &&
+                        !string.Equals(resolvedOriginalUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            var resolvedOriginalMeta = await instagramMeta.GetMetaAsync(resolvedOriginalUrl, ct);
+                            originalMeta = MergeConverterMeta(originalMeta, resolvedOriginalMeta);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+                else
+                {
+                    originalMeta = new LinkMetaResult();
+                }
+
+                var mergedTitle = ChooseBestConverterTitle(originalMeta.Title, convertedMeta.Title);
+                var mergedDescription = ChooseBestConverterDescription(originalMeta.Description, convertedMeta.Description);
+                var officialData = await officialProductDataService.TryGetBestAsync(normalizedInputUrl, convertedUrl, ct);
+                var mergedPrice = FirstNonEmpty(
+                    officialData?.CurrentPrice ?? string.Empty,
+                    originalMeta.PriceText ?? string.Empty,
+                    convertedMeta.PriceText ?? string.Empty,
+                    ExtractPriceFromText(mergedDescription),
+                    ExtractPriceFromText(originalMeta.Description),
+                    ExtractPriceFromText(convertedMeta.Description),
+                    "Preco sob consulta");
+                var mergedImages = (officialData?.Images ?? new List<string>())
+                    .Concat(originalMeta.Images ?? new List<string>())
+                    .Concat(convertedMeta.Images ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                viewModel.Success = true;
+                viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) || string.Equals(conversion.Store, "Unknown", StringComparison.OrdinalIgnoreCase)
+                    ? ResolveStoreNameFromUrl(convertedUrl)
+                    : conversion.Store.Trim();
+                viewModel.Title = FirstNonEmpty(officialData?.Title ?? string.Empty, mergedTitle, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
+                viewModel.Description = mergedDescription?.Trim() ?? string.Empty;
+                viewModel.Price = FirstNonEmpty(mergedPrice, "Preco sob consulta") ?? "Preco sob consulta";
+                viewModel.ImageUrl = SelectBestConverterImage(mergedImages, viewModel.Title, viewModel.Description);
+                viewModel.PreviousPrice = officialData?.PreviousPrice ?? string.Empty;
+                viewModel.DiscountPercent = officialData?.DiscountPercent;
+                viewModel.DataSource = !string.IsNullOrWhiteSpace(officialData?.DataSource) ? officialData!.DataSource : "meta";
+                viewModel.ConvertedUrl = convertedUrl;
+                viewModel.TrackedUrl = trackedUrl;
+                viewModel.IsAffiliated = conversion.IsAffiliated;
+                viewModel.ValidationError = conversion.ValidationError;
+                viewModel.CorrectionNote = conversion.CorrectionNote;
+                viewModel.ConversionHost = ExtractHostForDisplay(convertedUrl);
+                viewModel.DomainHost = ExtractHostForDisplay(trackedUrl);
+
+                try
+                {
+                    var coupons = await couponSelector.GetActiveCouponsAsync(viewModel.Store, 1, ct);
+                    var coupon = coupons.FirstOrDefault();
+                    if (coupon is not null)
+                    {
+                        viewModel.HasCoupon = true;
+                        viewModel.CouponCode = coupon.Code ?? string.Empty;
+                        viewModel.CouponDescription = coupon.Description ?? string.Empty;
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
     }
 
-    if (string.IsNullOrWhiteSpace(payload.Text))
-    {
-        return Results.BadRequest(new { success = false, error = "payload inválido" });
-    }
-
-    var result = await processor.ProcessAsync(payload.Text, payload.Source ?? "Webhook", ct);
-    return Results.Ok(new
-    {
-        success = result.Success,
-        converted = result.ConvertedText,
-        convertedLinks = result.ConvertedLinks,
-        source = result.Source
-    });
+    var currentUrl = $"{request.Scheme}://{request.Host}{request.Path}";
+    var html = BuildPublicLinkConverterPageHtml(viewModel, currentUrl);
+    return Results.Content(html, "text/html; charset=utf-8");
 });
 
-app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "AchadinhosBot.Next", ts = DateTimeOffset.UtcNow }));
-
-app.MapGet("/bio", async (HttpContext context, IInstagramPublishStore publishStore, CancellationToken ct) =>
+app.MapGet("/bio", async (
+    HttpContext context,
+    IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
+    ILinkTrackingStore trackingStore,
+    ISettingsStore settingsStore,
+    IOptions<WebhookOptions> webhookOptions,
+    CancellationToken ct) =>
 {
+    var settings = await settingsStore.GetAsync(ct);
+    var bioSettings = settings.BioHub ?? new BioHubSettings();
+    if (!bioSettings.Enabled)
+    {
+        return Results.Content("<!doctype html><html><body><p>Bio temporariamente desativada.</p></body></html>", "text/html; charset=utf-8");
+    }
+
+    var request = context.Request;
+    var source = NormalizeTrackingToken(
+        FirstNonEmpty(request.Query["src"].ToString(), bioSettings.DefaultSource, "bio"),
+        "bio") ?? "bio";
+    var campaign = NormalizeTrackingToken(
+        FirstNonEmpty(request.Query["camp"].ToString(), bioSettings.DefaultCampaign),
+        null);
+    var medium = NormalizeTrackingToken(request.Query["medium"].ToString(), "instagram") ?? "instagram";
+    var maxItems = Math.Clamp(bioSettings.MaxItems, 5, 80);
+
     var drafts = await publishStore.ListAsync(ct);
-    var items = drafts
+    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    var catalogByDraftId = await catalogOfferStore.GetByDraftIdAsync(ct);
+
+    var baseItems = drafts
         .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
         .Select(d =>
         {
+            catalogByDraftId.TryGetValue(d.Id, out var catalogItem);
             var cta = d.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Link));
             var link = cta?.Link ?? ExtractFirstUrl(d.Caption);
             var title = !string.IsNullOrWhiteSpace(d.ProductName) ? d.ProductName : "Oferta";
@@ -292,19 +518,80 @@ app.MapGet("/bio", async (HttpContext context, IInstagramPublishStore publishSto
                 CreatedAt = d.CreatedAt,
                 Title = title.Trim(),
                 Link = link?.Trim() ?? string.Empty,
-                Keyword = cta?.Keyword?.Trim()
+                OriginalLink = link?.Trim() ?? string.Empty,
+                Store = ResolveStoreNameFromUrl(link),
+                ItemNumber = catalogItem?.ItemNumber,
+                Keyword = FirstNonEmpty(catalogItem?.Keyword, cta?.Keyword?.Trim())
             };
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Link))
         .OrderByDescending(x => x.CreatedAt)
         .GroupBy(x => x.Link, StringComparer.OrdinalIgnoreCase)
         .Select(g => g.First())
-        .Take(40)
+        .Take(maxItems)
         .ToList();
 
+    var publicBaseUrl = ResolvePublicBaseUrl(
+        bioSettings.PublicBaseUrl,
+        webhookOptions.Value.PublicBaseUrl,
+        request.Scheme,
+        request.Host.ToString());
+    var trackedItems = new List<BioLinkItem>(baseItems.Count);
+    foreach (var item in baseItems)
+    {
+        var targetUrl = AppendBioCampaignParameters(item.OriginalLink, source, medium, campaign, item.Title);
+        var tracked = await trackingStore.GetOrCreateAsync(targetUrl, ct);
+        trackedItems.Add(item with
+        {
+            Link = BuildTrackedRedirectUrl(publicBaseUrl, tracked.Id, source, campaign),
+            OriginalLink = targetUrl
+        });
+    }
+
+    var currentUrl = BuildBioCurrentUrl(publicBaseUrl, source, campaign);
+    var html = BuildBioLinksPageHtml(trackedItems, currentUrl, bioSettings, source, campaign);
+    return Results.Content(html, "text/html; charset=utf-8");
+});
+
+app.MapGet("/catalogo", async (
+    HttpContext context,
+    IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var q = context.Request.Query["q"].ToString();
+    var drafts = await publishStore.ListAsync(ct);
+    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+
+    var items = await catalogOfferStore.ListAsync(q, 120, ct);
     var request = context.Request;
-    var currentUrl = $"{request.Scheme}://{request.Host}/bio";
-    var html = BuildBioLinksPageHtml(items, currentUrl);
+    var currentUrl = $"{request.Scheme}://{request.Host}/catalogo";
+    if (!string.IsNullOrWhiteSpace(q))
+    {
+        currentUrl += $"?q={Uri.EscapeDataString(q)}";
+    }
+
+    var html = BuildCatalogPageHtml(items, q, currentUrl);
+    return Results.Content(html, "text/html; charset=utf-8");
+});
+
+app.MapGet("/item/{query}", async (
+    string query,
+    HttpContext context,
+    IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var drafts = await publishStore.ListAsync(ct);
+    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    var item = await catalogOfferStore.FindByCodeAsync(query, ct);
+    if (item is null)
+    {
+        return Results.NotFound($"Item '{query}' nao encontrado.");
+    }
+
+    var baseCatalogUrl = $"{context.Request.Scheme}://{context.Request.Host}/catalogo";
+    var html = BuildCatalogItemPageHtml(item, baseCatalogUrl);
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
@@ -318,7 +605,7 @@ app.MapPost("/webhooks/evolution", async (
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
 
-    if (!VerifyWebhookSignature(request, body, evolution.Value.WebhookSecret))
+    if (!WebhookSignatureVerifier.TryValidate(request, body, evolution.Value.WebhookSecret))
     {
         return Results.Unauthorized();
     }
@@ -362,6 +649,7 @@ app.MapPost("/webhook/bot-conversor", async (
     IMessageProcessor processor,
     IWhatsAppGateway gateway,
     IMediaStore mediaStore,
+    IMediaFailureLogStore mediaFailureLogStore,
     ISettingsStore settingsStore,
     IConversionLogStore conversionLogStore,
     ILinkTrackingStore linkTrackingStore,
@@ -375,12 +663,18 @@ app.MapPost("/webhook/bot-conversor", async (
     InstagramImageDownloadService instagramImages,
     IIdempotencyStore idempotency,
     IOptions<AffiliateOptions> affiliate,
+    IOptions<EvolutionOptions> evolutionOptions,
     IOptions<WebhookOptions> webhookOptions,
     IHttpClientFactory httpClientFactory,
     ILogger<Program> logger,
     CancellationToken ct) =>
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
+    if (!IsBotConversorWebhookAuthorized(request, body, evolutionOptions.Value.WebhookSecret, webhookOptions.Value.ApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
     if (string.IsNullOrWhiteSpace(body))
     {
         return Results.Ok(new { success = true, ignored = true });
@@ -393,12 +687,22 @@ app.MapPost("/webhook/bot-conversor", async (
     }
 
     var settings = await settingsStore.GetAsync(ct);
-    var waSettings = settings.WhatsAppForwarding;
+    var waSettings = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
+    var waRoutes = ResolveWhatsAppForwardingRoutes(settings);
     var responder = settings.LinkResponder ?? new LinkResponderSettings();
-    var forwardingEnabled = waSettings.Enabled;
-    var destinations = forwardingEnabled
-        ? waSettings.DestinationGroupIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToArray()
-        : Array.Empty<string>();
+
+    async Task SendReplyAsync(string? instanceName, string chatId, string text)
+    {
+        var sendResult = await gateway.SendTextAsync(instanceName, chatId, text, ct);
+        if (!sendResult.Success)
+        {
+            logger.LogWarning(
+                "Falha ao responder WhatsApp comando/chat. Chat={ChatId} Instance={InstanceName} Error={Error}",
+                chatId,
+                instanceName ?? "default",
+                sendResult.Message ?? "unknown");
+        }
+    }
 
     var processed = 0;
     var responderProcessed = 0;
@@ -415,8 +719,9 @@ app.MapPost("/webhook/bot-conversor", async (
         else
         {
             // Fallback idempotency for payloads sem messageId (alguns provedores reenviam o mesmo evento).
-            var textHash = ComputeStableHash(msg.Text);
-            var waFallbackKey = $"wa-msg-fallback:{msg.InstanceName ?? "default"}:{msg.ChatId}:{msg.FromMe}:{textHash}";
+            var fallbackHash = ComputeStableHash(msg.RawPayloadJson ?? msg.Text);
+            var senderKey = string.IsNullOrWhiteSpace(msg.SenderId) ? "unknown" : msg.SenderId;
+            var waFallbackKey = $"wa-msg-fallback:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{fallbackHash}";
             if (!idempotency.TryBegin(waFallbackKey, TimeSpan.FromSeconds(45)))
             {
                 continue;
@@ -425,18 +730,36 @@ app.MapPost("/webhook/bot-conversor", async (
 
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
-        if (!msg.FromMe && TryParseInstagramCaptionChoiceCommand(msg.Text, out var captionChoice))
+        var normalizedText = msg.Text?.Trim() ?? string.Empty;
+        var isCommandLike = normalizedText.StartsWith("/help", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith(@"\help", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith("/ig", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith("ig ", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith("/leg", StringComparison.OrdinalIgnoreCase)
+                            || normalizedText.StartsWith(@"\leg", StringComparison.OrdinalIgnoreCase);
+        if (isCommandLike)
+        {
+            logger.LogInformation(
+                "WA comando recebido. Chat={ChatId} Sender={SenderId} FromMe={FromMe} MessageId={MessageId} Text={Text}",
+                msg.ChatId,
+                msg.SenderId ?? "unknown",
+                msg.FromMe,
+                msg.MessageId ?? "none",
+                normalizedText.Length > 140 ? normalizedText[..140] : normalizedText);
+        }
+
+        if (TryParseInstagramCaptionChoiceCommand(normalizedText, out var captionChoice))
         {
             if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
             {
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, "Comando /leg bloqueado neste chat.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, "Comando /leg bloqueado neste chat.");
                 continue;
             }
 
             var (draft, error) = await ResolveInstagramDraftAsync(instagramPublishStore, captionChoice.DraftRef, ct);
             if (draft is null)
             {
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, error ?? "Rascunho nao encontrado.");
                 continue;
             }
 
@@ -452,7 +775,7 @@ app.MapPost("/webhook/bot-conversor", async (
             if (captionChoice.OptionNumber < 1 || captionChoice.OptionNumber > options.Count)
             {
                 var max = options.Count;
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, $"Legenda {captionChoice.OptionNumber} nao existe. Escolha de 1 a {max}.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, $"Legenda {captionChoice.OptionNumber} nao existe. Escolha de 1 a {max}.");
                 continue;
             }
 
@@ -477,17 +800,17 @@ app.MapPost("/webhook/bot-conversor", async (
             }, ct);
 
             var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
-            await gateway.SendTextAsync(
+            await SendReplyAsync(
                 responderInstance,
                 msg.ChatId,
-                $"Legenda {captionChoice.OptionNumber} selecionada para o draft {shortId}.\nUse /ig revisar {shortId} e /ig confirmar {shortId}.",
-                ct);
+                $"Legenda {captionChoice.OptionNumber} selecionada para o draft {shortId}.\nUse /ig revisar {shortId} e /ig confirmar {shortId}.");
             continue;
         }
 
-        if (TryParseWhatsAppHelpCommand(msg.Text, out var helpCommand))
+        if (TryParseWhatsAppHelpCommand(normalizedText, out var helpCommand))
         {
-            var helpKey = $"wa-help:{msg.InstanceName ?? "default"}:{msg.ChatId}:{msg.FromMe}:{ComputeStableHash(msg.Text)}";
+            var senderKey = string.IsNullOrWhiteSpace(msg.SenderId) ? "unknown" : msg.SenderId;
+            var helpKey = $"wa-help:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{ComputeStableHash(normalizedText)}";
             if (!idempotency.TryBegin(helpKey, TimeSpan.FromMinutes(1)))
             {
                 continue;
@@ -498,13 +821,13 @@ app.MapPost("/webhook/bot-conversor", async (
             helpMenuStore.Arm(msg.ChatId);
 
             var helpMessage = BuildWhatsAppHelpMessageForScope(helpCommand.Scope);
-            await gateway.SendTextAsync(responderInstance, msg.ChatId, helpMessage, ct);
+            await SendReplyAsync(responderInstance, msg.ChatId, helpMessage);
             continue;
         }
 
         if (helpMenuStore.TryResolveScope(msg.ChatId, msg.Text, out var helpScope))
         {
-            await gateway.SendTextAsync(responderInstance, msg.ChatId, BuildWhatsAppHelpMessageForScope(helpScope), ct);
+            await SendReplyAsync(responderInstance, msg.ChatId, BuildWhatsAppHelpMessageForScope(helpScope));
             continue;
         }
 
@@ -514,7 +837,7 @@ app.MapPost("/webhook/bot-conversor", async (
             {
                 if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
                 {
-                    await gateway.SendTextAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.", ct);
+                    await SendReplyAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.");
                     continue;
                 }
 
@@ -536,7 +859,7 @@ app.MapPost("/webhook/bot-conversor", async (
                 {
                     foreach (var chunk in SplitLongMessage(response, 3000))
                     {
-                        await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
+                        await SendReplyAsync(responderInstance, msg.ChatId, chunk);
                     }
                 }
 
@@ -544,7 +867,7 @@ app.MapPost("/webhook/bot-conversor", async (
             }
         }
 
-        if (TryParseInstagramWhatsAppCommand(msg.Text, out var igCommand))
+        if (TryParseInstagramWhatsAppCommand(normalizedText, out var igCommand))
         {
             if (string.Equals(igCommand.Action, "menu", StringComparison.OrdinalIgnoreCase))
             {
@@ -553,7 +876,38 @@ app.MapPost("/webhook/bot-conversor", async (
 
             if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
             {
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.", ct);
+                await SendReplyAsync(responderInstance, msg.ChatId, "Comando /ig bloqueado neste chat.");
+                continue;
+            }
+
+            if (string.Equals(igCommand.Action, "reset", StringComparison.OrdinalIgnoreCase))
+            {
+                var instaKey = $"wa:{msg.ChatId}";
+                instagramStore.Clear(instaKey);
+                instagramMenuStore.Disarm(msg.ChatId);
+                helpMenuStore.Disarm(msg.ChatId);
+
+                var instances = new[] { msg.InstanceName ?? "default", "default" }
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+                foreach (var inst in instances)
+                {
+                    idempotency.RemoveByPrefix($"wa-help:{inst}:{msg.ChatId}:");
+                    idempotency.RemoveByPrefix($"wa-msg:{inst}:{msg.ChatId}:");
+                    idempotency.RemoveByPrefix($"wa-msg-fallback:{inst}:{msg.ChatId}:");
+                }
+
+                var normalizedArg = igCommand.Argument?.Trim().ToLowerInvariant() ?? string.Empty;
+                var fullReset = normalizedArg is "tudo" or "all" or "geral" or "total";
+                if (fullReset)
+                {
+                    await instagramPublishStore.ClearAsync(ct);
+                }
+
+                var resetMessage = fullReset
+                    ? "Reset concluido: estado do chat limpo e todos os drafts apagados.\nPode comecar de novo com /ig criar <produto ou link>."
+                    : "Reset do chat concluido: menu, contexto pendente e deduplicacao limpos.\nPode comecar de novo com /ig criar <produto ou link>.\nDica: use /ig reset tudo para apagar tambem os drafts.";
+                await SendReplyAsync(responderInstance, msg.ChatId, resetMessage);
                 continue;
             }
 
@@ -575,7 +929,7 @@ app.MapPost("/webhook/bot-conversor", async (
             {
                 foreach (var chunk in SplitLongMessage(response, 3000))
                 {
-                    await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
+                    await SendReplyAsync(responderInstance, msg.ChatId, chunk);
                 }
             }
 
@@ -583,7 +937,7 @@ app.MapPost("/webhook/bot-conversor", async (
         }
 
         if (!msg.FromMe &&
-            !IsInstagramBotResponse(msg.Text) &&
+            !IsInstagramBotResponse(normalizedText) &&
             instaSettings.Enabled &&
             instaSettings.AllowWhatsApp &&
             IsInstagramAllowed(instaSettings, msg.ChatId))
@@ -591,18 +945,18 @@ app.MapPost("/webhook/bot-conversor", async (
             var instaKey = $"wa:{msg.ChatId}";
             if (instagramStore.TryConsume(instaKey, out var convo))
             {
-                var post = await instagramComposer.BuildAsync(msg.Text, convo.Context, instaSettings, ct);
+                var post = await instagramComposer.BuildAsync(normalizedText, convo.Context, instaSettings, ct);
                 foreach (var chunk in SplitInstagramMessages(post))
                 {
                     await gateway.SendTextAsync(responderInstance, msg.ChatId, chunk, ct);
                 }
-                await SendInstagramImagesIfAnyAsync(instaSettings, msg.Text, convo.Context, post, responderInstance, msg.ChatId, instagramMeta, instagramImages, gateway, ct);
+                await SendInstagramImagesIfAnyAsync(instaSettings, normalizedText, convo.Context, post, responderInstance, msg.ChatId, instagramMeta, instagramImages, gateway, ct);
                 continue;
             }
 
-            if (IsInstagramTrigger(msg.Text, instaSettings.Triggers))
+            if (IsInstagramTrigger(normalizedText, instaSettings.Triggers))
             {
-                if (TryGetInstagramInlineProduct(msg.Text, instaSettings.Triggers, out var inlineProduct))
+                if (TryGetInstagramInlineProduct(normalizedText, instaSettings.Triggers, out var inlineProduct))
                 {
                     var post = await instagramComposer.BuildAsync(inlineProduct, null, instaSettings, ct);
                     foreach (var chunk in SplitInstagramMessages(post))
@@ -613,14 +967,14 @@ app.MapPost("/webhook/bot-conversor", async (
                 }
                 else
                 {
-                    instagramStore.SetPending(instaKey, msg.Text);
+                    instagramStore.SetPending(instaKey, normalizedText);
                     await gateway.SendTextAsync(responderInstance, msg.ChatId, "Qual produto? Envie o nome ou o link.", ct);
                 }
                 continue;
             }
         }
 
-        var autoReply = GetAutoReply(settings, msg.Text);
+        var autoReply = GetAutoReply(settings, normalizedText);
         if (!msg.FromMe && !string.IsNullOrWhiteSpace(autoReply))
         {
             var tracked = await ApplyTrackingAsync(autoReply, linkTrackingStore, webhookOptions.Value.PublicBaseUrl, responder.TrackingEnabled, ct);
@@ -630,7 +984,7 @@ app.MapPost("/webhook/bot-conversor", async (
                 Source = "AutoReply",
                 Store = "AutoReply",
                 Success = true,
-                OriginalUrl = msg.Text,
+                OriginalUrl = normalizedText,
                 ConvertedUrl = tracked.Text,
                 TrackingIds = tracked.TrackingIds,
                 OriginChatRef = msg.ChatId,
@@ -642,11 +996,11 @@ app.MapPost("/webhook/bot-conversor", async (
         if (responder.Enabled &&
             responder.AllowWhatsApp &&
             !msg.FromMe &&
-            msg.Text.Contains("http", StringComparison.OrdinalIgnoreCase) &&
+            normalizedText.Contains("http", StringComparison.OrdinalIgnoreCase) &&
             IsWhatsAppResponderAllowed(responder, msg))
         {
             var responderResult = await processor.ProcessAsync(
-                msg.Text,
+                normalizedText,
                 "WhatsAppResponder",
                 ct,
                 originChatRef: msg.ChatId,
@@ -676,7 +1030,7 @@ app.MapPost("/webhook/bot-conversor", async (
                     Source = "WhatsAppResponder",
                     Store = "Unknown",
                     Success = true,
-                    OriginalUrl = msg.Text,
+                    OriginalUrl = normalizedText,
                     ConvertedUrl = tracked.Text,
                     TrackingIds = tracked.TrackingIds,
                     OriginChatRef = msg.ChatId,
@@ -691,72 +1045,127 @@ app.MapPost("/webhook/bot-conversor", async (
             }
         }
 
-        if (!forwardingEnabled)
+        foreach (var waRoute in waRoutes)
         {
-            continue;
-        }
-
-        if (msg.FromMe)
-        {
-            if (!waSettings.ProcessFromMeOnly) continue;
-            if (waSettings.SourceChatIds.Count == 0 || !waSettings.SourceChatIds.Contains(msg.ChatId)) continue;
-        }
-        else if (waSettings.ProcessFromMeOnly)
-        {
-            continue;
-        }
-
-        if (waSettings.SourceChatIds.Count > 0 && !waSettings.SourceChatIds.Contains(msg.ChatId))
-        {
-            continue;
-        }
-        if (destinations.Length == 0 || waSettings.SourceChatIds.Count == 0)
-        {
-            continue;
-        }
-
-        if (destinations.Contains(msg.ChatId, StringComparer.OrdinalIgnoreCase))
-        {
-            continue;
-        }
-
-        var result = await processor.ProcessAsync(
-            msg.Text,
-            "WhatsApp",
-            ct,
-            originChatRef: msg.ChatId,
-            destinationChatRef: string.Join(",", destinations));
-
-        if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
-        {
-            continue;
-        }
-
-        var finalText = result.ConvertedText;
-        if (waSettings.AppendSheinCode &&
-            finalText.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(affiliate.Value.SheinCode) &&
-            !finalText.Contains(affiliate.Value.SheinCode, StringComparison.OrdinalIgnoreCase))
-        {
-            finalText += $"\n\nCodigo Shein: {affiliate.Value.SheinCode}";
-        }
-
-        if (!string.IsNullOrWhiteSpace(waSettings.FooterText))
-        {
-            finalText += $"\n\n{waSettings.FooterText}";
-        }
-
-        var instanceToUse = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
-        foreach (var destination in destinations)
-        {
-            var sendResult = await gateway.SendTextAsync(instanceToUse, destination, finalText, ct);
-            if (!sendResult.Success)
+            if (!waRoute.Enabled)
             {
-                logger.LogWarning("Falha ao enviar WhatsApp destino {Destination}: {Message}", destination, sendResult.Message);
+                continue;
             }
-        }
 
-        processed++;
+            const string protectedOfficialGroupId = "120363405661434395@g.us";
+            var isTestRoute = !string.IsNullOrWhiteSpace(waRoute.Name)
+                && waRoute.Name.Contains("teste", StringComparison.OrdinalIgnoreCase);
+
+            var destinations = waRoute.DestinationGroupIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Where(x => !(isTestRoute && string.Equals(x.Trim(), protectedOfficialGroupId, StringComparison.OrdinalIgnoreCase)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (destinations.Length == 0 || waRoute.SourceChatIds.Count == 0)
+            {
+                continue;
+            }
+
+            if (msg.FromMe)
+            {
+                if (!waRoute.ProcessFromMeOnly) continue;
+                if (!waRoute.SourceChatIds.Any(id => string.Equals(id, msg.ChatId, StringComparison.OrdinalIgnoreCase))) continue;
+            }
+            else if (waRoute.ProcessFromMeOnly)
+            {
+                continue;
+            }
+
+            if (waRoute.SourceChatIds.Count > 0 &&
+                !waRoute.SourceChatIds.Any(id => string.Equals(id, msg.ChatId, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            if (destinations.Any(id => string.Equals(id, msg.ChatId, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var result = await processor.ProcessAsync(
+                normalizedText,
+                "WhatsApp",
+                ct,
+                originChatRef: msg.ChatId,
+                destinationChatRef: string.Join(",", destinations));
+
+            if (!result.Success || result.ConvertedLinks <= 0 || string.IsNullOrWhiteSpace(result.ConvertedText))
+            {
+                logger.LogWarning(
+                    "WhatsApp forwarding bloqueado por conversao invalida. Chat={ChatId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                    msg.ChatId,
+                    result.ConvertedLinks,
+                    result.Success);
+                continue;
+            }
+
+            var finalText = result.ConvertedText;
+            if (waRoute.AppendSheinCode &&
+                finalText.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(affiliate.Value.SheinCode) &&
+                !finalText.Contains(affiliate.Value.SheinCode, StringComparison.OrdinalIgnoreCase))
+            {
+                finalText += $"\n\nCodigo Shein: {affiliate.Value.SheinCode}";
+            }
+
+            if (!string.IsNullOrWhiteSpace(waRoute.FooterText))
+            {
+                finalText += $"\n\n{waRoute.FooterText}";
+            }
+
+            var instanceToUse = FirstNonEmpty(waRoute.InstanceName, waSettings.InstanceName, msg.InstanceName);
+            foreach (var destination in destinations)
+            {
+                WhatsAppForwardSendOutcome outcome;
+                if (waRoute.SendMediaEnabled)
+                {
+                    outcome = await SendWhatsAppMessageWithMediaFallbackAsync(
+                        gateway,
+                        httpClientFactory,
+                        evolutionOptions.Value,
+                        mediaStore,
+                        webhookOptions.Value.PublicBaseUrl,
+                        instanceToUse,
+                        destination,
+                        finalText,
+                        msg,
+                        logger,
+                        ct);
+                }
+                else
+                {
+                    var textOnly = await gateway.SendTextAsync(instanceToUse, destination, finalText, ct);
+                    outcome = new WhatsAppForwardSendOutcome(textOnly, "text_only_media_disabled");
+                }
+
+                if (waRoute.SendMediaEnabled)
+                {
+                    await mediaFailureLogStore.AppendAsync(new MediaFailureEntry
+                    {
+                        Source = "WhatsAppWebhook",
+                        DestinationChatRef = destination,
+                        Success = outcome.Result.Success && (outcome.Mode.StartsWith("image_", StringComparison.OrdinalIgnoreCase) || !msg.HasMedia),
+                        Reason = outcome.Mode,
+                        Detail = msg.HasMedia
+                            ? $"hasMedia=true,mime={msg.MediaMimeType ?? "n/a"},hasUrl={!string.IsNullOrWhiteSpace(msg.MediaUrl)},diag={outcome.Diagnostic ?? outcome.Result.Message ?? "n/a"}"
+                            : $"hasMedia=false,diag={outcome.Diagnostic ?? outcome.Result.Message ?? "n/a"}"
+                    }, ct);
+                }
+
+                var sendResult = outcome.Result;
+                if (!sendResult.Success)
+                {
+                    logger.LogWarning("Falha ao enviar WhatsApp destino {Destination}: {Message}", destination, sendResult.Message);
+                }
+            }
+
+            processed++;
+        }
     }
 
     return Results.Ok(new { success = true, processed, responderProcessed });
@@ -969,7 +1378,11 @@ app.MapPost("/webhook/instagram", async (
 
 var api = app.MapGroup("/api").RequireAuthorization("ReadAccess");
 
-api.MapGet("/settings", async (ISettingsStore store, CancellationToken ct) =>
+api.MapGet("/settings", async (
+    ISettingsStore store,
+    IOptions<WebhookOptions> webhookOptions,
+    HttpContext context,
+    CancellationToken ct) =>
 {
     var settings = await store.GetAsync(ct);
     if (!string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
@@ -980,6 +1393,13 @@ api.MapGet("/settings", async (ISettingsStore store, CancellationToken ct) =>
     {
         settings.Gemini.ApiKey = "********";
     }
+    if (settings.Gemini?.ApiKeys?.Count > 0)
+    {
+        settings.Gemini.ApiKeys = settings.Gemini.ApiKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(_ => "********")
+            .ToList();
+    }
     if (!string.IsNullOrWhiteSpace(settings.InstagramPublish?.AccessToken))
     {
         settings.InstagramPublish.AccessToken = "********";
@@ -988,7 +1408,125 @@ api.MapGet("/settings", async (ISettingsStore store, CancellationToken ct) =>
     {
         settings.InstagramPublish.ManyChatApiKey = "********";
     }
-    return Results.Ok(settings);
+
+    var payload = JsonSerializer.SerializeToNode(
+        settings,
+        new JsonSerializerOptions(JsonSerializerDefaults.Web))?.AsObject() ?? new JsonObject();
+    payload["publicBaseUrl"] = ResolvePublicBaseUrl(
+        settings.BioHub?.PublicBaseUrl,
+        webhookOptions.Value.PublicBaseUrl,
+        context.Request.Scheme,
+        context.Request.Host.ToString());
+
+    return Results.Json(payload);
+});
+
+api.MapGet("/diagnostics/apis", async (
+    ISettingsStore store,
+    IOptions<AffiliateOptions> affiliateOptions,
+    IMercadoLivreOAuthService mercadoLivreOAuthService,
+    CancellationToken ct) =>
+{
+    var settings = await store.GetAsync(ct);
+    var affiliate = affiliateOptions.Value;
+
+    var gemini = settings.Gemini ?? new GeminiSettings();
+    var geminiKeys = new List<string>();
+    if (!string.IsNullOrWhiteSpace(gemini.ApiKey) && gemini.ApiKey != "********")
+    {
+        geminiKeys.Add(gemini.ApiKey.Trim());
+    }
+    if (gemini.ApiKeys is not null)
+    {
+        geminiKeys.AddRange(gemini.ApiKeys
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Where(x => x != "********"));
+    }
+
+    var openAiConfigured = !string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey) && settings.OpenAI.ApiKey != "********";
+    var amazonApi = affiliate.AmazonProductApi ?? new AmazonProductApiOptions();
+    var amazonCreatorApi = affiliate.AmazonCreatorApi ?? new AmazonCreatorApiOptions();
+    var amazonPaConfigured = !string.IsNullOrWhiteSpace(amazonApi.AccessKey)
+        && !string.IsNullOrWhiteSpace(amazonApi.SecretKey)
+        && !string.IsNullOrWhiteSpace(amazonApi.PartnerTag);
+    var amazonCreatorConfigured = !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientId)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientSecret)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.TokenEndpoint)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.CatalogEndpoint)
+        && !string.IsNullOrWhiteSpace(amazonCreatorApi.Version);
+    var shopeeApi = affiliate.ShopeeProductApi ?? new ShopeeProductApiOptions();
+    var shopeeConfigured = shopeeApi.PartnerId > 0
+        && shopeeApi.ShopId > 0
+        && !string.IsNullOrWhiteSpace(shopeeApi.PartnerKey);
+    var mercadoLivreOAuthConfigured =
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreClientId) &&
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreClientSecret) &&
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreRefreshToken) &&
+        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreUserId);
+    var mercadoLivreOAuthStatus = mercadoLivreOAuthConfigured
+        ? await mercadoLivreOAuthService.GetStatusAsync(ct)
+        : null;
+
+    var publish = settings.InstagramPublish ?? new InstagramPublishSettings();
+    return Results.Ok(new
+    {
+        app = new
+        {
+            instagramPublishEnabled = publish.Enabled,
+            autoPilotEnabled = publish.AutoPilotEnabled,
+            storyAutoPilotEnabled = publish.StoryAutoPilotEnabled,
+            strictMode = new
+            {
+                requireOfficialProductData = publish.AutoPilotRequireOfficialProductData,
+                minimumImageMatchScore = publish.AutoPilotMinimumImageMatchScore,
+                requireAiCaption = publish.AutoPilotRequireAiCaption
+            }
+        },
+        ai = new
+        {
+            openAiConfigured,
+            geminiKeysConfigured = geminiKeys.Distinct(StringComparer.Ordinal).Count()
+        },
+        officialProductApis = new
+        {
+            amazon = new
+            {
+                enabled = amazonApi.Enabled || amazonCreatorApi.Enabled,
+                configured = amazonPaConfigured || amazonCreatorConfigured,
+                provider = amazonCreatorApi.Enabled
+                    ? "creator-api"
+                    : (amazonApi.Enabled ? "pa-api" : "fallback"),
+                creatorApi = new
+                {
+                    enabled = amazonCreatorApi.Enabled,
+                    configured = amazonCreatorConfigured
+                },
+                paApi = new
+                {
+                    enabled = amazonApi.Enabled,
+                    configured = amazonPaConfigured
+                }
+            },
+            shopee = new
+            {
+                enabled = shopeeApi.Enabled,
+                configured = shopeeConfigured
+            },
+            mercadoLivre = new
+            {
+                oauthConfigured = mercadoLivreOAuthConfigured,
+                oauthValid = mercadoLivreOAuthStatus?.Success ?? false,
+                oauthMessage = mercadoLivreOAuthStatus?.Message
+            }
+        },
+        integrations = new
+        {
+            whatsappConnected = settings.Integrations?.WhatsApp?.Connected ?? false,
+            telegramConnected = settings.Integrations?.Telegram?.Connected ?? false,
+            mercadoLivreConnected = settings.Integrations?.MercadoLivre?.Connected ?? false
+        }
+    });
 });
 
 api.MapPut("/settings", async (
@@ -1024,11 +1562,13 @@ api.MapPut("/settings", async (
     }
     else
     {
-        var key = payload.Gemini.ApiKey;
-        if (string.IsNullOrWhiteSpace(key) || key == "********")
-        {
-            payload.Gemini.ApiKey = current.Gemini?.ApiKey;
-        }
+        var incomingGeminiApiKey = payload.Gemini.ApiKey;
+        payload.Gemini.ApiKey = ResolveSecretWithMask(incomingGeminiApiKey, current.Gemini?.ApiKey);
+        payload.Gemini.ApiKeys = MergeSecretListWithMask(
+            current.Gemini?.ApiKeys,
+            payload.Gemini.ApiKeys,
+            incomingGeminiApiKey,
+            current.Gemini?.ApiKey);
     }
 
     if (payload.InstagramPublish is null)
@@ -1055,6 +1595,42 @@ api.MapPut("/settings", async (
     return Results.Ok(new { success = true });
 }).RequireAuthorization("AdminOnly");
 
+api.MapPost("/catalog/sync", async (
+    IInstagramPublishStore publishStore,
+    ICatalogOfferStore catalogOfferStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var drafts = await publishStore.ListAsync(ct);
+    var result = await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    await audit.WriteAsync("catalog.sync", context.User.Identity?.Name ?? "unknown", result, ct);
+    return Results.Ok(new
+    {
+        success = true,
+        result
+    });
+}).RequireAuthorization("AdminOnly");
+
+api.MapGet("/catalog/items", async (
+    [FromQuery] string? q,
+    [FromQuery] int? limit,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var items = await catalogOfferStore.ListAsync(q, limit ?? 200, ct);
+    return Results.Ok(new { items });
+});
+
+api.MapGet("/catalog/items/{query}", async (
+    string query,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var item = await catalogOfferStore.FindByCodeAsync(query, ct);
+    return item is null ? Results.NotFound() : Results.Ok(item);
+});
+
 api.MapPost("/integrations/whatsapp/connect", async (
     WhatsAppInstanceRequest payload,
     IWhatsAppGateway gateway,
@@ -1069,7 +1645,7 @@ api.MapPost("/integrations/whatsapp/connect", async (
     settings.Integrations.WhatsApp.Connected = result.Success;
     settings.Integrations.WhatsApp.Identifier = "evolution-instance";
     settings.Integrations.WhatsApp.LastLoginAt = DateTimeOffset.UtcNow;
-    settings.Integrations.WhatsApp.Notes = result.Message ?? "Conexão solicitada";
+    settings.Integrations.WhatsApp.Notes = result.Message ?? "ConexÃ£o solicitada";
     await store.SaveAsync(settings, ct);
 
     await audit.WriteAsync("integration.whatsapp.connect", context.User.Identity?.Name ?? "unknown", new { result.Success, payload.InstanceName }, ct);
@@ -1085,7 +1661,7 @@ api.MapPost("/integrations/whatsapp/instance", async (
 {
     if (string.IsNullOrWhiteSpace(payload.InstanceName))
     {
-        return Results.BadRequest(new { success = false, message = "InstanceName obrigatório" });
+        return Results.BadRequest(new { success = false, message = "InstanceName obrigatÃ³rio" });
     }
 
     var result = await gateway.CreateInstanceAsync(payload.InstanceName, ct);
@@ -1106,10 +1682,258 @@ api.MapPost("/integrations/telegram/connect", async (
     settings.Integrations.Telegram.Connected = result.Success;
     settings.Integrations.Telegram.Identifier = result.Username;
     settings.Integrations.Telegram.LastLoginAt = DateTimeOffset.UtcNow;
-    settings.Integrations.Telegram.Notes = result.Message ?? "Conexão solicitada";
+    settings.Integrations.Telegram.Notes = result.Message ?? "ConexÃ£o solicitada";
     await store.SaveAsync(settings, ct);
 
     await audit.WriteAsync("integration.telegram.connect", context.User.Identity?.Name ?? "unknown", new { result.Success, result.Username }, ct);
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/integrations/telegram/test-alert", async (
+    TelegramAlertSender alertSender,
+    IOptions<TelegramOptions> telegramOptions,
+    IOptions<HeartbeatOptions> heartbeatOptions,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var chatId = heartbeatOptions.Value.TelegramAlertChatId != 0
+        ? heartbeatOptions.Value.TelegramAlertChatId
+        : telegramOptions.Value.LogsChatId;
+
+    if (chatId == 0)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = "Chat de alerta nao configurado. Defina Heartbeat:TelegramAlertChatId ou Telegram:LogsChatId."
+        });
+    }
+
+    var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
+    var sent = await alertSender.SendAsync(chatId, $"TESTE ALERTA: monitoramento ativo. Horario: {stamp}", ct);
+
+    await audit.WriteAsync("integration.telegram.test_alert", context.User.Identity?.Name ?? "unknown", new { sent, chatId }, ct);
+
+    if (!sent)
+    {
+        return Results.Json(new { success = false, message = "Falha ao enviar teste no Telegram." }, statusCode: StatusCodes.Status502BadGateway);
+    }
+
+    return Results.Ok(new { success = true, chatId, message = "Teste enviado com sucesso no Telegram." });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/integrations/mercadolivre/connect", async (
+    IMercadoLivreOAuthService mercadoLivreOAuthService,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await mercadoLivreOAuthService.RefreshAndCheckAsync(ct);
+
+    var settings = await store.GetAsync(ct);
+    settings.Integrations.MercadoLivre.Connected = result.Success;
+    settings.Integrations.MercadoLivre.Identifier = result.UserId?.ToString();
+    settings.Integrations.MercadoLivre.LastLoginAt = DateTimeOffset.UtcNow;
+    settings.Integrations.MercadoLivre.Notes = result.Message;
+    await store.SaveAsync(settings, ct);
+
+    await audit.WriteAsync("integration.mercadolivre.connect", context.User.Identity?.Name ?? "unknown", new
+    {
+        result.Configured,
+        result.Success,
+        result.UserId,
+        result.RefreshTokenRotated
+    }, ct);
+
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
+api.MapGet("/coupons", async (ISettingsStore store, CancellationToken ct) =>
+{
+    var settings = await store.GetAsync(ct);
+    var hub = settings.CouponHub ?? new CouponHubSettings();
+    var coupons = hub.Coupons
+        .OrderByDescending(x => x.Enabled)
+        .ThenByDescending(x => x.Priority)
+        .ThenBy(x => x.Store)
+        .ThenBy(x => x.Code)
+        .ToArray();
+
+    return Results.Ok(new
+    {
+        hub.Enabled,
+        hub.AppendToConvertedMessages,
+        hub.AppendToInstagramCaptions,
+        hub.MaxCouponsPerStore,
+        items = coupons
+    });
+});
+
+api.MapPost("/coupons/upsert", async (
+    CouponUpsertRequest payload,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.Store) || string.IsNullOrWhiteSpace(payload.Code))
+    {
+        return Results.BadRequest(new { success = false, message = "Store e Code sao obrigatorios." });
+    }
+
+    var settings = await store.GetAsync(ct);
+    settings.CouponHub ??= new CouponHubSettings();
+    var coupons = settings.CouponHub.Coupons;
+
+    var id = string.IsNullOrWhiteSpace(payload.Id) ? Guid.NewGuid().ToString("N") : payload.Id.Trim();
+    var existing = coupons.FirstOrDefault(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+    if (existing is null)
+    {
+        existing = coupons.FirstOrDefault(x =>
+            x.Store.Equals(payload.Store.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            x.Code.Equals(payload.Code.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    if (existing is null)
+    {
+        coupons.Add(new AffiliateCoupon
+        {
+            Id = id,
+            Enabled = payload.Enabled ?? true,
+            Store = payload.Store.Trim(),
+            Code = payload.Code.Trim(),
+            Description = payload.Description?.Trim() ?? string.Empty,
+            AffiliateLink = string.IsNullOrWhiteSpace(payload.AffiliateLink) ? null : payload.AffiliateLink.Trim(),
+            StartsAt = payload.StartsAt,
+            EndsAt = payload.EndsAt,
+            Priority = payload.Priority ?? 100,
+            Source = string.IsNullOrWhiteSpace(payload.Source) ? "manual" : payload.Source.Trim(),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+    }
+    else
+    {
+        existing.Enabled = payload.Enabled ?? existing.Enabled;
+        existing.Store = payload.Store.Trim();
+        existing.Code = payload.Code.Trim();
+        existing.Description = payload.Description?.Trim() ?? existing.Description;
+        existing.AffiliateLink = string.IsNullOrWhiteSpace(payload.AffiliateLink) ? existing.AffiliateLink : payload.AffiliateLink.Trim();
+        existing.StartsAt = payload.StartsAt ?? existing.StartsAt;
+        existing.EndsAt = payload.EndsAt ?? existing.EndsAt;
+        existing.Priority = payload.Priority ?? existing.Priority;
+        existing.Source = string.IsNullOrWhiteSpace(payload.Source) ? existing.Source : payload.Source.Trim();
+    }
+
+    await store.SaveAsync(settings, ct);
+    await audit.WriteAsync("coupon.upsert", context.User.Identity?.Name ?? "unknown", new { id, payload.Store, payload.Code }, ct);
+    return Results.Ok(new { success = true, id });
+}).RequireAuthorization("AdminOnly");
+
+api.MapDelete("/coupons/{id}", async (
+    string id,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+    {
+        return Results.BadRequest(new { success = false, message = "Id obrigatorio." });
+    }
+
+    var settings = await store.GetAsync(ct);
+    settings.CouponHub ??= new CouponHubSettings();
+    var removed = settings.CouponHub.Coupons.RemoveAll(x => x.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    if (removed == 0)
+    {
+        return Results.NotFound(new { success = false, message = "Cupom nao encontrado." });
+    }
+
+    await store.SaveAsync(settings, ct);
+    await audit.WriteAsync("coupon.delete", context.User.Identity?.Name ?? "unknown", new { id = id.Trim(), removed }, ct);
+    return Results.Ok(new { success = true, removed });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/coupons/extract", async (
+    CouponExtractRequest payload,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.Store) || string.IsNullOrWhiteSpace(payload.Text))
+    {
+        return Results.BadRequest(new { success = false, message = "Store e Text sao obrigatorios." });
+    }
+
+    var codes = ExtractCouponCodesFromText(payload.Text);
+    if (codes.Count == 0)
+    {
+        return Results.BadRequest(new { success = false, message = "Nenhum cupom detectado no texto." });
+    }
+
+    var settings = await store.GetAsync(ct);
+    settings.CouponHub ??= new CouponHubSettings();
+    var inserted = 0;
+    foreach (var code in codes)
+    {
+        var exists = settings.CouponHub.Coupons.Any(x =>
+            x.Store.Equals(payload.Store.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            x.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
+        if (exists)
+        {
+            continue;
+        }
+
+        settings.CouponHub.Coupons.Add(new AffiliateCoupon
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Enabled = true,
+            Store = payload.Store.Trim(),
+            Code = code,
+            Description = payload.Description?.Trim() ?? string.Empty,
+            AffiliateLink = string.IsNullOrWhiteSpace(payload.AffiliateLink) ? null : payload.AffiliateLink.Trim(),
+            EndsAt = payload.EndsAt,
+            Priority = payload.Priority ?? 100,
+            Source = string.IsNullOrWhiteSpace(payload.Source) ? "extract" : payload.Source.Trim(),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        inserted++;
+    }
+
+    if (inserted > 0)
+    {
+        await store.SaveAsync(settings, ct);
+    }
+
+    await audit.WriteAsync("coupon.extract", context.User.Identity?.Name ?? "unknown", new { payload.Store, inserted, codes }, ct);
+    return Results.Ok(new { success = true, inserted, codes });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/coupons/sync-official", async (
+    CouponOfficialSyncRequest payload,
+    IAffiliateCouponSyncService couponSyncService,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await couponSyncService.SyncAsync(new AffiliateCouponSyncRequest(payload.Store), ct);
+
+    await audit.WriteAsync("coupon.sync.official", context.User.Identity?.Name ?? "unknown", new
+    {
+        payload.Store,
+        result.Success,
+        result.ProvidersAttempted,
+        result.ProvidersSucceeded,
+        result.TotalFetched,
+        result.TotalInserted,
+        result.TotalUpdated,
+        result.TotalIgnored
+    }, ct);
+
     return Results.Ok(result);
 }).RequireAuthorization("AdminOnly");
 
@@ -1147,6 +1971,101 @@ api.MapPost("/instagram/test", async (
     var insta = settings.InstagramPosts ?? new InstagramPostSettings();
     var text = await composer.BuildAsync(payload.Input, payload.Context, insta, ct);
     return Results.Ok(new { text });
+}).RequireAuthorization("AdminOnly");
+
+api.MapGet("/content-calendar/items", async (
+    [FromQuery] int? limit,
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    var max = Math.Clamp(limit ?? 300, 1, 1000);
+    var items = (await store.ListAsync(ct))
+        .OrderBy(x => x.ScheduledAt)
+        .Take(max)
+        .ToList();
+    return Results.Ok(new { items });
+}).RequireAuthorization("ReadAccess");
+
+api.MapGet("/content-calendar/csv", async (
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    var csv = await store.ExportCsvAsync(ct);
+    var bytes = Encoding.UTF8.GetBytes(csv);
+    return Results.File(bytes, "text/csv; charset=utf-8", "content-calendar.csv");
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/content-calendar/items", async (
+    ContentCalendarCreateRequest payload,
+    ContentCalendarAutomationService automationService,
+    CancellationToken ct) =>
+{
+    var item = await automationService.CreateAsync(payload, ct);
+    return Results.Ok(new { success = true, item });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPut("/content-calendar/items/{id}", async (
+    string id,
+    ContentCalendarCreateRequest payload,
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    var existing = await store.GetAsync(id, ct);
+    if (existing is null)
+    {
+        return Results.NotFound(new { error = "Item do calendario nao encontrado." });
+    }
+
+    existing.ScheduledAt = payload.ScheduledAt ?? existing.ScheduledAt;
+    existing.PostType = string.IsNullOrWhiteSpace(payload.PostType) ? existing.PostType : payload.PostType.Trim();
+    existing.SourceInput = payload.SourceInput ?? existing.SourceInput;
+    existing.OfferContext = payload.OfferContext ?? existing.OfferContext;
+    existing.MediaUrl = payload.MediaUrl ?? existing.MediaUrl;
+    existing.OfferUrl = payload.OfferUrl ?? existing.OfferUrl;
+    existing.Keyword = payload.Keyword ?? existing.Keyword;
+    existing.Hashtags = payload.Hashtags ?? existing.Hashtags;
+    existing.GeneratedCaption = payload.GeneratedCaption ?? existing.GeneratedCaption;
+    existing.AutoPublish = payload.AutoPublish ?? existing.AutoPublish;
+    existing.ReferenceUrl = payload.ReferenceUrl ?? existing.ReferenceUrl;
+    existing.ReferenceCaption = payload.ReferenceCaption ?? existing.ReferenceCaption;
+    existing.ReferenceMediaUrl = payload.ReferenceMediaUrl ?? existing.ReferenceMediaUrl;
+    existing.UpdatedAt = DateTimeOffset.UtcNow;
+    await store.SaveAsync(existing, ct);
+
+    return Results.Ok(new { success = true, item = existing });
+}).RequireAuthorization("AdminOnly");
+
+api.MapDelete("/content-calendar/items/{id}", async (
+    string id,
+    IContentCalendarStore store,
+    CancellationToken ct) =>
+{
+    await store.DeleteAsync(id, ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/content-calendar/import-reference", async (
+    ContentReferenceImportRequest payload,
+    ContentCalendarAutomationService automationService,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.ReferenceUrl) &&
+        string.IsNullOrWhiteSpace(payload.ReferenceCaption) &&
+        string.IsNullOrWhiteSpace(payload.OfferUrl))
+    {
+        return Results.BadRequest(new { error = "Informe ao menos referencia (url/legenda) ou link da oferta." });
+    }
+
+    var item = await automationService.ImportReferenceAsync(payload, ct);
+    return Results.Ok(new { success = true, item });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/content-calendar/process-due", async (
+    ContentCalendarAutomationService automationService,
+    CancellationToken ct) =>
+{
+    var result = await automationService.ProcessDueAsync(ct);
+    return Results.Ok(new { success = true, result });
 }).RequireAuthorization("AdminOnly");
 
 api.MapGet("/instagram/publish/drafts", async (
@@ -1188,6 +2107,25 @@ api.MapPost("/instagram/publish/drafts", async (
     return Results.Ok(new { success = true, id = draft.Id });
 }).RequireAuthorization("AdminOnly");
 
+api.MapPost("/instagram/autopilot/run", async (
+    InstagramAutoPilotRunRequest payload,
+    IInstagramAutoPilotService autoPilotService,
+    CancellationToken ct) =>
+{
+    var result = await autoPilotService.RunNowAsync(payload, ct);
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/instagram/autostory/run", async (
+    InstagramAutoPilotRunRequest payload,
+    IInstagramAutoPilotService autoPilotService,
+    CancellationToken ct) =>
+{
+    payload.PostType = "story";
+    var result = await autoPilotService.RunNowAsync(payload, ct);
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
 api.MapPost("/instagram/publish/drafts/{id}/publish", async (
     string id,
     ISettingsStore store,
@@ -1202,6 +2140,7 @@ api.MapPost("/instagram/publish/drafts/{id}/publish", async (
     var publishResult = await PublishInstagramDraftAsync(
         id,
         settings.InstagramPublish ?? new InstagramPublishSettings(),
+        settings.Gemini ?? new GeminiSettings(),
         publishStore,
         publishLogStore,
         httpClientFactory,
@@ -1417,6 +2356,160 @@ api.MapPost("/instagram/comments/{id}/reject", async (
     return Results.Ok(new { success = true });
 }).RequireAuthorization("AdminOnly");
 
+api.MapGet("/mercadolivre/pending", async (
+    [FromQuery] string? status,
+    [FromQuery] int? limit,
+    IMercadoLivreApprovalStore approvalStore,
+    CancellationToken ct) =>
+{
+    var items = await approvalStore.ListAsync(status, limit ?? 200, ct);
+    return Results.Ok(new { items });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/mercadolivre/pending/{id}/approve", async (
+    string id,
+    MercadoLivreDecisionRequest payload,
+    IMercadoLivreApprovalStore approvalStore,
+    IMessageProcessor processor,
+    ISettingsStore settingsStore,
+    IWhatsAppGateway gateway,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var item = await approvalStore.GetAsync(id, ct);
+    if (item is null)
+    {
+        return Results.NotFound(new { error = "Pendencia nao encontrada." });
+    }
+
+    if (!string.Equals(item.Status, "pending", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { error = $"Pendencia ja foi analisada ({item.Status})." });
+    }
+
+    var result = await processor.ProcessAsync(
+        item.OriginalText,
+        "MercadoLivreManualApproval",
+        ct,
+        originChatId: item.OriginChatId,
+        destinationChatId: item.DestinationChatId,
+        originChatRef: item.OriginChatRef,
+        destinationChatRef: item.DestinationChatRef);
+
+    if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+    {
+        return Results.BadRequest(new { error = "Falha ao converter link durante aprovacao manual." });
+    }
+
+    var convertedText = result.ConvertedText ?? item.OriginalText;
+    var sendNow = payload.SendNow ?? true;
+    var sendSuccess = 0;
+    var sendFailures = new List<string>();
+    var targets = Array.Empty<string>();
+
+    if (sendNow)
+    {
+        var settings = await settingsStore.GetAsync(ct);
+        var rawTargets = string.IsNullOrWhiteSpace(item.DestinationChatRef)
+            ? item.OriginChatRef
+            : item.DestinationChatRef;
+        targets = ParseChatRefs(rawTargets)
+            .Where(x => x.Contains("@", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var target in targets)
+        {
+            var sendResult = await gateway.SendTextAsync(settings.WhatsAppForwarding?.InstanceName, target, convertedText, ct);
+            if (sendResult.Success)
+            {
+                sendSuccess++;
+            }
+            else
+            {
+                sendFailures.Add($"{target}: {sendResult.Message}");
+            }
+        }
+    }
+
+    var reviewNote = payload.Note;
+    if (sendNow)
+    {
+        var summary = $"Envio WhatsApp manual: sucesso={sendSuccess}, falhas={sendFailures.Count}.";
+        reviewNote = string.IsNullOrWhiteSpace(reviewNote) ? summary : $"{reviewNote} | {summary}";
+    }
+
+    var ok = await approvalStore.DecideAsync(
+        id,
+        "approved",
+        context.User.Identity?.Name ?? "unknown",
+        reviewNote,
+        convertedText,
+        result.ConvertedLinks,
+        ct);
+
+    if (!ok)
+    {
+        return Results.BadRequest(new { error = "Falha ao salvar aprovacao." });
+    }
+
+    await audit.WriteAsync("mercadolivre.pending.approved", context.User.Identity?.Name ?? "unknown", new
+    {
+        id,
+        result.ConvertedLinks,
+        sendNow,
+        sendSuccess,
+        sendFailures = sendFailures.Count
+    }, ct);
+    return Results.Ok(new
+    {
+        success = true,
+        converted = convertedText,
+        convertedLinks = result.ConvertedLinks,
+        sendNow,
+        sentTargets = sendSuccess,
+        sendFailures
+    });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/mercadolivre/pending/{id}/reject", async (
+    string id,
+    MercadoLivreDecisionRequest payload,
+    IMercadoLivreApprovalStore approvalStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var item = await approvalStore.GetAsync(id, ct);
+    if (item is null)
+    {
+        return Results.NotFound(new { error = "Pendencia nao encontrada." });
+    }
+
+    if (!string.Equals(item.Status, "pending", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { error = $"Pendencia ja foi analisada ({item.Status})." });
+    }
+
+    var ok = await approvalStore.DecideAsync(
+        id,
+        "rejected",
+        context.User.Identity?.Name ?? "unknown",
+        payload.Note,
+        null,
+        0,
+        ct);
+
+    if (!ok)
+    {
+        return Results.BadRequest(new { error = "Falha ao salvar rejeicao." });
+    }
+
+    await audit.WriteAsync("mercadolivre.pending.rejected", context.User.Identity?.Name ?? "unknown", new { id }, ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
+
 api.MapGet("/logs/conversions", async (
     [FromQuery] string? store,
     [FromQuery] string? q,
@@ -1442,6 +2535,101 @@ api.MapGet("/logs/clicks", async (
 {
     var items = await clickLogStore.QueryAsync(q, limit ?? 200, ct);
     return Results.Ok(new { items });
+});
+
+api.MapGet("/logs/funnel", async (
+    [FromQuery] int? hours,
+    IConversionLogStore conversionLogStore,
+    IClickLogStore clickLogStore,
+    CancellationToken ct) =>
+{
+    var windowHours = Math.Clamp(hours ?? 168, 1, 720);
+    var since = DateTimeOffset.UtcNow.AddHours(-windowHours);
+    var conversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 2000 }, ct);
+    var clicks = await clickLogStore.QueryAsync(null, 2000, ct);
+
+    var conversionsWindow = conversions
+        .Where(x => x.Timestamp >= since)
+        .ToList();
+    var clicksWindow = clicks
+        .Where(x => x.Timestamp >= since)
+        .ToList();
+
+    var bySource = clicksWindow
+        .GroupBy(x => string.IsNullOrWhiteSpace(x.Source) ? "unknown" : x.Source.Trim().ToLowerInvariant())
+        .Select(g => new
+        {
+            source = g.Key,
+            clicks = g.Count(),
+            uniqueLinks = g
+                .Select(x => x.TargetUrl)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count()
+        })
+        .OrderByDescending(x => x.clicks)
+        .Take(20)
+        .ToArray();
+
+    var byCampaign = clicksWindow
+        .GroupBy(x => string.IsNullOrWhiteSpace(x.Campaign) ? "(none)" : x.Campaign!.Trim().ToLowerInvariant())
+        .Select(g => new
+        {
+            campaign = g.Key,
+            clicks = g.Count(),
+            uniqueLinks = g
+                .Select(x => x.TargetUrl)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count()
+        })
+        .OrderByDescending(x => x.clicks)
+        .Take(20)
+        .ToArray();
+
+    var topLinks = clicksWindow
+        .GroupBy(x => x.TargetUrl, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new
+        {
+            targetUrl = g.Key,
+            clicks = g.Count(),
+            lastClickAt = g.Max(x => x.Timestamp),
+            source = g
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Source) ? "unknown" : x.Source.Trim().ToLowerInvariant())
+                .OrderByDescending(x => x.Count())
+                .Select(x => x.Key)
+                .FirstOrDefault() ?? "unknown",
+            campaign = g
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Campaign) ? "(none)" : x.Campaign!.Trim().ToLowerInvariant())
+                .OrderByDescending(x => x.Count())
+                .Select(x => x.Key)
+                .FirstOrDefault() ?? "(none)"
+        })
+        .OrderByDescending(x => x.clicks)
+        .ThenByDescending(x => x.lastClickAt)
+        .Take(30)
+        .ToArray();
+
+    return Results.Ok(new
+    {
+        windowHours,
+        since,
+        totals = new
+        {
+            clicks = clicksWindow.Count,
+            conversions = conversionsWindow.Count,
+            successfulConversions = conversionsWindow.Count(x => x.Success),
+            affiliatedConversions = conversionsWindow.Count(x => x.IsAffiliated),
+            trackedConversionLinks = conversionsWindow
+                .SelectMany(x => x.TrackingIds ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count()
+        },
+        bySource,
+        byCampaign,
+        topLinks
+    });
 });
 
 api.MapPost("/logs/clicks/clear", async (IClickLogStore clickLogStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
@@ -1541,6 +2729,73 @@ api.MapPost("/telegram/userbot/refresh", async (ITelegramUserbotService userbot,
     return Results.Ok(new { success = ok, ready = userbot.IsReady, chats });
 });
 
+api.MapPost("/telegram/userbot/auth", async (
+    TelegramUserbotAuthUpdateRequest payload,
+    ITelegramUserbotService userbot,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await userbot.UpdateRuntimeAuthAsync(payload, ct);
+
+    await audit.WriteAsync("telegram.userbot.auth.update", context.User.Identity?.Name ?? "unknown", new
+    {
+        HasPhone = payload.PhoneNumber is not null,
+        HasCode = payload.VerificationCode is not null,
+        HasPassword = payload.Password is not null,
+        payload.ForceReconnect,
+        result.Success,
+        result.ReconnectRequested
+    }, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = result.Message
+        });
+    }
+
+    return Results.Ok(new
+    {
+        success = true,
+        reconnectRequested = result.ReconnectRequested,
+        hasPhoneNumber = result.HasPhoneNumber,
+        hasVerificationCode = result.HasVerificationCode,
+        hasPassword = result.HasPassword,
+        message = result.Message
+    });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/telegram/userbot/replay-to-whatsapp", async (
+    TelegramUserbotReplayRequest payload,
+    ITelegramUserbotService userbot,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (payload.SourceChatId == 0)
+    {
+        return Results.BadRequest(new { success = false, error = "SourceChatId obrigatorio." });
+    }
+
+    var count = payload.Count <= 0 ? 10 : Math.Min(payload.Count, 50);
+    var result = await userbot.ReplayRecentOffersToWhatsAppAsync(payload.SourceChatId, count, payload.AllowOfficialDestination, ct);
+
+    await audit.WriteAsync("telegram.userbot.replay_to_whatsapp", context.User.Identity?.Name ?? "unknown", new
+    {
+        payload.SourceChatId,
+        Count = count,
+        payload.AllowOfficialDestination,
+        result.Success,
+        result.Replayed,
+        result.Failed
+    }, ct);
+
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
 api.MapGet("/whatsapp/groups", async (
     [FromQuery] string? instanceName,
     IWhatsAppGateway gateway,
@@ -1560,8 +2815,19 @@ app.MapGet("/media/{id}", (string id, IMediaStore store) =>
     return Results.File(item.Bytes, item.MimeType);
 });
 
+app.MapGet("/media/{id}.{ext}", (string id, string ext, IMediaStore store) =>
+{
+    if (!store.TryGet(id, out var item))
+    {
+        return Results.NotFound();
+    }
+
+    return Results.File(item.Bytes, item.MimeType);
+});
+
 app.MapGet("/r/{id}", async (
     string id,
+    HttpContext context,
     ILinkTrackingStore trackingStore,
     IClickLogStore clickLogStore,
     CancellationToken ct) =>
@@ -1572,16 +2838,113 @@ app.MapGet("/r/{id}", async (
         return Results.NotFound();
     }
 
+    var source = NormalizeTrackingToken(context.Request.Query["src"].ToString(), "LinkTracking") ?? "LinkTracking";
+    var campaign = NormalizeTrackingToken(context.Request.Query["camp"].ToString(), null);
+    var referrer = TruncateForLog(context.Request.Headers.Referer.ToString(), 600);
+    var userAgent = TruncateForLog(context.Request.Headers.UserAgent.ToString(), 320);
+    var ip = context.Connection.RemoteIpAddress?.ToString();
+
     await clickLogStore.AppendAsync(new ClickLogEntry
     {
         TrackingId = entry.Id,
-        TargetUrl = entry.TargetUrl
+        TargetUrl = entry.TargetUrl,
+        Source = source,
+        Campaign = campaign,
+        Referrer = string.IsNullOrWhiteSpace(referrer) ? null : referrer,
+        UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
+        IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
     }, ct);
 
     return Results.Redirect(entry.TargetUrl);
 });
 
 app.Run();
+
+static void LoadDotEnvIfPresent()
+{
+    var roots = new[]
+    {
+        Directory.GetCurrentDirectory(),
+        AppContext.BaseDirectory
+    };
+
+    var candidates = roots
+        .SelectMany(root => new[]
+        {
+            Path.Combine(root, ".env"),
+            Path.Combine(root, "AchadinhosBot.Next", ".env")
+        })
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Where(File.Exists)
+        .ToArray();
+
+    foreach (var file in candidates)
+    {
+        foreach (var raw in File.ReadAllLines(file))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith('#'))
+            {
+                continue;
+            }
+
+            var idx = line.IndexOf('=');
+            if (idx <= 0)
+            {
+                continue;
+            }
+
+            var key = line[..idx].Trim();
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            var value = line[(idx + 1)..].Trim();
+            if (value.Length >= 2 &&
+                ((value.StartsWith('"') && value.EndsWith('"')) ||
+                 (value.StartsWith('\'') && value.EndsWith('\''))))
+            {
+                value = value[1..^1];
+            }
+
+            SetIfMissing(key, value);
+
+            var normalizedAlias = BuildNormalizedAlias(key);
+            if (!normalizedAlias.Equals(key, StringComparison.Ordinal))
+            {
+                SetIfMissing(normalizedAlias, value);
+            }
+        }
+    }
+
+    static void SetIfMissing(string key, string value)
+    {
+        if (Environment.GetEnvironmentVariable(key) is null)
+        {
+            Environment.SetEnvironmentVariable(key, value, EnvironmentVariableTarget.Process);
+        }
+    }
+
+    static string BuildNormalizedAlias(string key)
+    {
+        var sections = key.Split("__", StringSplitOptions.None);
+        if (sections.Length < 2)
+        {
+            return key;
+        }
+
+        for (var i = 0; i < sections.Length; i++)
+        {
+            if (sections[i].Contains('_', StringComparison.Ordinal))
+            {
+                sections[i] = sections[i].Replace("_", string.Empty, StringComparison.Ordinal);
+            }
+        }
+
+        return string.Join("__", sections);
+    }
+}
 
 static IEnumerable<string> ValidateSettings(AutomationSettings settings)
 {
@@ -1590,7 +2953,7 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     {
         if (string.IsNullOrWhiteSpace(rule.Trigger) || string.IsNullOrWhiteSpace(rule.ResponseTemplate))
         {
-            yield return $"Regra '{rule.Name}' inválida (gatilho/resposta obrigatórios).";
+            yield return $"Regra '{rule.Name}' invÃ¡lida (gatilho/resposta obrigatÃ³rios).";
             continue;
         }
 
@@ -1599,20 +2962,133 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
             yield return $"Gatilho duplicado: {rule.Trigger}";
         }
     }
+
+    var bio = settings.BioHub ?? new BioHubSettings();
+    if (bio.MaxItems is < 5 or > 80)
+    {
+        yield return "BioHub.MaxItems deve estar entre 5 e 80.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(bio.DefaultSource) &&
+        NormalizeTrackingToken(bio.DefaultSource, null) is null)
+    {
+        yield return "BioHub.DefaultSource invalido.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(bio.DefaultCampaign) &&
+        NormalizeTrackingToken(bio.DefaultCampaign, null) is null)
+    {
+        yield return "BioHub.DefaultCampaign invalido.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(bio.PublicBaseUrl) &&
+        !TryNormalizePublicBaseUrl(bio.PublicBaseUrl, out _))
+    {
+        yield return "BioHub.PublicBaseUrl invalido. Use URL absoluta (http/https).";
+    }
+
+    var gemini = settings.Gemini ?? new GeminiSettings();
+    if (gemini.MaxOutputTokens is < 200 or > 4096)
+    {
+        yield return "Gemini.MaxOutputTokens deve estar entre 200 e 4096.";
+    }
+
+    var instaPublish = settings.InstagramPublish ?? new InstagramPublishSettings();
+    if (instaPublish.AutoPilotMinimumImageMatchScore is < 0 or > 100)
+    {
+        yield return "InstagramPublish.AutoPilotMinimumImageMatchScore deve estar entre 0 e 100.";
+    }
+
+    var contentCalendar = settings.ContentCalendar ?? new ContentCalendarSettings();
+    if (contentCalendar.PollIntervalSeconds is < 15 or > 300)
+    {
+        yield return "ContentCalendar.PollIntervalSeconds deve estar entre 15 e 300.";
+    }
+
+    if (contentCalendar.MaxAttempts is < 1 or > 10)
+    {
+        yield return "ContentCalendar.MaxAttempts deve estar entre 1 e 10.";
+    }
 }
 
-static bool VerifyWebhookSignature(HttpRequest request, string body, string? secret)
+static string? ResolveSecretWithMask(string? incoming, string? current)
 {
-    if (string.IsNullOrWhiteSpace(secret)) return true;
+    if (string.IsNullOrWhiteSpace(incoming))
+    {
+        return current;
+    }
 
-    if (!request.Headers.TryGetValue("x-signature", out var signatureHeader)) return false;
+    var trimmed = incoming.Trim();
+    return trimmed == "********" ? current : trimmed;
+}
 
-    using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-    var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(body));
-    var expectedHex = Convert.ToHexString(hash).ToLowerInvariant();
-    var provided = signatureHeader.ToString().Trim().ToLowerInvariant();
+static List<string> MergeSecretListWithMask(
+    IEnumerable<string>? currentValues,
+    IEnumerable<string>? incomingValues,
+    string? incomingSingle,
+    string? currentSingle)
+{
+    var current = NormalizeSecretList(currentValues);
+    var singleCurrent = NormalizeSecret(currentSingle);
+    if (!string.IsNullOrWhiteSpace(singleCurrent))
+    {
+        current.Add(singleCurrent);
+    }
 
-    return expectedHex == provided;
+    var incoming = NormalizeSecretList(incomingValues);
+    var hasMaskedValue = incomingValues?.Any(x => string.Equals(x?.Trim(), "********", StringComparison.Ordinal)) ?? false;
+    var singleIncoming = NormalizeSecret(incomingSingle);
+
+    if (incoming.Count == 0 && string.IsNullOrWhiteSpace(singleIncoming))
+    {
+        return current;
+    }
+
+    var merged = hasMaskedValue ? new List<string>(current) : new List<string>();
+    merged.AddRange(incoming);
+    if (!string.IsNullOrWhiteSpace(singleIncoming))
+    {
+        merged.Add(singleIncoming);
+    }
+
+    return merged
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+}
+
+static List<string> NormalizeSecretList(IEnumerable<string>? values)
+    => (values ?? Array.Empty<string>())
+        .Select(NormalizeSecret)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Cast<string>()
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+static string? NormalizeSecret(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
+    }
+
+    var trimmed = value.Trim();
+    return trimmed == "********" ? null : trimmed;
+}
+
+static bool IsBotConversorWebhookAuthorized(HttpRequest request, string body, string? webhookSecret, string? fallbackApiKey)
+{
+    if (WebhookSignatureVerifier.TryValidate(request, body, webhookSecret))
+    {
+        return true;
+    }
+
+    if (!request.Headers.TryGetValue("x-api-key", out var providedApiKey))
+    {
+        return false;
+    }
+
+    return SecretComparer.EqualsConstantTime(fallbackApiKey, providedApiKey.ToString());
 }
 
 static string ComputeStableHash(string? input)
@@ -1620,6 +3096,979 @@ static string ComputeStableHash(string? input)
     var value = input ?? string.Empty;
     var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
     return Convert.ToHexString(bytes).ToLowerInvariant();
+}
+
+static string[] ParseChatRefs(string? input)
+{
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return Array.Empty<string>();
+    }
+
+    return input
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .ToArray();
+}
+
+static IReadOnlyList<WhatsAppForwardingRouteSettings> ResolveWhatsAppForwardingRoutes(AutomationSettings settings)
+{
+    var explicitRoutes = (settings.WhatsAppForwardingRoutes ?? new List<WhatsAppForwardingRouteSettings>())
+        .Where(route => route is not null)
+        .Select(route => new WhatsAppForwardingRouteSettings
+        {
+            Name = string.IsNullOrWhiteSpace(route.Name) ? "Rota WhatsApp" : route.Name.Trim(),
+            Enabled = route.Enabled,
+            ProcessFromMeOnly = route.ProcessFromMeOnly,
+            SourceChatIds = route.SourceChatIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            DestinationGroupIds = route.DestinationGroupIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            AppendSheinCode = route.AppendSheinCode,
+            SendMediaEnabled = route.SendMediaEnabled,
+            FooterText = route.FooterText ?? string.Empty,
+            InstanceName = string.IsNullOrWhiteSpace(route.InstanceName) ? null : route.InstanceName.Trim()
+        })
+        .ToList();
+    if (explicitRoutes.Count > 0)
+    {
+        return explicitRoutes;
+    }
+
+    var legacy = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
+    return new List<WhatsAppForwardingRouteSettings>
+    {
+        new()
+        {
+            Name = "Rota padrao",
+            Enabled = legacy.Enabled,
+            ProcessFromMeOnly = legacy.ProcessFromMeOnly,
+            SourceChatIds = legacy.SourceChatIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            DestinationGroupIds = legacy.DestinationGroupIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            AppendSheinCode = legacy.AppendSheinCode,
+            SendMediaEnabled = legacy.SendMediaEnabled,
+            FooterText = legacy.FooterText ?? string.Empty,
+            InstanceName = string.IsNullOrWhiteSpace(legacy.InstanceName) ? null : legacy.InstanceName.Trim()
+        }
+    };
+}
+
+static string? FirstNonEmpty(params string?[] values)
+{
+    foreach (var value in values)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value.Trim();
+        }
+    }
+
+    return null;
+}
+
+static async Task<WhatsAppForwardSendOutcome> SendWhatsAppMessageWithMediaFallbackAsync(
+    IWhatsAppGateway gateway,
+    IHttpClientFactory httpClientFactory,
+    EvolutionOptions evolutionOptions,
+    IMediaStore mediaStore,
+    string? publicBaseUrl,
+    string? instanceName,
+    string destination,
+    string text,
+    WhatsAppIncomingMessage msg,
+    ILogger logger,
+    CancellationToken ct)
+{
+    if (!msg.HasMedia)
+    {
+        var textOnly = await gateway.SendTextAsync(instanceName, destination, text, ct);
+        return new WhatsAppForwardSendOutcome(textOnly, "text_no_media_in_payload");
+    }
+
+    var diagnostics = new List<string>();
+    string? effectiveMimeType = msg.MediaMimeType;
+    string? effectiveFileName = msg.MediaFileName;
+
+    // Prioriza URL original (normalmente arquivo completo); base64 do webhook pode ser apenas thumbnail.
+    byte[]? imageBytes = null;
+    var bytesCameFromUrl = false;
+    if (!string.IsNullOrWhiteSpace(msg.MediaUrl))
+    {
+        imageBytes = await TryDownloadIncomingMediaAsBytesAsync(httpClientFactory, evolutionOptions, msg.MediaUrl!, logger, ct);
+        diagnostics.Add(imageBytes is { Length: > 0 } ? $"downloaded_bytes={imageBytes.Length}" : "downloaded_bytes=0");
+        bytesCameFromUrl = imageBytes is { Length: > 0 };
+        if (imageBytes is { Length: > 0 } && string.IsNullOrWhiteSpace(DetectMimeTypeFromBytes(imageBytes)))
+        {
+            diagnostics.Add("download_mime_unknown");
+            imageBytes = null;
+            bytesCameFromUrl = false;
+        }
+    }
+
+    if ((imageBytes is null || imageBytes.Length == 0) && !string.IsNullOrWhiteSpace(msg.RawPayloadJson))
+    {
+        imageBytes = await TryDownloadMediaViaEvolutionMessageApiAsync(httpClientFactory, evolutionOptions, msg, logger, ct);
+        diagnostics.Add(imageBytes is { Length: > 0 } ? $"evolution_message_api_bytes={imageBytes.Length}" : "evolution_message_api_bytes=0");
+        bytesCameFromUrl = false;
+    }
+
+    if ((imageBytes is null || imageBytes.Length == 0) && !string.IsNullOrWhiteSpace(msg.MediaBase64))
+    {
+        imageBytes = DecodeBase64Payload(msg.MediaBase64);
+        if (imageBytes is { Length: > 0 })
+        {
+            diagnostics.Add($"payload_base64_bytes={imageBytes.Length}");
+        }
+    }
+
+    if (imageBytes is { Length: > 0 } &&
+        !bytesCameFromUrl &&
+        imageBytes.Length < 1024)
+    {
+        diagnostics.Add($"payload_base64_suspected_thumbnail={imageBytes.Length}");
+        imageBytes = null;
+    }
+
+    if (imageBytes is { Length: > 0 })
+    {
+        var detectedMimeType = DetectMimeTypeFromBytes(imageBytes);
+        if (!string.IsNullOrWhiteSpace(detectedMimeType))
+        {
+            if (!string.Equals(effectiveMimeType, detectedMimeType, StringComparison.OrdinalIgnoreCase))
+            {
+                diagnostics.Add($"mime_override={effectiveMimeType ?? "n/a"}->{detectedMimeType}");
+                effectiveMimeType = detectedMimeType;
+            }
+        }
+        else
+        {
+            var transcodedPng = TryTranscodeImageToPng(imageBytes, logger);
+            if (transcodedPng is { Length: > 0 })
+            {
+                imageBytes = transcodedPng;
+                effectiveMimeType = "image/png";
+                diagnostics.Add($"mime_transcoded_to_png={transcodedPng.Length}");
+            }
+            else
+            {
+                diagnostics.Add("mime_detect=unknown");
+                imageBytes = null;
+            }
+        }
+
+        if (imageBytes is { Length: > 0 })
+        {
+            effectiveFileName = ResolveMediaFileName(effectiveFileName, effectiveMimeType);
+        }
+    }
+
+    if (imageBytes is { Length: > 0 })
+    {
+        if (!string.IsNullOrWhiteSpace(publicBaseUrl))
+        {
+            var mediaId = mediaStore.Add(imageBytes, string.IsNullOrWhiteSpace(effectiveMimeType) ? "image/jpeg" : effectiveMimeType);
+            var hostedUrl = BuildPublicMediaUrl(publicBaseUrl, mediaId);
+            var imageByHostedUrl = await gateway.SendImageUrlAsync(
+                instanceName,
+                destination,
+                hostedUrl,
+                text,
+                effectiveMimeType,
+                effectiveFileName,
+                ct);
+            if (imageByHostedUrl.Success)
+            {
+                diagnostics.Add("send_hosted_url=ok");
+                return new WhatsAppForwardSendOutcome(imageByHostedUrl, "image_sent_hosted_url", string.Join(";", diagnostics));
+            }
+
+            diagnostics.Add($"send_hosted_url=fail:{imageByHostedUrl.Message ?? "unknown"}");
+            logger.LogWarning("Falha ao enviar imagem por URL hospedada para {Destination}: {Message}", destination, imageByHostedUrl.Message);
+        }
+
+        var imageByBytes = await gateway.SendImageAsync(instanceName, destination, imageBytes, text, effectiveMimeType, ct);
+        if (imageByBytes.Success)
+        {
+            diagnostics.Add("send_bytes=ok");
+            return new WhatsAppForwardSendOutcome(imageByBytes, "image_sent_bytes", string.Join(";", diagnostics));
+        }
+
+        diagnostics.Add($"send_bytes=fail:{imageByBytes.Message ?? "unknown"}");
+        logger.LogWarning("Falha ao enviar imagem em base64 para {Destination}: {Message}", destination, imageByBytes.Message);
+    }
+
+    if (!string.IsNullOrWhiteSpace(msg.MediaUrl))
+    {
+        var imageByUrl = await gateway.SendImageUrlAsync(
+            instanceName,
+            destination,
+            msg.MediaUrl!,
+            text,
+            effectiveMimeType,
+            effectiveFileName,
+            ct);
+        if (imageByUrl.Success)
+        {
+            diagnostics.Add("send_url=ok");
+            return new WhatsAppForwardSendOutcome(imageByUrl, "image_sent_url", string.Join(";", diagnostics));
+        }
+
+        diagnostics.Add($"send_url=fail:{imageByUrl.Message ?? "unknown"}");
+        logger.LogWarning("Falha ao enviar imagem por URL para {Destination}: {Message}", destination, imageByUrl.Message);
+    }
+
+    var fallbackText = await gateway.SendTextAsync(instanceName, destination, text, ct);
+    diagnostics.Add(fallbackText.Success ? "fallback_text=ok" : $"fallback_text=fail:{fallbackText.Message ?? "unknown"}");
+    return new WhatsAppForwardSendOutcome(
+        fallbackText,
+        fallbackText.Success ? "text_fallback_after_media_failure" : "send_failed",
+        string.Join(";", diagnostics));
+}
+
+static async Task<byte[]?> TryDownloadIncomingMediaAsBytesAsync(
+    IHttpClientFactory httpClientFactory,
+    EvolutionOptions evolutionOptions,
+    string mediaUrl,
+    ILogger logger,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(mediaUrl))
+    {
+        return null;
+    }
+
+    if (mediaUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+    {
+        return DecodeBase64Payload(mediaUrl);
+    }
+
+    if (!Uri.TryCreate(mediaUrl, UriKind.Absolute, out var mediaUri) && !string.IsNullOrWhiteSpace(evolutionOptions.BaseUrl))
+    {
+        if (Uri.TryCreate(new Uri(evolutionOptions.BaseUrl), mediaUrl, out var combined))
+        {
+            mediaUri = combined;
+        }
+    }
+
+    if (mediaUri is null)
+    {
+        return null;
+    }
+
+    async Task<byte[]?> DownloadAsync(bool authenticated)
+    {
+        try
+        {
+            if (authenticated && string.IsNullOrWhiteSpace(evolutionOptions.ApiKey))
+            {
+                return null;
+            }
+
+            var client = httpClientFactory.CreateClient("default");
+            using var request = new HttpRequestMessage(HttpMethod.Get, mediaUri);
+            if (authenticated)
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", evolutionOptions.ApiKey);
+                request.Headers.TryAddWithoutValidation("apikey", evolutionOptions.ApiKey);
+                request.Headers.TryAddWithoutValidation("x-api-key", evolutionOptions.ApiKey);
+            }
+
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning(
+                    "Falha ao baixar midia original da mensagem ({Mode}): {StatusCode}",
+                    authenticated ? "auth" : "anon",
+                    response.StatusCode);
+                return null;
+            }
+
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+            var payload = await response.Content.ReadAsByteArrayAsync(ct);
+            var parsed = TryDecodeMediaBytesFromResponse(payload, contentType, logger, authenticated ? "auth" : "anon");
+            if (parsed is { Length: > 0 })
+            {
+                return parsed;
+            }
+
+            logger.LogWarning(
+                "Midia baixada ({Mode}) sem bytes validos. ContentType={ContentType}, Bytes={Length}",
+                authenticated ? "auth" : "anon",
+                string.IsNullOrWhiteSpace(contentType) ? "n/a" : contentType,
+                payload.Length);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Erro ao baixar midia original da mensagem ({Mode}).", authenticated ? "auth" : "anon");
+            return null;
+        }
+    }
+
+    var anonBytes = await DownloadAsync(authenticated: false);
+    if (anonBytes is { Length: > 0 })
+    {
+        return anonBytes;
+    }
+
+    var authBytes = await DownloadAsync(authenticated: true);
+    if (authBytes is { Length: > 0 })
+    {
+        return authBytes;
+    }
+
+    return null;
+}
+
+static async Task<byte[]?> TryDownloadMediaViaEvolutionMessageApiAsync(
+    IHttpClientFactory httpClientFactory,
+    EvolutionOptions evolutionOptions,
+    WhatsAppIncomingMessage msg,
+    ILogger logger,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(evolutionOptions.BaseUrl) ||
+        string.IsNullOrWhiteSpace(evolutionOptions.ApiKey) ||
+        string.IsNullOrWhiteSpace(msg.RawPayloadJson))
+    {
+        return null;
+    }
+
+    var instance = FirstNonEmpty(msg.InstanceName, evolutionOptions.InstanceName);
+    if (string.IsNullOrWhiteSpace(instance))
+    {
+        return null;
+    }
+
+    var payloads = BuildEvolutionMediaExtractionPayloads(msg.RawPayloadJson!, logger);
+    if (payloads.Count == 0)
+    {
+        return null;
+    }
+
+    var client = httpClientFactory.CreateClient("evolution");
+    client.BaseAddress = new Uri(evolutionOptions.BaseUrl);
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", evolutionOptions.ApiKey);
+    if (!client.DefaultRequestHeaders.Contains("apikey"))
+    {
+        client.DefaultRequestHeaders.Add("apikey", evolutionOptions.ApiKey);
+    }
+    if (!client.DefaultRequestHeaders.Contains("x-api-key"))
+    {
+        client.DefaultRequestHeaders.Add("x-api-key", evolutionOptions.ApiKey);
+    }
+
+    var endpoint = $"/chat/getBase64FromMediaMessage/{instance}";
+    for (var i = 0; i < payloads.Count; i++)
+    {
+        try
+        {
+            using var content = new StringContent(payloads[i], Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(endpoint, content, ct);
+            var responseBytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogDebug(
+                    "Evolution media API falhou. Endpoint={Endpoint}, Tentativa={Attempt}, Status={StatusCode}",
+                    endpoint,
+                    i + 1,
+                    response.StatusCode);
+                continue;
+            }
+
+            var parsed = TryDecodeMediaBytesFromResponse(responseBytes, contentType, logger, $"evolution-media-api-{i + 1}");
+            if (parsed is { Length: > 0 })
+            {
+                return parsed;
+            }
+
+            var responseText = Encoding.UTF8.GetString(responseBytes);
+            var decoded = DecodeBase64Payload(responseText);
+            if (decoded is { Length: > 0 })
+            {
+                return decoded;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Erro ao tentar extrair midia via Evolution media API. Tentativa={Attempt}", i + 1);
+        }
+    }
+
+    return null;
+}
+
+static List<string> BuildEvolutionMediaExtractionPayloads(string rawPayloadJson, ILogger logger)
+{
+    var results = new List<string>();
+    var seen = new HashSet<string>(StringComparer.Ordinal);
+
+    void AddPayload(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return;
+        }
+
+        var trimmed = payload.Trim();
+        if (seen.Add(trimmed))
+        {
+            results.Add(trimmed);
+        }
+    }
+
+    void AddCore(string core)
+    {
+        AddPayload(core);
+        AddPayload($"{{\"message\":{core}}}");
+        AddPayload($"{{\"data\":{core}}}");
+    }
+
+    try
+    {
+        using var doc = JsonDocument.Parse(rawPayloadJson);
+        var root = doc.RootElement;
+        var rootRaw = root.GetRawText();
+        AddCore(rootRaw);
+
+        if (root.TryGetProperty("data", out var dataNode) &&
+            (dataNode.ValueKind == JsonValueKind.Object || dataNode.ValueKind == JsonValueKind.Array))
+        {
+            AddCore(dataNode.GetRawText());
+        }
+
+        if (root.TryGetProperty("message", out var messageNode) &&
+            (messageNode.ValueKind == JsonValueKind.Object || messageNode.ValueKind == JsonValueKind.Array))
+        {
+            AddCore(messageNode.GetRawText());
+        }
+
+        if (root.TryGetProperty("key", out var keyNode) &&
+            root.TryGetProperty("message", out messageNode) &&
+            keyNode.ValueKind == JsonValueKind.Object &&
+            messageNode.ValueKind == JsonValueKind.Object)
+        {
+            AddPayload($"{{\"key\":{keyNode.GetRawText()},\"message\":{messageNode.GetRawText()}}}");
+            AddPayload($"{{\"message\":{{\"key\":{keyNode.GetRawText()},\"message\":{messageNode.GetRawText()}}}}}");
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogDebug(ex, "Nao foi possivel montar payload para Evolution media API.");
+    }
+
+    return results;
+}
+
+static byte[]? TryDecodeMediaBytesFromResponse(byte[] payload, string contentType, ILogger logger, string mode)
+{
+    if (payload.Length == 0)
+    {
+        return null;
+    }
+
+    if (IsLikelyBinaryMediaPayload(payload, contentType))
+    {
+        return payload;
+    }
+
+    if (LooksLikeJsonPayload(payload, contentType))
+    {
+        var fromJson = TryParseJsonMediaBytes(payload, logger);
+        if (fromJson is { Length: > 0 })
+        {
+            return fromJson;
+        }
+    }
+
+    if (contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+    {
+        logger.LogWarning("Download de midia retornou texto ({Mode}), ignorando. ContentType={ContentType}", mode, contentType);
+        return null;
+    }
+
+    return null;
+}
+
+static bool IsLikelyBinaryMediaPayload(byte[] payload, string contentType)
+{
+    var detectedMime = DetectMimeTypeFromBytes(payload);
+    if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+        contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
+        contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+    {
+        if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return !string.IsNullOrWhiteSpace(detectedMime);
+        }
+
+        return true;
+    }
+
+    if (!string.IsNullOrWhiteSpace(detectedMime))
+    {
+        return true;
+    }
+
+    return false;
+}
+
+static byte[]? TryTranscodeImageToPng(byte[] payload, ILogger logger)
+{
+    if (!(OperatingSystem.IsWindows() && OperatingSystem.IsWindowsVersionAtLeast(6, 1)))
+    {
+        return null;
+    }
+
+    try
+    {
+        return TryTranscodeImageToPngWindows(payload);
+    }
+    catch (Exception ex)
+    {
+        logger.LogDebug(ex, "Nao foi possivel transcodificar imagem para PNG.");
+        return null;
+    }
+}
+
+[SupportedOSPlatform("windows6.1")]
+static byte[] TryTranscodeImageToPngWindows(byte[] payload)
+{
+#pragma warning disable CA1416
+    using var input = new MemoryStream(payload);
+    using var image = Image.FromStream(input, useEmbeddedColorManagement: false, validateImageData: true);
+    using var output = new MemoryStream();
+    image.Save(output, ImageFormat.Png);
+    return output.ToArray();
+#pragma warning restore CA1416
+}
+
+static string? DetectMimeTypeFromBytes(byte[] payload)
+{
+    if (payload is null || payload.Length < 4)
+    {
+        return null;
+    }
+
+    if (payload.Length >= 3 &&
+        payload[0] == 0xFF &&
+        payload[1] == 0xD8 &&
+        payload[2] == 0xFF)
+    {
+        return "image/jpeg";
+    }
+
+    if (payload.Length >= 8 &&
+        payload[0] == 0x89 &&
+        payload[1] == 0x50 &&
+        payload[2] == 0x4E &&
+        payload[3] == 0x47 &&
+        payload[4] == 0x0D &&
+        payload[5] == 0x0A &&
+        payload[6] == 0x1A &&
+        payload[7] == 0x0A)
+    {
+        return "image/png";
+    }
+
+    if (payload.Length >= 6 &&
+        payload[0] == 0x47 &&
+        payload[1] == 0x49 &&
+        payload[2] == 0x46 &&
+        payload[3] == 0x38 &&
+        (payload[4] == 0x37 || payload[4] == 0x39) &&
+        payload[5] == 0x61)
+    {
+        return "image/gif";
+    }
+
+    if (payload.Length >= 12 &&
+        payload[0] == 0x52 &&
+        payload[1] == 0x49 &&
+        payload[2] == 0x46 &&
+        payload[3] == 0x46 &&
+        payload[8] == 0x57 &&
+        payload[9] == 0x45 &&
+        payload[10] == 0x42 &&
+        payload[11] == 0x50)
+    {
+        return "image/webp";
+    }
+
+    if (payload.Length >= 2 &&
+        payload[0] == 0x42 &&
+        payload[1] == 0x4D)
+    {
+        return "image/bmp";
+    }
+
+    if (payload.Length >= 4 &&
+        ((payload[0] == 0x49 && payload[1] == 0x49 && payload[2] == 0x2A && payload[3] == 0x00) ||
+         (payload[0] == 0x4D && payload[1] == 0x4D && payload[2] == 0x00 && payload[3] == 0x2A)))
+    {
+        return "image/tiff";
+    }
+
+    if (payload.Length >= 12 &&
+        payload[4] == 0x66 &&
+        payload[5] == 0x74 &&
+        payload[6] == 0x79 &&
+        payload[7] == 0x70)
+    {
+        var brand = Encoding.ASCII.GetString(payload, 8, 4).ToLowerInvariant();
+        if (brand.Contains("avif", StringComparison.Ordinal))
+        {
+            return "image/avif";
+        }
+
+        if (brand.Contains("heic", StringComparison.Ordinal) || brand.Contains("heif", StringComparison.Ordinal))
+        {
+            return "image/heic";
+        }
+    }
+
+    return null;
+}
+
+static string? ResolveMediaFileName(string? currentFileName, string? mimeType)
+{
+    if (!string.IsNullOrWhiteSpace(currentFileName))
+    {
+        return currentFileName;
+    }
+
+    var ext = mimeType?.ToLowerInvariant() switch
+    {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        "image/avif" => "avif",
+        "image/heic" => "heic",
+        _ => "jpg"
+    };
+
+    return $"image.{ext}";
+}
+
+static bool LooksLikeJsonPayload(byte[] payload, string contentType)
+{
+    if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    foreach (var b in payload)
+    {
+        if (b is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')
+        {
+            continue;
+        }
+
+        return b is (byte)'{' or (byte)'[';
+    }
+
+    return false;
+}
+
+static byte[]? TryParseJsonMediaBytes(byte[] payload, ILogger logger)
+{
+    try
+    {
+        using var doc = JsonDocument.Parse(payload);
+        if (!TryFindMediaStringCandidate(doc.RootElement, out var mediaString))
+        {
+            return null;
+        }
+
+        var decoded = DecodeBase64Payload(mediaString);
+        if (decoded is { Length: > 0 })
+        {
+            return decoded;
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogDebug(ex, "Nao foi possivel interpretar payload JSON de midia.");
+    }
+
+    return null;
+}
+
+static bool TryFindMediaStringCandidate(JsonElement element, out string value)
+{
+    value = string.Empty;
+
+    if (element.ValueKind == JsonValueKind.String)
+    {
+        var candidate = element.GetString()?.Trim() ?? string.Empty;
+        if (candidate.StartsWith("data:", StringComparison.OrdinalIgnoreCase) || LooksLikeBase64Payload(candidate))
+        {
+            value = candidate;
+            return true;
+        }
+
+        return false;
+    }
+
+    if (element.ValueKind == JsonValueKind.Object)
+    {
+        var preferred = new[]
+        {
+            "base64", "fileBase64", "data", "media", "buffer", "content", "file", "payload"
+        };
+        foreach (var key in preferred)
+        {
+            if (element.TryGetProperty(key, out var property) && TryFindMediaStringCandidate(property, out value))
+            {
+                return true;
+            }
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (TryFindMediaStringCandidate(property.Value, out value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    if (element.ValueKind == JsonValueKind.Array)
+    {
+        foreach (var item in element.EnumerateArray())
+        {
+            if (TryFindMediaStringCandidate(item, out value))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static bool LooksLikeBase64Payload(string value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return false;
+    }
+
+    var candidate = value.Trim();
+    if (candidate.Length < 64)
+    {
+        return false;
+    }
+
+    candidate = candidate.Replace("\r", string.Empty, StringComparison.Ordinal)
+        .Replace("\n", string.Empty, StringComparison.Ordinal)
+        .Replace(" ", string.Empty, StringComparison.Ordinal)
+        .Replace("-", "+", StringComparison.Ordinal)
+        .Replace("_", "/", StringComparison.Ordinal);
+
+    foreach (var ch in candidate)
+    {
+        var isAlphaNum = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+        if (!isAlphaNum && ch != '+' && ch != '/' && ch != '=')
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static byte[]? DecodeBase64Payload(string? payload)
+{
+    if (string.IsNullOrWhiteSpace(payload))
+    {
+        return null;
+    }
+
+    var value = payload.Trim();
+    if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+    {
+        var comma = value.IndexOf(',');
+        if (comma >= 0 && comma + 1 < value.Length)
+        {
+            value = value[(comma + 1)..];
+        }
+    }
+
+    try
+    {
+        return Convert.FromBase64String(value);
+    }
+    catch
+    {
+        try
+        {
+            var normalized = value
+                .Replace("\r", string.Empty, StringComparison.Ordinal)
+                .Replace("\n", string.Empty, StringComparison.Ordinal)
+                .Replace(" ", string.Empty, StringComparison.Ordinal)
+                .Replace("-", "+", StringComparison.Ordinal)
+                .Replace("_", "/", StringComparison.Ordinal);
+
+            var pad = normalized.Length % 4;
+            if (pad > 0)
+            {
+                normalized = normalized.PadRight(normalized.Length + (4 - pad), '=');
+            }
+
+            return Convert.FromBase64String(normalized);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+static bool TryExtractIncomingMedia(
+    JsonElement node,
+    out string? mediaUrl,
+    out string? mediaBase64,
+    out string? mediaMimeType,
+    out string? mediaFileName)
+{
+    mediaUrl = null;
+    mediaBase64 = null;
+    mediaMimeType = null;
+    mediaFileName = null;
+
+    var hasMedia = false;
+    var messageNode = node;
+    if (node.TryGetProperty("message", out var rootMessage))
+    {
+        messageNode = rootMessage;
+    }
+
+    while (TryUnwrapMessageEnvelope(messageNode, out var inner))
+    {
+        messageNode = inner;
+    }
+
+    if (TryGetIncomingMediaNode(messageNode, out var mediaNode))
+    {
+        hasMedia = true;
+        mediaUrl = GetString(mediaNode, "url", "mediaUrl", "media_url");
+        mediaBase64 = GetString(mediaNode, "base64", "fileBase64", "data");
+        mediaMimeType = GetString(mediaNode, "mimetype", "mimeType");
+        mediaFileName = GetString(mediaNode, "fileName", "filename");
+    }
+
+    mediaUrl ??= GetString(node, "mediaUrl", "media_url");
+    mediaBase64 ??= GetString(node, "base64", "fileBase64");
+    mediaMimeType ??= GetString(node, "mimetype", "mimeType");
+    mediaFileName ??= GetString(node, "fileName", "filename");
+    mediaUrl ??= GetString(messageNode, "mediaUrl", "media_url", "url");
+    mediaBase64 ??= GetString(messageNode, "base64", "fileBase64", "data");
+    mediaMimeType ??= GetString(messageNode, "mimetype", "mimeType");
+    mediaFileName ??= GetString(messageNode, "fileName", "filename");
+
+    if (string.IsNullOrWhiteSpace(mediaBase64) &&
+        !string.IsNullOrWhiteSpace(mediaUrl) &&
+        mediaUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+    {
+        var value = mediaUrl;
+        var comma = value.IndexOf(',');
+        if (comma > 0 && comma + 1 < value.Length)
+        {
+            var header = value[..comma];
+            if (string.IsNullOrWhiteSpace(mediaMimeType) &&
+                header.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var semicolon = header.IndexOf(';');
+                if (semicolon > 5)
+                {
+                    mediaMimeType = header[5..semicolon];
+                }
+            }
+
+            mediaBase64 = value[(comma + 1)..];
+            mediaUrl = null;
+        }
+    }
+
+    if (!hasMedia)
+    {
+        var messageType = GetString(node, "messageType", "type");
+        hasMedia = !string.IsNullOrWhiteSpace(messageType) &&
+                   (messageType.Contains("image", StringComparison.OrdinalIgnoreCase) ||
+                    messageType.Contains("media", StringComparison.OrdinalIgnoreCase));
+    }
+
+    return hasMedia || !string.IsNullOrWhiteSpace(mediaUrl) || !string.IsNullOrWhiteSpace(mediaBase64);
+}
+
+static bool TryGetIncomingMediaNode(JsonElement node, out JsonElement mediaNode)
+{
+    if (node.TryGetProperty("imageMessage", out mediaNode)) return true;
+    if (node.TryGetProperty("videoMessage", out mediaNode)) return true;
+    if (node.TryGetProperty("documentMessage", out mediaNode)) return true;
+    if (node.TryGetProperty("stickerMessage", out mediaNode)) return true;
+
+    mediaNode = default;
+    return false;
+}
+
+static bool TryUnwrapMessageEnvelope(JsonElement messageNode, out JsonElement innerMessage)
+{
+    if (messageNode.TryGetProperty("ephemeralMessage", out var ephemeral) &&
+        ephemeral.TryGetProperty("message", out innerMessage))
+    {
+        return true;
+    }
+
+    if (messageNode.TryGetProperty("viewOnceMessage", out var viewOnce) &&
+        viewOnce.TryGetProperty("message", out innerMessage))
+    {
+        return true;
+    }
+
+    if (messageNode.TryGetProperty("viewOnceMessageV2", out var viewOnceV2) &&
+        viewOnceV2.TryGetProperty("message", out innerMessage))
+    {
+        return true;
+    }
+
+    if (messageNode.TryGetProperty("viewOnceMessageV2Extension", out var viewOnceExt) &&
+        viewOnceExt.TryGetProperty("message", out innerMessage))
+    {
+        return true;
+    }
+
+    if (messageNode.TryGetProperty("editedMessage", out var edited) &&
+        edited.TryGetProperty("message", out innerMessage))
+    {
+        return true;
+    }
+
+    innerMessage = default;
+    return false;
 }
 
 static List<WhatsAppIncomingMessage> ExtractEvolutionMessages(string body)
@@ -1679,15 +4128,17 @@ static List<WhatsAppIncomingMessage> ExtractEvolutionMessages(string body)
 
 static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, out WhatsAppIncomingMessage msg)
 {
-    msg = new WhatsAppIncomingMessage(string.Empty, string.Empty, false, instanceName, null);
+    msg = new WhatsAppIncomingMessage(string.Empty, null, string.Empty, false, instanceName, null, false, null, null, null, null, null);
 
     var chatId = string.Empty;
+    var senderId = string.Empty;
     var messageId = string.Empty;
     var fromMe = false;
 
     if (node.TryGetProperty("key", out var key))
     {
         chatId = GetString(key, "remoteJid") ?? string.Empty;
+        senderId = GetString(key, "participant", "sender", "from") ?? string.Empty;
         messageId = GetString(key, "id") ?? string.Empty;
         fromMe = GetBool(key, "fromMe");
     }
@@ -1702,13 +4153,48 @@ static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, o
         fromMe = GetBool(node, "fromMe");
     }
 
+    if (string.IsNullOrWhiteSpace(senderId))
+    {
+        senderId = GetString(node, "participant", "sender", "sender_id", "from") ?? string.Empty;
+    }
+
+    if (string.IsNullOrWhiteSpace(senderId) && node.TryGetProperty("sender", out var senderNode))
+    {
+        if (senderNode.ValueKind == JsonValueKind.String)
+        {
+            senderId = senderNode.GetString() ?? string.Empty;
+        }
+        else if (senderNode.ValueKind == JsonValueKind.Object)
+        {
+            senderId = GetString(senderNode, "id", "jid", "from", "user") ?? string.Empty;
+        }
+    }
+
+    if (string.IsNullOrWhiteSpace(senderId) && fromMe)
+    {
+        senderId = "self";
+    }
+
     var text = ExtractMessageText(node);
-    if (string.IsNullOrWhiteSpace(text))
+    var hasMedia = TryExtractIncomingMedia(node, out var mediaUrl, out var mediaBase64, out var mediaMimeType, out var mediaFileName);
+    if (string.IsNullOrWhiteSpace(text) && !hasMedia)
     {
         return false;
     }
 
-    msg = new WhatsAppIncomingMessage(chatId, text, fromMe, instanceName, string.IsNullOrWhiteSpace(messageId) ? null : messageId);
+    msg = new WhatsAppIncomingMessage(
+        chatId,
+        string.IsNullOrWhiteSpace(senderId) ? null : senderId,
+        text,
+        fromMe,
+        instanceName,
+        string.IsNullOrWhiteSpace(messageId) ? null : messageId,
+        hasMedia,
+        mediaUrl,
+        mediaBase64,
+        mediaMimeType,
+        mediaFileName,
+        node.GetRawText());
     return true;
 }
 
@@ -1851,6 +4337,9 @@ static bool TryParseInstagramWhatsAppCommand(string text, out InstagramWhatsAppC
         "status" => new InstagramWhatsAppCommand("review", argument),
         "confirmar" => new InstagramWhatsAppCommand("confirm", argument),
         "publicar" => new InstagramWhatsAppCommand("confirm", argument),
+        "reset" => new InstagramWhatsAppCommand("reset", argument),
+        "zerar" => new InstagramWhatsAppCommand("reset", argument),
+        "reiniciar" => new InstagramWhatsAppCommand("reset", argument),
         "ajuda" => new InstagramWhatsAppCommand("help", argument),
         "help" => new InstagramWhatsAppCommand("help", argument),
         _ => new InstagramWhatsAppCommand("unknown", payload)
@@ -2150,6 +4639,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var publishResult = await PublishInstagramDraftAsync(
                 draft.Id,
                 settings.InstagramPublish ?? new InstagramPublishSettings(),
+                settings.Gemini ?? new GeminiSettings(),
                 publishStore,
                 publishLogStore,
                 httpClientFactory,
@@ -2240,6 +4730,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var current = draft.ImageUrls ?? new List<string>();
             var merged = NormalizeExternalUrls(current.Concat(parsedImageCommand.ImageUrls), 10);
             draft.ImageUrls = merged;
+            draft.SelectedImageIndexes = SanitizeInstagramSelectedIndexes(draft.SelectedImageIndexes, draft.ImageUrls.Count);
             await publishStore.UpdateAsync(draft, ct);
 
             await publishLogStore.AppendAsync(new InstagramPublishLogEntry
@@ -2304,20 +4795,24 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
                 return new[] { "Nenhuma imagem valida selecionada." };
             }
 
-            draft.ImageUrls = selected;
+            var selectedIndexes = parsedManage.SelectedIndexes
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList();
+            draft.SelectedImageIndexes = selectedIndexes;
             await publishStore.UpdateAsync(draft, ct);
             await publishLogStore.AppendAsync(new InstagramPublishLogEntry
             {
                 Action = "wa_command_draft_select_images",
                 Success = true,
                 DraftId = draft.Id,
-                Details = $"Indexes={string.Join(",", parsedManage.SelectedIndexes)},Total={selected.Count}"
+                Details = $"Indexes={string.Join(",", selectedIndexes)},Total={selected.Count}"
             }, ct);
 
             var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
             return new[]
             {
-                $"Imagens selecionadas no draft {shortId}: {string.Join(", ", parsedManage.SelectedIndexes)}.",
+                $"Imagens selecionadas no draft {shortId}: {string.Join(", ", selectedIndexes)}.",
                 $"Total para publicar: {selected.Count}. Use /ig confirmar {shortId}."
             };
         }
@@ -2332,6 +4827,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             }
 
             draft.ImageUrls = new List<string>();
+            draft.SelectedImageIndexes = new List<int>();
             await publishStore.UpdateAsync(draft, ct);
             await publishLogStore.AppendAsync(new InstagramPublishLogEntry
             {
@@ -2531,9 +5027,10 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
                 .ToList();
 
             draft.Caption = EnsureInstagramCaptionContainsCta(FormatInstagramCaptionForReadability(draft.Caption), draft.Ctas);
-            if (draft.CaptionOptions.Count > 0 && draft.SelectedCaptionIndex >= 1 && draft.SelectedCaptionIndex <= draft.CaptionOptions.Count)
+            var captionOptions = draft.CaptionOptions ??= new List<string>();
+            if (captionOptions.Count > 0 && draft.SelectedCaptionIndex >= 1 && draft.SelectedCaptionIndex <= captionOptions.Count)
             {
-                draft.CaptionOptions[draft.SelectedCaptionIndex - 1] = draft.Caption;
+                captionOptions[draft.SelectedCaptionIndex - 1] = draft.Caption;
             }
 
             await publishStore.UpdateAsync(draft, ct);
@@ -2574,6 +5071,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var publishResult = await PublishInstagramDraftAsync(
                 draft.Id,
                 settings.InstagramPublish ?? new InstagramPublishSettings(),
+                settings.Gemini ?? new GeminiSettings(),
                 publishStore,
                 publishLogStore,
                 httpClientFactory,
@@ -2592,9 +5090,13 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             }
 
             var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
-            var help = publishResult.Error?.Contains("Sem imagens", StringComparison.OrdinalIgnoreCase) == true
+            var isNoImageError = publishResult.Error?.Contains("Sem imagens", StringComparison.OrdinalIgnoreCase) == true;
+            var isMediaTypeError = IsInstagramMediaTypeError(publishResult.Error);
+            var help = isNoImageError
                 ? $"\nDica: /ig imagem {shortId} <url-da-imagem>"
-                : string.Empty;
+                : isMediaTypeError
+                    ? $"\nDica: /ig imagens {shortId} (listar)\nDepois selecione JPG/PNG: /ig imagens {shortId} 1,2\nOu limpe e adicione novas: /ig limpar-imagens {shortId}"
+                    : string.Empty;
 
             return new[] { $"Falha ao publicar.\nDraft: {draft.Id}\nErro: {publishResult.Error ?? "erro desconhecido"}{help}" };
         }
@@ -2707,6 +5209,20 @@ static async Task<(InstagramPublishDraft? Draft, string? Error)> ResolveInstagra
         return latest is null ? (null, "Nenhum rascunho encontrado.") : (latest, null);
     }
 
+    if (int.TryParse(key, out var indexRef) && indexRef > 0)
+    {
+        var ordered = items
+            .OrderByDescending(x => x.CreatedAt)
+            .ToList();
+
+        if (indexRef <= ordered.Count)
+        {
+            return (ordered[indexRef - 1], null);
+        }
+
+        return (null, $"Indice {indexRef} fora do intervalo. Existem {ordered.Count} rascunhos.");
+    }
+
     var exact = items.FirstOrDefault(x => string.Equals(x.Id, key, StringComparison.OrdinalIgnoreCase));
     if (exact is not null)
     {
@@ -2762,6 +5278,8 @@ static string BuildInstagramCommandHelp()
         "- /ig templates : lista templates disponiveis.",
         "- /ig revisar <id|ultimo> : mostra resumo do rascunho.",
         "- /ig confirmar <id|ultimo> : publica no Instagram.",
+        "- /ig revisar <1|2|3> : atalho por ordem do rascunho mais recente.",
+        "- /ig reset [tudo] : limpa estado do chat; com 'tudo' apaga os drafts.",
         "- /ig anunciar ... : cria anuncio (Meta Ads) do post publicado.",
         "- /ig menu : abre menu numerico rapido (1..8).",
         "",
@@ -2919,15 +5437,561 @@ static string BuildInstagramMenuMessage()
     });
 }
 
-static string BuildBioLinksPageHtml(IReadOnlyList<BioLinkItem> items, string currentUrl)
+static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel model, string currentUrl)
 {
+    var input = System.Net.WebUtility.HtmlEncode(model.Input ?? string.Empty);
+    var current = System.Net.WebUtility.HtmlEncode(currentUrl);
+    var hasInput = !string.IsNullOrWhiteSpace(model.Input);
     var sb = new StringBuilder();
     sb.AppendLine("<!doctype html>");
     sb.AppendLine("<html lang=\"pt-BR\">");
     sb.AppendLine("<head>");
     sb.AppendLine("  <meta charset=\"utf-8\" />");
     sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
-    sb.AppendLine("  <title>Achadinhos - Links</title>");
+    sb.AppendLine("  <title>Conversor Inteligente de Links - Rei das Ofertas</title>");
+    sb.AppendLine("  <meta name=\"robots\" content=\"noindex,nofollow\" />");
+    sb.AppendLine("  <style>");
+    sb.AppendLine("    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=Sora:wght@600;700&display=swap');");
+    sb.AppendLine("    :root{--bg:#f8f5f0;--bg2:#eef7ff;--card:#ffffff;--line:#e6e0d6;--text:#0f172a;--muted:#55637a;--brand:#ff7a18;--brand2:#0ea5a4;--brandText:#ffffff;--accent:#0f172a;--accentText:#ffffff;--ok:#0f766e;--warn:#b42318;--chip:#eef9f7;--shadow:0 20px 50px rgba(15,23,42,.08)}");
+    sb.AppendLine("    *{box-sizing:border-box}");
+    sb.AppendLine("    body{margin:0;color:var(--text);font-family:'Manrope','Sora',sans-serif;background:radial-gradient(900px 520px at -10% -20%,#ffe1c5 0%,rgba(255,225,197,0) 70%),radial-gradient(700px 400px at 110% 10%,#cfefff 0%,rgba(207,239,255,0) 60%),linear-gradient(180deg,#fbfbfb 0%,#f6f2ec 100%)}");
+    sb.AppendLine("    .wrap{max-width:1120px;margin:0 auto;padding:28px 16px 64px}");
+    sb.AppendLine("    .hero{position:relative;padding:26px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(135deg,#ffffff 0%,#fff4e6 40%,#eff9ff 100%);box-shadow:var(--shadow);overflow:hidden}");
+    sb.AppendLine("    .hero:after{content:'';position:absolute;right:-80px;top:-60px;width:220px;height:220px;background:radial-gradient(circle,#ffd1a8 0%,rgba(255,209,168,0) 70%);opacity:.8}");
+    sb.AppendLine("    .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:#fff2e2;color:#a14a08;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em}");
+    sb.AppendLine("    h1{margin:12px 0 6px;font-size:1.7rem;line-height:1.2;font-family:'Sora',sans-serif}");
+    sb.AppendLine("    .subtitle{margin:0;color:var(--muted);max-width:760px;font-size:.98rem}");
+    sb.AppendLine("    .form{margin-top:16px;display:flex;gap:12px;flex-wrap:wrap}");
+    sb.AppendLine("    .form input{flex:1;min-width:260px;padding:14px 14px;border-radius:14px;border:1px solid var(--line);font-size:1rem;background:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}");
+    sb.AppendLine("    .form button{padding:14px 20px;border:0;border-radius:14px;background:linear-gradient(135deg,#ff7a18 0%,#ffb25b 100%);color:var(--brandText);font-weight:800;cursor:pointer;box-shadow:0 10px 20px rgba(255,122,24,.28)}");
+    sb.AppendLine("    .metaRow{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}");
+    sb.AppendLine("    .hint{font-size:.82rem;color:var(--muted)}");
+    sb.AppendLine("    .copyMini{border:1px solid var(--line);background:#fff;padding:6px 10px;border-radius:10px;cursor:pointer;font-weight:700;color:#2f4768}");
+    sb.AppendLine("    .chipRow{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}");
+    sb.AppendLine("    .chip{padding:6px 10px;border-radius:999px;background:#f0f6ff;color:#1f3760;font-size:.78rem;font-weight:700}");
+    sb.AppendLine("    .panel{margin-top:16px;padding:16px 18px;border-radius:16px;border:1px solid var(--line);background:var(--card);box-shadow:var(--shadow)}");
+    sb.AppendLine("    .status{font-weight:800;font-family:'Sora',sans-serif}");
+    sb.AppendLine("    .status.ok{color:var(--ok)}");
+    sb.AppendLine("    .status.error{color:var(--warn)}");
+    sb.AppendLine("    .steps{margin:10px 0 0;padding-left:18px;color:var(--muted);line-height:1.6;font-size:.95rem}");
+    sb.AppendLine("    .result{margin-top:18px;display:grid;grid-template-columns:minmax(260px,380px) 1fr;gap:16px}");
+    sb.AppendLine("    .media{border:1px solid var(--line);border-radius:18px;background:#fff;min-height:260px;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:var(--shadow)}");
+    sb.AppendLine("    .media img{width:100%;height:100%;object-fit:cover;display:block}");
+    sb.AppendLine("    .media .empty{padding:16px;color:var(--muted);font-size:.9rem;text-align:center}");
+    sb.AppendLine("    .card{border:1px solid var(--line);border-radius:18px;background:#fff;padding:18px;box-shadow:var(--shadow)}");
+    sb.AppendLine("    .topLine{display:flex;gap:8px;flex-wrap:wrap;align-items:center}");
+    sb.AppendLine("    .store{display:inline-flex;align-items:center;padding:6px 12px;border-radius:999px;background:var(--chip);color:#0f6c59;font-size:.78rem;font-weight:800}");
+    sb.AppendLine("    .aff{display:inline-flex;align-items:center;padding:6px 12px;border-radius:999px;background:#f1f5f9;color:#1f2a3a;font-size:.78rem;font-weight:800}");
+    sb.AppendLine("    .pill{display:inline-flex;align-items:center;padding:6px 12px;border-radius:999px;background:#fff4e6;color:#a14a08;font-size:.78rem;font-weight:800}");
+    sb.AppendLine("    .title{margin-top:10px;font-size:1.26rem;line-height:1.36;font-weight:800}");
+    sb.AppendLine("    .desc{margin-top:8px;color:var(--muted);line-height:1.5}");
+    sb.AppendLine("    .priceGrid{margin-top:14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}");
+    sb.AppendLine("    .stat{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff;display:flex;flex-direction:column;gap:6px}");
+    sb.AppendLine("    .stat.main{grid-column:span 2;background:linear-gradient(135deg,#fff1e1 0%,#fff 55%)}");
+    sb.AppendLine("    .stat-label{font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:#7a8699;font-weight:800}");
+    sb.AppendLine("    .stat-value{font-size:1.2rem;font-weight:800;color:#0f172a}");
+    sb.AppendLine("    .stat-sub{font-size:.85rem;color:var(--muted)}");
+    sb.AppendLine("    .meta{margin-top:10px;font-size:.84rem;color:var(--muted)}");
+    sb.AppendLine("    .actions{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap}");
+    sb.AppendLine("    .btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:12px 14px;border-radius:12px;font-weight:800;border:0;cursor:pointer}");
+    sb.AppendLine("    .btn.buy{background:linear-gradient(135deg,#0ea5a4 0%,#12c5b7 100%);color:#fff;box-shadow:0 10px 20px rgba(14,165,164,.25)}");
+    sb.AppendLine("    .btn.secondary{background:#0f172a;color:#fff}");
+    sb.AppendLine("    .btn.ghost{background:#f4f6fb;color:#1f2a3a;border:1px solid var(--line)}");
+    sb.AppendLine("    .urlGrid{margin-top:14px;display:grid;gap:10px}");
+    sb.AppendLine("    .urlRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}");
+    sb.AppendLine("    textarea.urlbox{width:100%;min-height:56px;resize:vertical;padding:10px 12px;border:1px dashed var(--line);border-radius:12px;background:#fbfdff;font-family:Consolas,'Courier New',monospace;font-size:.8rem;line-height:1.34;color:#1f2a3a}");
+    sb.AppendLine("    .copyBtn{padding:10px 12px;border:1px solid var(--line);background:#fff;border-radius:12px;font-weight:800;color:#264467;cursor:pointer;min-width:110px}");
+    sb.AppendLine("    .toast{margin-top:10px;font-size:.84rem;color:#1f5f42;font-weight:700;min-height:18px}");
+    sb.AppendLine("    @media (max-width:860px){");
+    sb.AppendLine("      .result{grid-template-columns:1fr}");
+    sb.AppendLine("      .media{min-height:220px}");
+    sb.AppendLine("    }");
+    sb.AppendLine("    @media (max-width:680px){");
+    sb.AppendLine("      .priceGrid{grid-template-columns:1fr}");
+    sb.AppendLine("      .stat.main{grid-column:span 1}");
+    sb.AppendLine("      .urlRow{grid-template-columns:1fr}");
+    sb.AppendLine("      .copyBtn{width:100%}");
+    sb.AppendLine("    }");
+    sb.AppendLine("  </style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body><main class=\"wrap\">");
+    sb.AppendLine("  <section class=\"hero\">");
+    sb.AppendLine("    <span class=\"badge\">Ferramenta oficial de conversao</span>");
+    sb.AppendLine("    <h1>Conversor de Link de Afiliado</h1>");
+    sb.AppendLine("    <p class=\"subtitle\">Cole qualquer link de oferta. O sistema converte, valida e gera um link pronto para compartilhar com sua audiencia.</p>");
+    sb.AppendLine("    <form class=\"form\" method=\"get\" action=\"/conversor\">");
+    sb.AppendLine($"      <input id=\"converterInput\" name=\"url\" value=\"{input}\" placeholder=\"Ex: https://amzn.to/...\" autocomplete=\"off\" />");
+    sb.AppendLine("      <button type=\"submit\">Converter agora</button>");
+    sb.AppendLine("    </form>");
+    sb.AppendLine("    <div class=\"metaRow\">");
+    sb.AppendLine($"      <span class=\"hint\">Link desta pagina: {current}</span>");
+    sb.AppendLine("      <button type=\"button\" class=\"copyMini\" onclick=\"copyById('pageLink','Link da pagina')\">Copiar pagina</button>");
+    sb.AppendLine("      <textarea id=\"pageLink\" style=\"display:none;\">");
+    sb.AppendLine(current);
+    sb.AppendLine("      </textarea>");
+    sb.AppendLine("    </div>");
+    sb.AppendLine("    <div class=\"chipRow\">");
+    sb.AppendLine("      <span class=\"chip\">Amazon</span>");
+    sb.AppendLine("      <span class=\"chip\">Shopee</span>");
+    sb.AppendLine("      <span class=\"chip\">Shein</span>");
+    sb.AppendLine("      <span class=\"chip\">Mercado Livre</span>");
+    sb.AppendLine("    </div>");
+    sb.AppendLine("  </section>");
+
+    if (!string.IsNullOrWhiteSpace(model.Error))
+    {
+        sb.AppendLine("  <section class=\"panel\">");
+        sb.AppendLine($"    <div class=\"status error\">Falha na conversao</div>");
+        sb.AppendLine($"    <div class=\"meta\">{System.Net.WebUtility.HtmlEncode(model.Error)}</div>");
+        if (!string.IsNullOrWhiteSpace(model.OriginalUrl))
+        {
+            sb.AppendLine($"    <div class=\"meta\">URL analisada: {System.Net.WebUtility.HtmlEncode(model.OriginalUrl)}</div>");
+        }
+        if (!string.IsNullOrWhiteSpace(model.ValidationError))
+        {
+            sb.AppendLine($"    <div class=\"meta\">Validacao: {System.Net.WebUtility.HtmlEncode(model.ValidationError)}</div>");
+        }
+        sb.AppendLine("    <ol class=\"steps\">");
+        sb.AppendLine("      <li>Confirme se o link abre normalmente no navegador.</li>");
+        sb.AppendLine("      <li>Tente o link completo da loja (nao apenas texto sem URL).</li>");
+        sb.AppendLine("      <li>Se persistir, envie outro link da mesma oferta.</li>");
+        sb.AppendLine("    </ol>");
+        sb.AppendLine("  </section>");
+    }
+    else if (model.Success)
+    {
+        var image = System.Net.WebUtility.HtmlEncode(model.ImageUrl ?? string.Empty);
+        var store = System.Net.WebUtility.HtmlEncode(model.Store ?? "Loja");
+        var title = System.Net.WebUtility.HtmlEncode(model.Title ?? "Oferta");
+        var price = System.Net.WebUtility.HtmlEncode(model.Price ?? "Preco sob consulta");
+        var previousPrice = System.Net.WebUtility.HtmlEncode(model.PreviousPrice ?? string.Empty);
+        var desc = System.Net.WebUtility.HtmlEncode(model.Description ?? string.Empty);
+        var host = System.Net.WebUtility.HtmlEncode(model.ConversionHost ?? "-");
+        var domainHost = System.Net.WebUtility.HtmlEncode(model.DomainHost ?? "-");
+        var converted = System.Net.WebUtility.HtmlEncode(model.ConvertedUrl ?? string.Empty);
+        var tracked = System.Net.WebUtility.HtmlEncode(model.TrackedUrl ?? string.Empty);
+        var correction = System.Net.WebUtility.HtmlEncode(model.CorrectionNote ?? string.Empty);
+        var source = System.Net.WebUtility.HtmlEncode(model.DataSource ?? "meta");
+        var couponCode = System.Net.WebUtility.HtmlEncode(model.CouponCode ?? string.Empty);
+        var couponDesc = System.Net.WebUtility.HtmlEncode(model.CouponDescription ?? string.Empty);
+        var couponDisplay = model.HasCoupon
+            ? (string.IsNullOrWhiteSpace(model.CouponCode) ? "Cupom ativo" : couponCode)
+            : "Sem cupom";
+        var couponHint = model.HasCoupon
+            ? (string.IsNullOrWhiteSpace(model.CouponDescription) ? "Cupom disponivel para esta loja" : couponDesc)
+            : "Se houver cupom, ele aparece no carrinho";
+        var previousDisplay = string.IsNullOrWhiteSpace(previousPrice) ? "—" : previousPrice;
+        var discountText = model.DiscountPercent.HasValue && model.DiscountPercent.Value > 0
+            ? System.Net.WebUtility.HtmlEncode($"{model.DiscountPercent.Value}% OFF")
+            : string.Empty;
+        var discountDisplay = string.IsNullOrWhiteSpace(discountText) ? "—" : discountText;
+        var shareCoupon = model.HasCoupon && !string.IsNullOrWhiteSpace(model.CouponCode)
+            ? $"\nCupom: {model.CouponCode}"
+            : string.Empty;
+        var shareText = $"{(string.IsNullOrWhiteSpace(model.Title) ? "Oferta" : model.Title)} | {(string.IsNullOrWhiteSpace(model.Price) ? "Preco sob consulta" : model.Price)}{shareCoupon}\nCompre aqui: {(string.IsNullOrWhiteSpace(model.TrackedUrl) ? model.ConvertedUrl : model.TrackedUrl)}";
+        var shareTextEncoded = System.Net.WebUtility.HtmlEncode(shareText);
+        var whatsAppShare = System.Net.WebUtility.HtmlEncode($"https://wa.me/?text={Uri.EscapeDataString(shareText)}");
+
+        sb.AppendLine("  <section class=\"panel\">");
+        sb.AppendLine($"    <div class=\"status ok\">Link convertido com sucesso ({(model.IsAffiliated ? "afiliado validado" : "sem validacao de afiliado")})</div>");
+        sb.AppendLine("    <div class=\"meta\">Use o botao de compra ou compartilhe o texto pronto com seu publico.</div>");
+        sb.AppendLine("  </section>");
+        sb.AppendLine("  <section class=\"result\">");
+        sb.AppendLine("    <div class=\"media\">");
+        if (!string.IsNullOrWhiteSpace(model.ImageUrl))
+        {
+            sb.AppendLine($"      <img src=\"{image}\" alt=\"Imagem da oferta\" loading=\"lazy\" />");
+        }
+        else
+        {
+            sb.AppendLine("      <div class=\"empty\">Sem imagem disponivel para esta oferta.</div>");
+        }
+        sb.AppendLine("    </div>");
+        sb.AppendLine("    <article class=\"card\">");
+        sb.AppendLine("      <div class=\"topLine\">");
+        sb.AppendLine($"        <span class=\"store\">{store}</span>");
+        sb.AppendLine($"        <span class=\"aff\">{(model.IsAffiliated ? "Afiliado confirmado" : "Afiliado sem validacao")}</span>");
+        sb.AppendLine($"        <span class=\"pill\">Fonte: {source}</span>");
+        sb.AppendLine("      </div>");
+        sb.AppendLine($"      <div class=\"title\">{title}</div>");
+        sb.AppendLine("      <div class=\"priceGrid\">");
+        sb.AppendLine("        <div class=\"stat main\">");
+        sb.AppendLine("          <div class=\"stat-label\">Preco atual</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{price}</div>");
+        sb.AppendLine($"          <div class=\"stat-sub\">{(model.IsAffiliated ? "Link afiliado confirmado" : "Link sem validacao de afiliado")}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"stat\">");
+        sb.AppendLine("          <div class=\"stat-label\">Preco anterior</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{previousDisplay}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"stat\">");
+        sb.AppendLine("          <div class=\"stat-label\">Desconto</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{discountDisplay}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"stat\">");
+        sb.AppendLine("          <div class=\"stat-label\">Cupom</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{couponDisplay}</div>");
+        sb.AppendLine($"          <div class=\"stat-sub\">{couponHint}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("      </div>");
+        if (!string.IsNullOrWhiteSpace(desc))
+        {
+            sb.AppendLine($"      <div class=\"desc\">{desc}</div>");
+        }
+        sb.AppendLine($"      <div class=\"meta\">Destino final: {host}</div>");
+        sb.AppendLine($"      <div class=\"meta\">Link publico no seu dominio: {domainHost}</div>");
+        sb.AppendLine("      <div class=\"actions\">");
+        sb.AppendLine($"        <a class=\"btn buy\" href=\"{tracked}\" target=\"_blank\" rel=\"noopener noreferrer\">Comprar com meu link</a>");
+        sb.AppendLine($"        <a class=\"btn secondary\" href=\"{whatsAppShare}\" target=\"_blank\" rel=\"noopener noreferrer\">Compartilhar no WhatsApp</a>");
+        sb.AppendLine($"        <a class=\"btn ghost\" href=\"{converted}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir link convertido</a>");
+        sb.AppendLine("      </div>");
+        sb.AppendLine("      <div class=\"urlGrid\">");
+        sb.AppendLine("        <div class=\"urlRow\">");
+        sb.AppendLine($"          <textarea id=\"trackedLink\" class=\"urlbox\" readonly>{tracked}</textarea>");
+        sb.AppendLine("          <button type=\"button\" class=\"copyBtn\" onclick=\"copyById('trackedLink','Link publico')\">Copiar link</button>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"urlRow\">");
+        sb.AppendLine($"          <textarea id=\"convertedLink\" class=\"urlbox\" readonly>{converted}</textarea>");
+        sb.AppendLine("          <button type=\"button\" class=\"copyBtn\" onclick=\"copyById('convertedLink','Link convertido')\">Copiar convertido</button>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"urlRow\">");
+        sb.AppendLine($"          <textarea id=\"shareText\" class=\"urlbox\" readonly>{shareTextEncoded}</textarea>");
+        sb.AppendLine("          <button type=\"button\" class=\"copyBtn\" onclick=\"copyById('shareText','Texto de divulgacao')\">Copiar texto</button>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("      </div>");
+        sb.AppendLine("      <div id=\"copyToast\" class=\"toast\"></div>");
+        if (!string.IsNullOrWhiteSpace(correction))
+        {
+            sb.AppendLine($"      <div class=\"meta\">Ajuste aplicado: {correction}</div>");
+        }
+        sb.AppendLine("    </article>");
+        sb.AppendLine("  </section>");
+    }
+    else if (!hasInput)
+    {
+        sb.AppendLine("  <section class=\"panel\">");
+        sb.AppendLine("    <div class=\"status\">Como usar</div>");
+        sb.AppendLine("    <ol class=\"steps\">");
+        sb.AppendLine("      <li>Cole o link original de produto no campo acima.</li>");
+        sb.AppendLine("      <li>Clique em <strong>Converter agora</strong>.</li>");
+        sb.AppendLine("      <li>Copie o <strong>Link publico</strong> ou o <strong>Texto de divulgacao</strong>.</li>");
+        sb.AppendLine("      <li>Envie para seu publico em grupos, stories ou bio.</li>");
+        sb.AppendLine("    </ol>");
+        sb.AppendLine("  </section>");
+    }
+
+    sb.AppendLine("  <script>");
+    sb.AppendLine("    function showCopyToast(msg){");
+    sb.AppendLine("      var el=document.getElementById('copyToast');");
+    sb.AppendLine("      if(!el){return;}");
+    sb.AppendLine("      el.textContent=msg+' copiado com sucesso.';");
+    sb.AppendLine("      clearTimeout(window.__copyToastTimer);");
+    sb.AppendLine("      window.__copyToastTimer=setTimeout(function(){el.textContent='';},2200);");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function copyById(id,label){");
+    sb.AppendLine("      var el=document.getElementById(id);");
+    sb.AppendLine("      if(!el){return;}");
+    sb.AppendLine("      var value=('value' in el)?el.value:el.textContent;");
+    sb.AppendLine("      if(!value){return;}");
+    sb.AppendLine("      if(navigator.clipboard && window.isSecureContext){");
+    sb.AppendLine("        navigator.clipboard.writeText(value).then(function(){showCopyToast(label);}).catch(function(){fallbackCopy(el,label);});");
+    sb.AppendLine("      } else {");
+    sb.AppendLine("        fallbackCopy(el,label);");
+    sb.AppendLine("      }");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function fallbackCopy(el,label){");
+    sb.AppendLine("      if(el.select){el.select();el.setSelectionRange(0,99999);} ");
+    sb.AppendLine("      document.execCommand('copy');");
+    sb.AppendLine("      showCopyToast(label);");
+    sb.AppendLine("    }");
+    sb.AppendLine("  </script>");
+    sb.AppendLine("</main></body></html>");
+    return sb.ToString();
+}
+
+static string? NormalizeConverterInputToUrl(string? input)
+{
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return null;
+    }
+
+    var raw = input.Trim().Trim('"', '\'');
+    var detected = ExtractFirstUrl(raw) ?? raw;
+    if (Uri.TryCreate(detected, UriKind.Absolute, out var absolute))
+    {
+        return absolute.ToString();
+    }
+
+    if (Uri.TryCreate($"https://{detected}", UriKind.Absolute, out var withScheme))
+    {
+        return withScheme.ToString();
+    }
+
+    return null;
+}
+
+static async Task<string?> TryResolveFinalUrlForMetaAsync(string? url, IHttpClientFactory httpClientFactory, CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return null;
+    }
+
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return null;
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient("default");
+        using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        var finalUri = res.RequestMessage?.RequestUri;
+        if (finalUri is null)
+        {
+            return null;
+        }
+
+        return finalUri.ToString();
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static LinkMetaResult MergeConverterMeta(LinkMetaResult primary, LinkMetaResult secondary)
+{
+    return new LinkMetaResult
+    {
+        Title = ChooseBestConverterTitle(primary.Title, secondary.Title),
+        Description = ChooseBestConverterDescription(primary.Description, secondary.Description),
+        PriceText = FirstNonEmpty(primary.PriceText ?? string.Empty, secondary.PriceText ?? string.Empty),
+        Images = (primary.Images ?? new List<string>())
+            .Concat(secondary.Images ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList(),
+        Videos = (primary.Videos ?? new List<string>())
+            .Concat(secondary.Videos ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList()
+    };
+}
+
+static string ChooseBestConverterTitle(string? preferred, string? fallback)
+{
+    var candidates = new[] { preferred, fallback }
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => System.Net.WebUtility.HtmlDecode(x?.Trim()) ?? string.Empty)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (candidates.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    var ordered = candidates
+        .Select(title => new { Title = title, Score = ScoreConverterTitle(title) })
+        .OrderByDescending(x => x.Score)
+        .ThenByDescending(x => x.Title.Length)
+        .ToList();
+
+    return ordered[0].Title;
+}
+
+static string ChooseBestConverterDescription(string? preferred, string? fallback)
+{
+    var first = System.Net.WebUtility.HtmlDecode(preferred?.Trim()) ?? string.Empty;
+    var second = System.Net.WebUtility.HtmlDecode(fallback?.Trim()) ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(first)) return second;
+    if (string.IsNullOrWhiteSpace(second)) return first;
+    return second.Length > first.Length ? second : first;
+}
+
+static int ScoreConverterTitle(string title)
+{
+    if (string.IsNullOrWhiteSpace(title))
+    {
+        return 0;
+    }
+
+    var score = 0;
+    var normalized = title.Trim().ToLowerInvariant();
+    if (normalized.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+    {
+        score -= 60;
+    }
+
+    var words = Regex.Matches(normalized, @"[a-z0-9À-ÿ]{2,}", RegexOptions.CultureInvariant).Count;
+    score += Math.Min(words * 3, 45);
+    score += Math.Min(normalized.Length / 8, 30);
+
+    if (normalized.Contains("home", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("inicio", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("index", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("login", StringComparison.OrdinalIgnoreCase))
+    {
+        score -= 40;
+    }
+
+    if (normalized.Contains("produto", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("oferta", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("kit", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 8;
+    }
+
+    return score;
+}
+
+static string SelectBestConverterImage(IReadOnlyList<string>? images, string? title, string? description)
+{
+    if (images is null || images.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    var valid = images
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Where(x => Uri.TryCreate(x, UriKind.Absolute, out _))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (valid.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    var keywords = ExtractConverterImageKeywords(title, description);
+    var ranked = valid
+        .Select(url => new { Url = url, Score = ScoreConverterImage(url, keywords) })
+        .OrderByDescending(x => x.Score)
+        .ToList();
+
+    return ranked[0].Url;
+}
+
+static int ScoreConverterImage(string url, IReadOnlyList<string> keywords)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return int.MinValue;
+    }
+
+    var score = 0;
+    var lower = url.ToLowerInvariant();
+
+    if (lower.Contains(".jpg", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains(".png", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 120;
+    }
+    else if (lower.Contains(".webp", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 55;
+    }
+    else if (lower.Contains(".gif", StringComparison.OrdinalIgnoreCase))
+    {
+        score -= 40;
+    }
+
+    var badTokens = new[] { "logo", "icon", "avatar", "sprite", "placeholder", "favicon", "banner" };
+    if (badTokens.Any(t => lower.Contains(t, StringComparison.OrdinalIgnoreCase)))
+    {
+        score -= 120;
+    }
+
+    if (lower.Contains("product", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains("produto", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains("item", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 22;
+    }
+
+    foreach (var keyword in keywords.Take(5))
+    {
+        if (lower.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 15;
+        }
+    }
+
+    var widthMatch = Regex.Match(lower, @"(?:\?|&)(?:w|width)=(?<v>\d{1,4})", RegexOptions.CultureInvariant);
+    if (widthMatch.Success && int.TryParse(widthMatch.Groups["v"].Value, out var width) && width > 0 && width <= 180)
+    {
+        score -= 45;
+    }
+    var heightMatch = Regex.Match(lower, @"(?:\?|&)(?:h|height)=(?<v>\d{1,4})", RegexOptions.CultureInvariant);
+    if (heightMatch.Success && int.TryParse(heightMatch.Groups["v"].Value, out var height) && height > 0 && height <= 180)
+    {
+        score -= 45;
+    }
+
+    return score;
+}
+
+static List<string> ExtractConverterImageKeywords(string? title, string? description)
+{
+    var text = $"{title} {description}".ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return new List<string>();
+    }
+
+    var stop = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "para","com","sem","de","da","do","das","dos","e","em","na","no","um","uma","por","pra","pro",
+        "the","and","for","with","from","this","that","produto","oferta","link","loja","comprar","preco"
+    };
+
+    return Regex.Matches(text, @"[a-z0-9À-ÿ]{4,}", RegexOptions.CultureInvariant)
+        .Select(m => m.Value.Trim())
+        .Where(x => !stop.Contains(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Take(8)
+        .ToList();
+}
+
+static string ExtractPriceFromText(string? text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return string.Empty;
+    }
+
+    var match = Regex.Match(
+        text,
+        @"(R\$\s?\d{1,3}(?:\.\d{3})*(?:,\d{2})?|\d{1,3}(?:\.\d{3})*,\d{2}\s?(?:reais|BRL))",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    return match.Success ? match.Value.Trim() : string.Empty;
+}
+
+static string BuildBioLinksPageHtml(
+    IReadOnlyList<BioLinkItem> items,
+    string currentUrl,
+    BioHubSettings settings,
+    string source,
+    string? campaign)
+{
+    var sb = new StringBuilder();
+    var brandName = string.IsNullOrWhiteSpace(settings.BrandName) ? "Rei das Ofertas" : settings.BrandName.Trim();
+    var headline = string.IsNullOrWhiteSpace(settings.Headline) ? "Achadinhos em destaque" : settings.Headline.Trim();
+    var subheadline = string.IsNullOrWhiteSpace(settings.Subheadline) ? "Toque no botao para abrir a oferta." : settings.Subheadline.Trim();
+    var buttonLabel = string.IsNullOrWhiteSpace(settings.ButtonLabel) ? "Abrir oferta" : settings.ButtonLabel.Trim();
+    var campaignLabel = string.IsNullOrWhiteSpace(campaign) ? "sem campanha" : campaign;
+    sb.AppendLine("<!doctype html>");
+    sb.AppendLine("<html lang=\"pt-BR\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("  <meta charset=\"utf-8\" />");
+    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+    sb.AppendLine($"  <title>{System.Net.WebUtility.HtmlEncode(brandName)} - Links</title>");
     sb.AppendLine("  <style>");
     sb.AppendLine("    :root{--bg:#f7f5ef;--card:#fffaf2;--line:#e8dfcc;--text:#1f1a14;--muted:#6a5f4e;--btn:#1f8f5f;--btnText:#fff;}");
     sb.AppendLine("    *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(180deg,#fffdf8 0%,var(--bg) 100%);color:var(--text)}");
@@ -2944,8 +6008,9 @@ static string BuildBioLinksPageHtml(IReadOnlyList<BioLinkItem> items, string cur
     sb.AppendLine("</head>");
     sb.AppendLine("<body><main class=\"wrap\">");
     sb.AppendLine("  <section class=\"head\">");
-    sb.AppendLine("    <h1>Achadinhos em destaque</h1>");
-    sb.AppendLine("    <p>Toque no botao para abrir a oferta.</p>");
+    sb.AppendLine($"    <h1>{System.Net.WebUtility.HtmlEncode(headline)}</h1>");
+    sb.AppendLine($"    <p>{System.Net.WebUtility.HtmlEncode(subheadline)}</p>");
+    sb.AppendLine($"    <p style=\"margin-top:6px;font-size:.82rem;\">Origem: <strong>{System.Net.WebUtility.HtmlEncode(source)}</strong> | Campanha: <strong>{System.Net.WebUtility.HtmlEncode(campaignLabel)}</strong></p>");
     sb.AppendLine("  </section>");
 
     if (items.Count == 0)
@@ -2959,18 +6024,437 @@ static string BuildBioLinksPageHtml(IReadOnlyList<BioLinkItem> items, string cur
             var title = System.Net.WebUtility.HtmlEncode(item.Title);
             var link = System.Net.WebUtility.HtmlEncode(item.Link);
             var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
+            var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
+            var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
             var createdAt = item.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
 
             sb.AppendLine("  <article class=\"card\">");
             sb.AppendLine($"    <div class=\"title\">{title}</div>");
-            sb.AppendLine($"    <div class=\"meta\">Publicado em {createdAt}" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" · Palavra: <strong>{keyword}</strong>") + "</div>");
-            sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
+            if (item.ItemNumber.HasValue)
+            {
+                sb.AppendLine($"    <div class=\"meta\">Item: <strong>{item.ItemNumber.Value}</strong></div>");
+            }
+            sb.AppendLine($"    <div class=\"meta\">Loja: <strong>{store}</strong></div>");
+            sb.AppendLine($"    <div class=\"meta\">Publicado em {createdAt}" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" | Palavra: <strong>{keyword}</strong>") + "</div>");
+            sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">{System.Net.WebUtility.HtmlEncode(buttonLabel)}</a>");
+            sb.AppendLine($"    <div class=\"meta\" style=\"margin-top:8px;font-size:.8rem;\">Destino: {host}</div>");
             sb.AppendLine("  </article>");
         }
     }
 
     sb.AppendLine($"  <div class=\"foot\">Link desta pagina: {System.Net.WebUtility.HtmlEncode(currentUrl)}</div>");
     sb.AppendLine("</main></body></html>");
+    return sb.ToString();
+}
+
+static string BuildBioCurrentUrl(string publicBaseUrl, string source, string? campaign)
+{
+    var parameters = new List<string>();
+    if (!string.IsNullOrWhiteSpace(source))
+    {
+        parameters.Add($"src={Uri.EscapeDataString(source)}");
+    }
+
+    if (!string.IsNullOrWhiteSpace(campaign))
+    {
+        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+    }
+
+    var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
+    return $"{publicBaseUrl.TrimEnd('/')}/bio{query}";
+}
+
+static string ResolvePublicBaseUrl(string? primaryPublicBaseUrl, string? secondaryPublicBaseUrl, string requestScheme, string requestHost)
+{
+    if (TryNormalizePublicBaseUrl(primaryPublicBaseUrl, out var primary))
+    {
+        return primary;
+    }
+
+    if (TryNormalizePublicBaseUrl(secondaryPublicBaseUrl, out var secondary))
+    {
+        return secondary;
+    }
+
+    if (TryReadBundledPublicBaseUrl(out var bundled))
+    {
+        return bundled;
+    }
+
+    if (string.IsNullOrWhiteSpace(requestHost))
+    {
+        return string.Empty;
+    }
+
+    var scheme = string.IsNullOrWhiteSpace(requestScheme) ? "https" : requestScheme.Trim();
+    return $"{scheme}://{requestHost}".TrimEnd('/');
+}
+
+static bool TryNormalizePublicBaseUrl(string? value, out string normalized)
+{
+    normalized = string.Empty;
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return false;
+    }
+
+    var trimmed = value.Trim().TrimEnd('/');
+    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    if (!string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    normalized = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+    return !string.IsNullOrWhiteSpace(normalized);
+}
+
+static bool TryReadBundledPublicBaseUrl(out string publicBaseUrl)
+{
+    publicBaseUrl = string.Empty;
+    var file = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    if (!File.Exists(file))
+    {
+        return false;
+    }
+
+    try
+    {
+        using var stream = File.OpenRead(file);
+        using var doc = JsonDocument.Parse(stream);
+        if (doc.RootElement.TryGetProperty("Webhook", out var webhook) &&
+            webhook.ValueKind == JsonValueKind.Object &&
+            webhook.TryGetProperty("PublicBaseUrl", out var baseUrlProp))
+        {
+            var raw = baseUrlProp.GetString();
+            if (TryNormalizePublicBaseUrl(raw, out var normalized))
+            {
+                publicBaseUrl = normalized;
+                return true;
+            }
+        }
+    }
+    catch
+    {
+        // keep default fallback path
+    }
+
+    return false;
+}
+
+static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, string source, string? campaign)
+{
+    var parameters = new List<string>();
+    if (!string.IsNullOrWhiteSpace(source))
+    {
+        parameters.Add($"src={Uri.EscapeDataString(source)}");
+    }
+
+    if (!string.IsNullOrWhiteSpace(campaign))
+    {
+        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+    }
+
+    if (publicBaseUrl.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
+        publicBaseUrl.Contains("ngrok.app", StringComparison.OrdinalIgnoreCase))
+    {
+        parameters.Add("ngrok-skip-browser-warning=1");
+    }
+
+    var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
+    return $"{publicBaseUrl.TrimEnd('/')}/r/{trackingId}{query}";
+}
+
+static string AppendBioCampaignParameters(string? url, string source, string medium, string? campaign, string title)
+{
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return url?.Trim() ?? string.Empty;
+    }
+
+    var query = ParseQueryMap(uri.Query);
+    if (!string.IsNullOrWhiteSpace(source))
+    {
+        query["utm_source"] = source;
+    }
+
+    if (!string.IsNullOrWhiteSpace(medium))
+    {
+        query["utm_medium"] = medium;
+    }
+
+    if (!string.IsNullOrWhiteSpace(campaign))
+    {
+        query["utm_campaign"] = campaign;
+    }
+
+    var content = BuildUtmContentValue(title);
+    if (!string.IsNullOrWhiteSpace(content))
+    {
+        query["utm_content"] = content;
+    }
+
+    var queryString = query.Count == 0
+        ? string.Empty
+        : string.Join("&", query.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+
+    var builder = new UriBuilder(uri)
+    {
+        Query = queryString
+    };
+    return builder.Uri.ToString();
+}
+
+static Dictionary<string, string> ParseQueryMap(string? query)
+{
+    var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return map;
+    }
+
+    foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+    {
+        var idx = pair.IndexOf('=');
+        if (idx < 0)
+        {
+            continue;
+        }
+
+        var key = Uri.UnescapeDataString(pair[..idx]);
+        var value = Uri.UnescapeDataString(pair[(idx + 1)..]);
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            map[key] = value;
+        }
+    }
+
+    return map;
+}
+
+static string BuildUtmContentValue(string? title)
+{
+    if (string.IsNullOrWhiteSpace(title))
+    {
+        return "oferta";
+    }
+
+    var normalized = Regex.Replace(title.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "-", RegexOptions.CultureInvariant);
+    normalized = Regex.Replace(normalized, @"-+", "-", RegexOptions.CultureInvariant).Trim('-');
+    if (normalized.Length > 60)
+    {
+        normalized = normalized[..60].Trim('-');
+    }
+
+    return string.IsNullOrWhiteSpace(normalized) ? "oferta" : normalized;
+}
+
+static string? NormalizeTrackingToken(string? value, string? fallback)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return fallback;
+    }
+
+    var normalized = Regex.Replace(value.Trim().ToLowerInvariant(), @"[^a-z0-9_.-]+", "-", RegexOptions.CultureInvariant);
+    normalized = Regex.Replace(normalized, @"-+", "-", RegexOptions.CultureInvariant).Trim('-');
+    if (normalized.Length > 48)
+    {
+        normalized = normalized[..48].Trim('-');
+    }
+
+    if (string.IsNullOrWhiteSpace(normalized))
+    {
+        return fallback;
+    }
+
+    return normalized;
+}
+
+static string ResolveStoreNameFromUrl(string? url)
+{
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return "Loja";
+    }
+
+    var host = uri.Host.ToLowerInvariant();
+    if (host.Contains("amazon", StringComparison.Ordinal))
+    {
+        return "Amazon";
+    }
+
+    if (host.Contains("mercadolivre", StringComparison.Ordinal) || host.Contains("mercado-livre", StringComparison.Ordinal))
+    {
+        return "Mercado Livre";
+    }
+
+    if (host.Contains("shopee", StringComparison.Ordinal))
+    {
+        return "Shopee";
+    }
+
+    if (host.Contains("shein", StringComparison.Ordinal))
+    {
+        return "Shein";
+    }
+
+    return host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
+}
+
+static string ExtractHostForDisplay(string? url)
+{
+    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return "-";
+    }
+
+    var host = uri.Host;
+    return host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
+}
+
+static string TruncateForLog(string? value, int maxLength)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return string.Empty;
+    }
+
+    var trimmed = value.Trim();
+    return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+}
+
+static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string? query, string currentUrl)
+{
+    var q = query?.Trim() ?? string.Empty;
+    var qEncoded = System.Net.WebUtility.HtmlEncode(q);
+    var currentUrlEncoded = System.Net.WebUtility.HtmlEncode(currentUrl);
+    var sb = new StringBuilder();
+    sb.AppendLine("<!doctype html>");
+    sb.AppendLine("<html lang=\"pt-BR\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("  <meta charset=\"utf-8\" />");
+    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+    sb.AppendLine("  <title>Catalogo de Ofertas</title>");
+    sb.AppendLine("  <style>");
+    sb.AppendLine("    :root{--bg:#f6f8ff;--text:#1d2842;--sub:#61718f;--line:#d7deef;--card:#ffffff;--btn:#2f73ef;--btnText:#fff;}");
+    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(175deg,#fbfcff 0%,var(--bg) 100%);color:var(--text)}");
+    sb.AppendLine("    .wrap{max-width:980px;margin:0 auto;padding:22px 14px 32px}");
+    sb.AppendLine("    .head{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}");
+    sb.AppendLine("    h1{margin:0 0 6px;font-size:1.4rem} p{margin:0;color:var(--sub)}");
+    sb.AppendLine("    form{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}");
+    sb.AppendLine("    input{flex:1;min-width:220px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}");
+    sb.AppendLine("    button{padding:10px 14px;border:0;border-radius:10px;background:var(--btn);color:var(--btnText);font-weight:700;cursor:pointer}");
+    sb.AppendLine("    .list{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}");
+    sb.AppendLine("    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}");
+    sb.AppendLine("    .code{font-size:.82rem;color:var(--sub);font-weight:700}");
+    sb.AppendLine("    .title{margin-top:6px;font-weight:700;line-height:1.35}");
+    sb.AppendLine("    .meta{margin-top:6px;color:var(--sub);font-size:.86rem}");
+    sb.AppendLine("    .price{margin-top:8px;font-size:1rem;font-weight:700}");
+    sb.AppendLine("    .thumb{margin-top:8px;width:100%;height:170px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}");
+    sb.AppendLine("    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}");
+    sb.AppendLine("    .link{display:inline-block;text-decoration:none;background:var(--btn);color:#fff;padding:8px 10px;border-radius:8px;font-weight:700}");
+    sb.AppendLine("    .ghost{display:inline-block;text-decoration:none;background:#eef3ff;color:#1f3e80;padding:8px 10px;border-radius:8px;font-weight:700}");
+    sb.AppendLine("    .foot{margin-top:14px;color:var(--sub);font-size:.82rem}");
+    sb.AppendLine("  </style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body><main class=\"wrap\">");
+    sb.AppendLine("  <section class=\"head\">");
+    sb.AppendLine("    <h1>Catalogo de ofertas</h1>");
+    sb.AppendLine("    <p>Busque pelo numero (ex: 42) ou palavra-chave do item.</p>");
+    sb.AppendLine("    <form method=\"get\" action=\"/catalogo\">");
+    sb.AppendLine($"      <input name=\"q\" value=\"{qEncoded}\" placeholder=\"Ex: 42, ITEM42, FONE\" />");
+    sb.AppendLine("      <button type=\"submit\">Buscar</button>");
+    sb.AppendLine("    </form>");
+    sb.AppendLine("  </section>");
+
+    if (items.Count == 0)
+    {
+        sb.AppendLine("  <div class=\"head\" style=\"margin-top:12px;\">Nenhum item encontrado.</div>");
+    }
+    else
+    {
+        sb.AppendLine("  <section class=\"list\">");
+        foreach (var item in items)
+        {
+            var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
+            var store = System.Net.WebUtility.HtmlEncode(item.Store);
+            var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
+            var link = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
+            var detail = $"/item/{item.ItemNumber}";
+            var detailLink = System.Net.WebUtility.HtmlEncode(detail);
+            var price = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+
+            sb.AppendLine("    <article class=\"card\">");
+            sb.AppendLine($"      <div class=\"code\">ITEM {item.ItemNumber} | Palavra: {keyword}</div>");
+            sb.AppendLine($"      <div class=\"title\">{title}</div>");
+            sb.AppendLine($"      <div class=\"meta\">Loja: {store}</div>");
+            sb.AppendLine($"      <div class=\"price\">{price}</div>");
+            if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+            {
+                var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl);
+                sb.AppendLine($"      <img class=\"thumb\" src=\"{image}\" alt=\"Item {item.ItemNumber}\" loading=\"lazy\" />");
+            }
+            sb.AppendLine("      <div class=\"actions\">");
+            sb.AppendLine($"        <a class=\"link\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
+            sb.AppendLine($"        <a class=\"ghost\" href=\"{detailLink}\">Ver detalhes</a>");
+            sb.AppendLine("      </div>");
+            sb.AppendLine("    </article>");
+        }
+        sb.AppendLine("  </section>");
+    }
+
+    sb.AppendLine($"  <div class=\"foot\">Link desta pagina: {currentUrlEncoded}</div>");
+    sb.AppendLine("</main></body></html>");
+    return sb.ToString();
+}
+
+static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
+{
+    var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
+    var store = System.Net.WebUtility.HtmlEncode(item.Store);
+    var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
+    var price = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+    var offerUrl = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
+    var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
+    var catalog = System.Net.WebUtility.HtmlEncode(catalogUrl);
+    var sb = new StringBuilder();
+    sb.AppendLine("<!doctype html>");
+    sb.AppendLine("<html lang=\"pt-BR\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("  <meta charset=\"utf-8\" />");
+    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+    sb.AppendLine($"  <title>Item {item.ItemNumber} - Catalogo</title>");
+    sb.AppendLine("  <style>");
+    sb.AppendLine("    :root{--bg:#f6f8ff;--text:#1d2842;--sub:#61718f;--line:#d7deef;--card:#fff;--btn:#2f73ef;--btnText:#fff}");
+    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;background:linear-gradient(175deg,#fbfcff 0%,var(--bg) 100%);color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif}");
+    sb.AppendLine("    .wrap{max-width:720px;margin:0 auto;padding:24px 14px 28px}");
+    sb.AppendLine("    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}");
+    sb.AppendLine("    h1{margin:0 0 8px;font-size:1.35rem}.meta{color:var(--sub);margin-top:5px}");
+    sb.AppendLine("    .price{margin-top:10px;font-size:1.1rem;font-weight:700}.thumb{margin-top:12px;width:100%;height:290px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}");
+    sb.AppendLine("    .actions{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}.btn{display:inline-block;text-decoration:none;padding:10px 12px;border-radius:10px;font-weight:700}");
+    sb.AppendLine("    .btn.primary{background:var(--btn);color:var(--btnText)}.btn.ghost{background:#eef3ff;color:#1f3e80}");
+    sb.AppendLine("  </style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body><main class=\"wrap\"><article class=\"card\">");
+    sb.AppendLine($"  <h1>Item {item.ItemNumber} - {title}</h1>");
+    sb.AppendLine($"  <div class=\"meta\">Loja: {store}</div>");
+    sb.AppendLine($"  <div class=\"meta\">Palavra-chave: <strong>{keyword}</strong></div>");
+    sb.AppendLine($"  <div class=\"price\">{price}</div>");
+    if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+    {
+        sb.AppendLine($"  <img class=\"thumb\" src=\"{image}\" alt=\"Item {item.ItemNumber}\" />");
+    }
+    sb.AppendLine("  <div class=\"actions\">");
+    sb.AppendLine($"    <a class=\"btn primary\" href=\"{offerUrl}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
+    sb.AppendLine($"    <a class=\"btn ghost\" href=\"{catalog}\">Voltar ao catalogo</a>");
+    sb.AppendLine("  </div>");
+    sb.AppendLine("</article></main></body></html>");
     return sb.ToString();
 }
 
@@ -3028,15 +6512,28 @@ static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)
     if (draft.ImageUrls.Count > 0)
     {
         sb.AppendLine();
-        sb.AppendLine("Primeiras imagens:");
-        foreach (var url in draft.ImageUrls.Take(3))
+        sb.AppendLine("Imagens do post (todas):");
+        for (var i = 0; i < draft.ImageUrls.Count; i++)
         {
-            sb.AppendLine(url);
+            sb.AppendLine($"{i + 1}) {draft.ImageUrls[i]}");
         }
-        if (draft.ImageUrls.Count > 3)
+
+        var selectedIndexes = SanitizeInstagramSelectedIndexes(draft.SelectedImageIndexes, draft.ImageUrls.Count);
+        if (selectedIndexes.Count > 0)
         {
-            sb.AppendLine($"... +{draft.ImageUrls.Count - 3} imagens");
+            sb.AppendLine();
+            sb.AppendLine($"Selecionadas para envio: {string.Join(", ", selectedIndexes)} (total: {selectedIndexes.Count})");
         }
+        else
+        {
+            sb.AppendLine();
+            sb.AppendLine("Selecionadas para envio: todas as imagens acima.");
+        }
+
+        var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
+        sb.AppendLine();
+        sb.AppendLine($"Selecionar imagens: /ig imagens {shortId} 1,2");
+        sb.AppendLine($"Listar novamente: /ig imagens {shortId}");
     }
 
     return sb.ToString().Trim();
@@ -3045,6 +6542,7 @@ static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)
 static string BuildInstagramImageSelectionMessage(InstagramPublishDraft draft)
 {
     var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
+    var selectedIndexes = SanitizeInstagramSelectedIndexes(draft.SelectedImageIndexes, draft.ImageUrls.Count);
     var sb = new StringBuilder();
     sb.AppendLine($"Imagens do draft {shortId} (total: {draft.ImageUrls.Count}):");
     sb.AppendLine();
@@ -3055,6 +6553,15 @@ static string BuildInstagramImageSelectionMessage(InstagramPublishDraft draft)
     }
 
     sb.AppendLine();
+    if (selectedIndexes.Count > 0)
+    {
+        sb.AppendLine($"Selecionadas atualmente: {string.Join(", ", selectedIndexes)}");
+    }
+    else
+    {
+        sb.AppendLine("Selecionadas atualmente: todas");
+    }
+    sb.AppendLine();
     sb.AppendLine("Selecionar por indice:");
     sb.AppendLine($"- /ig imagens {shortId} 1");
     sb.AppendLine($"- /ig imagens {shortId} 2");
@@ -3062,6 +6569,45 @@ static string BuildInstagramImageSelectionMessage(InstagramPublishDraft draft)
     sb.AppendLine($"- /ig imagens {shortId} 2-4");
 
     return sb.ToString().Trim();
+}
+
+static List<int> SanitizeInstagramSelectedIndexes(IEnumerable<int>? indexes, int maxCount)
+{
+    if (indexes is null || maxCount <= 0)
+    {
+        return new List<int>();
+    }
+
+    return indexes
+        .Where(i => i >= 1 && i <= maxCount)
+        .Distinct()
+        .OrderBy(i => i)
+        .ToList();
+}
+
+static List<string> ResolveSelectedInstagramImageUrls(InstagramPublishDraft draft)
+{
+    var allImages = (draft.ImageUrls ?? new List<string>())
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToList();
+    if (allImages.Count == 0)
+    {
+        return new List<string>();
+    }
+
+    var selectedIndexes = SanitizeInstagramSelectedIndexes(draft.SelectedImageIndexes, allImages.Count);
+    if (selectedIndexes.Count == 0)
+    {
+        return allImages
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    return selectedIndexes
+        .Select(index => allImages[index - 1])
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
 }
 
 static async Task<InstagramDraftBuildResult> BuildInstagramDraftFromCreateInputAsync(
@@ -3862,7 +7408,7 @@ static List<InstagramCtaOption> BuildEffectiveDraftCtas(InstagramPublishDraft dr
         map[keyword] = new InstagramCtaOption
         {
             Keyword = keyword,
-            Link = string.IsNullOrWhiteSpace(cta.Link) ? fallbackLink : cta.Link
+            Link = string.IsNullOrWhiteSpace(cta.Link) ? (fallbackLink ?? string.Empty) : cta.Link
         };
     }
 
@@ -3874,7 +7420,7 @@ static List<InstagramCtaOption> BuildEffectiveDraftCtas(InstagramPublishDraft dr
             map[keyword] = new InstagramCtaOption
             {
                 Keyword = keyword,
-                Link = fallbackLink
+                Link = fallbackLink ?? string.Empty
             };
         }
     }
@@ -4137,6 +7683,19 @@ static HttpRequestMessage BuildImageFetchRequest(Uri uri)
 
 static byte[]? NormalizeImageBytes(byte[] input)
 {
+    if (!OperatingSystem.IsWindows())
+    {
+        // Keep original bytes on non-Windows hosts to avoid dropping media.
+        return input;
+    }
+
+    return NormalizeImageBytesWindows(input);
+}
+
+[SupportedOSPlatform("windows")]
+#pragma warning disable CA1416
+static byte[]? NormalizeImageBytesWindows(byte[] input)
+{
     try
     {
         using var ms = new MemoryStream(input);
@@ -4206,11 +7765,12 @@ static byte[]? NormalizeImageBytes(byte[] input)
         return null;
     }
 }
+#pragma warning restore CA1416
 
 static string BuildPublicMediaUrl(string publicBaseUrl, string id)
 {
     var baseUrl = publicBaseUrl.TrimEnd('/');
-    var url = baseUrl + $"/media/{id}";
+    var url = baseUrl + $"/media/{id}.jpg";
     if (url.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) || url.Contains("ngrok.app", StringComparison.OrdinalIgnoreCase))
     {
         url += "?ngrok-skip-browser-warning=1";
@@ -4224,10 +7784,10 @@ static bool IsInstagramSectionHeader(string line)
     var t = line.Trim();
     return Regex.IsMatch(t, @"^Legenda\s+\d+\b", RegexOptions.IgnoreCase)
            || t.StartsWith("Hashtags sugeridas", StringComparison.OrdinalIgnoreCase)
-           || t.StartsWith("Sugestões de imagem", StringComparison.OrdinalIgnoreCase)
+           || t.StartsWith("SugestÃµes de imagem", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Sugestoes de imagem", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Post extra", StringComparison.OrdinalIgnoreCase)
-           || t.StartsWith("Sugestão rápida", StringComparison.OrdinalIgnoreCase)
+           || t.StartsWith("SugestÃ£o rÃ¡pida", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Sugestao rapida", StringComparison.OrdinalIgnoreCase);
 }
 
@@ -4255,7 +7815,7 @@ static bool TryGetInstagramInlineProduct(string text, List<string> triggers, out
         if (!normalized.StartsWith(trimmedTrigger, StringComparison.OrdinalIgnoreCase)) continue;
 
         var remaining = normalized[trimmedTrigger.Length..].Trim();
-        remaining = remaining.Trim('-', ':', '—', '–');
+        remaining = remaining.Trim('-', ':');
         if (!string.IsNullOrWhiteSpace(remaining))
         {
             product = remaining;
@@ -4321,7 +7881,7 @@ static async Task<(string Text, List<string> TrackingIds)> ApplyTrackingAsync(st
         }
         else
         {
-            var entry = await store.CreateAsync(url, ct);
+            var entry = await store.GetOrCreateAsync(url, ct);
             sb.Append($"{baseUrl}/r/{entry.Id}{trackingSuffix}");
             trackingIds.Add(entry.Id);
         }
@@ -4347,10 +7907,10 @@ static string ExtractMessageText(JsonElement node)
 {
     if (node.TryGetProperty("message", out var messageNode))
     {
-        if (messageNode.TryGetProperty("ephemeralMessage", out var ephemeral) &&
-            ephemeral.TryGetProperty("message", out var innerMessage))
+        while (TryUnwrapMessageEnvelope(messageNode, out var innerMessage))
         {
-            var innerText = ExtractMessageText(innerMessage);
+            messageNode = innerMessage;
+            var innerText = ExtractMessageText(messageNode);
             if (!string.IsNullOrWhiteSpace(innerText))
             {
                 return innerText;
@@ -4423,6 +7983,7 @@ static bool GetBool(JsonElement node, string name)
 static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
     string id,
     InstagramPublishSettings publishSettings,
+    GeminiSettings geminiSettings,
     IInstagramPublishStore publishStore,
     IInstagramPublishLogStore publishLogStore,
     IHttpClientFactory httpClientFactory,
@@ -4491,11 +8052,37 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
         effectiveCaption = draft.CaptionOptions[idx - 1];
     }
 
-    var caption = BuildInstagramCaption(effectiveCaption, draft.Hashtags);
-    var normalized = await NormalizeInstagramImagesAsync(httpClientFactory, mediaStore, publicBaseUrl, draft.ImageUrls, ct);
+    var caption = BuildInstagramCaption(effectiveCaption, draft.Hashtags, draft.Ctas);
+    draft.SelectedImageIndexes = SanitizeInstagramSelectedIndexes(draft.SelectedImageIndexes, draft.ImageUrls.Count);
+    var selectedImageUrls = ResolveSelectedInstagramImageUrls(draft);
+    var publishImageUrls = selectedImageUrls;
+    var normalized = await NormalizeInstagramImagesAsync(httpClientFactory, mediaStore, publicBaseUrl, selectedImageUrls, ct);
     if (normalized.Count > 0)
     {
-        draft.ImageUrls = normalized;
+        publishImageUrls = normalized;
+    }
+    var qualityCheck = await ValidateInstagramDraftQualityAsync(
+        draft,
+        effectiveCaption,
+        publishImageUrls,
+        geminiSettings,
+        httpClientFactory,
+        ct);
+    if (!qualityCheck.IsValid)
+    {
+        draft.Status = "failed";
+        draft.MediaId = null;
+        draft.Error = qualityCheck.Error;
+        await publishStore.UpdateAsync(draft, ct);
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "publish",
+            Success = false,
+            DraftId = draft.Id,
+            Error = qualityCheck.Error,
+            Details = qualityCheck.Details
+        }, ct);
+        return new InstagramPublishExecutionResult(false, StatusCodes.Status400BadRequest, null, qualityCheck.Error, draft.Id);
     }
     draft.PostType = NormalizeInstagramPostTypeValue(draft.PostType);
 
@@ -4505,9 +8092,31 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
         publishSettings.InstagramUserId!,
         publishSettings.AccessToken!,
         draft.PostType,
-        draft.ImageUrls,
+        publishImageUrls,
         caption,
         ct);
+    if (!ok &&
+        normalized.Count > 0 &&
+        selectedImageUrls.Count > 0 &&
+        IsInstagramMediaTypeError(errorMessage))
+    {
+        // Retry with original source URLs when hosted/transcoded URL is rejected by Graph.
+        var fallbackOriginals = selectedImageUrls
+            .Where(x => !IsLikelyWebpUrl(x))
+            .ToList();
+        if (fallbackOriginals.Count > 0)
+        {
+            (ok, mediaId, errorMessage) = await PublishToInstagramAsync(
+                httpClientFactory,
+                publishSettings.GraphBaseUrl,
+                publishSettings.InstagramUserId!,
+                publishSettings.AccessToken!,
+                draft.PostType,
+                fallbackOriginals,
+                caption,
+                ct);
+        }
+    }
 
     draft.Status = ok ? "published" : "failed";
     draft.MediaId = mediaId;
@@ -4526,6 +8135,432 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
     return new InstagramPublishExecutionResult(ok, StatusCodes.Status200OK, mediaId, errorMessage, draft.Id);
 }
 
+static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagramDraftQualityAsync(
+    InstagramPublishDraft draft,
+    string? effectiveCaption,
+    IReadOnlyList<string> publishImageUrls,
+    GeminiSettings geminiSettings,
+    IHttpClientFactory httpClientFactory,
+    CancellationToken ct)
+{
+    var productName = (draft.ProductName ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(productName))
+    {
+        return (false, "Produto vazio no rascunho. Defina um produto real antes de publicar.", "quality=product_missing");
+    }
+
+    if (publishImageUrls.Count == 0 || publishImageUrls.All(string.IsNullOrWhiteSpace))
+    {
+        return (false, "Sem imagens para validar/publicar.", "quality=image_missing");
+    }
+
+    if (!IsCaptionAlignedWithProduct(productName, effectiveCaption, out var captionDetails))
+    {
+        return (false, "Legenda nao condiz com o produto informado. Revise o texto antes de publicar.", $"quality=caption_mismatch;{captionDetails}");
+    }
+
+    if (!IsGeminiConfiguredForImageValidation(geminiSettings))
+    {
+        return (false, "Validacao de imagem/produto exige Gemini configurado.", "quality=gemini_not_configured");
+    }
+
+    var firstMedia = publishImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    if (string.IsNullOrWhiteSpace(firstMedia))
+    {
+        return (false, "Imagem invalida para validacao.", "quality=image_invalid");
+    }
+
+    var probeClient = httpClientFactory.CreateClient("default");
+    if (await IsLikelyVideoUrlAsync(probeClient, firstMedia, ct))
+    {
+        return (true, null, "quality=ok;video_validation_skipped=true");
+    }
+
+    var imageValidation = await EvaluateImageProductMatchWithGeminiAsync(
+        productName,
+        effectiveCaption ?? string.Empty,
+        firstMedia,
+        geminiSettings,
+        httpClientFactory,
+        ct);
+    if (imageValidation is null)
+    {
+        return (false, "Nao foi possivel validar a imagem com IA. Tente outra imagem.", "quality=gemini_validation_failed");
+    }
+
+    const int minimumMatchScore = 65;
+    if (!imageValidation.Value.IsMatch || imageValidation.Value.Score < minimumMatchScore)
+    {
+        var reason = string.IsNullOrWhiteSpace(imageValidation.Value.Reason) ? "sem motivo informado" : imageValidation.Value.Reason;
+        return (false, $"Imagem nao condiz com o produto (score {imageValidation.Value.Score}/100).", $"quality=image_mismatch;score={imageValidation.Value.Score};reason={reason}");
+    }
+
+    return (true, null, $"quality=ok;image_score={imageValidation.Value.Score}");
+}
+
+static bool IsGeminiConfiguredForImageValidation(GeminiSettings settings)
+    => GetGeminiApiKeys(settings).Count > 0;
+
+static bool IsCaptionAlignedWithProduct(string productName, string? caption, out string details)
+{
+    var productTokens = ExtractMeaningfulTokens(productName, minLength: 3).Take(8).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    if (productTokens.Count == 0)
+    {
+        details = "caption_check=skipped_no_product_tokens";
+        return true;
+    }
+
+    var captionTokens = ExtractMeaningfulTokens(caption ?? string.Empty, minLength: 3).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var overlap = productTokens.Count(token => captionTokens.Contains(token));
+    var requiredOverlap = productTokens.Count >= 4 ? 2 : 1;
+    var ok = overlap >= requiredOverlap;
+
+    details = $"caption_overlap={overlap};required={requiredOverlap};product_tokens={productTokens.Count}";
+    return ok;
+}
+
+static IEnumerable<string> ExtractMeaningfulTokens(string input, int minLength)
+{
+    var normalized = NormalizeForTokenization(input);
+    foreach (Match match in Regex.Matches(normalized, @"[a-z0-9]+", RegexOptions.CultureInvariant))
+    {
+        var token = match.Value;
+        if (token.Length < minLength)
+        {
+            continue;
+        }
+
+        if (IsInstagramConsistencyStopWord(token))
+        {
+            continue;
+        }
+
+        yield return token;
+    }
+}
+
+static string NormalizeForTokenization(string input)
+{
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return string.Empty;
+    }
+
+    var formD = input.Normalize(NormalizationForm.FormD);
+    var sb = new StringBuilder(formD.Length);
+    foreach (var c in formD)
+    {
+        var category = CharUnicodeInfo.GetUnicodeCategory(c);
+        if (category == UnicodeCategory.NonSpacingMark)
+        {
+            continue;
+        }
+
+        sb.Append(char.ToLowerInvariant(c));
+    }
+
+    return sb.ToString().Normalize(NormalizationForm.FormC);
+}
+
+static bool IsInstagramConsistencyStopWord(string token)
+    => token is
+        "de" or "da" or "do" or "das" or "dos" or
+        "com" or "sem" or "para" or "por" or "em" or
+        "na" or "no" or "nas" or "nos" or "e" or "ou" or
+        "a" or "o" or "as" or "os" or "um" or "uma" or "uns" or "umas" or
+        "oferta" or "ofertas" or "produto" or "produtos" or "link" or "bio" or
+        "comente" or "comentario" or "comprar" or "promocao" or "promocaoo" or
+        "desconto" or "imperdivel" or "reidasofertas" or "achadinho" or
+        "achadinhos" or "hoje" or "agora" or "novo" or "nova" or "top" or
+        "kit" or "item" or "loja" or "oficial";
+
+static async Task<(int Score, bool IsMatch, string Reason)?> EvaluateImageProductMatchWithGeminiAsync(
+    string productName,
+    string caption,
+    string imageUrl,
+    GeminiSettings geminiSettings,
+    IHttpClientFactory httpClientFactory,
+    CancellationToken ct)
+{
+    try
+    {
+        var apiKeys = GetGeminiApiKeys(geminiSettings);
+        if (apiKeys.Count == 0)
+        {
+            return null;
+        }
+
+        var client = httpClientFactory.CreateClient("default");
+        using var imageResponse = await client.GetAsync(imageUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!imageResponse.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var contentLength = imageResponse.Content.Headers.ContentLength;
+        if (contentLength.HasValue && contentLength.Value > 5_000_000)
+        {
+            return null;
+        }
+
+        var imageBytes = await imageResponse.Content.ReadAsByteArrayAsync(ct);
+        if (imageBytes.Length == 0 || imageBytes.Length > 5_000_000)
+        {
+            return null;
+        }
+
+        var mimeType = ResolveImageMimeTypeForPublishValidation(imageResponse.Content.Headers.ContentType?.MediaType, imageUrl);
+        if (!mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var shortCaption = (caption ?? string.Empty).Trim();
+        if (shortCaption.Length > 280)
+        {
+            shortCaption = shortCaption[..280];
+        }
+
+        var prompt =
+            "Valide se a imagem representa exatamente o produto informado. " +
+            $"Produto: {productName}. " +
+            $"Legenda resumida: {shortCaption}. " +
+            "Responda somente JSON valido no formato: " +
+            "{\"score\":0-100,\"isMatch\":true|false,\"reason\":\"texto curto\"}.";
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["contents"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["role"] = "user",
+                    ["parts"] = new object[]
+                    {
+                        new Dictionary<string, object?> { ["text"] = prompt },
+                        new Dictionary<string, object?>
+                        {
+                            ["inline_data"] = new Dictionary<string, object?>
+                            {
+                                ["mime_type"] = mimeType,
+                                ["data"] = Convert.ToBase64String(imageBytes)
+                            }
+                        }
+                    }
+                }
+            },
+            ["generationConfig"] = new Dictionary<string, object?>
+            {
+                ["temperature"] = 0,
+                ["response_mime_type"] = "application/json"
+            }
+        };
+
+        var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
+        var geminiClient = httpClientFactory.CreateClient("gemini");
+        foreach (var apiKey in apiKeys)
+        {
+            var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+            using var response = await geminiClient.PostAsync(
+                url,
+                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                ct);
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                if (ShouldTryNextGeminiKey(response.StatusCode, raw))
+                {
+                    continue;
+                }
+
+                return null;
+            }
+
+            var output = ExtractGeminiOutputTextForImageValidation(raw);
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                continue;
+            }
+
+            var json = ExtractFirstJsonObjectForImageValidation(output) ?? output.Trim();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var score = root.TryGetProperty("score", out var scoreNode) && scoreNode.TryGetInt32(out var parsedScore)
+                ? parsedScore
+                : 0;
+            score = Math.Clamp(score, 0, 100);
+
+            var isMatch = root.TryGetProperty("isMatch", out var matchNode) && matchNode.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? matchNode.GetBoolean()
+                : score >= 55;
+
+            var reason = root.TryGetProperty("reason", out var reasonNode) ? reasonNode.GetString() : null;
+            reason = string.IsNullOrWhiteSpace(reason) ? $"gemini_match={isMatch}" : reason.Trim();
+            return (score, isMatch, reason);
+        }
+
+        return null;
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+static List<string> GetGeminiApiKeys(GeminiSettings settings)
+{
+    var keys = new List<string>();
+    if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+    {
+        keys.Add(settings.ApiKey.Trim());
+    }
+
+    if (settings.ApiKeys is not null)
+    {
+        foreach (var key in settings.ApiKeys)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            var trimmed = key.Trim();
+            if (trimmed == "********")
+            {
+                continue;
+            }
+
+            keys.Add(trimmed);
+        }
+    }
+
+    return keys
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+}
+
+static bool ShouldTryNextGeminiKey(System.Net.HttpStatusCode statusCode, string? body)
+{
+    var status = (int)statusCode;
+    if (status is 401 or 403 or 429 or 500 or 502 or 503 or 504)
+    {
+        return true;
+    }
+
+    if (status == 400 && !string.IsNullOrWhiteSpace(body))
+    {
+        return body.Contains("RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase) ||
+               body.Contains("quota", StringComparison.OrdinalIgnoreCase) ||
+               body.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    return false;
+}
+
+static string ResolveImageMimeTypeForPublishValidation(string? contentType, string imageUrl)
+{
+    if (!string.IsNullOrWhiteSpace(contentType) && contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+    {
+        return contentType;
+    }
+
+    var extension = Path.GetExtension(imageUrl ?? string.Empty).ToLowerInvariant();
+    return extension switch
+    {
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        ".gif" => "image/gif",
+        ".bmp" => "image/bmp",
+        _ => "image/jpeg"
+    };
+}
+
+static string? ExtractGeminiOutputTextForImageValidation(string json)
+{
+    if (string.IsNullOrWhiteSpace(json))
+    {
+        return null;
+    }
+
+    try
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var candidate in candidates.EnumerateArray())
+        {
+            if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            var sb = new StringBuilder();
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.TryGetProperty("text", out var text))
+                {
+                    sb.Append(text.GetString());
+                }
+            }
+
+            var combined = sb.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(combined))
+            {
+                return combined;
+            }
+        }
+    }
+    catch
+    {
+        return null;
+    }
+
+    return null;
+}
+
+static string? ExtractFirstJsonObjectForImageValidation(string input)
+{
+    var trimmed = input?.Trim();
+    if (string.IsNullOrWhiteSpace(trimmed))
+    {
+        return null;
+    }
+
+    var start = trimmed.IndexOf('{');
+    if (start < 0)
+    {
+        return null;
+    }
+
+    var depth = 0;
+    for (var i = start; i < trimmed.Length; i++)
+    {
+        if (trimmed[i] == '{')
+        {
+            depth++;
+        }
+        else if (trimmed[i] == '}')
+        {
+            depth--;
+            if (depth == 0)
+            {
+                return trimmed[start..(i + 1)];
+            }
+        }
+    }
+
+    return null;
+}
+
 static string FormatInstagramCaptionForReadability(string? caption)
 {
     if (string.IsNullOrWhiteSpace(caption))
@@ -4536,7 +8571,7 @@ static string FormatInstagramCaptionForReadability(string? caption)
     var normalized = caption.Replace("\r", string.Empty).Trim();
     normalized = Regex.Replace(normalized, @"\\n", "\n", RegexOptions.CultureInvariant);
     normalized = Regex.Replace(normalized, @"[ \t]+", " ", RegexOptions.CultureInvariant);
-    normalized = Regex.Replace(normalized, @"\s*(?=(?:[#•\-]\s*|✅|🔥|👉|✔))", "\n", RegexOptions.CultureInvariant);
+    normalized = Regex.Replace(normalized, @"\s*(?=(?:[#â€¢\-]\s*|âœ…|ðŸ”¥|ðŸ‘‰|âœ”))", "\n", RegexOptions.CultureInvariant);
     normalized = Regex.Replace(normalized, @"\n{3,}", "\n\n", RegexOptions.CultureInvariant);
 
     if (!normalized.Contains('\n'))
@@ -4756,13 +8791,20 @@ static List<string> SplitCaptionSentences(string text)
         .ToList();
 }
 
-static string BuildInstagramCaption(string caption, string hashtags)
+static string BuildInstagramCaption(string caption, string hashtags, IReadOnlyCollection<InstagramCtaOption>? ctas = null)
 {
     caption = FormatInstagramCaptionForReadability(caption);
-    hashtags ??= string.Empty;
-    if (string.IsNullOrWhiteSpace(hashtags)) return caption.Trim();
-    if (caption.Contains(hashtags, StringComparison.OrdinalIgnoreCase)) return caption.Trim();
-    return string.Join("\n\n", new[] { caption.Trim(), hashtags.Trim() }.Where(x => !string.IsNullOrWhiteSpace(x)));
+    caption = EnsureInstagramCaptionContainsCta(caption, ctas ?? Array.Empty<InstagramCtaOption>());
+    caption = EnsureInstagramEngagementHook(caption);
+
+    var normalizedHashtags = NormalizeInstagramHashtags(hashtags, caption);
+    var finalCaption = string.Join("\n\n", new[] { caption.Trim(), normalizedHashtags }.Where(x => !string.IsNullOrWhiteSpace(x)));
+    if (finalCaption.Length > 2200)
+    {
+        finalCaption = finalCaption[..2200].TrimEnd() + "...";
+    }
+
+    return finalCaption.Trim();
 }
 
 static string EnsureInstagramCaptionContainsCta(string caption, IReadOnlyCollection<InstagramCtaOption> ctas)
@@ -4787,13 +8829,156 @@ static string EnsureInstagramCaptionContainsCta(string caption, IReadOnlyCollect
         return baseCaption;
     }
 
-    var ctaLine = $"Comente \"{primaryKeyword}\" para receber o link.";
+    var ctaLine = BuildInstagramCtaLine(primaryKeyword, baseCaption);
     if (string.IsNullOrWhiteSpace(baseCaption))
     {
         return ctaLine;
     }
 
     return $"{baseCaption}\n\n{ctaLine}";
+}
+
+static string BuildInstagramCtaLine(string primaryKeyword, string seed)
+{
+    var templates = new[]
+    {
+        "Comente \"{0}\" para receber o link.",
+        "Quer o link? Escreva \"{0}\" nos comentarios.",
+        "Digita \"{0}\" aqui embaixo que eu te envio o link.",
+        "Comenta \"{0}\" e te mando o link completo.",
+        "Para receber o link, comente \"{0}\"."
+    };
+
+    var idx = ComputeDeterministicIndex($"{primaryKeyword}|{seed}", templates.Length);
+    return string.Format(templates[idx], primaryKeyword);
+}
+
+static int ComputeDeterministicIndex(string seed, int length)
+{
+    if (length <= 0)
+    {
+        return 0;
+    }
+
+    var hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed ?? string.Empty));
+    var value = BitConverter.ToInt32(hash, 0) & int.MaxValue;
+    return value % length;
+}
+
+static string EnsureInstagramEngagementHook(string caption)
+{
+    var text = (caption ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return text;
+    }
+
+    var hasEngagementHook = Regex.IsMatch(
+        text,
+        @"\b(comente|comenta|salve|compartilhe|link na bio|direct|dm|chama no direct)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    if (hasEngagementHook)
+    {
+        return text;
+    }
+
+    return $"{text}\n\nSalve este post e compartilhe com quem ama promocoes.";
+}
+
+static string NormalizeInstagramHashtags(string hashtags, string caption)
+{
+    var allTags = new List<string>();
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    static IEnumerable<string> ExtractTags(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            yield break;
+        }
+
+        foreach (Match match in Regex.Matches(input, @"#([A-Za-z0-9_À-ÖØ-öø-ÿ]+)", RegexOptions.CultureInvariant))
+        {
+            var raw = match.Groups[1].Value;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var normalized = "#" + raw.Trim().TrimStart('#');
+            if (normalized.Length > 1)
+            {
+                yield return normalized;
+            }
+        }
+    }
+
+    foreach (var tag in ExtractTags(hashtags))
+    {
+        if (seen.Add(tag))
+        {
+            allTags.Add(tag);
+        }
+    }
+
+    foreach (var tag in ExtractTags(caption))
+    {
+        if (seen.Add(tag))
+        {
+            allTags.Add(tag);
+        }
+    }
+
+    var fallback = new List<string>
+    {
+        "#achadinhos",
+        "#ofertas",
+        "#promocoes",
+        "#descontos",
+        "#custobeneficio",
+        "#dicadecompra"
+    };
+
+    var lowerCaption = (caption ?? string.Empty).ToLowerInvariant();
+    if (lowerCaption.Contains("amazon", StringComparison.Ordinal))
+    {
+        fallback.Add("#amazonbr");
+    }
+    if (lowerCaption.Contains("mercado livre", StringComparison.Ordinal) || lowerCaption.Contains("mercadolivre", StringComparison.Ordinal))
+    {
+        fallback.Add("#mercadolivre");
+    }
+    if (lowerCaption.Contains("shopee", StringComparison.Ordinal))
+    {
+        fallback.Add("#shopeebrasil");
+    }
+    if (lowerCaption.Contains("shein", StringComparison.Ordinal))
+    {
+        fallback.Add("#sheinbrasil");
+    }
+
+    const int minTags = 5;
+    const int maxTags = 10;
+    foreach (var tag in fallback)
+    {
+        if (allTags.Count >= minTags)
+        {
+            break;
+        }
+
+        if (seen.Add(tag))
+        {
+            allTags.Add(tag);
+        }
+    }
+
+    if (allTags.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    return string.Join(' ', allTags.Take(maxTags));
 }
 
 static async Task<(bool Success, string? MediaId, string? Error)> PublishToInstagramAsync(
@@ -4810,22 +8995,31 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
     {
         if (imageUrls is null || imageUrls.Count == 0)
         {
-            return (false, null, "Sem imagens para publicar.");
+            return (false, null, "Sem midia para publicar.");
         }
 
         var client = httpClientFactory.CreateClient("default");
         baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://graph.facebook.com/v19.0" : baseUrl.TrimEnd('/');
         var normalizedType = NormalizeInstagramPostTypeValue(postType);
+        var mediaUrls = imageUrls
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToList();
+        if (mediaUrls.Count == 0)
+        {
+            return (false, null, "Sem midia valida para publicar.");
+        }
 
         if (normalizedType == "story")
         {
-            var firstImage = imageUrls.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(firstImage))
+            var firstMedia = mediaUrls.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(firstMedia))
             {
-                return (false, null, "Sem imagens para publicar story.");
+                return (false, null, "Sem midia para publicar story.");
             }
 
-            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, firstImage, string.Empty, false, "STORIES", ct);
+            var isStoryVideo = await IsLikelyVideoUrlAsync(client, firstMedia, ct);
+            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, firstMedia, string.Empty, false, "STORIES", isStoryVideo, ct);
             if (string.IsNullOrWhiteSpace(containerId))
             {
                 return (false, null, $"Falha ao criar story. {containerError}");
@@ -4834,9 +9028,35 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
             return string.IsNullOrWhiteSpace(mediaId) ? (false, null, $"Falha ao publicar story. {publishError}") : (true, mediaId, null);
         }
 
-        if (imageUrls.Count == 1)
+        if (normalizedType == "reel")
         {
-            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, imageUrls[0], caption, false, null, ct);
+            var firstMedia = mediaUrls.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(firstMedia))
+            {
+                return (false, null, "Sem midia para publicar reel.");
+            }
+
+            var isReelVideo = await IsLikelyVideoUrlAsync(client, firstMedia, ct);
+            if (!isReelVideo)
+            {
+                return (false, null, "Reel requer URL de video valida.");
+            }
+
+            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, firstMedia, caption, false, "REELS", true, ct);
+            if (string.IsNullOrWhiteSpace(containerId))
+            {
+                return (false, null, $"Falha ao criar reel. {containerError}");
+            }
+            var (mediaId, publishError) = await PublishMediaAsync(client, baseUrl, igUserId, accessToken, containerId!, ct);
+            return string.IsNullOrWhiteSpace(mediaId) ? (false, null, $"Falha ao publicar reel. {publishError}") : (true, mediaId, null);
+        }
+
+        if (mediaUrls.Count == 1)
+        {
+            var singleMedia = mediaUrls[0];
+            var isSingleVideo = await IsLikelyVideoUrlAsync(client, singleMedia, ct);
+            var mediaType = isSingleVideo ? "VIDEO" : null;
+            var (containerId, containerError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, singleMedia, caption, false, mediaType, isSingleVideo, ct);
             if (string.IsNullOrWhiteSpace(containerId))
             {
                 return (false, null, $"Falha ao criar container. {containerError}");
@@ -4845,11 +9065,19 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
             return string.IsNullOrWhiteSpace(mediaId) ? (false, null, $"Falha ao publicar. {publishErrorSingle}") : (true, mediaId, null);
         }
 
+        foreach (var candidate in mediaUrls)
+        {
+            if (await IsLikelyVideoUrlAsync(client, candidate, ct))
+            {
+                return (false, null, "Carrossel com video nao suportado neste fluxo automatico.");
+            }
+        }
+
         var childIds = new List<string>();
         string? firstError = null;
-        foreach (var url in imageUrls)
+        foreach (var url in mediaUrls)
         {
-            var (child, childError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, url, string.Empty, true, null, ct);
+            var (child, childError) = await CreateMediaContainerAsync(client, baseUrl, igUserId, accessToken, url, string.Empty, true, null, false, ct);
             if (!string.IsNullOrWhiteSpace(child)) childIds.Add(child!);
             if (firstError is null && !string.IsNullOrWhiteSpace(childError)) firstError = childError;
         }
@@ -4873,14 +9101,102 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
     }
 }
 
-static async Task<(string? Id, string? Error)> CreateMediaContainerAsync(HttpClient client, string baseUrl, string igUserId, string token, string imageUrl, string caption, bool carouselItem, string? mediaType, CancellationToken ct)
+static bool IsInstagramMediaTypeError(string? error)
+{
+    if (string.IsNullOrWhiteSpace(error)) return false;
+    return error.Contains("Only photo or video can be accepted as media type", StringComparison.OrdinalIgnoreCase)
+           || error.Contains("image format is not supported", StringComparison.OrdinalIgnoreCase)
+           || error.Contains("code 9004", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsLikelyWebpUrl(string? url)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return false;
+    }
+
+    return Regex.IsMatch(url, @"\.webp(\?|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+}
+
+static bool IsLikelyVideoUrl(string? url)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return false;
+    }
+
+    var normalized = url.ToLowerInvariant();
+    return normalized.Contains(".mp4", StringComparison.Ordinal) ||
+           normalized.Contains(".mov", StringComparison.Ordinal) ||
+           normalized.Contains(".m4v", StringComparison.Ordinal) ||
+           normalized.Contains(".webm", StringComparison.Ordinal) ||
+           normalized.Contains(".m3u8", StringComparison.Ordinal);
+}
+
+static async Task<bool> IsLikelyVideoUrlAsync(HttpClient client, string? url, CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return false;
+    }
+
+    if (IsLikelyVideoUrl(url))
+    {
+        return true;
+    }
+
+    if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+    {
+        return false;
+    }
+
+    try
+    {
+        using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
+        using var headResponse = await client.SendAsync(headRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (headResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+    }
+    catch
+    {
+        // ignored
+    }
+
+    try
+    {
+        using var getRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        getRequest.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
+        using var getResponse = await client.SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        return getResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+static async Task<(string? Id, string? Error)> CreateMediaContainerAsync(HttpClient client, string baseUrl, string igUserId, string token, string mediaUrl, string caption, bool carouselItem, string? mediaType, bool isVideo, CancellationToken ct)
 {
     var url = $"{baseUrl}/{igUserId}/media";
     var data = new Dictionary<string, string>
     {
-        ["image_url"] = imageUrl,
         ["access_token"] = token
     };
+    if (isVideo)
+    {
+        data["video_url"] = mediaUrl;
+        if (string.IsNullOrWhiteSpace(mediaType))
+        {
+            data["media_type"] = "VIDEO";
+        }
+    }
+    else
+    {
+        data["image_url"] = mediaUrl;
+    }
     if (!string.IsNullOrWhiteSpace(mediaType))
     {
         data["media_type"] = mediaType;
@@ -5828,6 +10144,44 @@ static async Task<InstagramDmSendResult> SendManyChatDmAsync(
     }
 }
 
+static List<string> ExtractCouponCodesFromText(string text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return new List<string>();
+    }
+
+    var hint = text.Contains("cupom", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("coupon", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("código", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("codigo", StringComparison.OrdinalIgnoreCase);
+
+    if (!hint)
+    {
+        return new List<string>();
+    }
+
+    var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "CUPOM",
+        "COUPON",
+        "CODIGO",
+        "CÓDIGO",
+        "OFF",
+        "R",
+        "RS"
+    };
+
+    var matches = Regex.Matches(text.ToUpperInvariant(), @"\b[A-Z0-9]{4,16}\b");
+    return matches
+        .Select(m => m.Value.Trim())
+        .Where(v => !blocked.Contains(v))
+        .Where(v => v.Any(char.IsDigit))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Take(20)
+        .ToList();
+}
+
 static string EscapeJsonValue(string value)
 {
     return (value ?? string.Empty)
@@ -5838,10 +10192,44 @@ static string EscapeJsonValue(string value)
 }
 
 internal sealed record LoginRequest(string Username, string Password);
-internal sealed record ConvertRequest(string Text, string? Source);
 internal sealed record PlaygroundRequest(string Text);
+internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
-internal sealed record WhatsAppIncomingMessage(string ChatId, string Text, bool FromMe, string? InstanceName, string? MessageId);
+internal sealed record TelegramUserbotReplayRequest(long SourceChatId, int Count = 10, bool AllowOfficialDestination = false);
+internal sealed record CouponUpsertRequest(
+    string? Id,
+    string Store,
+    string Code,
+    string? Description,
+    string? AffiliateLink,
+    DateTimeOffset? StartsAt,
+    DateTimeOffset? EndsAt,
+    int? Priority,
+    bool? Enabled,
+    string? Source);
+internal sealed record CouponExtractRequest(
+    string Store,
+    string Text,
+    string? Description,
+    string? AffiliateLink,
+    DateTimeOffset? EndsAt,
+    int? Priority,
+    string? Source);
+internal sealed record CouponOfficialSyncRequest(string? Store);
+internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
+internal sealed record WhatsAppIncomingMessage(
+    string ChatId,
+    string? SenderId,
+    string Text,
+    bool FromMe,
+    string? InstanceName,
+    string? MessageId,
+    bool HasMedia,
+    string? MediaUrl,
+    string? MediaBase64,
+    string? MediaMimeType,
+    string? MediaFileName,
+    string? RawPayloadJson);
 internal sealed record WhatsAppHelpCommand(string Scope);
 internal sealed record InstagramWhatsAppCommand(string Action, string? Argument);
 internal sealed record InstagramDraftBuildResult(InstagramPublishDraft? Draft, string? Error);
@@ -5871,7 +10259,35 @@ internal sealed record BioLinkItem
     public DateTimeOffset CreatedAt { get; init; }
     public string Title { get; init; } = string.Empty;
     public string Link { get; init; } = string.Empty;
+    public string OriginalLink { get; init; } = string.Empty;
+    public string Store { get; init; } = "Loja";
+    public int? ItemNumber { get; init; }
     public string? Keyword { get; init; }
+}
+internal sealed record PublicLinkConverterViewModel
+{
+    public string Input { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+    public string Store { get; set; } = "Loja";
+    public string OriginalUrl { get; set; } = string.Empty;
+    public string ConvertedUrl { get; set; } = string.Empty;
+    public string TrackedUrl { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Price { get; set; } = string.Empty;
+    public string PreviousPrice { get; set; } = string.Empty;
+    public int? DiscountPercent { get; set; }
+    public bool HasCoupon { get; set; }
+    public string CouponCode { get; set; } = string.Empty;
+    public string CouponDescription { get; set; } = string.Empty;
+    public string ImageUrl { get; set; } = string.Empty;
+    public bool IsAffiliated { get; set; }
+    public string? ValidationError { get; set; }
+    public string? CorrectionNote { get; set; }
+    public string? ConversionHost { get; set; }
+    public string? DomainHost { get; set; }
+    public string? DataSource { get; set; }
 }
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);
 internal sealed record InstagramBoostAdResult(bool Success, string? CampaignId, string? AdSetId, string? AdId, string? Error);
@@ -5886,3 +10302,4 @@ internal sealed record InstagramDraftRequest(
     List<string> ImageUrls,
     string? PostType);
 internal sealed record InstagramApproveRequest(string Message);
+

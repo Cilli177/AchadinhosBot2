@@ -25,6 +25,7 @@ public sealed class ClickLogStore : IClickLogStore
             var json = JsonSerializer.Serialize(entry);
             await writer.WriteLineAsync(json);
             await writer.FlushAsync();
+            await JsonlLogRetention.TrimIfNeededAsync(_path, 15000, 8 * 1024 * 1024, cancellationToken);
         }
         finally
         {
@@ -58,7 +59,10 @@ public sealed class ClickLogStore : IClickLogStore
                     {
                         var q = search.Trim();
                         if (!(entry.TargetUrl.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                              entry.TrackingId.Contains(q, StringComparison.OrdinalIgnoreCase)))
+                              entry.TrackingId.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                              entry.Source.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                              (entry.Campaign?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                              (entry.Referrer?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)))
                         {
                             continue;
                         }
@@ -79,7 +83,7 @@ public sealed class ClickLogStore : IClickLogStore
 
         return entries
             .OrderByDescending(e => e.Timestamp)
-            .Take(Math.Clamp(limit, 1, 500))
+            .Take(Math.Clamp(limit, 1, 2000))
             .ToArray();
     }
 

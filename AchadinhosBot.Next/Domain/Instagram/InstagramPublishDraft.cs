@@ -11,6 +11,7 @@ public sealed class InstagramPublishDraft
     public int SelectedCaptionIndex { get; set; } = 1;
     public string Hashtags { get; set; } = string.Empty;
     public List<string> ImageUrls { get; set; } = new();
+    public List<int> SelectedImageIndexes { get; set; } = new();
     public List<InstagramCtaOption> Ctas { get; set; } = new();
     public string Status { get; set; } = "draft";
     public string? MediaId { get; set; }

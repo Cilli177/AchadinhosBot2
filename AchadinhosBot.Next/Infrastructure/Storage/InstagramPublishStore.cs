@@ -79,6 +79,19 @@ public sealed class InstagramPublishStore : IInstagramPublishStore
         }
     }
 
+    public async Task ClearAsync(CancellationToken ct)
+    {
+        await _mutex.WaitAsync(ct);
+        try
+        {
+            await WriteAllAsync(new List<InstagramPublishDraft>(), ct);
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
     private async Task<List<InstagramPublishDraft>> ReadAllAsync(CancellationToken ct)
     {
         if (!File.Exists(_path)) return new List<InstagramPublishDraft>();

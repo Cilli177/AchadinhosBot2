@@ -16,6 +16,7 @@ namespace AchadinhosBot.Next.Infrastructure.Telegram;
 
 public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbotService
 {
+    private const string OfficialWhatsAppDemandGroupId = "120363405661434395@g.us";
     private readonly TelegramOptions _options;
     private readonly AffiliateOptions _affiliateOptions;
     private readonly ISettingsStore _settingsStore;
@@ -34,6 +35,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
     private IReadOnlyList<TelegramUserbotChat> _cachedChats = Array.Empty<TelegramUserbotChat>();
     private readonly ConcurrentDictionary<long, InputPeer> _inputPeers = new();
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private readonly object _runtimeAuthLock = new();
+    private readonly object _reconnectLock = new();
+    private CancellationTokenSource _reconnectSignal = new();
+    private string? _runtimePhoneNumber;
+    private string? _runtimeVerificationCode;
+    private string? _runtimePassword;
     private long? _selfUserId;
     private volatile bool _ready;
 
@@ -94,12 +101,9 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        var phoneEnv = Environment.GetEnvironmentVariable("TELEGRAM_PHONE");
-        var phoneConfig = _options.UserbotPhone;
-        if (!hasSession && string.IsNullOrWhiteSpace(phoneEnv))
+        if (!hasSession && string.IsNullOrWhiteSpace(GetPhoneNumberForLogin()))
         {
-            _logger.LogWarning("TelegramUserbotService: defina TELEGRAM_PHONE ou forneÃ§a um session file ({SessionPath}).", sessionPath);
-            return;
+            _logger.LogWarning("TelegramUserbotService: sem sessao valida e sem telefone configurado. Aguardando credenciais via painel.");
         }
 
         string? Config(string what)
@@ -109,18 +113,42 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 "session_pathname" => sessionPath,
                 "api_id" => _options.ApiId.ToString(),
                 "api_hash" => _options.ApiHash,
-                "phone_number" => phoneEnv ?? phoneConfig ?? string.Empty,
-                "verification_code" => Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE") ?? string.Empty,
-                "password" => Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD") ?? string.Empty,
+                "phone_number" => GetPhoneNumberForLogin(),
+                "verification_code" => GetVerificationCodeForLogin(),
+                "password" => GetPasswordForLogin(),
                 _ => null
             };
         }
 
         var retryCount = 0;
+        var waitCredentialsCount = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                hasSession = File.Exists(sessionPath);
+                if (!hasSession)
+                {
+                    var altSession = Path.Combine(Directory.GetCurrentDirectory(), "WTelegram.session");
+                    if (File.Exists(altSession))
+                    {
+                        sessionPath = altSession;
+                        hasSession = true;
+                    }
+                }
+
+                if (!hasSession && string.IsNullOrWhiteSpace(GetPhoneNumberForLogin()))
+                {
+                    waitCredentialsCount++;
+                    if (waitCredentialsCount == 1 || waitCredentialsCount % 12 == 0)
+                    {
+                        _logger.LogWarning("TelegramUserbotService: aguardando telefone/codigo no painel para autenticar.");
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    continue;
+                }
+
+                waitCredentialsCount = 0;
                 _client = new Client(Config);
                 await using (_client)
                 {
@@ -132,13 +160,19 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     _logger.LogInformation("TelegramUserbot conectado. UserId={UserId}. Session={SessionPath}", _selfUserId, sessionPath);
 
                     await RefreshDialogsAsync(stoppingToken);
-                    await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+                    using var linkedRun = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, GetReconnectToken());
+                    await Task.Delay(Timeout.InfiniteTimeSpan, linkedRun.Token);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation("TelegramUserbotService cancelado.");
                 break;
+            }
+            catch (OperationCanceledException)
+            {
+                retryCount = 0;
+                _logger.LogInformation("TelegramUserbotService: reconexao acionada manualmente.");
             }
             catch (Exception ex)
             {
@@ -152,6 +186,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     _logger.LogWarning(
                         "TelegramUserbot retornou BadMsg/BadServerSalt. Normalmente indica sessao inconsistente ou horario do Windows fora de sincronia. " +
                         "Verifique relogio/NTP e, se necessario, recrie o arquivo WTelegram.session.");
+                }
+
+                if (IsPhoneNumberInvalid(ex))
+                {
+                    _logger.LogWarning(
+                        "TelegramUserbot falhou com PHONE_NUMBER_INVALID. Configure TELEGRAM__USERBOTPHONE no formato internacional (ex: +5511999999999) e, se preciso, apague WTelegram.session para refazer login.");
                 }
 
                 try
@@ -179,10 +219,84 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                || dump.Contains("BadServerSalt", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsPhoneNumberInvalid(Exception ex)
+    {
+        return ex.ToString().Contains("PHONE_NUMBER_INVALID", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static TimeSpan GetRetryDelay(int retryCount)
     {
         var seconds = Math.Min(60, Math.Max(5, retryCount * 5));
         return TimeSpan.FromSeconds(seconds);
+    }
+
+    public Task<TelegramUserbotAuthUpdateResult> UpdateRuntimeAuthAsync(TelegramUserbotAuthUpdateRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var phone = NormalizePhone(request.PhoneNumber);
+        var code = NormalizeSecret(request.VerificationCode);
+        var password = NormalizeSecret(request.Password);
+        var updated = false;
+
+        lock (_runtimeAuthLock)
+        {
+            if (request.PhoneNumber is not null)
+            {
+                _runtimePhoneNumber = phone;
+                updated = true;
+            }
+
+            if (request.VerificationCode is not null)
+            {
+                _runtimeVerificationCode = code;
+                updated = true;
+            }
+
+            if (request.Password is not null)
+            {
+                _runtimePassword = password;
+                updated = true;
+            }
+        }
+
+        var reconnectRequested = request.ForceReconnect || request.VerificationCode is not null || request.Password is not null;
+        if (reconnectRequested)
+        {
+            RequestReconnect("userbot_auth_update");
+        }
+
+        var hasPhone = !string.IsNullOrWhiteSpace(GetPhoneNumberForLogin());
+        var hasCode = !string.IsNullOrWhiteSpace(GetCurrentRuntimeVerificationCode());
+        var hasPassword = !string.IsNullOrWhiteSpace(GetPasswordForLogin());
+
+        if (!updated && !reconnectRequested)
+        {
+            return Task.FromResult(new TelegramUserbotAuthUpdateResult(
+                false,
+                false,
+                hasPhone,
+                hasCode,
+                hasPassword,
+                "Nenhum dado foi informado."));
+        }
+
+        _logger.LogInformation(
+            "TelegramUserbot auth atualizado via painel. phone={HasPhone} code={HasCode} password={HasPassword} reconnect={ReconnectRequested}",
+            request.PhoneNumber is not null,
+            request.VerificationCode is not null,
+            request.Password is not null,
+            reconnectRequested);
+
+        return Task.FromResult(new TelegramUserbotAuthUpdateResult(
+            true,
+            reconnectRequested,
+            hasPhone,
+            hasCode,
+            hasPassword,
+            reconnectRequested
+                ? "Credenciais atualizadas e reconexao solicitada."
+                : "Credenciais atualizadas."));
     }
 
     public async Task<IReadOnlyList<TelegramUserbotChat>> GetDialogsAsync(CancellationToken cancellationToken)
@@ -242,6 +356,388 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
     }
 
+    private string GetPhoneNumberForLogin()
+    {
+        var runtime = GetCurrentRuntimePhoneNumber();
+        if (!string.IsNullOrWhiteSpace(runtime))
+        {
+            return runtime;
+        }
+
+        var envPhone =
+            Environment.GetEnvironmentVariable("TELEGRAM_PHONE")
+            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOTPHONE")
+            ?? Environment.GetEnvironmentVariable("TELEGRAM__USERBOT_PHONE");
+
+        return NormalizePhone(envPhone) ?? NormalizePhone(_options.UserbotPhone) ?? string.Empty;
+    }
+
+    private string GetVerificationCodeForLogin()
+    {
+        lock (_runtimeAuthLock)
+        {
+            if (!string.IsNullOrWhiteSpace(_runtimeVerificationCode))
+            {
+                var code = _runtimeVerificationCode!;
+                _runtimeVerificationCode = null;
+                return code;
+            }
+        }
+
+        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE")) ?? string.Empty;
+    }
+
+    private string GetPasswordForLogin()
+    {
+        var runtime = GetCurrentRuntimePassword();
+        if (!string.IsNullOrWhiteSpace(runtime))
+        {
+            return runtime;
+        }
+
+        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD")) ?? string.Empty;
+    }
+
+    private string? GetCurrentRuntimePhoneNumber()
+    {
+        lock (_runtimeAuthLock)
+        {
+            return _runtimePhoneNumber;
+        }
+    }
+
+    private string? GetCurrentRuntimeVerificationCode()
+    {
+        lock (_runtimeAuthLock)
+        {
+            return _runtimeVerificationCode;
+        }
+    }
+
+    private string? GetCurrentRuntimePassword()
+    {
+        lock (_runtimeAuthLock)
+        {
+            return _runtimePassword;
+        }
+    }
+
+    private CancellationToken GetReconnectToken()
+    {
+        lock (_reconnectLock)
+        {
+            return _reconnectSignal.Token;
+        }
+    }
+
+    private void RequestReconnect(string reason)
+    {
+        CancellationTokenSource previous;
+        lock (_reconnectLock)
+        {
+            previous = _reconnectSignal;
+            _reconnectSignal = new CancellationTokenSource();
+        }
+
+        try
+        {
+            previous.Cancel();
+        }
+        catch
+        {
+            // ignore cancellation races
+        }
+        finally
+        {
+            previous.Dispose();
+        }
+
+        _ready = false;
+        try
+        {
+            _client?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao descartar client durante reconexao manual.");
+        }
+
+        _logger.LogInformation("TelegramUserbot reconexao solicitada. reason={Reason}", reason);
+    }
+
+    private static string? NormalizePhone(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim().Replace(" ", string.Empty, StringComparison.Ordinal);
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    private static string? NormalizeSecret(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    public async Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, bool allowOfficialDestination, CancellationToken cancellationToken)
+    {
+        if (_client is null || _manager is null || !_ready)
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                "Telegram userbot nao esta pronto.",
+                sourceChatId,
+                count,
+                0,
+                0,
+                0);
+        }
+
+        var requested = Math.Clamp(count, 1, 50);
+        var peer = ResolvePeer(sourceChatId);
+        if (peer is null)
+        {
+            await RefreshDialogsAsync(cancellationToken);
+            peer = ResolvePeer(sourceChatId);
+        }
+
+        if (peer is null)
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                $"Chat {sourceChatId} nao encontrado nos dialogs do userbot.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        Messages_MessagesBase? history;
+        try
+        {
+            history = await _client.Messages_GetHistory(peer, limit: Math.Clamp(requested * 8, 20, 200));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao carregar historico do chat {SourceChatId} para replay.", sourceChatId);
+            return new TelegramUserbotReplayResult(
+                false,
+                "Falha ao carregar historico do Telegram.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        if (history is null)
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                "Historico vazio para o chat informado.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        var candidates = ExtractHistoryMessages(history)
+            .Where(m => !string.IsNullOrWhiteSpace(m.message))
+            .Where(m => m.message!.Contains("http", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(m => m.date)
+            .ThenByDescending(m => m.id)
+            .Take(requested)
+            .OrderBy(m => m.date)
+            .ThenBy(m => m.id)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            return new TelegramUserbotReplayResult(
+                true,
+                "Nenhuma oferta com link encontrada no historico recente.",
+                sourceChatId,
+                requested,
+                0,
+                0,
+                0);
+        }
+
+        var settings = await _settingsStore.GetAsync(cancellationToken);
+        var replayDestinations = ResolveReplayWhatsAppDestinations(settings, sourceChatId);
+        if (!allowOfficialDestination && replayDestinations.Any(d => string.Equals(d, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return new TelegramUserbotReplayResult(
+                false,
+                $"Replay bloqueado: destino oficial {OfficialWhatsAppDemandGroupId} protegido. Use AllowOfficialDestination=true somente em recuperacao real.",
+                sourceChatId,
+                requested,
+                candidates.Length,
+                0,
+                0);
+        }
+
+        var replayed = 0;
+        var failed = 0;
+        var telegramReplayEnabled = IsTelegramReplayEnabled(settings, sourceChatId);
+        var telegramDestinationPeer = telegramReplayEnabled
+            ? ResolvePeer(settings.TelegramForwarding.DestinationChatId)
+            : null;
+        if (telegramReplayEnabled && telegramDestinationPeer is null)
+        {
+            await RefreshDialogsAsync(cancellationToken);
+            telegramDestinationPeer = ResolvePeer(settings.TelegramForwarding.DestinationChatId);
+        }
+
+        foreach (var msg in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var text = BuildMessageTextForConversion(msg);
+                var result = await _messageProcessor.ProcessAsync(
+                    text,
+                    "manual",
+                    cancellationToken,
+                    originChatId: sourceChatId,
+                    destinationChatId: settings.TelegramForwarding.DestinationChatId);
+                if (!TryGetStrictForwardText(text, result.Success, result.ConvertedLinks, result.ConvertedText, out var replayText))
+                {
+                    _logger.LogWarning(
+                        "Replay bloqueado por conversao invalida. SourceChat={SourceChatId} MsgId={MessageId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                        sourceChatId,
+                        msg.id,
+                        result.ConvertedLinks,
+                        result.Success);
+                    failed++;
+                    continue;
+                }
+
+                if (telegramReplayEnabled && telegramDestinationPeer is not null)
+                {
+                    try
+                    {
+                        var telegramText = BuildTelegramForwardText(settings, replayText);
+                        await _client.SendMessageAsync(telegramDestinationPeer, telegramText);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Falha ao reenviar oferta para Telegram destino. Source={SourceChatId} MsgId={MessageId}", sourceChatId, msg.id);
+                    }
+                }
+
+                var (imageBytes, imageMime) = await TryExtractImageForWhatsAppAsync(msg);
+                await SendToWhatsAppIfEnabled(settings, replayText, sourceChatId, imageBytes, imageMime, allowOfficialDestination);
+                replayed++;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                _logger.LogWarning(ex, "Falha ao reenviar mensagem do Telegram para WhatsApp. Chat={SourceChatId} MsgId={MessageId}", sourceChatId, msg.id);
+            }
+        }
+
+        return new TelegramUserbotReplayResult(
+            true,
+            $"Replay concluido. reenviadas={replayed}, falhas={failed}.",
+            sourceChatId,
+            requested,
+            candidates.Length,
+            replayed,
+            failed);
+    }
+
+    private bool IsTelegramReplayEnabled(AutomationSettings settings, long sourceChatId)
+    {
+        if (!settings.TelegramForwarding.Enabled)
+        {
+            return false;
+        }
+
+        if (settings.TelegramForwarding.DestinationChatId == 0)
+        {
+            return false;
+        }
+
+        var sourceIds = settings.TelegramForwarding.SourceChatIds;
+        return sourceIds.Count > 0 && IsSourceMatch(sourceChatId, sourceIds);
+    }
+
+    private string BuildTelegramForwardText(AutomationSettings settings, string text)
+    {
+        var finalText = text;
+        if (settings.TelegramForwarding.AppendSheinCode &&
+            ContainsShein(finalText) &&
+            !string.IsNullOrWhiteSpace(_affiliateOptions.SheinCode) &&
+            !finalText.Contains(_affiliateOptions.SheinCode, StringComparison.OrdinalIgnoreCase))
+        {
+            finalText += $"\n\nCodigo Shein: {_affiliateOptions.SheinCode}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.TelegramForwarding.FooterText))
+        {
+            finalText += $"\n\n{settings.TelegramForwarding.FooterText}";
+        }
+
+        return finalText;
+    }
+
+    private static IEnumerable<Message> ExtractHistoryMessages(Messages_MessagesBase history)
+    {
+        return history switch
+        {
+            Messages_MessagesSlice ms => ms.messages.OfType<Message>(),
+            Messages_ChannelMessages cm => cm.messages.OfType<Message>(),
+            Messages_Messages mm => mm.messages.OfType<Message>(),
+            _ => Enumerable.Empty<Message>()
+        };
+    }
+
+    private async Task<(byte[]? bytes, string? mime)> TryExtractImageForWhatsAppAsync(Message msg)
+    {
+        if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
+        {
+            return await TryDownloadPhotoAsync(photo);
+        }
+
+        if (msg.media is MessageMediaDocument mmDoc && mmDoc.document is Document doc)
+        {
+            if (!string.IsNullOrWhiteSpace(doc.mime_type) &&
+                doc.mime_type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                return await TryDownloadDocumentAsync(doc);
+            }
+        }
+
+        if (msg.media is MessageMediaWebPage mmWeb &&
+            mmWeb.webpage is WebPage webPage &&
+            webPage.photo is Photo webPhoto)
+        {
+            return await TryDownloadPhotoAsync(webPhoto);
+        }
+
+        if (msg.grouped_id != 0)
+        {
+            var grouped = await TryDownloadGroupedMediaAsync(msg);
+            if (grouped.bytes is not null && grouped.bytes.Length > 0)
+            {
+                return grouped;
+            }
+        }
+
+        return await TryDownloadNearbyMediaAsync(msg);
+    }
+
     private async Task OnUserbotUpdate(Update update)
     {
         if (_client is null || _manager is null)
@@ -264,7 +760,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             return;
         }
 
-        var text = msg.message ?? string.Empty;
+        var text = BuildMessageTextForConversion(msg);
         if (string.IsNullOrWhiteSpace(text))
         {
             return;
@@ -431,8 +927,14 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             CancellationToken.None,
             originChatId: originId,
             destinationChatId: settings.TelegramForwarding.DestinationChatId);
-        if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+        if (!TryGetStrictForwardText(text, result.Success, result.ConvertedLinks, result.ConvertedText, out var finalText))
         {
+            _logger.LogWarning(
+                "TelegramUserbot bloqueou encaminhamento por conversao invalida. Origin={OriginChatId} MsgId={MessageId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                originId,
+                msg.id,
+                result.ConvertedLinks,
+                result.Success);
             return;
         }
 
@@ -450,7 +952,6 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             return;
         }
 
-        var finalText = result.ConvertedText;
         if (settings.TelegramForwarding.AppendSheinCode &&
             ContainsShein(finalText) &&
             !string.IsNullOrWhiteSpace(_affiliateOptions.SheinCode) &&
@@ -466,6 +967,13 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
         byte[]? waImageBytes = null;
         string? waImageMime = null;
+        var client = _client;
+        if (client is null)
+        {
+            _logger.LogWarning("TelegramUserbot: cliente nÃ£o inicializado para enviar mensagem ao destino {DestinationId}.", destinationId);
+            return;
+        }
+
         try
         {
             if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
@@ -479,7 +987,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         file_reference = photo.file_reference
                     }
                 };
-                await _client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                await client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
                 (waImageBytes, waImageMime) = await TryDownloadPhotoAsync(photo);
             }
             else if (msg.media is MessageMediaDocument mmDoc && mmDoc.document is Document doc)
@@ -493,7 +1001,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         file_reference = doc.file_reference
                     }
                 };
-                await _client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                await client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
                 if (!string.IsNullOrWhiteSpace(doc.mime_type) && doc.mime_type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 {
                     (waImageBytes, waImageMime) = await TryDownloadDocumentAsync(doc);
@@ -501,12 +1009,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
             else if (msg.media is MessageMediaWebPage mmWeb && mmWeb.webpage is WebPage webPage && webPage.photo is Photo webPhoto)
             {
-                await _client.SendMessageAsync(destinationPeer, finalText);
+                await client.SendMessageAsync(destinationPeer, finalText);
                 (waImageBytes, waImageMime) = await TryDownloadPhotoAsync(webPhoto);
             }
             else
             {
-                await _client.SendMessageAsync(destinationPeer, finalText);
+                await client.SendMessageAsync(destinationPeer, finalText);
                 if (msg.grouped_id != 0)
                 {
                     var grouped = await TryDownloadGroupedMediaAsync(msg);
@@ -563,34 +1071,63 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }, CancellationToken.None);
         }
 
-        await SendToWhatsAppIfEnabled(settings, result.ConvertedText, originId, waImageBytes, waImageMime);
+        await SendToWhatsAppIfEnabled(settings, finalText, originId, waImageBytes, waImageMime);
     }
 
-    private async Task SendToWhatsAppIfEnabled(AutomationSettings settings, string convertedText, long originId, byte[]? imageBytes, string? imageMime)
+    private async Task SendToWhatsAppIfEnabled(AutomationSettings settings, string convertedText, long originId, byte[]? imageBytes, string? imageMime, bool allowOfficialDestination = true)
     {
-        var route = settings.TelegramToWhatsApp;
-        var wa = settings.WhatsAppForwarding;
-
-        var enabled = route.Enabled || wa.Enabled;
-        if (!enabled)
+        var wa = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
+        var routes = ResolveTelegramToWhatsAppRoutes(settings);
+        if (routes.Count == 0)
         {
             return;
         }
 
-        var routeSources = route.SourceChatIds.Count > 0 || settings.TelegramForwarding.SourceChatIds.Count > 0
-            ? route.SourceChatIds.Union(settings.TelegramForwarding.SourceChatIds).ToList()
-            : settings.TelegramForwarding.SourceChatIds;
-        if (route.Enabled && routeSources.Count > 0 && !IsSourceMatch(originId, routeSources))
+        var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var defaultSources = (settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>())
+            .Union(settings.TelegramForwarding?.SourceChatIds ?? new List<long>())
+            .Distinct()
+            .ToList();
+        foreach (var route in routes)
         {
-            return;
+            if (!route.Enabled) continue;
+            var isTestRoute = !string.IsNullOrWhiteSpace(route.Name)
+                && route.Name.Contains("teste", StringComparison.OrdinalIgnoreCase);
+            var effectiveSources = route.SourceChatIds
+                .Union(defaultSources)
+                .Distinct()
+                .ToList();
+            if (effectiveSources.Count == 0) continue;
+            if (!IsSourceMatch(originId, effectiveSources)) continue;
+
+            foreach (var destination in route.DestinationGroupIds)
+            {
+                if (!string.IsNullOrWhiteSpace(destination))
+                {
+                    var normalizedDestination = destination.Trim();
+                    if (isTestRoute && string.Equals(normalizedDestination, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    destinations.Add(normalizedDestination);
+                }
+            }
         }
 
-        var destinations = route.Enabled
-            ? route.DestinationGroupIds.Union(wa.DestinationGroupIds).ToList()
-            : wa.DestinationGroupIds;
         if (destinations.Count == 0)
         {
             return;
+        }
+
+        if (!allowOfficialDestination)
+        {
+            destinations.RemoveWhere(x => string.Equals(x, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase));
+            if (destinations.Count == 0)
+            {
+                _logger.LogWarning("Envio para WhatsApp ignorado: apenas grupo oficial protegido estava como destino.");
+                return;
+            }
         }
 
         var text = convertedText;
@@ -622,7 +1159,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        var destList = destinations.Distinct().Where(d => !string.IsNullOrWhiteSpace(d)).ToArray();
+        var destList = destinations.Where(d => !string.IsNullOrWhiteSpace(d)).ToArray();
         await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
         {
             OriginChatId = originId,
@@ -714,6 +1251,53 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             Detail = $"Destinos={destList.Length}",
             Success = imageBytes is not null && imageBytes.Length > 0
         }, CancellationToken.None);
+    }
+
+    private static HashSet<string> ResolveReplayWhatsAppDestinations(AutomationSettings settings, long originId)
+    {
+        var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var routes = ResolveTelegramToWhatsAppRoutes(settings);
+        var defaultSources = (settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>())
+            .Union(settings.TelegramForwarding?.SourceChatIds ?? new List<long>())
+            .Distinct()
+            .ToList();
+
+        foreach (var route in routes)
+        {
+            if (!route.Enabled)
+            {
+                continue;
+            }
+
+            var isTestRoute = !string.IsNullOrWhiteSpace(route.Name)
+                && route.Name.Contains("teste", StringComparison.OrdinalIgnoreCase);
+
+            var effectiveSources = route.SourceChatIds
+                .Union(defaultSources)
+                .Distinct()
+                .ToList();
+
+            if (effectiveSources.Count == 0 || !IsSourceMatch(originId, effectiveSources))
+            {
+                continue;
+            }
+
+            foreach (var destination in route.DestinationGroupIds)
+            {
+                if (!string.IsNullOrWhiteSpace(destination))
+                {
+                    var normalizedDestination = destination.Trim();
+                    if (isTestRoute && string.Equals(normalizedDestination, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    destinations.Add(normalizedDestination);
+                }
+            }
+        }
+
+        return destinations;
     }
 
     private async Task<(byte[]? bytes, string? mime)> TryDownloadPhotoAsync(Photo photo)
@@ -951,6 +1535,71 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         return null;
     }
 
+    private static IReadOnlyList<TelegramToWhatsAppRouteSettings> ResolveTelegramToWhatsAppRoutes(AutomationSettings settings)
+    {
+        var explicitRoutes = (settings.TelegramToWhatsAppRoutes ?? new List<TelegramToWhatsAppRouteSettings>())
+            .Where(route => route is not null)
+            .Select(route => new TelegramToWhatsAppRouteSettings
+            {
+                Name = string.IsNullOrWhiteSpace(route.Name) ? "Rota Telegram -> WhatsApp" : route.Name.Trim(),
+                Enabled = route.Enabled,
+                SourceChatIds = route.SourceChatIds
+                    .Distinct()
+                    .ToList(),
+                DestinationGroupIds = route.DestinationGroupIds
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            })
+            .ToList();
+        if (explicitRoutes.Count > 0)
+        {
+            return explicitRoutes;
+        }
+
+        var legacy = settings.TelegramToWhatsApp ?? new TelegramToWhatsAppSettings();
+        if (legacy.SourceChatIds.Count > 0 || legacy.DestinationGroupIds.Count > 0)
+        {
+            return new List<TelegramToWhatsAppRouteSettings>
+            {
+                new()
+                {
+                    Name = "Rota Telegram -> WhatsApp (legado)",
+                    Enabled = legacy.Enabled,
+                    SourceChatIds = legacy.SourceChatIds.Distinct().ToList(),
+                    DestinationGroupIds = legacy.DestinationGroupIds
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                }
+            };
+        }
+
+        var wa = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
+        var tgSources = settings.TelegramForwarding?.SourceChatIds ?? new List<long>();
+        if (!wa.Enabled || wa.DestinationGroupIds.Count == 0 || tgSources.Count == 0)
+        {
+            return Array.Empty<TelegramToWhatsAppRouteSettings>();
+        }
+
+        return new List<TelegramToWhatsAppRouteSettings>
+        {
+            new()
+            {
+                Name = "Rota Telegram -> WhatsApp (fallback)",
+                Enabled = true,
+                SourceChatIds = tgSources.Distinct().ToList(),
+                DestinationGroupIds = wa.DestinationGroupIds
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            }
+        };
+    }
+
     private static bool IsSourceMatch(long originId, List<long> sourceIds)
     {
         if (sourceIds.Contains(originId)) return true;
@@ -972,6 +1621,143 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
     private static bool IsTelegramGroupPeer(Peer peer)
         => peer is PeerChat || peer is PeerChannel;
+
+    private static string BuildMessageTextForConversion(Message msg)
+    {
+        var baseText = msg.message ?? string.Empty;
+        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (msg.entities is not null)
+        {
+            foreach (var entity in msg.entities)
+            {
+                switch (entity)
+                {
+                    case MessageEntityTextUrl textUrl when !string.IsNullOrWhiteSpace(textUrl.url):
+                        urls.Add(textUrl.url.Trim());
+                        break;
+                    case MessageEntityUrl urlEntity:
+                        var extracted = TryExtractUrlFromEntity(baseText, urlEntity.offset, urlEntity.length);
+                        if (!string.IsNullOrWhiteSpace(extracted))
+                        {
+                            urls.Add(extracted);
+                        }
+                        break;
+                }
+            }
+        }
+
+        if (msg.media is MessageMediaWebPage mmWeb &&
+            mmWeb.webpage is WebPage webPage &&
+            !string.IsNullOrWhiteSpace(webPage.url))
+        {
+            urls.Add(webPage.url.Trim());
+        }
+
+        if (urls.Count == 0)
+        {
+            return baseText;
+        }
+
+        var sb = new StringBuilder(baseText);
+        foreach (var url in urls)
+        {
+            if (baseText.Contains(url, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (sb.Length > 0)
+            {
+                sb.AppendLine();
+            }
+            sb.Append(url);
+        }
+
+        return sb.ToString();
+    }
+
+    private static string? TryExtractUrlFromEntity(string text, int offset, int length)
+    {
+        if (string.IsNullOrWhiteSpace(text) || offset < 0 || length <= 0 || offset >= text.Length)
+        {
+            return null;
+        }
+
+        var max = Math.Min(length, text.Length - offset);
+        if (max <= 0)
+        {
+            return null;
+        }
+
+        var candidate = text.Substring(offset, max).Trim();
+        if (candidate.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            candidate.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return candidate;
+        }
+
+        return null;
+    }
+
+    private static bool TryGetStrictForwardText(string originalText, bool conversionSuccess, int convertedLinks, string? convertedText, out string strictText)
+    {
+        strictText = string.Empty;
+        if (!conversionSuccess || convertedLinks <= 0 || string.IsNullOrWhiteSpace(convertedText))
+        {
+            return false;
+        }
+
+        var originalUrls = ExtractNormalizedUrls(originalText);
+        if (originalUrls.Count == 0)
+        {
+            return false;
+        }
+
+        var convertedUrls = ExtractNormalizedUrls(convertedText);
+        if (convertedUrls.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var originalUrl in originalUrls)
+        {
+            if (convertedUrls.Contains(originalUrl))
+            {
+                return false;
+            }
+        }
+
+        strictText = convertedText;
+        return true;
+    }
+
+    private static HashSet<string> ExtractNormalizedUrls(string text)
+    {
+        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return urls;
+        }
+
+        foreach (Match match in UrlRegex.Matches(text))
+        {
+            var normalized = NormalizeUrlForComparison(match.Value);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                urls.Add(normalized);
+            }
+        }
+
+        return urls;
+    }
+
+    private static string NormalizeUrlForComparison(string rawUrl)
+    {
+        return rawUrl
+            .Trim()
+            .TrimEnd('"', '\'', '`', '.', ',', ';', ':', ')', ']', '}', '!', '?');
+    }
 
     private static string? GetAutoReply(AutomationSettings settings, string text)
     {

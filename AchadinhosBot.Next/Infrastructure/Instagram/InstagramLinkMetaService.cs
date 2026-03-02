@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using System.Net;
+using System.Globalization;
+using AchadinhosBot.Next.Infrastructure.Amazon;
 
 namespace AchadinhosBot.Next.Infrastructure.Instagram;
 
@@ -9,11 +11,16 @@ public sealed class InstagramLinkMetaService
     private static readonly object CacheLock = new();
     private static readonly Dictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly ILogger<InstagramLinkMetaService> _logger;
 
-    public InstagramLinkMetaService(IHttpClientFactory httpClientFactory, ILogger<InstagramLinkMetaService> logger)
+    public InstagramLinkMetaService(
+        IHttpClientFactory httpClientFactory,
+        AmazonPaApiClient amazonPaApiClient,
+        ILogger<InstagramLinkMetaService> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _amazonPaApiClient = amazonPaApiClient;
         _logger = logger;
     }
 
@@ -24,6 +31,33 @@ public sealed class InstagramLinkMetaService
 
         try
         {
+            LinkMetaResult? amazonMeta = null;
+            if (Uri.TryCreate(link, UriKind.Absolute, out var uri) &&
+                IsAmazonHost(uri.Host) &&
+                _amazonPaApiClient.IsConfigured)
+            {
+                var asin = ExtractAmazonAsin(uri);
+                if (!string.IsNullOrWhiteSpace(asin))
+                {
+                    var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
+                    if (item is not null)
+                    {
+                        amazonMeta = new LinkMetaResult
+                        {
+                            Title = item.Title,
+                            PriceText = item.PriceDisplay,
+                            Images = item.Images ?? new List<string>()
+                        };
+
+                        if (!string.IsNullOrWhiteSpace(amazonMeta.Title) || amazonMeta.Images.Count > 0)
+                        {
+                            SetCache(link, amazonMeta);
+                            return amazonMeta;
+                        }
+                    }
+                }
+            }
+
             var client = _httpClientFactory.CreateClient("default");
             using var response = await client.GetAsync(link, ct);
             if (!response.IsSuccessStatusCode) return new LinkMetaResult();
@@ -32,8 +66,10 @@ public sealed class InstagramLinkMetaService
             var resolvedUri = response.RequestMessage?.RequestUri;
 
             var title = FirstNonEmpty(
+                amazonMeta?.Title ?? string.Empty,
                 ExtractMetaContent(html, "property", "og:title"),
                 ExtractMetaContent(html, "name", "twitter:title"),
+                ExtractMetaContent(html, "itemprop", "name"),
                 ExtractTitleTag(html));
 
             var description = FirstNonEmpty(
@@ -41,7 +77,39 @@ public sealed class InstagramLinkMetaService
                 ExtractMetaContent(html, "name", "description"),
                 ExtractMetaContent(html, "name", "twitter:description"));
 
+            if (amazonMeta is null &&
+                resolvedUri is not null &&
+                IsAmazonHost(resolvedUri.Host) &&
+                _amazonPaApiClient.IsConfigured)
+            {
+                var asin = ExtractAmazonAsin(resolvedUri);
+                if (!string.IsNullOrWhiteSpace(asin))
+                {
+                    try
+                    {
+                        var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
+                        if (item is not null)
+                        {
+                            amazonMeta = new LinkMetaResult
+                            {
+                                Title = item.Title,
+                                PriceText = item.PriceDisplay,
+                                Images = item.Images ?? new List<string>()
+                            };
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Falha ao complementar meta da Amazon via URL resolvida.");
+                    }
+                }
+            }
+
             var images = new List<string>();
+            if (amazonMeta?.Images is { Count: > 0 })
+            {
+                images.AddRange(amazonMeta.Images);
+            }
             images.AddRange(ExtractMetaContents(html, "property", "og:image"));
             images.AddRange(ExtractMetaContents(html, "property", "og:image:url"));
             images.AddRange(ExtractMetaContents(html, "property", "og:image:secure_url"));
@@ -51,13 +119,31 @@ public sealed class InstagramLinkMetaService
             images.AddRange(ExtractLinkHrefs(html, "rel", "image_src"));
             images.AddRange(ExtractImageUrlsFromJsonLd(html));
             images.AddRange(ExtractImageUrlsFromImgTags(html));
+            images.AddRange(ExtractAmazonMediaImageUrls(html));
             images = NormalizeImageUrls(images, resolvedUri);
+
+            var videos = new List<string>();
+            videos.AddRange(ExtractMetaContents(html, "property", "og:video"));
+            videos.AddRange(ExtractMetaContents(html, "property", "og:video:url"));
+            videos.AddRange(ExtractMetaContents(html, "property", "og:video:secure_url"));
+            videos.AddRange(ExtractMetaContents(html, "name", "twitter:player:stream"));
+            videos.AddRange(ExtractVideoUrlsFromJsonLd(html));
+            videos.AddRange(ExtractVideoUrlsFromVideoTags(html));
+            videos.AddRange(ExtractVideoUrlsFromKnownJsonKeys(html));
+            videos.AddRange(ExtractVideoUrlsByExtensionPattern(html));
+            videos = NormalizeVideoUrls(videos, resolvedUri);
 
             var result = new LinkMetaResult
             {
                 Title = WebUtility.HtmlDecode(title?.Trim() ?? string.Empty),
                 Description = WebUtility.HtmlDecode(description?.Trim() ?? string.Empty),
-                Images = images
+                PriceText = FirstNonEmpty(
+                    amazonMeta?.PriceText ?? string.Empty,
+                    ExtractMetaPriceText(html),
+                    ExtractPriceFromJsonLd(html),
+                    ExtractPriceFromRawHtml(html)),
+                Images = images,
+                Videos = videos
             };
             SetCache(link, result);
             return result;
@@ -97,6 +183,50 @@ public sealed class InstagramLinkMetaService
 
     private static string FirstNonEmpty(params string[] values)
         => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? string.Empty;
+
+    private static bool IsAmazonHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        var normalized = host.Trim().ToLowerInvariant();
+        return normalized == "amazon.com"
+               || normalized == "amazon.com.br"
+               || normalized.EndsWith(".amazon.com", StringComparison.Ordinal)
+               || normalized.EndsWith(".amazon.com.br", StringComparison.Ordinal);
+    }
+
+    private static string? ExtractAmazonAsin(Uri uri)
+    {
+        var path = (uri.AbsolutePath ?? string.Empty).ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var patterns = new[]
+        {
+            @"/DP/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/GP/AW/D/(?<asin>[A-Z0-9]{10})(?:[/?]|$)",
+            @"/PRODUCT/(?<asin>[A-Z0-9]{10})(?:[/?]|$)"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(path, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (match.Success)
+            {
+                return match.Groups["asin"].Value;
+            }
+        }
+
+        var query = uri.Query ?? string.Empty;
+        var queryMatch = Regex.Match(query, @"(?:^|[?&])asin=(?<asin>[A-Za-z0-9]{10})(?:&|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return queryMatch.Success ? queryMatch.Groups["asin"].Value.ToUpperInvariant() : null;
+    }
 
     private static string ExtractTitleTag(string html)
     {
@@ -280,6 +410,200 @@ public sealed class InstagramLinkMetaService
             .ToList();
     }
 
+    private static List<string> ExtractAmazonMediaImageUrls(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var list = new List<string>();
+
+        var absolute = Regex.Matches(
+            html,
+            @"https?:\\?/\\?/m\.media-amazon\.com/images/I/[^""'<>\\s]+",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        foreach (Match match in absolute)
+        {
+            var raw = match.Value;
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                list.Add(UnescapeJsonUrl(raw));
+            }
+        }
+
+        var encoded = Regex.Matches(
+            html,
+            @"m\.media-amazon\.com/images/I/[^""'<>\\s]+",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        foreach (Match match in encoded)
+        {
+            var raw = match.Value;
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                list.Add($"https://{raw.Trim()}");
+            }
+        }
+
+        return list
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractVideoUrlsFromVideoTags(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var urls = new List<string>();
+        var videoTags = Regex.Matches(html, @"<video\b[^>]*>(?<inner>[\s\S]*?)</video>", RegexOptions.IgnoreCase);
+        foreach (Match match in videoTags)
+        {
+            var tag = match.Value ?? string.Empty;
+            var src = ExtractTagAttribute(tag, "src");
+            if (!string.IsNullOrWhiteSpace(src))
+            {
+                urls.Add(src!);
+            }
+
+            var inner = match.Groups["inner"].Value ?? string.Empty;
+            foreach (Match source in Regex.Matches(inner, @"<source\b[^>]*>", RegexOptions.IgnoreCase))
+            {
+                var sourceSrc = ExtractTagAttribute(source.Value, "src");
+                if (!string.IsNullOrWhiteSpace(sourceSrc))
+                {
+                    urls.Add(sourceSrc!);
+                }
+            }
+        }
+
+        var sourceOnly = Regex.Matches(html, @"<source\b[^>]*>", RegexOptions.IgnoreCase);
+        foreach (Match source in sourceOnly)
+        {
+            var sourceSrc = ExtractTagAttribute(source.Value, "src");
+            if (!string.IsNullOrWhiteSpace(sourceSrc))
+            {
+                urls.Add(sourceSrc!);
+            }
+        }
+
+        return urls
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractVideoUrlsFromJsonLd(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var list = new List<string>();
+        var scripts = Regex.Matches(
+            html,
+            @"<script[^>]*type\s*=\s*['""]application/ld\+json['""][^>]*>(?<json>[\s\S]*?)</script>",
+            RegexOptions.IgnoreCase);
+
+        foreach (Match script in scripts)
+        {
+            var json = script.Groups["json"].Value;
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                continue;
+            }
+
+            list.AddRange(ExtractJsonImageByKey(json, "contentUrl"));
+            list.AddRange(ExtractJsonImageByKey(json, "embedUrl"));
+            list.AddRange(ExtractJsonImageByKey(json, "video"));
+        }
+
+        return list
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractVideoUrlsFromKnownJsonKeys(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var keys = new[]
+        {
+            "videoUrl",
+            "video_url",
+            "playUrl",
+            "play_url",
+            "streamUrl",
+            "stream_url",
+            "hlsUrl",
+            "hls_url",
+            "masterUrl",
+            "master_url",
+            "downloadUrl",
+            "download_url",
+            "video"
+        };
+
+        var list = new List<string>();
+        foreach (var key in keys)
+        {
+            list.AddRange(ExtractJsonImageByKey(html, key));
+        }
+
+        return list
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractVideoUrlsByExtensionPattern(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var list = new List<string>();
+        var absolutePattern = @"https?:\\?/\\?/[^""'<>\\s]+?\.(?:mp4|mov|m4v|webm|m3u8)(?:\?[^""'<>\\s]*)?";
+        foreach (Match match in Regex.Matches(html, absolutePattern, RegexOptions.IgnoreCase))
+        {
+            var raw = match.Value;
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                list.Add(UnescapeJsonUrl(raw));
+            }
+        }
+
+        var relativePattern = @"(?:\\?/)+[^""'<>\\s]+?\.(?:mp4|mov|m4v|webm|m3u8)(?:\?[^""'<>\\s]*)?";
+        foreach (Match match in Regex.Matches(html, relativePattern, RegexOptions.IgnoreCase))
+        {
+            var raw = match.Value;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var normalized = UnescapeJsonUrl(raw);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                list.Add(normalized);
+            }
+        }
+
+        return list
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private static bool IsTinyImageTag(string tag)
     {
         var widthRaw = ExtractTagAttribute(tag, "width");
@@ -383,6 +707,52 @@ public sealed class InstagramLinkMetaService
             .ToList();
     }
 
+    private static List<string> NormalizeVideoUrls(IEnumerable<string> urls, Uri? baseUri)
+    {
+        var result = new List<string>();
+        foreach (var raw in urls.Where(x => !string.IsNullOrWhiteSpace(x)).Take(80))
+        {
+            var value = (raw ?? string.Empty).Trim().Trim('"', '\'');
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+            if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("blob:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            value = WebUtility.HtmlDecode(value)?.Trim() ?? string.Empty;
+            if (value.StartsWith("//", StringComparison.Ordinal))
+            {
+                value = (baseUri?.Scheme ?? "https") + ":" + value;
+            }
+
+            if (Uri.TryCreate(value, UriKind.Absolute, out var absolute))
+            {
+                if (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps)
+                {
+                    result.Add(absolute.GetLeftPart(UriPartial.Path) + absolute.Query);
+                }
+                continue;
+            }
+
+            if (baseUri is not null &&
+                Uri.TryCreate(baseUri, value, out var relative) &&
+                (relative.Scheme == Uri.UriSchemeHttp || relative.Scheme == Uri.UriSchemeHttps))
+            {
+                result.Add(relative.GetLeftPart(UriPartial.Path) + relative.Query);
+            }
+        }
+
+        return result
+            .Where(x => !IsLikelyInvalidVideoUrl(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+    }
+
     private static bool IsLikelyInvalidImageUrl(string url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -396,8 +766,16 @@ public sealed class InstagramLinkMetaService
         }
 
         var path = uri.AbsolutePath.ToLowerInvariant();
+        var host = uri.Host.ToLowerInvariant();
         if (path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith(".ico", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (host.StartsWith("fls-na.", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("oc-csi", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("/images/g/", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -410,6 +788,189 @@ public sealed class InstagramLinkMetaService
                || path.Contains("loading", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsLikelyInvalidVideoUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return true;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return true;
+        }
+
+        var path = uri.AbsolutePath.ToLowerInvariant();
+        if (path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (path.Contains("logo", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("sprite", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("icon", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string ExtractMetaPriceText(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return string.Empty;
+        }
+
+        var amount = FirstNonEmpty(
+            ExtractMetaContent(html, "property", "product:price:amount"),
+            ExtractMetaContent(html, "property", "og:price:amount"),
+            ExtractMetaContent(html, "name", "product:price:amount"),
+            ExtractMetaContent(html, "itemprop", "price"),
+            ExtractMetaContent(html, "name", "price"));
+        var currency = FirstNonEmpty(
+            ExtractMetaContent(html, "property", "product:price:currency"),
+            ExtractMetaContent(html, "property", "og:price:currency"),
+            ExtractMetaContent(html, "name", "product:price:currency"),
+            ExtractMetaContent(html, "itemprop", "priceCurrency"));
+
+        var formatted = FormatPriceDisplay(amount, currency);
+        if (!string.IsNullOrWhiteSpace(formatted))
+        {
+            return formatted;
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractPriceFromJsonLd(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return string.Empty;
+        }
+
+        var currencyMatch = Regex.Match(
+            html,
+            @"""(?:priceCurrency|currency)""\s*:\s*""(?<currency>[A-Z]{3})""",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var priceMatch = Regex.Match(
+            html,
+            @"""(?:price|lowPrice|highPrice)""\s*:\s*""?(?<price>\d{1,7}(?:[.,]\d{1,2})?)""?",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        if (!priceMatch.Success)
+        {
+            return string.Empty;
+        }
+
+        var priceRaw = priceMatch.Groups["price"].Value;
+        var currency = currencyMatch.Success ? currencyMatch.Groups["currency"].Value : string.Empty;
+        return FormatPriceDisplay(priceRaw, currency);
+    }
+
+    private static string ExtractPriceFromRawHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return string.Empty;
+        }
+
+        var decoded = WebUtility.HtmlDecode(html)?.Replace('\u00A0', ' ') ?? html;
+
+        var amazonWhole = Regex.Match(
+            decoded,
+            @"a-price-whole[^>]*>\s*(?<whole>\d{1,3}(?:[\.]\d{3})*)\s*<",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var amazonFraction = Regex.Match(
+            decoded,
+            @"a-price-fraction[^>]*>\s*(?<fraction>\d{2})\s*<",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (amazonWhole.Success && amazonFraction.Success)
+        {
+            return $"R$ {amazonWhole.Groups["whole"].Value.Trim()},{amazonFraction.Groups["fraction"].Value.Trim()}";
+        }
+
+        var brl = Regex.Match(
+            decoded,
+            @"R\$\s?(?<price>\d{1,3}(?:\.\d{3})*(?:,\d{2})?)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (brl.Success)
+        {
+            return $"R$ {brl.Groups["price"].Value.Trim()}";
+        }
+
+        return string.Empty;
+    }
+
+    private static string FormatPriceDisplay(string? amountRaw, string? currencyRaw)
+    {
+        if (string.IsNullOrWhiteSpace(amountRaw))
+        {
+            return string.Empty;
+        }
+
+        var amount = NormalizeDecimal(amountRaw);
+        if (!decimal.TryParse(amount, NumberStyles.Number, CultureInfo.InvariantCulture, out var value))
+        {
+            return string.Empty;
+        }
+
+        var currency = (currencyRaw ?? string.Empty).Trim().ToUpperInvariant();
+        if (currency is "BRL" or "R$")
+        {
+            return $"R$ {value.ToString("N2", CultureInfo.GetCultureInfo("pt-BR"))}";
+        }
+
+        if (string.IsNullOrWhiteSpace(currency))
+        {
+            if (value < 5)
+            {
+                return string.Empty;
+            }
+            return value.ToString("N2", CultureInfo.GetCultureInfo("pt-BR"));
+        }
+
+        return $"{currency} {value.ToString("0.00", CultureInfo.InvariantCulture)}";
+    }
+
+    private static string NormalizeDecimal(string raw)
+    {
+        var value = (raw ?? string.Empty).Trim();
+        value = Regex.Replace(value, @"[^\d\.,]", string.Empty, RegexOptions.CultureInvariant);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var hasComma = value.Contains(',', StringComparison.Ordinal);
+        var hasDot = value.Contains('.', StringComparison.Ordinal);
+        if (hasComma && hasDot)
+        {
+            var lastComma = value.LastIndexOf(',');
+            var lastDot = value.LastIndexOf('.');
+            if (lastComma > lastDot)
+            {
+                value = value.Replace(".", string.Empty, StringComparison.Ordinal).Replace(",", ".", StringComparison.Ordinal);
+            }
+            else
+            {
+                value = value.Replace(",", string.Empty, StringComparison.Ordinal);
+            }
+        }
+        else if (hasComma)
+        {
+            value = value.Replace(",", ".", StringComparison.Ordinal);
+        }
+
+        return value;
+    }
+
     private record CacheEntry(DateTimeOffset Timestamp, LinkMetaResult Result);
 }
 
@@ -417,5 +978,7 @@ public sealed class LinkMetaResult
 {
     public string? Title { get; set; }
     public string? Description { get; set; }
+    public string? PriceText { get; set; }
     public List<string> Images { get; set; } = new();
+    public List<string> Videos { get; set; } = new();
 }

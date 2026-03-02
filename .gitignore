@@ -9,7 +9,12 @@
 *.user
 *.userosscache
 *.sln.docstates
-.azure 
+.azure
+
+# Local secrets and runtime sessions
+AchadinhosBot.Next/.env
+AchadinhosBot.Next/WTelegram.session
+AchadinhosBot.Next/bin/**/WTelegram.session
 .dotnet
 
 # User-specific files (MonoDevelop/Xamarin Studio)

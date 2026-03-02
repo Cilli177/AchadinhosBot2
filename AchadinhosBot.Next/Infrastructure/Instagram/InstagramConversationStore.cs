@@ -37,6 +37,15 @@ public sealed class InstagramConversationStore
         return false;
     }
 
+    public void Clear(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return;
+        lock (_lock)
+        {
+            _pending.Remove(key);
+        }
+    }
+
     private void CleanupLocked()
     {
         var now = DateTimeOffset.UtcNow;

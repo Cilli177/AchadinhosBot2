@@ -101,6 +101,7 @@ curl http://localhost:8081/health
 - `PUT /api/settings` (admin)
 - `POST /api/integrations/whatsapp/connect` (admin)
 - `POST /api/integrations/telegram/connect` (admin)
+- `POST /api/coupons/sync-official` (admin)
 - `POST /api/playground/preview` (admin e operator)
 
 ## Variáveis de ambiente principais
@@ -114,6 +115,38 @@ curl http://localhost:8081/health
 - `Evolution__InstanceName`
 - `Evolution__WebhookSecret`
 - `Telegram__BotToken`
+
+## Cupons via API oficial (todas as lojas)
+- Endpoint: `POST /api/coupons/sync-official`
+- Body opcional:
+```json
+{
+  "store": "Shopee"
+}
+```
+- Sem `store`, sincroniza todos os providers oficiais configurados.
+- Stores aceitas: `Amazon`, `Shopee`, `Shein`, `Mercado Livre`.
+
+### ConfiguraÃ§Ã£o
+No bloco `Affiliate`, configure cada loja:
+- `AmazonOfficialCoupons`
+- `ShopeeOfficialCoupons`
+- `SheinOfficialCoupons`
+- `MercadoLivreOfficialCoupons`
+
+Cada bloco suporta:
+- `Enabled`
+- `Endpoint`
+- `Method` (`GET`, `POST`, `PUT`, `PATCH`)
+- `PayloadJson`
+- `ApiKeyHeader`
+- `ApiKey`
+- `BearerToken`
+- `Headers` (dicionÃ¡rio de headers extras)
+
+Formato esperado no retorno JSON da API oficial:
+- array de cupons no root, ou dentro de um campo (ex: `coupons`, `data.coupons`);
+- cada item deve trazer ao menos um campo de cÃ³digo (`code`, `couponCode`, `promoCode`, `voucherCode`).
 
 ## Hospedagem gratuita (recomendação prática)
 

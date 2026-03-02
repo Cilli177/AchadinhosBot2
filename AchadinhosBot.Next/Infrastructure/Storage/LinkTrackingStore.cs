@@ -20,15 +20,30 @@ public sealed class LinkTrackingStore : ILinkTrackingStore
         try
         {
             var data = await ReadAsync(cancellationToken);
-            var id = Guid.NewGuid().ToString("N");
-            var entry = new LinkTrackingEntry
+            var entry = BuildEntry(targetUrl);
+            data[entry.Id] = entry;
+            await WriteAsync(data, cancellationToken);
+            return entry;
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
+    public async Task<LinkTrackingEntry> GetOrCreateAsync(string targetUrl, CancellationToken cancellationToken)
+    {
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var data = await ReadAsync(cancellationToken);
+            if (TryFindByTargetUrl(data, targetUrl, out var existing))
             {
-                Id = id,
-                TargetUrl = targetUrl,
-                Clicks = 0,
-                CreatedAt = DateTimeOffset.UtcNow
-            };
-            data[id] = entry;
+                return existing;
+            }
+
+            var entry = BuildEntry(targetUrl);
+            data[entry.Id] = entry;
             await WriteAsync(data, cancellationToken);
             return entry;
         }
@@ -78,5 +93,36 @@ public sealed class LinkTrackingStore : ILinkTrackingStore
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         await using var stream = File.Create(_path);
         await JsonSerializer.SerializeAsync(stream, data, new JsonSerializerOptions { WriteIndented = true }, cancellationToken);
+    }
+
+    private static LinkTrackingEntry BuildEntry(string targetUrl)
+    {
+        var normalized = targetUrl?.Trim() ?? string.Empty;
+        return new LinkTrackingEntry
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            TargetUrl = normalized,
+            Clicks = 0,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static bool TryFindByTargetUrl(
+        Dictionary<string, LinkTrackingEntry> data,
+        string targetUrl,
+        out LinkTrackingEntry existing)
+    {
+        var normalized = targetUrl?.Trim() ?? string.Empty;
+        foreach (var value in data.Values)
+        {
+            if (string.Equals(value.TargetUrl, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                existing = value;
+                return true;
+            }
+        }
+
+        existing = new LinkTrackingEntry();
+        return false;
     }
 }

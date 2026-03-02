@@ -30,7 +30,8 @@ public sealed class GeminiInstagramPostGenerator
 
     public async Task<string?> GenerateAsync(string productInput, string? offerContext, string? affiliateLink, InstagramPostSettings instaSettings, GeminiSettings geminiSettings, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(geminiSettings.ApiKey) || geminiSettings.ApiKey == "********")
+        var apiKeys = GetGeminiApiKeys(geminiSettings);
+        if (apiKeys.Count == 0)
         {
             return null;
         }
@@ -61,6 +62,10 @@ public sealed class GeminiInstagramPostGenerator
                     role = "user",
                     parts = new[] { new { text = prompt } }
                 }
+            },
+            generationConfig = new
+            {
+                maxOutputTokens = Math.Clamp(geminiSettings.MaxOutputTokens <= 0 ? 1200 : geminiSettings.MaxOutputTokens, 200, 4096)
             }
         };
 
@@ -68,21 +73,37 @@ public sealed class GeminiInstagramPostGenerator
         try
         {
             var client = _httpClientFactory.CreateClient("gemini");
-            var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(geminiSettings.ApiKey)}";
-            using var response = await client.PostAsync(url, new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            string? lastErrorBody = null;
+            for (var i = 0; i < apiKeys.Count; i++)
             {
-                _logger.LogWarning("Gemini respondeu erro {Status}: {Body}", response.StatusCode, body);
-                await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, null, body, started, 0, "Erro na geracao"), cancellationToken);
-                return null;
+                var apiKey = apiKeys[i];
+                var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+                using var response = await client.PostAsync(url, new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastErrorBody = body;
+                    var canTryNext = i < apiKeys.Count - 1 && ShouldTryNextGeminiKey(response.StatusCode, body);
+                    if (canTryNext)
+                    {
+                        _logger.LogWarning("Gemini chave {KeyIndex}/{Total} falhou com {Status}. Tentando proxima chave.", i + 1, apiKeys.Count, response.StatusCode);
+                        continue;
+                    }
+
+                    _logger.LogWarning("Gemini respondeu erro {Status}: {Body}", response.StatusCode, body);
+                    await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, null, body, started, 0, "Erro na geracao"), cancellationToken);
+                    return null;
+                }
+
+                var text = ExtractOutputText(body);
+                var finalText = AppendImagesIfMissing(text, images);
+                var (score, notes) = EvaluateQuality(finalText);
+                await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, finalText, null, started, score, notes), cancellationToken);
+                return finalText;
             }
 
-            var text = ExtractOutputText(body);
-            var finalText = AppendImagesIfMissing(text, images);
-            var (score, notes) = EvaluateQuality(finalText);
-            await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, finalText, null, started, score, notes), cancellationToken);
-            return finalText;
+            await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, null, lastErrorBody, started, 0, "Erro na geracao"), cancellationToken);
+            return null;
         }
         catch (Exception ex)
         {
@@ -90,6 +111,56 @@ public sealed class GeminiInstagramPostGenerator
             await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, 0, Array.Empty<string>(), null, ex.Message, started, 0, "Erro na geracao"), cancellationToken);
             return null;
         }
+    }
+
+    private static List<string> GetGeminiApiKeys(GeminiSettings settings)
+    {
+        var keys = new List<string>();
+        if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+        {
+            keys.Add(settings.ApiKey.Trim());
+        }
+
+        if (settings.ApiKeys is not null)
+        {
+            foreach (var key in settings.ApiKeys)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                var trimmed = key.Trim();
+                if (trimmed == "********")
+                {
+                    continue;
+                }
+
+                keys.Add(trimmed);
+            }
+        }
+
+        return keys
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static bool ShouldTryNextGeminiKey(System.Net.HttpStatusCode statusCode, string? body)
+    {
+        var status = (int)statusCode;
+        if (status is 401 or 403 or 429 or 500 or 502 or 503 or 504)
+        {
+            return true;
+        }
+
+        if (status == 400 && !string.IsNullOrWhiteSpace(body))
+        {
+            return body.Contains("RESOURCE_EXHAUSTED", StringComparison.OrdinalIgnoreCase) ||
+                   body.Contains("quota", StringComparison.OrdinalIgnoreCase) ||
+                   body.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static string? ExtractOutputText(string json)
