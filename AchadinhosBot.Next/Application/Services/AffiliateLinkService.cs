@@ -108,7 +108,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
             var officialErrors = new List<string>();
 
-            if (_amazonCreatorApiClient.IsConfigured)
+            var creatorEnabled = false; // bloqueado temporariamente: manter conversao interna sem Creator API
+
+            if (creatorEnabled)
             {
                 var creator = await ConvertAmazonWithCreatorApiAsync(resolved, expectedTag, cancellationToken);
                 if (creator.Success && !string.IsNullOrWhiteSpace(creator.Url))

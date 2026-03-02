@@ -9,6 +9,7 @@ using System.Runtime.Versioning;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Net.Http.Headers;
+using System.IO;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
@@ -35,6 +36,7 @@ using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Telegram;
 using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.WhatsApp;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
@@ -49,6 +51,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
+
+// Persistir chaves de DataProtection em pasta local acessível ao sandbox
+var dpKeysPath = Path.Combine(AppContext.BaseDirectory, ".runtime", "localappdata", "DataProtection-Keys");
+Directory.CreateDirectory(dpKeysPath);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dpKeysPath));
 
 // Mantem a API de pe mesmo que algum worker opcional (ex: Telegram) falhe.
 builder.Services.Configure<HostOptions>(options =>
@@ -310,6 +318,7 @@ app.MapGet("/conversor", async (
     IHttpClientFactory httpClientFactory,
     OfficialProductDataService officialProductDataService,
     ILinkTrackingStore trackingStore,
+    ICouponSelector couponSelector,
     ISettingsStore settingsStore,
     IOptions<WebhookOptions> webhookOptions,
     CancellationToken ct) =>
@@ -442,6 +451,21 @@ app.MapGet("/conversor", async (
                 viewModel.CorrectionNote = conversion.CorrectionNote;
                 viewModel.ConversionHost = ExtractHostForDisplay(convertedUrl);
                 viewModel.DomainHost = ExtractHostForDisplay(trackedUrl);
+
+                try
+                {
+                    var coupons = await couponSelector.GetActiveCouponsAsync(viewModel.Store, 1, ct);
+                    var coupon = coupons.FirstOrDefault();
+                    if (coupon is not null)
+                    {
+                        viewModel.HasCoupon = true;
+                        viewModel.CouponCode = coupon.Code ?? string.Empty;
+                        viewModel.CouponDescription = coupon.Description ?? string.Empty;
+                    }
+                }
+                catch
+                {
+                }
             }
         }
     }
@@ -5427,50 +5451,64 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
     sb.AppendLine("  <title>Conversor Inteligente de Links - Rei das Ofertas</title>");
     sb.AppendLine("  <meta name=\"robots\" content=\"noindex,nofollow\" />");
     sb.AppendLine("  <style>");
-    sb.AppendLine("    :root{--bg:#f4f7fb;--bg2:#eef3ff;--card:#ffffff;--line:#d8e1ef;--text:#132034;--muted:#58708f;--brand:#0f8a5f;--brandText:#ffffff;--accent:#1459c7;--accentText:#ffffff;--ok:#157347;--warn:#a02828;--chip:#edf4ff}");
+    sb.AppendLine("    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=Sora:wght@600;700&display=swap');");
+    sb.AppendLine("    :root{--bg:#f8f5f0;--bg2:#eef7ff;--card:#ffffff;--line:#e6e0d6;--text:#0f172a;--muted:#55637a;--brand:#ff7a18;--brand2:#0ea5a4;--brandText:#ffffff;--accent:#0f172a;--accentText:#ffffff;--ok:#0f766e;--warn:#b42318;--chip:#eef9f7;--shadow:0 20px 50px rgba(15,23,42,.08)}");
     sb.AppendLine("    *{box-sizing:border-box}");
-    sb.AppendLine("    body{margin:0;color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif;background:radial-gradient(circle at 0% 0%,#d9ecff 0%,#f7fbff 30%,#f3f8ff 100%)}");
-    sb.AppendLine("    .wrap{max-width:1040px;margin:0 auto;padding:22px 14px 42px}");
-    sb.AppendLine("    .hero{padding:18px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,#ffffff 0%,#f3f9ff 55%,#eef6ff 100%)}");
-    sb.AppendLine("    .badge{display:inline-block;padding:4px 10px;border-radius:999px;background:#e6f8f0;color:#0e7a54;font-size:.78rem;font-weight:800}");
-    sb.AppendLine("    h1{margin:10px 0 6px;font-size:1.52rem;line-height:1.24}");
-    sb.AppendLine("    .subtitle{margin:0;color:var(--muted);max-width:760px}");
-    sb.AppendLine("    .form{margin-top:15px;display:flex;gap:10px;flex-wrap:wrap}");
-    sb.AppendLine("    .form input{flex:1;min-width:260px;padding:12px 12px;border-radius:12px;border:1px solid var(--line);font-size:.95rem;background:#fff}");
-    sb.AppendLine("    .form button{padding:12px 18px;border:0;border-radius:12px;background:var(--brand);color:var(--brandText);font-weight:800;cursor:pointer}");
-    sb.AppendLine("    .metaRow{margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}");
+    sb.AppendLine("    body{margin:0;color:var(--text);font-family:'Manrope','Sora',sans-serif;background:radial-gradient(900px 520px at -10% -20%,#ffe1c5 0%,rgba(255,225,197,0) 70%),radial-gradient(700px 400px at 110% 10%,#cfefff 0%,rgba(207,239,255,0) 60%),linear-gradient(180deg,#fbfbfb 0%,#f6f2ec 100%)}");
+    sb.AppendLine("    .wrap{max-width:1120px;margin:0 auto;padding:28px 16px 64px}");
+    sb.AppendLine("    .hero{position:relative;padding:26px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(135deg,#ffffff 0%,#fff4e6 40%,#eff9ff 100%);box-shadow:var(--shadow);overflow:hidden}");
+    sb.AppendLine("    .hero:after{content:'';position:absolute;right:-80px;top:-60px;width:220px;height:220px;background:radial-gradient(circle,#ffd1a8 0%,rgba(255,209,168,0) 70%);opacity:.8}");
+    sb.AppendLine("    .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:#fff2e2;color:#a14a08;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em}");
+    sb.AppendLine("    h1{margin:12px 0 6px;font-size:1.7rem;line-height:1.2;font-family:'Sora',sans-serif}");
+    sb.AppendLine("    .subtitle{margin:0;color:var(--muted);max-width:760px;font-size:.98rem}");
+    sb.AppendLine("    .form{margin-top:16px;display:flex;gap:12px;flex-wrap:wrap}");
+    sb.AppendLine("    .form input{flex:1;min-width:260px;padding:14px 14px;border-radius:14px;border:1px solid var(--line);font-size:1rem;background:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}");
+    sb.AppendLine("    .form button{padding:14px 20px;border:0;border-radius:14px;background:linear-gradient(135deg,#ff7a18 0%,#ffb25b 100%);color:var(--brandText);font-weight:800;cursor:pointer;box-shadow:0 10px 20px rgba(255,122,24,.28)}");
+    sb.AppendLine("    .metaRow{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}");
     sb.AppendLine("    .hint{font-size:.82rem;color:var(--muted)}");
-    sb.AppendLine("    .copyMini{border:1px solid var(--line);background:#fff;padding:6px 10px;border-radius:9px;cursor:pointer;font-weight:700;color:#2f4768}");
-    sb.AppendLine("    .panel{margin-top:14px;padding:14px;border-radius:14px;border:1px solid var(--line);background:var(--card)}");
-    sb.AppendLine("    .status{font-weight:800}");
+    sb.AppendLine("    .copyMini{border:1px solid var(--line);background:#fff;padding:6px 10px;border-radius:10px;cursor:pointer;font-weight:700;color:#2f4768}");
+    sb.AppendLine("    .chipRow{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}");
+    sb.AppendLine("    .chip{padding:6px 10px;border-radius:999px;background:#f0f6ff;color:#1f3760;font-size:.78rem;font-weight:700}");
+    sb.AppendLine("    .panel{margin-top:16px;padding:16px 18px;border-radius:16px;border:1px solid var(--line);background:var(--card);box-shadow:var(--shadow)}");
+    sb.AppendLine("    .status{font-weight:800;font-family:'Sora',sans-serif}");
     sb.AppendLine("    .status.ok{color:var(--ok)}");
     sb.AppendLine("    .status.error{color:var(--warn)}");
-    sb.AppendLine("    .steps{margin:8px 0 0;padding-left:18px;color:var(--muted);line-height:1.5;font-size:.92rem}");
-    sb.AppendLine("    .result{margin-top:14px;display:grid;grid-template-columns:minmax(260px,360px) 1fr;gap:14px}");
-    sb.AppendLine("    .media{border:1px solid var(--line);border-radius:14px;background:#fff;min-height:250px;display:flex;align-items:center;justify-content:center;overflow:hidden}");
+    sb.AppendLine("    .steps{margin:10px 0 0;padding-left:18px;color:var(--muted);line-height:1.6;font-size:.95rem}");
+    sb.AppendLine("    .result{margin-top:18px;display:grid;grid-template-columns:minmax(260px,380px) 1fr;gap:16px}");
+    sb.AppendLine("    .media{border:1px solid var(--line);border-radius:18px;background:#fff;min-height:260px;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:var(--shadow)}");
     sb.AppendLine("    .media img{width:100%;height:100%;object-fit:cover;display:block}");
     sb.AppendLine("    .media .empty{padding:16px;color:var(--muted);font-size:.9rem;text-align:center}");
-    sb.AppendLine("    .card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px}");
+    sb.AppendLine("    .card{border:1px solid var(--line);border-radius:18px;background:#fff;padding:18px;box-shadow:var(--shadow)}");
     sb.AppendLine("    .topLine{display:flex;gap:8px;flex-wrap:wrap;align-items:center}");
-    sb.AppendLine("    .store{display:inline-block;padding:5px 10px;border-radius:999px;background:var(--chip);color:#24476f;font-size:.79rem;font-weight:800}");
-    sb.AppendLine("    .aff{display:inline-block;padding:5px 10px;border-radius:999px;background:#e9f7ef;color:#0f6c48;font-size:.79rem;font-weight:800}");
-    sb.AppendLine("    .title{margin-top:8px;font-size:1.18rem;line-height:1.34;font-weight:800}");
-    sb.AppendLine("    .price{margin-top:8px;font-size:1.08rem;font-weight:800;color:#1a4a96}");
-    sb.AppendLine("    .desc{margin-top:8px;color:var(--muted);line-height:1.45}");
-    sb.AppendLine("    .meta{margin-top:9px;font-size:.84rem;color:var(--muted)}");
-    sb.AppendLine("    .actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}");
-    sb.AppendLine("    .btn{display:inline-block;text-decoration:none;padding:10px 12px;border-radius:10px;font-weight:800;border:0;cursor:pointer}");
-    sb.AppendLine("    .btn.buy{background:var(--brand);color:var(--brandText)}");
-    sb.AppendLine("    .btn.secondary{background:var(--accent);color:var(--accentText)}");
-    sb.AppendLine("    .btn.ghost{background:#f4f8ff;color:#214162;border:1px solid var(--line)}");
-    sb.AppendLine("    .urlGrid{margin-top:12px;display:grid;gap:8px}");
+    sb.AppendLine("    .store{display:inline-flex;align-items:center;padding:6px 12px;border-radius:999px;background:var(--chip);color:#0f6c59;font-size:.78rem;font-weight:800}");
+    sb.AppendLine("    .aff{display:inline-flex;align-items:center;padding:6px 12px;border-radius:999px;background:#f1f5f9;color:#1f2a3a;font-size:.78rem;font-weight:800}");
+    sb.AppendLine("    .pill{display:inline-flex;align-items:center;padding:6px 12px;border-radius:999px;background:#fff4e6;color:#a14a08;font-size:.78rem;font-weight:800}");
+    sb.AppendLine("    .title{margin-top:10px;font-size:1.26rem;line-height:1.36;font-weight:800}");
+    sb.AppendLine("    .desc{margin-top:8px;color:var(--muted);line-height:1.5}");
+    sb.AppendLine("    .priceGrid{margin-top:14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}");
+    sb.AppendLine("    .stat{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff;display:flex;flex-direction:column;gap:6px}");
+    sb.AppendLine("    .stat.main{grid-column:span 2;background:linear-gradient(135deg,#fff1e1 0%,#fff 55%)}");
+    sb.AppendLine("    .stat-label{font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:#7a8699;font-weight:800}");
+    sb.AppendLine("    .stat-value{font-size:1.2rem;font-weight:800;color:#0f172a}");
+    sb.AppendLine("    .stat-sub{font-size:.85rem;color:var(--muted)}");
+    sb.AppendLine("    .meta{margin-top:10px;font-size:.84rem;color:var(--muted)}");
+    sb.AppendLine("    .actions{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap}");
+    sb.AppendLine("    .btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:12px 14px;border-radius:12px;font-weight:800;border:0;cursor:pointer}");
+    sb.AppendLine("    .btn.buy{background:linear-gradient(135deg,#0ea5a4 0%,#12c5b7 100%);color:#fff;box-shadow:0 10px 20px rgba(14,165,164,.25)}");
+    sb.AppendLine("    .btn.secondary{background:#0f172a;color:#fff}");
+    sb.AppendLine("    .btn.ghost{background:#f4f6fb;color:#1f2a3a;border:1px solid var(--line)}");
+    sb.AppendLine("    .urlGrid{margin-top:14px;display:grid;gap:10px}");
     sb.AppendLine("    .urlRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}");
-    sb.AppendLine("    textarea.urlbox{width:100%;min-height:54px;resize:vertical;padding:8px 10px;border:1px dashed var(--line);border-radius:10px;background:#fbfdff;font-family:Consolas,'Courier New',monospace;font-size:.8rem;line-height:1.34;color:#1f2a3a}");
-    sb.AppendLine("    .copyBtn{padding:9px 11px;border:1px solid var(--line);background:#fff;border-radius:10px;font-weight:800;color:#264467;cursor:pointer;min-width:92px}");
+    sb.AppendLine("    textarea.urlbox{width:100%;min-height:56px;resize:vertical;padding:10px 12px;border:1px dashed var(--line);border-radius:12px;background:#fbfdff;font-family:Consolas,'Courier New',monospace;font-size:.8rem;line-height:1.34;color:#1f2a3a}");
+    sb.AppendLine("    .copyBtn{padding:10px 12px;border:1px solid var(--line);background:#fff;border-radius:12px;font-weight:800;color:#264467;cursor:pointer;min-width:110px}");
     sb.AppendLine("    .toast{margin-top:10px;font-size:.84rem;color:#1f5f42;font-weight:700;min-height:18px}");
-    sb.AppendLine("    @media (max-width:760px){");
+    sb.AppendLine("    @media (max-width:860px){");
     sb.AppendLine("      .result{grid-template-columns:1fr}");
     sb.AppendLine("      .media{min-height:220px}");
+    sb.AppendLine("    }");
+    sb.AppendLine("    @media (max-width:680px){");
+    sb.AppendLine("      .priceGrid{grid-template-columns:1fr}");
+    sb.AppendLine("      .stat.main{grid-column:span 1}");
     sb.AppendLine("      .urlRow{grid-template-columns:1fr}");
     sb.AppendLine("      .copyBtn{width:100%}");
     sb.AppendLine("    }");
@@ -5491,6 +5529,12 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
     sb.AppendLine("      <textarea id=\"pageLink\" style=\"display:none;\">");
     sb.AppendLine(current);
     sb.AppendLine("      </textarea>");
+    sb.AppendLine("    </div>");
+    sb.AppendLine("    <div class=\"chipRow\">");
+    sb.AppendLine("      <span class=\"chip\">Amazon</span>");
+    sb.AppendLine("      <span class=\"chip\">Shopee</span>");
+    sb.AppendLine("      <span class=\"chip\">Shein</span>");
+    sb.AppendLine("      <span class=\"chip\">Mercado Livre</span>");
     sb.AppendLine("    </div>");
     sb.AppendLine("  </section>");
 
@@ -5528,10 +5572,23 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         var tracked = System.Net.WebUtility.HtmlEncode(model.TrackedUrl ?? string.Empty);
         var correction = System.Net.WebUtility.HtmlEncode(model.CorrectionNote ?? string.Empty);
         var source = System.Net.WebUtility.HtmlEncode(model.DataSource ?? "meta");
+        var couponCode = System.Net.WebUtility.HtmlEncode(model.CouponCode ?? string.Empty);
+        var couponDesc = System.Net.WebUtility.HtmlEncode(model.CouponDescription ?? string.Empty);
+        var couponDisplay = model.HasCoupon
+            ? (string.IsNullOrWhiteSpace(model.CouponCode) ? "Cupom ativo" : couponCode)
+            : "Sem cupom";
+        var couponHint = model.HasCoupon
+            ? (string.IsNullOrWhiteSpace(model.CouponDescription) ? "Cupom disponivel para esta loja" : couponDesc)
+            : "Se houver cupom, ele aparece no carrinho";
+        var previousDisplay = string.IsNullOrWhiteSpace(previousPrice) ? "—" : previousPrice;
         var discountText = model.DiscountPercent.HasValue && model.DiscountPercent.Value > 0
             ? System.Net.WebUtility.HtmlEncode($"{model.DiscountPercent.Value}% OFF")
             : string.Empty;
-        var shareText = $"{(string.IsNullOrWhiteSpace(model.Title) ? "Oferta" : model.Title)} | {(string.IsNullOrWhiteSpace(model.Price) ? "Preco sob consulta" : model.Price)}\nCompre aqui: {(string.IsNullOrWhiteSpace(model.TrackedUrl) ? model.ConvertedUrl : model.TrackedUrl)}";
+        var discountDisplay = string.IsNullOrWhiteSpace(discountText) ? "—" : discountText;
+        var shareCoupon = model.HasCoupon && !string.IsNullOrWhiteSpace(model.CouponCode)
+            ? $"\nCupom: {model.CouponCode}"
+            : string.Empty;
+        var shareText = $"{(string.IsNullOrWhiteSpace(model.Title) ? "Oferta" : model.Title)} | {(string.IsNullOrWhiteSpace(model.Price) ? "Preco sob consulta" : model.Price)}{shareCoupon}\nCompre aqui: {(string.IsNullOrWhiteSpace(model.TrackedUrl) ? model.ConvertedUrl : model.TrackedUrl)}";
         var shareTextEncoded = System.Net.WebUtility.HtmlEncode(shareText);
         var whatsAppShare = System.Net.WebUtility.HtmlEncode($"https://wa.me/?text={Uri.EscapeDataString(shareText)}");
 
@@ -5554,24 +5611,35 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         sb.AppendLine("      <div class=\"topLine\">");
         sb.AppendLine($"        <span class=\"store\">{store}</span>");
         sb.AppendLine($"        <span class=\"aff\">{(model.IsAffiliated ? "Afiliado confirmado" : "Afiliado sem validacao")}</span>");
+        sb.AppendLine($"        <span class=\"pill\">Fonte: {source}</span>");
         sb.AppendLine("      </div>");
         sb.AppendLine($"      <div class=\"title\">{title}</div>");
-        sb.AppendLine($"      <div class=\"price\">{price}</div>");
-        if (!string.IsNullOrWhiteSpace(previousPrice))
-        {
-            sb.AppendLine($"      <div class=\"meta\">De: <span style=\"text-decoration:line-through;\">{previousPrice}</span></div>");
-        }
-        if (!string.IsNullOrWhiteSpace(discountText))
-        {
-            sb.AppendLine($"      <div class=\"meta\"><strong>{discountText}</strong></div>");
-        }
+        sb.AppendLine("      <div class=\"priceGrid\">");
+        sb.AppendLine("        <div class=\"stat main\">");
+        sb.AppendLine("          <div class=\"stat-label\">Preco atual</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{price}</div>");
+        sb.AppendLine($"          <div class=\"stat-sub\">{(model.IsAffiliated ? "Link afiliado confirmado" : "Link sem validacao de afiliado")}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"stat\">");
+        sb.AppendLine("          <div class=\"stat-label\">Preco anterior</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{previousDisplay}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"stat\">");
+        sb.AppendLine("          <div class=\"stat-label\">Desconto</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{discountDisplay}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("        <div class=\"stat\">");
+        sb.AppendLine("          <div class=\"stat-label\">Cupom</div>");
+        sb.AppendLine($"          <div class=\"stat-value\">{couponDisplay}</div>");
+        sb.AppendLine($"          <div class=\"stat-sub\">{couponHint}</div>");
+        sb.AppendLine("        </div>");
+        sb.AppendLine("      </div>");
         if (!string.IsNullOrWhiteSpace(desc))
         {
             sb.AppendLine($"      <div class=\"desc\">{desc}</div>");
         }
         sb.AppendLine($"      <div class=\"meta\">Destino final: {host}</div>");
         sb.AppendLine($"      <div class=\"meta\">Link publico no seu dominio: {domainHost}</div>");
-        sb.AppendLine($"      <div class=\"meta\">Fonte de dados: {source}</div>");
         sb.AppendLine("      <div class=\"actions\">");
         sb.AppendLine($"        <a class=\"btn buy\" href=\"{tracked}\" target=\"_blank\" rel=\"noopener noreferrer\">Comprar com meu link</a>");
         sb.AppendLine($"        <a class=\"btn secondary\" href=\"{whatsAppShare}\" target=\"_blank\" rel=\"noopener noreferrer\">Compartilhar no WhatsApp</a>");
@@ -10210,6 +10278,9 @@ internal sealed record PublicLinkConverterViewModel
     public string Price { get; set; } = string.Empty;
     public string PreviousPrice { get; set; } = string.Empty;
     public int? DiscountPercent { get; set; }
+    public bool HasCoupon { get; set; }
+    public string CouponCode { get; set; } = string.Empty;
+    public string CouponDescription { get; set; } = string.Empty;
     public string ImageUrl { get; set; } = string.Empty;
     public bool IsAffiliated { get; set; }
     public string? ValidationError { get; set; }

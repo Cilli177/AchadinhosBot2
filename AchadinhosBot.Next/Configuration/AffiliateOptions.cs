@@ -49,6 +49,11 @@ public sealed class AmazonCreatorApiOptions
 {
     public bool Enabled { get; init; }
 
+    /// <summary>
+    /// Quando true, o Creator Ã© carregado mas nÃ£o Ã© usado para conversÃ£o (evita falhas de elegibilidade).
+    /// </summary>
+    public bool DisableConversion { get; init; }
+
     public string ClientId { get; init; } = string.Empty;
 
     public string ClientSecret { get; init; } = string.Empty;

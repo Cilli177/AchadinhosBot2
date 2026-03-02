@@ -1,7 +1,7 @@
 param(
     [string]$TunnelName = "achadinhos-fixed",
     [string]$Hostname = "achadinhos.reidasofertas.ia.br",
-    [string]$AppUrl = "http://localhost:5000",
+    [string]$AppUrl = "http://127.0.0.1:5000",
     [switch]$NoConfigUpdate
 )
 
@@ -151,6 +151,11 @@ function Update-PublicBaseUrl {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $publicBaseUrl = "https://$Hostname"
+
+# Evita resolver localhost para IPv6 (::1), que pode falhar no origin
+if ($AppUrl -match "localhost") {
+    $AppUrl = $AppUrl -replace "localhost", "127.0.0.1"
+}
 
 $cloudflaredPath = Resolve-CloudflaredPath
 Ensure-CertFile | Out-Null
