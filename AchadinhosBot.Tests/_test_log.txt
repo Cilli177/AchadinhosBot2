@@ -1,0 +1,4 @@
+  Determinando os projetos a serem restaurados...
+  c:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj restaurado (em 267 ms).
+  c:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Tests\AchadinhosBot.Tests.csproj restaurado (em 288 ms).
+C:\Program Files\dotnet\sdk\8.0.418\Sdks\Microsoft.SourceLink.Common\build\Microsoft.SourceLink.Common.targets(56,5): error : Erro ao gravar para o arquivo do source link 'obj\Debug\net8.0\AchadinhosBot.Next.sourcelink.json': The process cannot access the file 'c:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\obj\Debug\net8.0\AchadinhosBot.Next.sourcelink.json' because it is being used by another process. [c:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]

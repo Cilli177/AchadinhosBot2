@@ -105,7 +105,7 @@ public static class CoreEndpoints
                 ct);
 
             return Results.Ok(response);
-        });
+        }).RequireRateLimiting("converter");
     }
 
     public static void MapHealthEndpoints(this WebApplication app, bool startTelegramBotWorker, bool startTelegramUserbotWorker)

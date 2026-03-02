@@ -623,6 +623,9 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     continue;
                 }
 
+                var enrichment = await _messageProcessor.EnrichTextWithProductDataAsync(replayText, text, cancellationToken);
+                replayText = enrichment.EnrichedText;
+
                 if (telegramReplayEnabled && telegramDestinationPeer is not null)
                 {
                     try
@@ -937,6 +940,9 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 result.Success);
             return;
         }
+
+        var enrichment = await _messageProcessor.EnrichTextWithProductDataAsync(finalText, text, CancellationToken.None);
+        finalText = enrichment.EnrichedText;
 
         var destinationId = settings.TelegramForwarding.DestinationChatId;
         if (destinationId == 0)

@@ -15,6 +15,7 @@ namespace AchadinhosBot.Next.Infrastructure.ProductData;
 public sealed class OfficialProductDataService
 {
     private readonly AmazonPaApiClient _amazonPaApiClient;
+    private readonly AmazonCreatorApiClient _amazonCreatorApiClient;
     private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
     private readonly AffiliateOptions _affiliateOptions;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -22,12 +23,14 @@ public sealed class OfficialProductDataService
 
     public OfficialProductDataService(
         AmazonPaApiClient amazonPaApiClient,
+        AmazonCreatorApiClient amazonCreatorApiClient,
         IMercadoLivreOAuthService mercadoLivreOAuthService,
         IOptions<AffiliateOptions> affiliateOptions,
         IHttpClientFactory httpClientFactory,
         ILogger<OfficialProductDataService> logger)
     {
         _amazonPaApiClient = amazonPaApiClient;
+        _amazonCreatorApiClient = amazonCreatorApiClient;
         _mercadoLivreOAuthService = mercadoLivreOAuthService;
         _affiliateOptions = affiliateOptions.Value;
         _httpClientFactory = httpClientFactory;
@@ -98,37 +101,60 @@ public sealed class OfficialProductDataService
 
     private async Task<OfficialProductDataResult?> TryGetAmazonDataAsync(Uri uri, CancellationToken ct)
     {
-        if (!_amazonPaApiClient.IsConfigured)
-        {
-            return null;
-        }
-
         var asin = ExtractAmazonAsin(uri);
         if (string.IsNullOrWhiteSpace(asin))
         {
             return null;
         }
 
-        var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
-        if (item is null)
+        // Tentar PA-API primeiro
+        if (_amazonPaApiClient.IsConfigured)
         {
-            return null;
+            var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
+            if (item is not null)
+            {
+                var current = NormalizePriceDisplay(item.PriceDisplay);
+                var previous = ExtractPreviousPrice(item.PriceDisplay);
+                var discount = ComputeDiscount(previous, current);
+
+                return new OfficialProductDataResult(
+                    Store: "Amazon",
+                    Title: item.Title,
+                    CurrentPrice: current,
+                    PreviousPrice: previous,
+                    DiscountPercent: discount,
+                    Images: item.Images ?? new List<string>(),
+                    IsOfficial: true,
+                    DataSource: "amazon_paapi",
+                    SourceUrl: uri.ToString());
+            }
         }
 
-        var current = NormalizePriceDisplay(item.PriceDisplay);
-        var previous = ExtractPreviousPrice(item.PriceDisplay);
-        var discount = ComputeDiscount(previous, current);
+        // Fallback: Creator API
+        if (_amazonCreatorApiClient.IsConfigured)
+        {
+            var partnerTag = _affiliateOptions.AmazonTag;
+            var creatorItem = await _amazonCreatorApiClient.GetItemAsync(asin, partnerTag, ct);
+            if (creatorItem is not null)
+            {
+                var current = NormalizePriceDisplay(creatorItem.PriceDisplay);
+                var previous = ExtractPreviousPrice(creatorItem.PriceDisplay);
+                var discount = ComputeDiscount(previous, current);
 
-        return new OfficialProductDataResult(
-            Store: "Amazon",
-            Title: item.Title,
-            CurrentPrice: current,
-            PreviousPrice: previous,
-            DiscountPercent: discount,
-            Images: item.Images ?? new List<string>(),
-            IsOfficial: true,
-            DataSource: "amazon_paapi",
-            SourceUrl: uri.ToString());
+                return new OfficialProductDataResult(
+                    Store: "Amazon",
+                    Title: creatorItem.Title,
+                    CurrentPrice: current,
+                    PreviousPrice: previous,
+                    DiscountPercent: discount,
+                    Images: creatorItem.Images ?? new List<string>(),
+                    IsOfficial: true,
+                    DataSource: "amazon_creator_api",
+                    SourceUrl: uri.ToString());
+            }
+        }
+
+        return null;
     }
 
     private async Task<OfficialProductDataResult?> TryGetMercadoLivreDataAsync(Uri uri, CancellationToken ct)
@@ -242,6 +268,31 @@ public sealed class OfficialProductDataService
             }
         }
 
+        // Extract shipping / delivery info
+        string? estimatedDelivery = null;
+        if (root.TryGetProperty("shipping", out var shippingNode) && shippingNode.ValueKind == JsonValueKind.Object)
+        {
+            var freeShipping = shippingNode.TryGetProperty("free_shipping", out var fsNode) && fsNode.ValueKind == JsonValueKind.True;
+            var logisticType = TryGetString(shippingNode, "logistic_type") ?? string.Empty;
+            var mode = TryGetString(shippingNode, "mode") ?? string.Empty;
+
+            if (freeShipping)
+            {
+                estimatedDelivery = "Entrega grátis";
+            }
+            else if (!string.IsNullOrWhiteSpace(logisticType) || !string.IsNullOrWhiteSpace(mode))
+            {
+                estimatedDelivery = "Frete pago";
+            }
+        }
+        // Also check top-level free_shipping fallback
+        if (estimatedDelivery is null &&
+            root.TryGetProperty("free_shipping", out var topFsNode) &&
+            topFsNode.ValueKind == JsonValueKind.True)
+        {
+            estimatedDelivery = "Entrega grátis";
+        }
+
         var current = FormatCurrency(price, currency);
         var previous = FormatCurrency(originalPrice, currency);
         var discount = ComputeDiscount(originalPrice, price);
@@ -260,51 +311,93 @@ public sealed class OfficialProductDataService
             Images: pictures,
             IsOfficial: true,
             DataSource: "mercadolivre_items_api",
-            SourceUrl: uri.ToString());
+            SourceUrl: uri.ToString(),
+            EstimatedDelivery: estimatedDelivery);
     }
 
     private async Task<OfficialProductDataResult?> TryGetShopeeDataAsync(Uri uri, CancellationToken ct)
     {
-        var settings = _affiliateOptions.ShopeeProductApi ?? new ShopeeProductApiOptions();
-        if (!settings.Enabled ||
-            settings.PartnerId <= 0 ||
-            string.IsNullOrWhiteSpace(settings.PartnerKey))
+        var appId = _affiliateOptions.ShopeeAppId?.Trim();
+        var secret = _affiliateOptions.ShopeeSecret?.Trim();
+        if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(secret))
         {
             return null;
         }
 
-        var itemId = ExtractShopeeItemId(uri);
-        var shopId = ExtractShopeeShopId(uri);
+        var targetUrl = uri.ToString();
+        if (targetUrl.Contains("s.shopee.com.br", StringComparison.OrdinalIgnoreCase) || 
+            targetUrl.Contains("shope.ee", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var resolverClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+                resolverClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+                var response = await resolverClient.GetAsync(uri, ct);
+                var location = response.Headers.Location?.ToString();
+                if (!string.IsNullOrEmpty(location))
+                {
+                    targetUrl = location;
+                }
+                else
+                {
+                    var html = await response.Content.ReadAsStringAsync(ct);
+                    var matchUrl = Regex.Match(html, @"url=([^""]+)");
+                    if (matchUrl.Success) targetUrl = matchUrl.Groups[1].Value;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Falha ao resolver shortlink da Shopee: {Url}", uri);
+            }
+        }
+
+        long? itemId = null;
+        var match = Regex.Match(targetUrl, @"-i[._](\d+)[._](\d+)");
+        if (match.Success)
+        {
+            if (long.TryParse(match.Groups[2].Value, out var mId)) itemId = mId;
+        }
+        else
+        {
+            match = Regex.Match(targetUrl, @"shopee\.com\.br/[^/]+/(\d+)/(\d+)");
+            if (match.Success)
+            {
+                if (long.TryParse(match.Groups[2].Value, out var mId)) itemId = mId;
+            }
+            else
+            {
+                match = Regex.Match(targetUrl, @"(?:itemid|product_id|itemId)=(\d+)");
+                if (match.Success && long.TryParse(match.Groups[1].Value, out var mId)) itemId = mId;
+            }
+        }
+
         if (itemId is null || itemId <= 0)
         {
             return null;
         }
 
-        var path = "/api/v2/product/get_item_base_info";
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var baseString = $"{settings.PartnerId}{path}{timestamp}";
-        var sign = ComputeHmacSha256(settings.PartnerKey.Trim(), baseString);
-        var host = string.IsNullOrWhiteSpace(settings.Host) ? "https://partner.shopeemobile.com" : settings.Host.Trim().TrimEnd('/');
-        var effectiveShopId = shopId ?? settings.ShopId;
-        if (effectiveShopId <= 0)
+
+        var payload = $$"""{"query":"query {\n  productOfferV2(\n    itemId: {{itemId}}\n    page: 1\n    limit: 1\n    listType: 0\n  ) {\n    nodes {\n      itemId\n      productName\n      price\n      priceDiscountRate\n      imageUrl\n    }\n  }\n}"}""";
+
+        var baseString = appId + timestamp + payload + secret;
+        var sign = string.Empty;
+        using (var sha256 = System.Security.Cryptography.SHA256.Create())
         {
-            return null;
+            var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(baseString));
+            sign = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
-        var query = new Dictionary<string, string>
-        {
-            ["partner_id"] = settings.PartnerId.ToString(CultureInfo.InvariantCulture),
-            ["timestamp"] = timestamp.ToString(CultureInfo.InvariantCulture),
-            ["sign"] = sign,
-            ["shop_id"] = effectiveShopId.ToString(CultureInfo.InvariantCulture),
-            ["item_id_list"] = itemId.Value.ToString(CultureInfo.InvariantCulture)
-        };
-        var url = $"{host}{path}?{string.Join("&", query.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"))}";
+        var url = "https://open-api.affiliate.shopee.com.br/graphql";
 
         try
         {
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+            request.Headers.Add("Authorization", $"SHA256 Credential={appId}, Timestamp={timestamp}, Signature={sign}");
+
             var client = _httpClientFactory.CreateClient("default");
-            using var response = await client.GetAsync(url, ct);
+            using var response = await client.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -313,12 +406,8 @@ public sealed class OfficialProductDataService
             var body = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
-            if (!root.TryGetProperty("response", out var responseNode) || responseNode.ValueKind != JsonValueKind.Object)
-            {
-                return null;
-            }
 
-            if (!responseNode.TryGetProperty("item_list", out var listNode) || listNode.ValueKind != JsonValueKind.Array)
+            if (!root.TryGetProperty("data", out var dataNode) || !dataNode.TryGetProperty("productOfferV2", out var offerNode) || !offerNode.TryGetProperty("nodes", out var listNode) || listNode.ValueKind != JsonValueKind.Array)
             {
                 return null;
             }
@@ -329,35 +418,22 @@ public sealed class OfficialProductDataService
                 return null;
             }
 
-            var title = TryGetString(first, "item_name");
-            var priceRaw = TryGetDecimal(first, "price");
-            var previousRaw = TryGetDecimal(first, "price_before_discount");
-            var normalizedPrice = NormalizeShopeePrice(priceRaw);
-            var normalizedPrevious = NormalizeShopeePrice(previousRaw);
-            var discount = TryGetIntPercent(first, "discount") ?? ComputeDiscount(normalizedPrevious, normalizedPrice);
+            var title = TryGetString(first, "productName");
+            var priceRawStr = TryGetString(first, "price");
+            decimal.TryParse(priceRawStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var priceRaw);
+            
+            var discount = TryGetIntPercent(first, "priceDiscountRate");
+            
+            var normalizedPrice = Math.Round(priceRaw, 2);
+            var normalizedPrevious = discount.HasValue && discount.Value > 0 && discount.Value < 100
+                ? Math.Round(normalizedPrice / (1m - discount.Value / 100m), 2)
+                : normalizedPrice;
 
             var images = new List<string>();
-            var imageUrl = TryGetString(first, "image");
+            var imageUrl = TryGetString(first, "imageUrl");
             if (!string.IsNullOrWhiteSpace(imageUrl))
             {
-                if (Uri.TryCreate(imageUrl, UriKind.Absolute, out _))
-                {
-                    images.Add(imageUrl.Trim());
-                }
-                else
-                {
-                    images.Add($"https://cf.shopee.com.br/file/{imageUrl.Trim()}");
-                }
-            }
-
-            if (first.TryGetProperty("image_url_list", out var listImages) && listImages.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var node in listImages.EnumerateArray().Take(10))
-                {
-                    var value = node.ValueKind == JsonValueKind.String ? node.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(value)) continue;
-                    images.Add(value.Trim());
-                }
+                images.Add(imageUrl.Trim());
             }
 
             var current = FormatCurrency(normalizedPrice, "BRL");
@@ -375,12 +451,12 @@ public sealed class OfficialProductDataService
                 DiscountPercent: discount,
                 Images: images.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 IsOfficial: true,
-                DataSource: "shopee_open_api",
-                SourceUrl: uri.ToString());
+                DataSource: "shopee_affiliate_graphql",
+                SourceUrl: targetUrl);
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Falha ao obter dados oficiais da Shopee.");
+            _logger.LogDebug(ex, "Falha ao obter dados oficiais da Shopee via GraphQL.");
             return null;
         }
     }
@@ -478,8 +554,8 @@ public sealed class OfficialProductDataService
 
     private static string? ExtractMercadoLivreItemId(Uri uri)
     {
-        var text = $"{uri.AbsolutePath} {uri.Query}";
-        var match = Regex.Match(text, @"\bMLB[-_]?(?<id>\d{8,})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var text = Uri.UnescapeDataString($"{uri.AbsolutePath} {uri.Query}");
+        var match = Regex.Match(text, @"(?:^|[^a-zA-Z0-9])MLB[-_]?(?<id>\d{8,})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return match.Success ? $"MLB{match.Groups["id"].Value}" : null;
     }
 
@@ -718,4 +794,6 @@ public sealed record OfficialProductDataResult(
     List<string> Images,
     bool IsOfficial,
     string DataSource,
-    string SourceUrl);
+    string SourceUrl,
+    string? EstimatedDelivery = null);
+

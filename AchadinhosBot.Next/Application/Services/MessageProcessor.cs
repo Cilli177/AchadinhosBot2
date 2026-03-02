@@ -15,6 +15,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
     private readonly ICouponSelector _couponSelector;
     private readonly ISettingsStore _settingsStore;
     private readonly IMercadoLivreApprovalStore _mercadoLivreApprovalStore;
+    private readonly Infrastructure.ProductData.OfficialProductDataService _productDataService;
     private readonly ILogger<MessageProcessor> _logger;
 
     public MessageProcessor(
@@ -23,6 +24,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         ICouponSelector couponSelector,
         ISettingsStore settingsStore,
         IMercadoLivreApprovalStore mercadoLivreApprovalStore,
+        Infrastructure.ProductData.OfficialProductDataService productDataService,
         ILogger<MessageProcessor> logger)
     {
         _affiliateLinkService = affiliateLinkService;
@@ -30,6 +32,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         _couponSelector = couponSelector;
         _settingsStore = settingsStore;
         _mercadoLivreApprovalStore = mercadoLivreApprovalStore;
+        _productDataService = productDataService;
         _logger = logger;
     }
 
@@ -606,5 +609,78 @@ public sealed partial class MessageProcessor : IMessageProcessor
         if (lower.Contains("shopee") || lower.Contains("shope.ee") || lower.Contains("s.shopee")) return "Shopee";
         if (lower.Contains("shein")) return "Shein";
         return "Unknown";
+    }
+    public async Task<(string EnrichedText, string? ProductImageUrl)> EnrichTextWithProductDataAsync(
+        string convertedText,
+        string originalText,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var lowerConverted = convertedText.ToLowerInvariant();
+            var isAmazon = lowerConverted.Contains("amazon.") || lowerConverted.Contains("amzn.to") || lowerConverted.Contains("a.co/") || lowerConverted.Contains("amzlink.to") || lowerConverted.Contains("amzn.divulgador.link");
+            var isShopee = lowerConverted.Contains("shopee") || lowerConverted.Contains("shp.ee") || lowerConverted.Contains("s.shopee");
+            var isML = lowerConverted.Contains("mercadolivre") || lowerConverted.Contains("mercadolibre") || lowerConverted.Contains("meli.");
+
+            if (!isAmazon && !isShopee && !isML)
+            {
+                return (convertedText, null);
+            }
+
+            var urlMatch = Regex.Match(originalText, @"https?://[^\s]+", RegexOptions.IgnoreCase);
+            if (!urlMatch.Success)
+            {
+                return (convertedText, null);
+            }
+
+            var originalUrl = urlMatch.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}');
+            var convertedUrlMatch = Regex.Match(convertedText, @"https?://[^\s]+", RegexOptions.IgnoreCase);
+            var convertedUrl = convertedUrlMatch.Success ? convertedUrlMatch.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}') : null;
+
+            var productData = await _productDataService.TryGetBestAsync(originalUrl, convertedUrl, cancellationToken);
+            if (productData is null)
+            {
+                return (convertedText, null);
+            }
+
+            var enrichParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(productData.CurrentPrice))
+            {
+                var pricePart = $"💰 {productData.CurrentPrice.Trim()}";
+                if (productData.DiscountPercent.HasValue && productData.DiscountPercent.Value > 0)
+                {
+                    pricePart += $" ({productData.DiscountPercent.Value}% OFF)";
+                }
+                enrichParts.Add(pricePart);
+            }
+            else if (productData.DiscountPercent.HasValue && productData.DiscountPercent.Value > 0)
+            {
+                enrichParts.Add($"🏷️ {productData.DiscountPercent.Value}% OFF");
+            }
+
+            var enrichedText = convertedText;
+            if (enrichParts.Count > 0)
+            {
+                var enrichBlock = string.Join("\n", enrichParts);
+                enrichedText = $"{enrichBlock}\n\n{convertedText}";
+            }
+
+            var bestImage = productData.Images.FirstOrDefault();
+
+            _logger.LogInformation(
+                "Produto enriquecido via {DataSource}. Store={Store} Price={Price} Discount={Discount} HasImage={HasImage}",
+                productData.DataSource,
+                productData.Store,
+                productData.CurrentPrice ?? "n/a",
+                productData.DiscountPercent?.ToString() ?? "n/a",
+                !string.IsNullOrWhiteSpace(bestImage));
+
+            return (enrichedText, bestImage);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao enriquecer texto com metadados de produto. Retornando texto original.");
+            return (convertedText, null);
+        }
     }
 }

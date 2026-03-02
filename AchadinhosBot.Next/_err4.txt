@@ -1,0 +1,12 @@
+  Determinando os projetos a serem restaurados...
+  Todos os projetos estão atualizados para restauração.
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(5500,15): warning CS8321: A função local 'BuildPublicLinkConverterPageHtml' está declarada, mas nunca é usada [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+  AchadinhosBot.Next -> C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\bin\Debug\net8.0\AchadinhosBot.Next.dll
+
+Compilação com êxito.
+
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(5500,15): warning CS8321: A função local 'BuildPublicLinkConverterPageHtml' está declarada, mas nunca é usada [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+    1 Aviso(s)
+    0 Erro(s)
+
+Tempo Decorrido 00:01:38.45

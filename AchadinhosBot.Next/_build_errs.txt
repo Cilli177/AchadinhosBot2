@@ -1,0 +1,27 @@
+  Determinando os projetos a serem restaurados...
+  Todos os projetos estão atualizados para restauração.
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(1150,25): error CS1503: Argumento 10: não é possível converter de "Microsoft.Extensions.Logging.ILogger<Program>" para "Microsoft.Extensions.Logging.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3207,5): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3360,5): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3455,5): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3531,82): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3593,84): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3646,55): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3806,55): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(5453,15): warning CS8321: A função local 'BuildPublicLinkConverterPageHtml' está declarada, mas nunca é usada [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+
+FALHA da compilação.
+
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(5453,15): warning CS8321: A função local 'BuildPublicLinkConverterPageHtml' está declarada, mas nunca é usada [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(1150,25): error CS1503: Argumento 10: não é possível converter de "Microsoft.Extensions.Logging.ILogger<Program>" para "Microsoft.Extensions.Logging.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3207,5): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3360,5): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3455,5): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3531,82): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3593,84): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3646,55): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(3806,55): error CS0104: "ILogger" é uma referência ambígua entre "Microsoft.Extensions.Logging.ILogger" e "Serilog.ILogger" [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+    1 Aviso(s)
+    8 Erro(s)
+
+Tempo Decorrido 00:00:02.98

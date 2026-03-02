@@ -31,6 +31,7 @@ public sealed class InstagramLinkMetaService
 
         try
         {
+            // ── Amazon fast-path ──────────────────────────────────────────
             LinkMetaResult? amazonMeta = null;
             if (Uri.TryCreate(link, UriKind.Absolute, out var uri) &&
                 IsAmazonHost(uri.Host) &&
@@ -64,6 +65,25 @@ public sealed class InstagramLinkMetaService
             var html = await response.Content.ReadAsStringAsync(ct);
             if (string.IsNullOrWhiteSpace(html)) return new LinkMetaResult();
             var resolvedUri = response.RequestMessage?.RequestUri;
+
+            // ── Shopee: extract from embedded __NEXT_DATA__ JSON ──────────
+            if (resolvedUri is not null && IsShopeeHost(resolvedUri.Host))
+            {
+                var shopeeResult = TryExtractShopeeMetaFromNextData(html);
+                if (shopeeResult is not null)
+                {
+                    SetCache(link, shopeeResult);
+                    return shopeeResult;
+                }
+
+                // Fallback: extract from Shopee HTML elements
+                shopeeResult = TryExtractShopeeMetaFromHtml(html);
+                if (shopeeResult is not null)
+                {
+                    SetCache(link, shopeeResult);
+                    return shopeeResult;
+                }
+            }
 
             var title = FirstNonEmpty(
                 amazonMeta?.Title ?? string.Empty,
@@ -110,6 +130,10 @@ public sealed class InstagramLinkMetaService
             {
                 images.AddRange(amazonMeta.Images);
             }
+            if (resolvedUri != null && IsMercadoLivreHost(resolvedUri.Host))
+            {
+                images.AddRange(ExtractMercadoLivreMainImageFromHtml(html));
+            }
             images.AddRange(ExtractMetaContents(html, "property", "og:image"));
             images.AddRange(ExtractMetaContents(html, "property", "og:image:url"));
             images.AddRange(ExtractMetaContents(html, "property", "og:image:secure_url"));
@@ -133,6 +157,21 @@ public sealed class InstagramLinkMetaService
             videos.AddRange(ExtractVideoUrlsByExtensionPattern(html));
             videos = NormalizeVideoUrls(videos, resolvedUri);
 
+            // Extract previous price from HTML for Amazon/ML
+            string previousPriceFromHtml = string.Empty;
+            if (resolvedUri is not null)
+            {
+                var host = resolvedUri.Host.ToLowerInvariant();
+                if (IsAmazonHost(host))
+                {
+                    previousPriceFromHtml = ExtractAmazonListPriceFromHtml(html);
+                }
+                else if (host.Contains("mercadolivre") || host.Contains("mercadolibre"))
+                {
+                    previousPriceFromHtml = ExtractMercadoLivreOldPriceFromHtml(html);
+                }
+            }
+
             var result = new LinkMetaResult
             {
                 Title = WebUtility.HtmlDecode(title?.Trim() ?? string.Empty),
@@ -142,8 +181,11 @@ public sealed class InstagramLinkMetaService
                     ExtractMetaPriceText(html),
                     ExtractPriceFromJsonLd(html),
                     ExtractPriceFromRawHtml(html)),
+                PreviousPriceText = previousPriceFromHtml,
+                DiscountPercentFromHtml = ExtractDiscountPercentFromHtml(html),
                 Images = images,
-                Videos = videos
+                Videos = videos,
+                ResolvedUrl = resolvedUri?.ToString()
             };
             SetCache(link, result);
             return result;
@@ -154,6 +196,184 @@ public sealed class InstagramLinkMetaService
             return new LinkMetaResult();
         }
     }
+
+    private static bool IsShopeeHost(string host)
+    {
+        var h = host.ToLowerInvariant();
+        return h.Contains("shopee") || h.Contains("shp.ee");
+    }
+
+    private static LinkMetaResult? TryExtractShopeeMetaFromNextData(string html)
+    {
+        // Shopee embeds product data in <script id="__NEXT_DATA__"> or window.__NEXT_DATA__
+        var match = Regex.Match(
+            html,
+            @"<script[^>]*id=[""']__NEXT_DATA__[""'][^>]*>\s*(?<json>\{[\s\S]*?)\s*</script>",
+            RegexOptions.IgnoreCase);
+
+        if (!match.Success)
+        {
+            // Try alternate format
+            match = Regex.Match(html,
+                @"window\.__NEXT_DATA__\s*=\s*(?<json>\{[\s\S]*?)\s*;</",
+                RegexOptions.IgnoreCase);
+        }
+
+        if (!match.Success) return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(match.Groups["json"].Value);
+            var root = doc.RootElement;
+
+            // Navigate: props.pageProps.initialState.pdp.data.product
+            if (!root.TryGetProperty("props", out var props)) return null;
+            if (!props.TryGetProperty("pageProps", out var pageProps)) return null;
+
+            // Try multiple known paths
+            System.Text.Json.JsonElement? productNode = null;
+
+            if (pageProps.TryGetProperty("initialState", out var initState) &&
+                initState.TryGetProperty("pdp", out var pdp) &&
+                pdp.TryGetProperty("data", out var pdpData) &&
+                pdpData.TryGetProperty("product", out var prod1))
+            {
+                productNode = prod1;
+            }
+            else if (pageProps.TryGetProperty("data", out var data) &&
+                     data.TryGetProperty("product", out var prod2))
+            {
+                productNode = prod2;
+            }
+            else if (pageProps.TryGetProperty("product", out var prod3))
+            {
+                productNode = prod3;
+            }
+
+            if (productNode is null) return null;
+            var p = productNode.Value;
+
+            var title = p.TryGetProperty("name", out var nameNode) && nameNode.ValueKind == System.Text.Json.JsonValueKind.String
+                ? nameNode.GetString()
+                : null;
+
+            // Price: Shopee stores centavos * 100000
+            decimal? priceRaw = p.TryGetProperty("price", out var priceNode) && priceNode.TryGetDecimal(out var priceVal) ? priceVal : null;
+            decimal? prevRaw = p.TryGetProperty("price_before_discount", out var prevNode) && prevNode.TryGetDecimal(out var prevVal) ? prevVal : null;
+
+            static decimal? NormalizeShopeeVal(decimal? v) => v.HasValue && v.Value > 100000 ? Math.Round(v.Value / 100000m, 2) : v;
+            var price = NormalizeShopeeVal(priceRaw);
+            var prev = NormalizeShopeeVal(prevRaw);
+
+            string? priceText = price.HasValue ? $"R$ {price.Value:N2}" : null;
+
+            // Images
+            var images = new List<string>();
+            if (p.TryGetProperty("images", out var imagesArr) && imagesArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var img in imagesArr.EnumerateArray().Take(8))
+                {
+                    var imgUrl = img.ValueKind == System.Text.Json.JsonValueKind.String ? img.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(imgUrl))
+                    {
+                        images.Add(imgUrl.StartsWith("http") ? imgUrl : $"https://cf.shopee.com.br/file/{imgUrl}");
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(priceText) && images.Count == 0)
+                return null;
+
+            return new LinkMetaResult
+            {
+                Title = WebUtility.HtmlDecode(title?.Trim() ?? string.Empty),
+                PriceText = priceText ?? string.Empty,
+                Images = images
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Fallback: extract Shopee product data from raw HTML elements when __NEXT_DATA__ is unavailable.
+    /// </summary>
+    private static LinkMetaResult? TryExtractShopeeMetaFromHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return null;
+
+        try
+        {
+            var decoded = WebUtility.HtmlDecode(html) ?? html;
+
+            // Title: try h1 tag first, then OG title
+            string? title = null;
+            var h1Match = Regex.Match(decoded, @"<h1[^>]*>(.*?)</h1>",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (h1Match.Success)
+            {
+                title = Regex.Replace(h1Match.Groups[1].Value, @"<[^>]+>", "").Trim();
+            }
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = ExtractMetaContent(html, "property", "og:title");
+            }
+
+            // Images: extract susercontent.com URLs (Shopee CDN)
+            var images = new List<string>();
+            var imgMatches = Regex.Matches(decoded,
+                @"https?://(?:down-br\.img\.susercontent\.com|cf\.shopee\.com\.br)/file/[^\s""'<>]+",
+                RegexOptions.IgnoreCase);
+            foreach (Match m in imgMatches)
+            {
+                var imgUrl = m.Value.TrimEnd('.', ',', ')', ']', '}');
+                // Remove resize suffixes to get original
+                var cleanUrl = Regex.Replace(imgUrl, @"@resize_w\d+(?:_nl)?$", "", RegexOptions.IgnoreCase);
+                if (!string.IsNullOrWhiteSpace(cleanUrl) && !images.Contains(cleanUrl, StringComparer.OrdinalIgnoreCase))
+                {
+                    images.Add(cleanUrl);
+                }
+            }
+
+            // Also try OG image
+            var ogImage = ExtractMetaContent(html, "property", "og:image");
+            if (!string.IsNullOrWhiteSpace(ogImage) && !images.Contains(ogImage, StringComparer.OrdinalIgnoreCase))
+            {
+                images.Insert(0, ogImage);
+            }
+
+            // Price: try R$ pattern from HTML
+            string? priceText = null;
+            var priceMatch = Regex.Match(decoded,
+                @"R\$\s?(?<price>\d{1,3}(?:\.\d{3})*(?:,\d{2})?)",
+                RegexOptions.IgnoreCase);
+            if (priceMatch.Success)
+            {
+                priceText = $"R$ {priceMatch.Groups["price"].Value.Trim()}";
+            }
+            if (string.IsNullOrWhiteSpace(priceText))
+            {
+                priceText = ExtractMetaPriceText(html);
+            }
+
+            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(priceText) && images.Count == 0)
+                return null;
+
+            return new LinkMetaResult
+            {
+                Title = title?.Trim() ?? string.Empty,
+                PriceText = priceText ?? string.Empty,
+                Images = images.Take(8).ToList()
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
 
     private static bool TryGetFromCache(string link, out LinkMetaResult result)
     {
@@ -419,6 +639,28 @@ public sealed class InstagramLinkMetaService
 
         var list = new List<string>();
 
+        // Priority 1: Main product "landingImage"
+        var landingMatch = Regex.Match(
+            html,
+            @"<img[^>]*?(?:id|data-a-image-name)=[""']landingImage['""][^>]*>",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        if (landingMatch.Success)
+        {
+            var imgTag = landingMatch.Value;
+            var hiResMatch = Regex.Match(imgTag, @"data-old-hires=[""']([^'""]+)['""]", RegexOptions.IgnoreCase);
+            if (hiResMatch.Success && !string.IsNullOrWhiteSpace(hiResMatch.Groups[1].Value))
+            {
+                list.Add(UnescapeJsonUrl(hiResMatch.Groups[1].Value));
+            }
+            
+            var srcMatch = Regex.Match(imgTag, @"src=[""']([^'""]+)['""]", RegexOptions.IgnoreCase);
+            if (srcMatch.Success && !string.IsNullOrWhiteSpace(srcMatch.Groups[1].Value))
+            {
+                list.Add(UnescapeJsonUrl(srcMatch.Groups[1].Value));
+            }
+        }
+
         var absolute = Regex.Matches(
             html,
             @"https?:\\?/\\?/m\.media-amazon\.com/images/I/[^""'<>\\s]+",
@@ -449,6 +691,49 @@ public sealed class InstagramLinkMetaService
             .Where(v => !string.IsNullOrWhiteSpace(v))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static List<string> ExtractMercadoLivreMainImageFromHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var decoded = WebUtility.HtmlDecode(html)?.Replace('\u00A0', ' ') ?? html;
+
+        // Try data-zoom attribute from img with ui-pdp-gallery__figure__image class (highest res)
+        var imgDirectMatch = Regex.Match(
+            decoded,
+            @"<img[^>]*class=""[^""]*ui-pdp-gallery__figure__image[^""]*""[^>]*data-zoom\s*=\s*['""]([^'""]+)['""]",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        if (imgDirectMatch.Success)
+        {
+            return new List<string> { imgDirectMatch.Groups[1].Value.Trim() };
+        }
+
+        // Fallback: data-zoom or src from same class
+        var imgSrcMatch = Regex.Match(
+            decoded,
+            @"<img[^>]*class=""[^""]*ui-pdp-gallery__figure__image[^""]*""[^>]*src\s*=\s*['""]([^'""]+)['""]",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        if (imgSrcMatch.Success)
+        {
+            return new List<string> { imgSrcMatch.Groups[1].Value.Trim() };
+        }
+
+        // Legacy: try to get the high-res image from the main gallery figure container
+        var galleryMatch = Regex.Match(
+            decoded,
+            @"ui-pdp-gallery__figure[^>]*>.*?<img[^>]*?(?:data-zoom|src)\s*=\s*['""]([^'""]+)['""]",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
+        if (galleryMatch.Success)
+        {
+            return new List<string> { galleryMatch.Groups[1].Value.Trim() };
+        }
+
+        return new List<string>();
     }
 
     private static List<string> ExtractVideoUrlsFromVideoTags(string html)
@@ -702,9 +987,162 @@ public sealed class InstagramLinkMetaService
 
         return result
             .Where(x => !IsLikelyInvalidImageUrl(x))
+            .Select(UpgradeAmazonImageUrl)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(12)
             .ToList();
+    }
+
+    /// <summary>
+    /// Upgrade Amazon thumbnail URLs to high-resolution versions.
+    /// Transforms suffixes like _AC_US40_, _SX38_, _SS100_ to _AC_SL1200_.
+    /// </summary>
+    private static string UpgradeAmazonImageUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return url;
+        if (!url.Contains("media-amazon.com", StringComparison.OrdinalIgnoreCase) &&
+            !url.Contains("images-amazon.com", StringComparison.OrdinalIgnoreCase))
+            return url;
+
+        // Replace sizing suffixes like ._AC_US40_. or ._SX38_SY50_CR,0,0,38,50_. etc with ._AC_SL1200_.
+        return Regex.Replace(url,
+            @"\._[A-Z]{2}[^.]*_\.",
+            "._AC_SL1200_.",
+            RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>
+    /// Extract old/list price from Amazon HTML (the strikethrough price).
+    /// </summary>
+    private static string ExtractAmazonListPriceFromHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+        var decoded = WebUtility.HtmlDecode(html)?.Replace('\u00A0', ' ') ?? html;
+
+        // Amazon uses class "a-text-price" for the old (crossed-out) prices
+        var listPriceMatch = Regex.Match(decoded,
+            @"a-text-price[^>]*>\s*<span[^>]*>\s*R\$\s*(?<price>\d{1,3}(?:[\.]\d{3})*(?:,\d{2})?)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (listPriceMatch.Success)
+        {
+            return $"R$ {listPriceMatch.Groups["price"].Value.Trim()}";
+        }
+
+        // Alternative: basisPrice, priceBlockStrikePriceString
+        var altMatch = Regex.Match(decoded,
+            @"(?:basisPrice|priceBlockStrikePriceString|list_price)[^>]*>.*?R\$\s*(?<price>\d{1,3}(?:[\.]\d{3})*(?:,\d{2})?)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        if (altMatch.Success)
+        {
+            return $"R$ {altMatch.Groups["price"].Value.Trim()}";
+        }
+
+        // Amazon aria-hidden spans near savingsPercentage: <span aria-hidden="true">R$212,00</span>
+        var ariaMatch = Regex.Match(decoded,
+            @"savingsPercentage.*?<span[^>]*aria-hidden[^>]*>\s*R\$\s*(?<price>\d{1,3}(?:[\.]\d{3})*(?:,\d{2})?)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        if (ariaMatch.Success)
+        {
+            return $"R$ {ariaMatch.Groups["price"].Value.Trim()}";
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Extract Mercado Livre old price from HTML (the strikethrough price).
+    /// </summary>
+    private static string ExtractMercadoLivreOldPriceFromHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+        var decoded = WebUtility.HtmlDecode(html)?.Replace('\u00A0', ' ') ?? html;
+
+        // Isolate the main product price block based on user hints (e.g. id="price" or ui-pdp-price class)
+        var mainPriceBlockMatch = Regex.Match(decoded,
+            @"(?:id=""price""|class=""[^""]*ui-pdp-price[^""]*"").*?(?:andes-money-amount--previous[^>]*>.*?R\$\s*(?<price>\d{1,3}(?:[\.]\d{3})*(?:,\d{2})?))",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
+        if (mainPriceBlockMatch.Success) return $"R$ {mainPriceBlockMatch.Groups["price"].Value.Trim()}";
+
+        // Fallback to strict first occurrence of previous price if container logic fails
+        var match = Regex.Match(decoded,
+            @"andes-money-amount--previous[^>]*>.*?R\$\s*(?<price>\d{1,3}(?:[\.]\d{3})*(?:,\d{2})?)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        if (match.Success) return $"R$ {match.Groups["price"].Value.Trim()}";
+
+        var altMatch = Regex.Match(decoded,
+            @"price-tag[_-]?(?:striked|old|original)[^>]*>.*?R\$\s*(?<price>\d{1,3}(?:[\.]\d{3})*(?:,\d{2})?)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        if (altMatch.Success) return $"R$ {altMatch.Groups["price"].Value.Trim()}";
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Isolate the main product price block based on user hints (e.g. id="price" or ui-pdp-price class)
+    /// </summary>
+    private static string IsolateMercadoLivrePriceBlock(string decodedHtml)
+    {
+        var mainPriceBlockMatch = Regex.Match(decodedHtml,
+            @"(?:id=""price""|class=""[^""]*ui-pdp-price[^""]*"").*?(?:</div></div>|</div>\s*</div>)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
+        if (mainPriceBlockMatch.Success)
+        {
+            return mainPriceBlockMatch.Value;
+        }
+        
+        // Return a reasonable chunk if the strict block fails
+        var fallbackMatch = Regex.Match(decodedHtml, 
+            @"ui-pdp-price[^""]*"".*?<button", 
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+            
+        return fallbackMatch.Success ? fallbackMatch.Value : decodedHtml;
+    }
+
+    /// <summary>
+    /// Extract discount percentage directly from the HTML (e.g. '25% OFF', '-25%', '25% de desconto').
+    /// </summary>
+    private static int? ExtractDiscountPercentFromHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return null;
+        var decoded = WebUtility.HtmlDecode(html)?.Replace('\u00A0', ' ') ?? html;
+
+        // If it looks like Mercado Livre, restrict search to the main price block
+        if (decoded.Contains("mercadolivre.com") || decoded.Contains("mercadolibre.com") || decoded.Contains("ui-pdp-price"))
+        {
+            decoded = IsolateMercadoLivrePriceBlock(decoded);
+        }
+
+        // Amazon-specific: savingsPercentage class with "-44%" pattern
+        var amazonMatch = Regex.Match(decoded,
+            @"savingsPercentage[^>]*>\s*[-−]\s*(?<pct>\d{1,2})\s*%",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (amazonMatch.Success && int.TryParse(amazonMatch.Groups["pct"].Value, out var amazonPct) && amazonPct > 0 && amazonPct < 100)
+            return amazonPct;
+
+        // Match patterns: "25% OFF", "-25%", "25% de desconto", "25% off", "Economize 25%"
+        var match = Regex.Match(decoded,
+            @"(?:[-−]\s*)?(?<pct>\d{1,2})\s*%\s*(?:OFF|off|de desconto|desconto)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (match.Success && int.TryParse(match.Groups["pct"].Value, out var pct) && pct > 0 && pct < 100)
+            return pct;
+
+        // Also try: "Economize 25%" or "economize R$... (25%)"
+        var altMatch = Regex.Match(decoded,
+            @"(?:economize|desconto|oferta)\s.*?(?<pct>\d{1,2})\s*%",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (altMatch.Success && int.TryParse(altMatch.Groups["pct"].Value, out var pct2) && pct2 > 0 && pct2 < 100)
+            return pct2;
+
+        // Generic standalone: "-44%" anywhere in the HTML
+        var standaloneMatch = Regex.Match(decoded,
+            @"[-−]\s*(?<pct>\d{1,2})\s*%",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (standaloneMatch.Success && int.TryParse(standaloneMatch.Groups["pct"].Value, out var pct3) && pct3 > 0 && pct3 < 100)
+            return pct3;
+
+        return null;
     }
 
     private static List<string> NormalizeVideoUrls(IEnumerable<string> urls, Uri? baseUri)
@@ -787,6 +1225,12 @@ public sealed class InstagramLinkMetaService
                || path.Contains("placeholder", StringComparison.OrdinalIgnoreCase)
                || path.Contains("loading", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsMercadoLivreHost(string host)
+        => host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
+           || host.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
+           || host.Equals("meli.la", StringComparison.OrdinalIgnoreCase)
+           || host.Equals("meli.co", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsLikelyInvalidVideoUrl(string url)
     {
@@ -882,6 +1326,22 @@ public sealed class InstagramLinkMetaService
         }
 
         var decoded = WebUtility.HtmlDecode(html)?.Replace('\u00A0', ' ') ?? html;
+
+        // If it looks like Mercado Livre, restrict search to the main price block
+        if (decoded.Contains("mercadolivre.com") || decoded.Contains("mercadolibre.com") || decoded.Contains("ui-pdp-price"))
+        {
+            var mlBlock = IsolateMercadoLivrePriceBlock(decoded);
+            
+            // Extract whole and cents from the exact structure the user provided
+            var mlWhole = Regex.Match(mlBlock, @"andes-money-amount__fraction[^>]*>(?<whole>\d{1,3}(?:[\.]\d{3})*)", RegexOptions.IgnoreCase);
+            var mlCents = Regex.Match(mlBlock, @"andes-money-amount__cents[^>]*>(?<cents>\d{1,2})", RegexOptions.IgnoreCase);
+            
+            if (mlWhole.Success)
+            {
+                var cents = mlCents.Success ? mlCents.Groups["cents"].Value : "00";
+                return $"R$ {mlWhole.Groups["whole"].Value},{cents}";
+            }
+        }
 
         var amazonWhole = Regex.Match(
             decoded,
@@ -979,6 +1439,9 @@ public sealed class LinkMetaResult
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? PriceText { get; set; }
+    public string? PreviousPriceText { get; set; }
+    public int? DiscountPercentFromHtml { get; set; }
+    public string? ResolvedUrl { get; set; }
     public List<string> Images { get; set; } = new();
     public List<string> Videos { get; set; } = new();
 }

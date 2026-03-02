@@ -36,10 +36,16 @@ using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Telegram;
 using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.WhatsApp;
+using AchadinhosBot.Next.Infrastructure.Resilience;
+using Serilog;
+using ILogger = Microsoft.Extensions.Logging.ILogger;
+
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
+using MassTransit;
+using AchadinhosBot.Next.Application.Consumers;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
@@ -47,10 +53,13 @@ LoadDotEnvIfPresent();
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext());
+
 // Evita falha de permissao no EventLog em ambientes sem privilegio administrativo.
 builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-builder.Logging.AddDebug();
 
 // Persistir chaves de DataProtection em pasta local acessível ao sandbox
 var dpKeysPath = Path.Combine(AppContext.BaseDirectory, ".runtime", "localappdata", "DataProtection-Keys");
@@ -132,6 +141,12 @@ builder.Services.AddRateLimiter(options =>
         l.Window = TimeSpan.FromMinutes(1);
         l.QueueLimit = 0;
     });
+    options.AddFixedWindowLimiter("converter", l =>
+    {
+        l.PermitLimit = 100;
+        l.Window = TimeSpan.FromMinutes(1);
+        l.QueueLimit = 0;
+    });
 });
 
 builder.Services.AddHttpClient("default", c =>
@@ -144,11 +159,11 @@ builder.Services.AddHttpClient("default", c =>
     AllowAutoRedirect = true,
     UseCookies = true,
     CookieContainer = new System.Net.CookieContainer()
-});
-builder.Services.AddHttpClient("evolution", c => c.Timeout = TimeSpan.FromSeconds(30));
-builder.Services.AddHttpClient("evolution-groups", c => c.Timeout = TimeSpan.FromSeconds(120));
-builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(60));
-builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60));
+}).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
+builder.Services.AddHttpClient("evolution", c => c.Timeout = TimeSpan.FromSeconds(30)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
+builder.Services.AddHttpClient("evolution-groups", c => c.Timeout = TimeSpan.FromSeconds(120)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
+builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
+builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
 
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
 builder.Services.AddSingleton<AmazonCreatorApiClient>();
@@ -206,6 +221,24 @@ builder.Services.AddHostedService<UptimeHeartbeatService>();
 builder.Services.AddHostedService<InstagramAutoPilotWorker>();
 builder.Services.AddHostedService<ContentCalendarWorker>();
 
+builder.Services.AddMassTransit(x =>
+{
+    x.AddConsumer<EvolutionWebhookConsumer>();
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        cfg.Host("localhost", "/", h => {
+            h.Username("guest");
+            h.Password("guest");
+        });
+        cfg.ConfigureEndpoints(context);
+    });
+});
+
+builder.Services.AddHttpClient("evolution-webhook-internal", (sp, client) => {
+    var opts = sp.GetRequiredService<IOptions<WebhookOptions>>().Value;
+    client.BaseAddress = new Uri($"http://localhost:{opts.Port}");
+});
+
 var app = builder.Build();
 
 var webhookOptions = app.Services.GetRequiredService<IOptions<WebhookOptions>>().Value;
@@ -240,6 +273,7 @@ app.UseStaticFiles(new StaticFileOptions
         }
     }
 });
+app.UseSerilogRequestLogging();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -311,7 +345,20 @@ app.MapGet("/auth/me", (HttpContext context) =>
 app.MapConverterEndpoint();
 app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 
-app.MapGet("/conversor", async (
+app.MapGet("/conversor", (IWebHostEnvironment env) =>
+{
+    var path = Path.Combine(env.WebRootPath, "conversor.html");
+    return File.Exists(path) ? Results.File(path, "text/html") : Results.NotFound();
+});
+
+app.MapGet("/dashboard", (IWebHostEnvironment env) =>
+{
+    var path = Path.Combine(env.WebRootPath, "dashboard.html");
+    return File.Exists(path) ? Results.File(path, "text/html") : Results.NotFound();
+});
+
+app.MapPost("/api/conversor", async (
+    [FromBody] ConversorWebRequest webRequest,
     HttpContext context,
     IAffiliateLinkService affiliateLinkService,
     InstagramLinkMetaService instagramMeta,
@@ -323,12 +370,14 @@ app.MapGet("/conversor", async (
     IOptions<WebhookOptions> webhookOptions,
     CancellationToken ct) =>
 {
-    var request = context.Request;
-    var input = request.Query["url"].ToString();
-    var viewModel = new PublicLinkConverterViewModel
+    try
     {
-        Input = input?.Trim() ?? string.Empty
-    };
+        var request = context.Request;
+        var input = webRequest.Url;
+        var viewModel = new PublicLinkConverterViewModel
+        {
+            Input = input?.Trim() ?? string.Empty
+        };
 
     if (!string.IsNullOrWhiteSpace(viewModel.Input))
     {
@@ -362,71 +411,130 @@ app.MapGet("/conversor", async (
                 var tracked = await trackingStore.GetOrCreateAsync(convertedUrl, ct);
                 var trackedUrl = BuildTrackedRedirectUrl(publicBaseUrl, tracked.Id, "conversor", null);
 
-                LinkMetaResult convertedMeta;
-                try
+                // =================== PARALLEL METADATA FETCH ===================
+                // All metadata sources run concurrently to minimize total latency.
+                // Previously sequential (~8-15s), now parallel (~3-5s).
+                var productPageMetaTask = Task.Run(async () =>
                 {
-                    convertedMeta = await instagramMeta.GetMetaAsync(convertedUrl, ct);
-                }
-                catch
-                {
-                    convertedMeta = new LinkMetaResult();
-                }
-                var resolvedConvertedUrl = await TryResolveFinalUrlForMetaAsync(convertedUrl, httpClientFactory, ct);
-                if (!string.IsNullOrWhiteSpace(resolvedConvertedUrl) &&
-                    !string.Equals(resolvedConvertedUrl, convertedUrl, StringComparison.OrdinalIgnoreCase))
+                    // Priority: fetch directly from the real ML product page URL
+                    if (!string.IsNullOrWhiteSpace(convertedUrl) &&
+                        !convertedUrl.Contains("mercadolivre.com.br", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var resolvedForMeta = await TryResolveFinalUrlForMetaAsync(convertedUrl, httpClientFactory, ct);
+                        if (!string.IsNullOrWhiteSpace(resolvedForMeta) &&
+                            resolvedForMeta.Contains("mercadolivre.com.br", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try { return await instagramMeta.GetMetaAsync(resolvedForMeta, ct); } catch { }
+                        }
+                    }
+                    else if (!string.IsNullOrWhiteSpace(convertedUrl))
+                    {
+                        try { return await instagramMeta.GetMetaAsync(convertedUrl, ct); } catch { }
+                    }
+                    return new LinkMetaResult();
+                }, ct);
+
+                var convertedMetaTask = Task.Run(async () =>
                 {
                     try
                     {
-                        var resolvedConvertedMeta = await instagramMeta.GetMetaAsync(resolvedConvertedUrl, ct);
-                        convertedMeta = MergeConverterMeta(convertedMeta, resolvedConvertedMeta);
+                        var meta = await instagramMeta.GetMetaAsync(convertedUrl, ct);
+                        var resolvedConvertedUrl = await TryResolveFinalUrlForMetaAsync(convertedUrl, httpClientFactory, ct);
+                        if (!string.IsNullOrWhiteSpace(resolvedConvertedUrl) &&
+                            !string.Equals(resolvedConvertedUrl, convertedUrl, StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                var resolvedMeta = await instagramMeta.GetMetaAsync(resolvedConvertedUrl, ct);
+                                return MergeConverterMeta(meta, resolvedMeta);
+                            }
+                            catch { }
+                        }
+                        return meta;
                     }
-                    catch
-                    {
-                    }
-                }
+                    catch { return new LinkMetaResult(); }
+                }, ct);
 
-                LinkMetaResult originalMeta;
-                if (!string.Equals(convertedUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                var originalMetaTask = Task.Run(async () =>
+                {
+                    if (string.Equals(convertedUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                        return new LinkMetaResult();
+                    try
+                    {
+                        var meta = await instagramMeta.GetMetaAsync(normalizedInputUrl, ct);
+                        var resolvedOriginalUrl = await TryResolveFinalUrlForMetaAsync(normalizedInputUrl, httpClientFactory, ct);
+                        if (!string.IsNullOrWhiteSpace(resolvedOriginalUrl) &&
+                            !string.Equals(resolvedOriginalUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                var resolvedMeta = await instagramMeta.GetMetaAsync(resolvedOriginalUrl, ct);
+                                return MergeConverterMeta(meta, resolvedMeta);
+                            }
+                            catch { }
+                        }
+                        return meta;
+                    }
+                    catch { return new LinkMetaResult(); }
+                }, ct);
+
+                var officialDataTask = officialProductDataService.TryGetBestAsync(normalizedInputUrl, convertedUrl, ct);
+                var couponsTask = Task.Run(async () =>
                 {
                     try
                     {
-                        originalMeta = await instagramMeta.GetMetaAsync(normalizedInputUrl, ct);
-                    }
-                    catch
-                    {
-                        originalMeta = new LinkMetaResult();
-                    }
-                    var resolvedOriginalUrl = await TryResolveFinalUrlForMetaAsync(normalizedInputUrl, httpClientFactory, ct);
-                    if (!string.IsNullOrWhiteSpace(resolvedOriginalUrl) &&
-                        !string.Equals(resolvedOriginalUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
+                        var store = conversion.Store?.Trim() ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(store) && !string.Equals(store, "Unknown", StringComparison.OrdinalIgnoreCase))
                         {
-                            var resolvedOriginalMeta = await instagramMeta.GetMetaAsync(resolvedOriginalUrl, ct);
-                            originalMeta = MergeConverterMeta(originalMeta, resolvedOriginalMeta);
-                        }
-                        catch
-                        {
+                            return await couponSelector.GetActiveCouponsAsync(store, 1, ct);
                         }
                     }
-                }
-                else
-                {
-                    originalMeta = new LinkMetaResult();
-                }
+                    catch { }
+                    return Enumerable.Empty<AffiliateCoupon>();
+                }, ct);
 
-                var mergedTitle = ChooseBestConverterTitle(originalMeta.Title, convertedMeta.Title);
-                var mergedDescription = ChooseBestConverterDescription(originalMeta.Description, convertedMeta.Description);
-                var officialData = await officialProductDataService.TryGetBestAsync(normalizedInputUrl, convertedUrl, ct);
+                await Task.WhenAll(productPageMetaTask, convertedMetaTask, originalMetaTask, officialDataTask, couponsTask);
+
+                var productPageMeta = await productPageMetaTask;
+                var convertedMeta = await convertedMetaTask;
+                var originalMeta = await originalMetaTask;
+                var officialData = await officialDataTask;
+                
+                // Fallback for short links (e.g. meli.la) - if Official API couldn't resolve the ID organically,
+                // try again using the ResolvedUrl obtained by the metadata HTML scraper
+                if (officialData is null)
+                {
+                    var resolvedFromMeta = FirstNonEmpty(productPageMeta.ResolvedUrl, originalMeta.ResolvedUrl, convertedMeta.ResolvedUrl);
+                    if (!string.IsNullOrWhiteSpace(resolvedFromMeta) && 
+                        !string.Equals(resolvedFromMeta, normalizedInputUrl, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(resolvedFromMeta, convertedUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        officialData = await officialProductDataService.TryGetBestAsync(resolvedFromMeta, null, ct);
+                    }
+                }
+                
+                var coupons = await couponsTask;
+                // ================================================================
+
+                // Merge: productPageMeta (from real ML product) takes highest priority for title, price, image
+                var mergedTitle = ChooseBestConverterTitle(
+                    ChooseBestConverterTitle(productPageMeta.Title, originalMeta.Title),
+                    convertedMeta.Title);
+                var mergedDescription = ChooseBestConverterDescription(
+                    ChooseBestConverterDescription(productPageMeta.Description, originalMeta.Description),
+                    convertedMeta.Description);
                 var mergedPrice = FirstNonEmpty(
                     officialData?.CurrentPrice ?? string.Empty,
+                    productPageMeta.PriceText ?? string.Empty,
                     originalMeta.PriceText ?? string.Empty,
                     convertedMeta.PriceText ?? string.Empty,
                     ExtractPriceFromText(mergedDescription),
+                    ExtractPriceFromText(productPageMeta.Description),
                     ExtractPriceFromText(originalMeta.Description),
                     ExtractPriceFromText(convertedMeta.Description),
                     "Preco sob consulta");
                 var mergedImages = (officialData?.Images ?? new List<string>())
+                    .Concat(productPageMeta.Images ?? new List<string>())
                     .Concat(originalMeta.Images ?? new List<string>())
                     .Concat(convertedMeta.Images ?? new List<string>())
                     .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -441,8 +549,54 @@ app.MapGet("/conversor", async (
                 viewModel.Description = mergedDescription?.Trim() ?? string.Empty;
                 viewModel.Price = FirstNonEmpty(mergedPrice, "Preco sob consulta") ?? "Preco sob consulta";
                 viewModel.ImageUrl = SelectBestConverterImage(mergedImages, viewModel.Title, viewModel.Description);
-                viewModel.PreviousPrice = officialData?.PreviousPrice ?? string.Empty;
+
+                // Previous price: cascade from official data → HTML scraping of each meta source
+                viewModel.PreviousPrice = FirstNonEmpty(
+                    officialData?.PreviousPrice ?? string.Empty,
+                    productPageMeta.PreviousPriceText ?? string.Empty,
+                    convertedMeta.PreviousPriceText ?? string.Empty,
+                    originalMeta.PreviousPriceText ?? string.Empty);
+
+                // Validate previous price: must be greater than current price, otherwise discard
+                if (!string.IsNullOrWhiteSpace(viewModel.PreviousPrice) && !string.IsNullOrWhiteSpace(viewModel.Price))
+                {
+                    var prevVal = ParseBrlPrice(viewModel.PreviousPrice);
+                    var curVal = ParseBrlPrice(viewModel.Price);
+                    if (prevVal.HasValue && curVal.HasValue && prevVal.Value <= curVal.Value)
+                    {
+                        viewModel.PreviousPrice = string.Empty; // Invalid: old price should be higher
+                    }
+                }
+
+                // Discount percent: cascade official API → HTML extracted % → computed from prices
                 viewModel.DiscountPercent = officialData?.DiscountPercent;
+                if (!viewModel.DiscountPercent.HasValue || viewModel.DiscountPercent.Value <= 0)
+                {
+                    // Try HTML-extracted discount % (e.g. "25% OFF" on the page)
+                    viewModel.DiscountPercent = productPageMeta.DiscountPercentFromHtml
+                        ?? convertedMeta.DiscountPercentFromHtml
+                        ?? originalMeta.DiscountPercentFromHtml;
+                }
+                if (!viewModel.DiscountPercent.HasValue || viewModel.DiscountPercent.Value <= 0)
+                {
+                    // Fallback: compute from display prices
+                    viewModel.DiscountPercent = TryComputeDiscountFromDisplayPrices(viewModel.PreviousPrice, viewModel.Price);
+                }
+
+                // Calculate previous price from discount if we have discount % but no valid previous price
+                if (string.IsNullOrWhiteSpace(viewModel.PreviousPrice) &&
+                    viewModel.DiscountPercent.HasValue && viewModel.DiscountPercent.Value > 0 &&
+                    !string.IsNullOrWhiteSpace(viewModel.Price))
+                {
+                    var curVal = ParseBrlPrice(viewModel.Price);
+                    if (curVal.HasValue && curVal.Value > 0)
+                    {
+                        var calculatedPrev = Math.Round(curVal.Value / (1m - viewModel.DiscountPercent.Value / 100m), 2);
+                        viewModel.PreviousPrice = $"R$ {calculatedPrev.ToString("N2", System.Globalization.CultureInfo.GetCultureInfo("pt-BR"))}";
+                    }
+                }
+
+                viewModel.EstimatedDelivery = officialData?.EstimatedDelivery ?? string.Empty;
                 viewModel.DataSource = !string.IsNullOrWhiteSpace(officialData?.DataSource) ? officialData!.DataSource : "meta";
                 viewModel.ConvertedUrl = convertedUrl;
                 viewModel.TrackedUrl = trackedUrl;
@@ -454,7 +608,6 @@ app.MapGet("/conversor", async (
 
                 try
                 {
-                    var coupons = await couponSelector.GetActiveCouponsAsync(viewModel.Store, 1, ct);
                     var coupon = coupons.FirstOrDefault();
                     if (coupon is not null)
                     {
@@ -470,9 +623,12 @@ app.MapGet("/conversor", async (
         }
     }
 
-    var currentUrl = $"{request.Scheme}://{request.Host}{request.Path}";
-    var html = BuildPublicLinkConverterPageHtml(viewModel, currentUrl);
-    return Results.Content(html, "text/html; charset=utf-8");
+        return Results.Ok(viewModel);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { success = false, error = ex.Message, validationError = "Erro inesperado interno do servidor." }, statusCode: 500);
+    }
 });
 
 app.MapGet("/bio", async (
@@ -646,6 +802,33 @@ app.MapPost("/webhooks/evolution", async (
 
 app.MapPost("/webhook/bot-conversor", async (
     HttpRequest request,
+    IPublishEndpoint publishEndpoint,
+    IOptions<EvolutionOptions> evolutionOptions,
+    IOptions<WebhookOptions> webhookOptions,
+    CancellationToken ct) =>
+{
+    request.EnableBuffering();
+    var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
+    request.Body.Position = 0;
+
+    if (!IsBotConversorWebhookAuthorized(request, body, evolutionOptions.Value.WebhookSecret, webhookOptions.Value.ApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
+    if (string.IsNullOrWhiteSpace(body))
+    {
+        return Results.Ok(new { success = true, ignored = true });
+    }
+
+    var headers = request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString());
+
+    await publishEndpoint.Publish(new ProcessEvolutionWebhookEvent(body, headers), ct);
+    return Results.Ok(new { success = true });
+});
+
+app.MapPost("/internal/webhook/bot-conversor", async (
+    HttpRequest request,
     IMessageProcessor processor,
     IWhatsAppGateway gateway,
     IMediaStore mediaStore,
@@ -662,6 +845,7 @@ app.MapPost("/webhook/bot-conversor", async (
     InstagramLinkMetaService instagramMeta,
     InstagramImageDownloadService instagramImages,
     IIdempotencyStore idempotency,
+    OfficialProductDataService officialProductDataService,
     IOptions<AffiliateOptions> affiliate,
     IOptions<EvolutionOptions> evolutionOptions,
     IOptions<WebhookOptions> webhookOptions,
@@ -1009,6 +1193,12 @@ app.MapPost("/webhook/bot-conversor", async (
             if (responderResult.Success && !string.IsNullOrWhiteSpace(responderResult.ConvertedText))
             {
                 var replyText = BuildResponderMessage(responder, responderResult.ConvertedText);
+
+                // Enriquecer com metadados de produto (Amazon/Shopee/ML)
+                var (enrichedReply, responderProductImageUrl) = await processor.EnrichTextWithProductDataAsync(
+                    replyText, normalizedText, ct);
+                replyText = enrichedReply;
+
                 if (responder.AppendSheinCode &&
                     replyText.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(affiliate.Value.SheinCode) &&
@@ -1024,7 +1214,18 @@ app.MapPost("/webhook/bot-conversor", async (
 
                 var tracked = await ApplyTrackingAsync(replyText, linkTrackingStore, webhookOptions.Value.PublicBaseUrl, responder.TrackingEnabled, ct);
 
-                await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
+                if (!string.IsNullOrWhiteSpace(responderProductImageUrl))
+                {
+                    var imgResult = await gateway.SendImageUrlAsync(responderInstance, msg.ChatId, responderProductImageUrl, tracked.Text, "image/jpeg", null, ct);
+                    if (!imgResult.Success)
+                    {
+                        await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
+                    }
+                }
+                else
+                {
+                    await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
+                }
                 _ = conversionLogStore.AppendAsync(new ConversionLogEntry
                 {
                     Source = "WhatsAppResponder",
@@ -1105,6 +1306,12 @@ app.MapPost("/webhook/bot-conversor", async (
             }
 
             var finalText = result.ConvertedText;
+
+            // Enriquecer com metadados de produto (Amazon/Shopee/ML)
+            var (enrichedFinal, forwardProductImageUrl) = await processor.EnrichTextWithProductDataAsync(
+                finalText, normalizedText, ct);
+            finalText = enrichedFinal;
+
             if (waRoute.AppendSheinCode &&
                 finalText.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(affiliate.Value.SheinCode) &&
@@ -1124,18 +1331,32 @@ app.MapPost("/webhook/bot-conversor", async (
                 WhatsAppForwardSendOutcome outcome;
                 if (waRoute.SendMediaEnabled)
                 {
-                    outcome = await SendWhatsAppMessageWithMediaFallbackAsync(
-                        gateway,
-                        httpClientFactory,
-                        evolutionOptions.Value,
-                        mediaStore,
-                        webhookOptions.Value.PublicBaseUrl,
-                        instanceToUse,
-                        destination,
-                        finalText,
-                        msg,
-                        logger,
-                        ct);
+                    // Se nao tem midia na msg original mas temos imagem do produto via API, enviar a imagem do produto
+                    if (!msg.HasMedia && !string.IsNullOrWhiteSpace(forwardProductImageUrl))
+                    {
+                        var imgResult = await gateway.SendImageUrlAsync(
+                            instanceToUse, destination, forwardProductImageUrl, finalText, "image/jpeg", null, ct);
+                        outcome = imgResult.Success
+                            ? new WhatsAppForwardSendOutcome(imgResult, "image_sent_product_api")
+                            : new WhatsAppForwardSendOutcome(
+                                await gateway.SendTextAsync(instanceToUse, destination, finalText, ct),
+                                "text_fallback_product_image_failed");
+                    }
+                    else
+                    {
+                        outcome = await SendWhatsAppMessageWithMediaFallbackAsync(
+                            gateway,
+                            httpClientFactory,
+                            evolutionOptions.Value,
+                            mediaStore,
+                            webhookOptions.Value.PublicBaseUrl,
+                            instanceToUse,
+                            destination,
+                            finalText,
+                            msg,
+                            logger,
+                            ct);
+                    }
                 }
                 else
                 {
@@ -3180,6 +3401,45 @@ static string? FirstNonEmpty(params string?[] values)
 
     return null;
 }
+
+static int? TryComputeDiscountFromDisplayPrices(string? previousDisplay, string? currentDisplay)
+{
+    if (string.IsNullOrWhiteSpace(previousDisplay) || string.IsNullOrWhiteSpace(currentDisplay))
+        return null;
+
+    var previous = ParseBrlPrice(previousDisplay);
+    var current = ParseBrlPrice(currentDisplay);
+
+    if (!previous.HasValue || !current.HasValue || previous.Value <= 0 || current.Value <= 0 || previous.Value <= current.Value)
+        return null;
+
+    var pct = (int)Math.Round(((previous.Value - current.Value) / previous.Value) * 100m, MidpointRounding.AwayFromZero);
+    return pct > 0 && pct < 100 ? pct : null;
+}
+
+static decimal? ParseBrlPrice(string? text)
+{
+    if (string.IsNullOrWhiteSpace(text)) return null;
+    var clean = System.Text.RegularExpressions.Regex.Replace(text, @"[^\d\.,]", "", System.Text.RegularExpressions.RegexOptions.CultureInvariant).Trim();
+    if (string.IsNullOrWhiteSpace(clean)) return null;
+
+    // BRL: 2.999,99 → dots are thousand separators, comma is decimal
+    if (clean.Contains(',') && clean.Contains('.'))
+    {
+        if (clean.LastIndexOf(',') > clean.LastIndexOf('.'))
+            clean = clean.Replace(".", "").Replace(",", ".");
+        else
+            clean = clean.Replace(",", "");
+    }
+    else if (clean.Contains(','))
+    {
+        clean = clean.Replace(",", ".");
+    }
+
+    return decimal.TryParse(clean, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : null;
+}
+
+
 
 static async Task<WhatsAppForwardSendOutcome> SendWhatsAppMessageWithMediaFallbackAsync(
     IWhatsAppGateway gateway,
@@ -5889,17 +6149,37 @@ static int ScoreConverterImage(string url, IReadOnlyList<string> keywords)
 
     if (lower.Contains(".jpg", StringComparison.OrdinalIgnoreCase) ||
         lower.Contains(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-        lower.Contains(".png", StringComparison.OrdinalIgnoreCase))
+        lower.Contains(".png", StringComparison.OrdinalIgnoreCase) ||
+        lower.Contains(".webp", StringComparison.OrdinalIgnoreCase))
     {
         score += 120;
-    }
-    else if (lower.Contains(".webp", StringComparison.OrdinalIgnoreCase))
-    {
-        score += 55;
     }
     else if (lower.Contains(".gif", StringComparison.OrdinalIgnoreCase))
     {
         score -= 40;
+    }
+
+    // Strong boost for product CDN images (known store-specific product URLs)
+    if (lower.Contains("mlstatic.com", StringComparison.OrdinalIgnoreCase) &&
+        lower.Contains("d_nq_np", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 200; // ML product image from gallery
+    }
+    else if (lower.Contains("m.media-amazon.com/images/i/", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 200; // Amazon product image
+        
+        // Massively boost actual product images (which contain AC_SL or AC_SX) to beat generic banners
+        if (lower.Contains("_ac_sl", StringComparison.OrdinalIgnoreCase) ||
+            lower.Contains("_ac_sy", StringComparison.OrdinalIgnoreCase) ||
+            lower.Contains("_ac_sx", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 150;
+        }
+    }
+    else if (lower.Contains("susercontent.com/file/", StringComparison.OrdinalIgnoreCase))
+    {
+        score += 200; // Shopee product image
     }
 
     var badTokens = new[] { "logo", "icon", "avatar", "sprite", "placeholder", "favicon", "banner" };
@@ -10278,6 +10558,7 @@ internal sealed record PublicLinkConverterViewModel
     public string Price { get; set; } = string.Empty;
     public string PreviousPrice { get; set; } = string.Empty;
     public int? DiscountPercent { get; set; }
+    public string EstimatedDelivery { get; set; } = string.Empty;
     public bool HasCoupon { get; set; }
     public string CouponCode { get; set; } = string.Empty;
     public string CouponDescription { get; set; } = string.Empty;
@@ -10289,6 +10570,7 @@ internal sealed record PublicLinkConverterViewModel
     public string? DomainHost { get; set; }
     public string? DataSource { get; set; }
 }
+
 internal sealed record InstagramPublishExecutionResult(bool Success, int StatusCode, string? MediaId, string? Error, string? DraftId);
 internal sealed record InstagramBoostAdResult(bool Success, string? CampaignId, string? AdSetId, string? AdId, string? Error);
 internal sealed record InstagramCtaResolution(string Reply, bool HasKeywordMatch, string? Keyword, string? Link);
@@ -10303,3 +10585,5 @@ internal sealed record InstagramDraftRequest(
     string? PostType);
 internal sealed record InstagramApproveRequest(string Message);
 
+public record ConversorWebRequest(string Url);
+public partial class Program { } 

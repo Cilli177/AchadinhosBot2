@@ -4,7 +4,7 @@ namespace AchadinhosBot.Next.Application.Abstractions;
 
 public interface IMessageProcessor
 {
-    Task<ConversionResult> ProcessAsync(
+    Task<AchadinhosBot.Next.Domain.Models.ConversionResult> ProcessAsync(
         string input,
         string source,
         CancellationToken cancellationToken,
@@ -12,4 +12,10 @@ public interface IMessageProcessor
         long? destinationChatId = null,
         string? originChatRef = null,
         string? destinationChatRef = null);
+    Task<(string EnrichedText, string? ProductImageUrl)> EnrichTextWithProductDataAsync(
+        string convertedText,
+        string originalText,
+        CancellationToken cancellationToken);
 }
+
+// Removing duplicate ConversionResult here since it's already in Domain.Models
