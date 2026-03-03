@@ -107,8 +107,31 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 240);
             var sendForApproval = request.SendForApproval ?? (storyMode ? instaPublishSettings.StoryAutoPilotSendForApproval : instaPublishSettings.AutoPilotSendForApproval);
             var dryRun = request.DryRun;
+            var manualUrl = request.ManualUrl?.Trim();
 
-            var ranked = await BuildRankedCandidatesAsync(settings, instaPublishSettings, topCount, lookbackHours, repeatWindowHours, request.ForceIncludeExisting, cancellationToken);
+            List<CandidateScore> ranked;
+            if (!string.IsNullOrWhiteSpace(manualUrl))
+            {
+                _logger.LogInformation("Autopilot running in manual mode for URL: {Url}", manualUrl);
+                ranked = new List<CandidateScore>
+                {
+                    new CandidateScore
+                    {
+                        Url = manualUrl,
+                        Key = NormalizeUrlKey(manualUrl),
+                        Store = "Manual",
+                        ProductName = "Processando...", // Garantir que não seja filtrado
+                        FinalScore = 100,
+                        LatestTimestamp = DateTimeOffset.UtcNow,
+                        Note = "Manual input"
+                    }
+                };
+            }
+            else
+            {
+                ranked = await BuildRankedCandidatesAsync(settings, instaPublishSettings, topCount, lookbackHours, repeatWindowHours, request.ForceIncludeExisting, cancellationToken);
+            }
+
             result.CandidatesEvaluated = ranked.Count;
 
             var selected = ranked
@@ -273,6 +296,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var key = NormalizeUrlKey(url);
             if (existingKeys.Contains(key))
             {
+                _logger.LogDebug("Skipping candidate already in recent drafts: {Url}", url);
                 continue;
             }
 
@@ -1035,7 +1059,12 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             or "t.co"
             or "cutt.ly"
             or "compre.link"
-            or "oferta.one";
+            or "oferta.one"
+            or "s.shopee.com.br"
+            or "shope.ee"
+            or "meli.la"
+            or "amzn.to"
+            or "a.co";
     }
 
     private async Task<ImageSelectionResult> SelectBestImagesForProductAsync(

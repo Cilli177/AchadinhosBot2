@@ -955,10 +955,33 @@ public sealed class TelegramBotPollingService : BackgroundService
             }
 
             case "story":
+            {
+                var args = string.Join(" ", command.Arguments);
+                var manualUrl = UrlRegex.Match(args).Value;
+                
+                if (string.IsNullOrWhiteSpace(manualUrl))
+                {
+                    await SendMessageAsync(message.ChatId, "Para postagem direta no Story, forneça um link. Ex: /story https://...\nPara rodar o ranking automático, use /autostory", ct);
+                    return;
+                }
+
+                await SendMessageAsync(message.ChatId, "Executando criacao de story para o link fornecido...", ct);
+                var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
+                {
+                    PostType = "story",
+                    ManualUrl = manualUrl,
+                    SendForApproval = true,
+                    ApprovalChannel = "telegram",
+                    ApprovalTelegramChatId = message.ChatId
+                }, ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                return;
+            }
+
             case "autostory":
             {
                 var options = ParseAutoPilotCommandOptions(command.Arguments);
-                await SendMessageAsync(message.ChatId, "Executando autostory...", ct);
+                await SendMessageAsync(message.ChatId, "Executando autostory (ranking global)...", ct);
                 var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
                 {
                     PostType = "story",
@@ -974,10 +997,33 @@ public sealed class TelegramBotPollingService : BackgroundService
             }
 
             case "post":
+            {
+                var args = string.Join(" ", command.Arguments);
+                var manualUrl = UrlRegex.Match(args).Value;
+
+                if (string.IsNullOrWhiteSpace(manualUrl))
+                {
+                    await SendMessageAsync(message.ChatId, "Para postagem direta no Feed, forneça um link. Ex: /post https://...\nPara rodar o ranking automático, use /autopilot", ct);
+                    return;
+                }
+
+                await SendMessageAsync(message.ChatId, "Executando criacao de post para o link fornecido...", ct);
+                var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
+                {
+                    PostType = "feed",
+                    ManualUrl = manualUrl,
+                    SendForApproval = true,
+                    ApprovalChannel = "telegram",
+                    ApprovalTelegramChatId = message.ChatId
+                }, ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                return;
+            }
+
             case "autopilot":
             {
                 var options = ParseAutoPilotCommandOptions(command.Arguments);
-                await SendMessageAsync(message.ChatId, "Executando autopilot de post...", ct);
+                await SendMessageAsync(message.ChatId, "Executando autopilot de post (ranking global)...", ct);
                 var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
                 {
                     PostType = "feed",
@@ -1073,8 +1119,10 @@ public sealed class TelegramBotPollingService : BackgroundService
             "/legenda [id|ultimo] <texto> - ajusta copy",
             "/aprovar [id|ultimo] - marca draft como aprovado",
             "/reprovar [id|ultimo] <motivo> - marca draft como reprovado",
-            "/story [top] [dry] [force] - roda autostory (ex.: /story 2)",
-            "/post [top] [dry] [force] - roda autopilot feed (ex.: /post 3)",
+            "/story <link> - cria story de um link especifico",
+            "/autostory [top] [dry] [force] - roda autostory global (ex.: /autostory 2)",
+            "/post <link> - cria post de um link especifico",
+            "/autopilot [top] [dry] [force] - roda autopilot feed global (ex.: /autopilot 3)",
             "/ping - teste rapido",
             "",
             "Conversacional:",

@@ -32,6 +32,7 @@ public sealed class AutomationSettings
     public InstagramPublishSettings InstagramPublish { get; set; } = new();
     public OpenAISettings OpenAI { get; set; } = new();
     public GeminiSettings Gemini { get; set; } = new();
+    public DeepSeekSettings DeepSeek { get; set; } = new();
 }
 
 public sealed class IntegrationSettings
@@ -315,4 +316,13 @@ public sealed class GeminiSettings
     public string Model { get; set; } = "gemini-2.5-flash";
     public string BaseUrl { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
     public int MaxOutputTokens { get; set; } = 1200;
+}
+
+public sealed class DeepSeekSettings
+{
+    public string? ApiKey { get; set; }
+    public string Model { get; set; } = "deepseek-chat";
+    public double Temperature { get; set; } = 0.7;
+    public int MaxOutputTokens { get; set; } = 1200;
+    public string BaseUrl { get; set; } = "https://api.deepseek.com";
 }

@@ -18,6 +18,7 @@ public sealed class InstagramAutoPilotRunRequest
     public string? ApprovalWhatsAppInstanceName { get; set; }
     public bool ForceIncludeExisting { get; set; }
     public bool DryRun { get; set; }
+    public string? ManualUrl { get; set; }
 }
 
 public sealed class InstagramAutoPilotRunResult

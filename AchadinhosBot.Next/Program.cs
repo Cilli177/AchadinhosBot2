@@ -164,6 +164,7 @@ builder.Services.AddHttpClient("evolution", c => c.Timeout = TimeSpan.FromSecond
 builder.Services.AddHttpClient("evolution-groups", c => c.Timeout = TimeSpan.FromSeconds(120)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
 builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
 builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
+builder.Services.AddHttpClient("deepseek", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
 
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
 builder.Services.AddSingleton<AmazonCreatorApiClient>();
@@ -188,6 +189,7 @@ builder.Services.AddSingleton<InstagramImageDownloadService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
 builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
+builder.Services.AddSingleton<DeepSeekInstagramPostGenerator>();
 builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
 builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
 builder.Services.AddSingleton<ContentCalendarAutomationService>();

@@ -16,6 +16,7 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
     private readonly ICouponSelector _couponSelector;
     private readonly OpenAiInstagramPostGenerator _openAiGenerator;
     private readonly GeminiInstagramPostGenerator _geminiGenerator;
+    private readonly DeepSeekInstagramPostGenerator _deepSeekGenerator;
     private readonly ISettingsStore _settingsStore;
     private readonly OfficialProductDataService _officialProductDataService;
     private readonly IPromotionalCardGenerator _promotionalCardGenerator;
@@ -27,6 +28,7 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         ICouponSelector couponSelector,
         OpenAiInstagramPostGenerator openAiGenerator,
         GeminiInstagramPostGenerator geminiGenerator,
+        DeepSeekInstagramPostGenerator deepSeekGenerator,
         ISettingsStore settingsStore,
         OfficialProductDataService officialProductDataService,
         IPromotionalCardGenerator promotionalCardGenerator,
@@ -37,6 +39,7 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         _couponSelector = couponSelector;
         _openAiGenerator = openAiGenerator;
         _geminiGenerator = geminiGenerator;
+        _deepSeekGenerator = deepSeekGenerator;
         _settingsStore = settingsStore;
         _officialProductDataService = officialProductDataService;
         _promotionalCardGenerator = promotionalCardGenerator;
@@ -79,13 +82,24 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         {
             var openAi = allSettings.OpenAI ?? new OpenAISettings();
             var gemini = allSettings.Gemini ?? new GeminiSettings();
+            var deepSeek = allSettings.DeepSeek ?? new DeepSeekSettings();
 
             var provider = string.IsNullOrWhiteSpace(settings.AiProvider) ? "openai" : settings.AiProvider.Trim().ToLowerInvariant();
             var results = new List<string>();
             var openAiResult = string.Empty;
             var geminiResult = string.Empty;
+            var deepSeekResult = string.Empty;
 
-            if (provider is "openai" or "both")
+            if (provider is "deepseek")
+            {
+                deepSeekResult = (await _deepSeekGenerator.GenerateAsync(input, offerContext, link, settings, deepSeek, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(deepSeekResult))
+                {
+                    results.Add(deepSeekResult);
+                }
+            }
+
+            if (provider is "openai" or "both" && results.Count == 0)
             {
                 openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
                 if (!string.IsNullOrWhiteSpace(openAiResult))
@@ -104,20 +118,33 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
             }
 
             // Fallback cruzado: evita cair para o texto generico quando o provider principal falha (ex.: limite de cota).
-            if (results.Count == 0 && provider == "gemini")
+            if (results.Count == 0)
             {
-                openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(openAiResult))
+                // Tenta DeepSeek como primeiro fallback geral se estiver configurado
+                if (!string.IsNullOrWhiteSpace(deepSeek.ApiKey) && deepSeek.ApiKey != "********")
                 {
-                    results.Add(openAiResult);
+                    deepSeekResult = (await _deepSeekGenerator.GenerateAsync(input, offerContext, link, settings, deepSeek, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(deepSeekResult))
+                    {
+                        results.Add(deepSeekResult);
+                    }
                 }
-            }
-            else if (results.Count == 0 && provider == "openai")
-            {
-                geminiResult = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemini, cancellationToken))?.Trim() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(geminiResult))
+
+                if (results.Count == 0 && provider == "gemini")
                 {
-                    results.Add(geminiResult);
+                    openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(openAiResult))
+                    {
+                        results.Add(openAiResult);
+                    }
+                }
+                else if (results.Count == 0 && provider == "openai")
+                {
+                    geminiResult = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemini, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(geminiResult))
+                    {
+                        results.Add(geminiResult);
+                    }
                 }
             }
 
@@ -137,8 +164,9 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                         var cardBytes = await _promotionalCardGenerator.GenerateCardAsync(
                             officialData.Title ?? "Oferta Especial",
                             officialData.CurrentPrice ?? "Confira",
+                            officialData.PreviousPrice,
                             discountText,
-                            officialData.Images?.FirstOrDefault(),
+                            officialData.Images?.FirstOrDefault() ?? string.Empty,
                             cancellationToken);
                         
                         if (cardBytes is not null && cardBytes.Length > 0)
