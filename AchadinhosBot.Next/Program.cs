@@ -392,7 +392,8 @@ app.MapPost("/api/conversor", async (
         else
         {
             viewModel.OriginalUrl = normalizedInputUrl;
-            var conversion = await affiliateLinkService.ConvertAsync(normalizedInputUrl, ct);
+            var requestedSource = NormalizeWebConversorSource(webRequest.Source);
+            var conversion = await affiliateLinkService.ConvertAsync(normalizedInputUrl, ct, requestedSource);
             if (!conversion.Success || string.IsNullOrWhiteSpace(conversion.ConvertedUrl))
             {
                 viewModel.Error = string.IsNullOrWhiteSpace(conversion.Error)
@@ -10488,6 +10489,17 @@ static string EscapeJsonValue(string value)
         .Replace("\n", "\\n", StringComparison.Ordinal);
 }
 
+static string NormalizeWebConversorSource(string? source)
+{
+    var normalized = (source ?? string.Empty).Trim().ToLowerInvariant();
+    return normalized switch
+    {
+        "instagram_ofertas" => "instagram_ofertas",
+        "whatsapp" => "whatsapp",
+        _ => "conversor_web"
+    };
+}
+
 internal sealed record LoginRequest(string Username, string Password);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
@@ -10602,5 +10614,5 @@ internal sealed record InstagramDraftRequest(
     string? PostType);
 internal sealed record InstagramApproveRequest(string Message);
 
-public record ConversorWebRequest(string Url);
+public record ConversorWebRequest(string Url, string? Source = null);
 public partial class Program { } 

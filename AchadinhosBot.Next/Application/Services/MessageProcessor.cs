@@ -133,7 +133,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         {
             tasks[i] = items[i].IsBlocked
                 ? Task.FromResult(new AffiliateLinkResult(false, null, "Unknown", false, null, "Link bloqueado", false, null))
-                : _affiliateLinkService.ConvertAsync(items[i].CleanedUrl, cancellationToken);
+                : _affiliateLinkService.ConvertAsync(items[i].CleanedUrl, cancellationToken, source);
         }
 
         await Task.WhenAll(tasks);

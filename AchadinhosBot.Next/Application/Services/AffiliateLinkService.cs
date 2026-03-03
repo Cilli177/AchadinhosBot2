@@ -38,7 +38,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<AffiliateLinkResult> ConvertAsync(string rawUrl, CancellationToken cancellationToken)
+    public async Task<AffiliateLinkResult> ConvertAsync(string rawUrl, CancellationToken cancellationToken, string? source = null)
     {
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri))
         {
@@ -46,12 +46,12 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         var host = NormalizeHost(uri.Host);
-        return await ConvertWithExpansionAsync(uri, host, cancellationToken);
+        return await ConvertWithExpansionAsync(uri, host, cancellationToken, source);
     }
 
-    private async Task<AffiliateLinkResult> ConvertWithExpansionAsync(Uri uri, string host, CancellationToken cancellationToken)
+    private async Task<AffiliateLinkResult> ConvertWithExpansionAsync(Uri uri, string host, CancellationToken cancellationToken, string? source)
     {
-        var converted = await ConvertInternalAsync(uri, host, cancellationToken);
+        var converted = await ConvertInternalAsync(uri, host, cancellationToken, source);
         if (converted.Success)
         {
             return converted;
@@ -73,10 +73,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 : new AffiliateLinkResult(false, null, "Unknown", false, null, "ConversÃ£o nÃ£o suportada", false, null);
         }
 
-        return await ConvertInternalAsync(expanded, expandedHost, cancellationToken);
+        return await ConvertInternalAsync(expanded, expandedHost, cancellationToken, source);
     }
 
-    private async Task<AffiliateLinkResult> ConvertInternalAsync(Uri uri, string host, CancellationToken cancellationToken)
+    private async Task<AffiliateLinkResult> ConvertInternalAsync(Uri uri, string host, CancellationToken cancellationToken, string? source)
     {
         if (IsAmazonHost(host))
         {
@@ -124,7 +124,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     }
                     else
                     {
-                        var creatorShort = await ShortenAsync(creator.Url, cancellationToken) ?? creator.Url;
+                        var creatorTagged = ApplyTrackingTags(creator.Url, "Amazon", source);
+                        var creatorShort = await ShortenAsync(creatorTagged, cancellationToken) ?? creatorTagged;
                         LogStore("Amazon", uri.ToString(), creatorShort);
                         return new AffiliateLinkResult(true, creatorShort, "Amazon", true, null, null, creator.CorrectionApplied, creator.Note);
                     }
@@ -151,7 +152,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     }
                     else
                     {
-                        var officialShort = await ShortenAsync(official.Url, cancellationToken) ?? official.Url;
+                        var officialTagged = ApplyTrackingTags(official.Url, "Amazon", source);
+                        var officialShort = await ShortenAsync(officialTagged, cancellationToken) ?? officialTagged;
                         LogStore("Amazon", uri.ToString(), officialShort);
                         return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
                     }
@@ -189,7 +191,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Amazon sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), amazon);
             }
 
-            var fallbackShort = await ShortenAsync(amazon, cancellationToken) ?? amazon;
+            var taggedAmazon = ApplyTrackingTags(amazon, "Amazon", source);
+            var fallbackShort = await ShortenAsync(taggedAmazon, cancellationToken) ?? taggedAmazon;
             LogStore("Amazon", uri.ToString(), fallbackShort);
             return new AffiliateLinkResult(true, fallbackShort, "Amazon", true, null, null, correctionApplied, correctionNote);
         }
@@ -216,8 +219,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Shein sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), shein);
             }
 
-            LogStore("Shein", uri.ToString(), shein);
-            return new AffiliateLinkResult(true, shein, "Shein", true, null, null, correctionApplied, correctionNote);
+            var taggedShein = ApplyTrackingTags(shein, "Shein", source);
+            LogStore("Shein", uri.ToString(), taggedShein);
+            return new AffiliateLinkResult(true, taggedShein, "Shein", true, null, null, correctionApplied, correctionNote);
         }
 
         if (IsMercadoLivreHost(host)
@@ -241,7 +245,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     _logger.LogWarning("Mercado Livre sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), sanitized);
                 }
 
-                var shortened = await ShortenAsync(sanitized, cancellationToken) ?? sanitized;
+                var taggedMercadoLivre = ApplyTrackingTags(sanitized, "Mercado Livre", source);
+                var shortened = await ShortenAsync(taggedMercadoLivre, cancellationToken) ?? taggedMercadoLivre;
                 LogStore("Mercado Livre", uri.ToString(), shortened);
                 return new AffiliateLinkResult(true, shortened, "Mercado Livre", true, null, null, ensured.CorrectionApplied, ensured.CorrectionNote);
             }
@@ -269,8 +274,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     return new AffiliateLinkResult(false, null, "Shopee", false, validation.Error, "Link convertido sem afiliado vÃ¡lido", false, null);
                 }
 
-                LogStore("Shopee", uri.ToString(), shopee);
-                return new AffiliateLinkResult(true, shopee, "Shopee", true, null, null, false, null);
+                var taggedShopee = ApplyTrackingTags(shopee, "Shopee", source);
+                LogStore("Shopee", uri.ToString(), taggedShopee);
+                return new AffiliateLinkResult(true, taggedShopee, "Shopee", true, null, null, false, null);
             }
         }
 
@@ -2140,6 +2146,109 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return result;
     }
 
+    private string ApplyTrackingTags(string url, string store, string? source)
+    {
+        var cfg = _options.LinkTagging;
+        if (!cfg.Enabled || string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return url;
+        }
+
+        var entryPoint = ResolveTrackingEntryPoint(source);
+        var query = ParseQuery(uri.Query);
+        UpsertTrackingParam(query, "utm_source", cfg.Source, cfg.OverwriteExisting);
+        UpsertTrackingParam(query, "utm_medium", cfg.Medium, cfg.OverwriteExisting);
+
+        var campaign = cfg.Campaign?.Trim() ?? string.Empty;
+        if (cfg.IncludeStoreInCampaign && !string.IsNullOrWhiteSpace(store))
+        {
+            var safeStore = Regex.Replace(store.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "_");
+            safeStore = Regex.Replace(safeStore, @"_+", "_").Trim('_');
+            if (!string.IsNullOrWhiteSpace(safeStore))
+            {
+                campaign = string.IsNullOrWhiteSpace(campaign) ? safeStore : $"{campaign}_{safeStore}";
+            }
+        }
+
+        UpsertTrackingParam(query, "utm_campaign", campaign, cfg.OverwriteExisting);
+        UpsertTrackingParam(query, "utm_term", cfg.Term, cfg.OverwriteExisting);
+        var content = BuildContentTag(cfg.Content, entryPoint);
+        UpsertTrackingParam(query, "utm_content", content, cfg.OverwriteExisting);
+        UpsertTrackingParam(query, "ab_entry", entryPoint, cfg.OverwriteExisting);
+
+        if (cfg.ExtraParams is not null)
+        {
+            foreach (var pair in cfg.ExtraParams)
+            {
+                UpsertTrackingParam(query, pair.Key, pair.Value, cfg.OverwriteExisting);
+            }
+        }
+
+        var encodedQuery = string.Join("&", query.Select(p => $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value)}"));
+        var ub = new UriBuilder(uri)
+        {
+            Query = encodedQuery
+        };
+        return ub.Uri.ToString();
+    }
+
+    private static void UpsertTrackingParam(Dictionary<string, string> query, string key, string? value, bool overwrite)
+    {
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (!overwrite && query.TryGetValue(key, out var existing) && !string.IsNullOrWhiteSpace(existing))
+        {
+            return;
+        }
+
+        query[key] = value.Trim();
+    }
+
+    private static string BuildContentTag(string? baseContent, string entryPoint)
+    {
+        var trimmed = (baseContent ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return entryPoint;
+        }
+
+        return $"{trimmed}_{entryPoint}";
+    }
+
+    private static string ResolveTrackingEntryPoint(string? source)
+    {
+        var normalized = (source ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return "conversor_web";
+        }
+
+        if (normalized.Contains("whatsapp", StringComparison.Ordinal))
+        {
+            return "whatsapp";
+        }
+
+        if (normalized.Contains("instagram", StringComparison.Ordinal))
+        {
+            return "instagram_ofertas";
+        }
+
+        if (normalized.Contains("conversor", StringComparison.Ordinal) || normalized.Contains("web", StringComparison.Ordinal))
+        {
+            return "conversor_web";
+        }
+
+        return "conversor_web";
+    }
+
     private string MercadoLivreMattTool => ResolveString(
         _options.MercadoLivreMattTool,
         ReadEnv("AFFILIATE__MERCADOLIVRE_MATT_TOOL", "AFFILIATE__MERCADOLIVREMATTTOOL", "AFFILIATE__ML_MATT_TOOL"));
@@ -2201,4 +2310,3 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return false;
     }
 }
-

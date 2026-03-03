@@ -43,6 +43,29 @@ public sealed class AffiliateOptions
     public OfficialCouponApiOptions SheinOfficialCoupons { get; init; } = new();
 
     public OfficialCouponApiOptions MercadoLivreOfficialCoupons { get; init; } = new();
+
+    public AffiliateLinkTaggingOptions LinkTagging { get; init; } = new();
+}
+
+public sealed class AffiliateLinkTaggingOptions
+{
+    public bool Enabled { get; init; } = true;
+
+    public bool OverwriteExisting { get; init; } = true;
+
+    public bool IncludeStoreInCampaign { get; init; } = true;
+
+    public string Source { get; init; } = "achadinhosbot";
+
+    public string Medium { get; init; } = "affiliate";
+
+    public string Campaign { get; init; } = "conversor";
+
+    public string Term { get; init; } = string.Empty;
+
+    public string Content { get; init; } = string.Empty;
+
+    public Dictionary<string, string> ExtraParams { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class AmazonCreatorApiOptions

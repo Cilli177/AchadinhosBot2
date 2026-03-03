@@ -249,6 +249,11 @@ public sealed class TelegramBotPollingService : BackgroundService
         if (messageNode.TryGetProperty("from", out var fromNode) && fromNode.TryGetProperty("id", out var fromId))
         {
             msg.FromId = fromId.GetInt64();
+            if (fromNode.TryGetProperty("is_bot", out var isBotNode) &&
+                (isBotNode.ValueKind == JsonValueKind.True || isBotNode.ValueKind == JsonValueKind.False))
+            {
+                msg.FromIsBot = isBotNode.GetBoolean();
+            }
         }
 
         update.Message = msg;
@@ -267,13 +272,19 @@ public sealed class TelegramBotPollingService : BackgroundService
             return;
         }
 
+        if (update.Message.FromIsBot)
+        {
+            _logger.LogDebug("Ignorando mensagem de bot externo. ChatId={ChatId}", update.Message.ChatId);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(update.Message.Text))
         {
             return;
         }
 
-        // Prevent infinite loops between Userbot and Bot
-        if (update.Message.Text.Contains("Link convertido", StringComparison.OrdinalIgnoreCase))
+        // Prevent infinite loops before command parsing.
+        if (IsLikelyAutomationEcho(update.Message.Text))
         {
             return;
         }
@@ -510,6 +521,22 @@ public sealed class TelegramBotPollingService : BackgroundService
                || text.Contains("Executando criacao", StringComparison.OrdinalIgnoreCase)
                || text.Contains("Autopilot story", StringComparison.OrdinalIgnoreCase)
                || text.Contains("Aprovacao", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLikelyAutomationEcho(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        return text.Contains("Link convertido", StringComparison.OrdinalIgnoreCase)
+               || text.StartsWith("Executando criacao de story", StringComparison.OrdinalIgnoreCase)
+               || text.StartsWith("Executando criacao de post", StringComparison.OrdinalIgnoreCase)
+               || text.StartsWith("Executando autostory", StringComparison.OrdinalIgnoreCase)
+               || text.StartsWith("Executando autopilot", StringComparison.OrdinalIgnoreCase)
+               || text.StartsWith("Resultado story", StringComparison.OrdinalIgnoreCase)
+               || text.StartsWith("Resultado feed", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> SplitInstagramMessages(string text)
@@ -2775,6 +2802,7 @@ public sealed class TelegramBotPollingService : BackgroundService
     {
         public long ChatId { get; set; }
         public long? FromId { get; set; }
+        public bool FromIsBot { get; set; }
         public string Text { get; set; } = string.Empty;
         public string ChatType { get; set; } = string.Empty;
     }

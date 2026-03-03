@@ -133,6 +133,7 @@ No bloco `Affiliate`, configure cada loja:
 - `ShopeeOfficialCoupons`
 - `SheinOfficialCoupons`
 - `MercadoLivreOfficialCoupons`
+- `LinkTagging`
 
 Cada bloco suporta:
 - `Enabled`
@@ -143,6 +144,28 @@ Cada bloco suporta:
 - `ApiKey`
 - `BearerToken`
 - `Headers` (dicionÃ¡rio de headers extras)
+
+### Rastreabilidade por tags em links afiliados
+No bloco `Affiliate:LinkTagging`, configure:
+- `Enabled`: ativa/desativa tags de rastreabilidade.
+- `OverwriteExisting`: substitui `utm_*` existente quando estiver `true`.
+- `IncludeStoreInCampaign`: adiciona a loja no `utm_campaign`.
+- `Source`, `Medium`, `Campaign`, `Term`, `Content`: valores de UTM.
+- `ExtraParams`: parametros adicionais customizados.
+
+As tags sao aplicadas automaticamente nos links convertidos de Amazon, Mercado Livre, Shopee e Shein.
+
+Mapeamento automatico de origem:
+- `whatsapp` -> quando a conversao vem de fluxos com source contendo "whatsapp".
+- `conversor_web` -> quando vem do endpoint do site conversor.
+- `instagram_ofertas` -> quando vem de fluxos com source contendo "instagram".
+
+Os valores sao aplicados em `ab_entry` e incorporados ao `utm_content`.
+
+No endpoint `/api/conversor`, voce pode enviar `source` no body:
+- `conversor_web` (padrao)
+- `instagram_ofertas`
+- `whatsapp`
 
 Formato esperado no retorno JSON da API oficial:
 - array de cupons no root, ou dentro de um campo (ex: `coupons`, `data.coupons`);
