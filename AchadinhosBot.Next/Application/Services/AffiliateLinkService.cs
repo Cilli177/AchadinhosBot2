@@ -500,6 +500,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             var recoveredMlbId = await TryRecoverMercadoLivreIdAsync(uri, resolvedUri, mlbId, cancellationToken);
             if (string.IsNullOrWhiteSpace(recoveredMlbId))
             {
+                if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
+                {
+                    var socialFallback = CleanMercadoLivreSocial(resolvedUri.ToString());
+                    var ensuredFallback = EnsureMercadoLivreAffiliate(socialFallback, uri.ToString());
+                    return ensuredFallback.Url;
+                }
+
                 return null;
             }
 
