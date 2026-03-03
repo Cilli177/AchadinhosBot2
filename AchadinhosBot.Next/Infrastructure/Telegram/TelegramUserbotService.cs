@@ -1831,9 +1831,13 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         if (string.IsNullOrWhiteSpace(text)) return false;
         return text.Contains("POST PARA INSTAGRAM", StringComparison.OrdinalIgnoreCase)
                || text.Contains("Legenda 1", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("Hashtags sugeridas", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Hashtags", StringComparison.OrdinalIgnoreCase)
                || text.StartsWith("Qual produto?", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("Envie o nome ou o link", StringComparison.OrdinalIgnoreCase);
+               || text.Contains("Envie o nome ou o link", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Link convertido", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Executando criacao", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Autopilot story", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Aprovacao", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> SplitInstagramMessages(string text)
