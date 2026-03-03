@@ -1,7 +1,11 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Settings;
+using AchadinhosBot.Next.Infrastructure.ProductData;
+using AchadinhosBot.Next.Infrastructure.Media;
+using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Infrastructure.Instagram;
 
@@ -13,19 +17,31 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
     private readonly OpenAiInstagramPostGenerator _openAiGenerator;
     private readonly GeminiInstagramPostGenerator _geminiGenerator;
     private readonly ISettingsStore _settingsStore;
+    private readonly OfficialProductDataService _officialProductDataService;
+    private readonly IPromotionalCardGenerator _promotionalCardGenerator;
+    private readonly IMediaStore _mediaStore;
+    private readonly WebhookOptions _webhookOptions;
 
     public InstagramPostComposer(
         IMessageProcessor messageProcessor,
         ICouponSelector couponSelector,
         OpenAiInstagramPostGenerator openAiGenerator,
         GeminiInstagramPostGenerator geminiGenerator,
-        ISettingsStore settingsStore)
+        ISettingsStore settingsStore,
+        OfficialProductDataService officialProductDataService,
+        IPromotionalCardGenerator promotionalCardGenerator,
+        IMediaStore mediaStore,
+        IOptions<WebhookOptions> webhookOptions)
     {
         _messageProcessor = messageProcessor;
         _couponSelector = couponSelector;
         _openAiGenerator = openAiGenerator;
         _geminiGenerator = geminiGenerator;
         _settingsStore = settingsStore;
+        _officialProductDataService = officialProductDataService;
+        _promotionalCardGenerator = promotionalCardGenerator;
+        _mediaStore = mediaStore;
+        _webhookOptions = webhookOptions.Value;
     }
 
     public async Task<string> BuildAsync(string productInput, string? offerContext, InstagramPostSettings settings, CancellationToken cancellationToken)
@@ -48,6 +64,16 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
 
         var allSettings = await _settingsStore.GetAsync(cancellationToken);
         var couponLine = await BuildCouponLineAsync(allSettings, link, cancellationToken);
+
+        OfficialProductDataResult? officialData = null;
+        if (!string.IsNullOrWhiteSpace(link) || !string.IsNullOrWhiteSpace(input))
+        {
+            officialData = await _officialProductDataService.TryGetBestAsync(input, link, cancellationToken);
+        }
+        if (officialData is null && !string.IsNullOrWhiteSpace(offerContext))
+        {
+            officialData = await _officialProductDataService.TryGetBestAsync(offerContext, null, cancellationToken);
+        }
 
         if (settings.UseAi)
         {
@@ -101,6 +127,35 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                 if (allSettings.CouponHub.Enabled && allSettings.CouponHub.AppendToInstagramCaptions && !string.IsNullOrWhiteSpace(couponLine))
                 {
                     merged += $"\n\nCupom recomendado: {couponLine}";
+                }
+
+                if (officialData is not null)
+                {
+                    try
+                    {
+                        var discountText = officialData.DiscountPercent > 0 ? $"-{officialData.DiscountPercent}%" : null;
+                        var cardBytes = await _promotionalCardGenerator.GenerateCardAsync(
+                            officialData.Title ?? "Oferta Especial",
+                            officialData.CurrentPrice ?? "Confira",
+                            discountText,
+                            officialData.Images?.FirstOrDefault(),
+                            cancellationToken);
+                        
+                        if (cardBytes is not null && cardBytes.Length > 0)
+                        {
+                            var mediaId = _mediaStore.Add(cardBytes, "image/jpeg");
+                            var port = _webhookOptions.Port <= 0 ? 5000 : _webhookOptions.Port;
+                            var mediaUrl = !string.IsNullOrWhiteSpace(_webhookOptions.PublicBaseUrl)
+                                ? _webhookOptions.PublicBaseUrl.TrimEnd('/') + $"/media/{mediaId}"
+                                : $"http://localhost:{port}/media/{mediaId}";
+                            
+                            merged += $"\n\n[Cartão Promocional Gerado: {mediaUrl}]";
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore generation errors to not crash the AI generation flow
+                    }
                 }
 
                 return merged;

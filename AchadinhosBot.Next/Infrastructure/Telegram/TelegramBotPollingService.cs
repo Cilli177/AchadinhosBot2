@@ -272,6 +272,12 @@ public sealed class TelegramBotPollingService : BackgroundService
             return;
         }
 
+        // Prevent infinite loops between Userbot and Bot
+        if (update.Message.Text.Contains("Link convertido", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         if (IsRateLimited(update.Message.ChatId))
         {
             return;

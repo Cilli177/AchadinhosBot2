@@ -763,6 +763,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             return;
         }
 
+        // Prevent infinite loops: ignore messages sent by the userbot itself
+        if (msg.flags.HasFlag(Message.Flags.out_))
+        {
+            return;
+        }
+
         var text = BuildMessageTextForConversion(msg);
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -771,6 +777,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
         var settings = await _settingsStore.GetAsync(CancellationToken.None);
         if (IsInstagramBotResponse(text))
+        {
+            return;
+        }
+
+        // Prevent infinite loops between Userbot and Bot
+        if (text.Contains("Link convertido", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }

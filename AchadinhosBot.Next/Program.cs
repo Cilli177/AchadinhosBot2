@@ -197,6 +197,7 @@ builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalSt
 builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 builder.Services.AddSingleton<IWhatsAppGateway, EvolutionWhatsAppGateway>();
 builder.Services.AddSingleton<IMediaStore, FileMediaStore>();
+builder.Services.AddSingleton<IPromotionalCardGenerator, PromotionalCardGenerator>();
 builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
 builder.Services.AddSingleton<WhatsAppHelpMenuStore>();

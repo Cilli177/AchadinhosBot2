@@ -4,28 +4,35 @@ using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Settings;
 
+using AchadinhosBot.Next.Infrastructure.ProductData;
+
 namespace AchadinhosBot.Next.Infrastructure.Instagram;
 
 public sealed class GeminiInstagramPostGenerator
 {
+    private static int _currentKeyIndex = -1;
+    
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<GeminiInstagramPostGenerator> _logger;
     private readonly IInstagramAiLogStore _logStore;
     private readonly InstagramLinkMetaService _metaService;
     private readonly InstagramImageDownloadService _imageDownloadService;
+    private readonly OfficialProductDataService _officialService;
 
     public GeminiInstagramPostGenerator(
         IHttpClientFactory httpClientFactory,
         ILogger<GeminiInstagramPostGenerator> logger,
         IInstagramAiLogStore logStore,
         InstagramLinkMetaService metaService,
-        InstagramImageDownloadService imageDownloadService)
+        InstagramImageDownloadService imageDownloadService,
+        OfficialProductDataService officialService)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _logStore = logStore;
         _metaService = metaService;
         _imageDownloadService = imageDownloadService;
+        _officialService = officialService;
     }
 
     public async Task<string?> GenerateAsync(string productInput, string? offerContext, string? affiliateLink, InstagramPostSettings instaSettings, GeminiSettings geminiSettings, CancellationToken cancellationToken)
@@ -39,9 +46,11 @@ public sealed class GeminiInstagramPostGenerator
         var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
         var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
 
+        var officialData = await _officialService.TryGetBestAsync(productInput, affiliateLink, cancellationToken);
         var meta = await _metaService.GetMetaAsync(affiliateLink ?? productInput, cancellationToken);
-        var images = meta.Images;
-        if (instaSettings.UseImageDownload && images.Count > 0)
+        
+        var images = officialData?.Images?.Count > 0 ? officialData.Images : meta.Images;
+        if (instaSettings.UseImageDownload && images?.Count > 0)
         {
             var downloaded = await _imageDownloadService.DownloadAsync(images, cancellationToken);
             if (downloaded.Count > 0)
@@ -49,9 +58,23 @@ public sealed class GeminiInstagramPostGenerator
                 images = downloaded;
             }
         }
-        var effectiveInput = OpenAiInstagramPostGenerator.ResolveEffectiveInput(productInput, meta.Title, affiliateLink ?? productInput);
-        var effectiveContext = !string.IsNullOrWhiteSpace(offerContext) ? offerContext : meta.Description;
-        var prompt = OpenAiInstagramPostGenerator.BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images, meta.Title, meta.Description, instaSettings);
+        
+        var officialContext = string.Empty;
+        if (officialData != null)
+        {
+            officialContext = $"Produto: {officialData.Title}\nPreço Atual: {officialData.CurrentPrice}";
+            if (!string.IsNullOrWhiteSpace(officialData.PreviousPrice)) officialContext += $"\nPreço Anterior: {officialData.PreviousPrice}";
+            if (officialData.DiscountPercent > 0) officialContext += $"\nDesconto: {officialData.DiscountPercent}%";
+            if (!string.IsNullOrWhiteSpace(officialData.EstimatedDelivery)) officialContext += $"\nEntrega: {officialData.EstimatedDelivery}";
+        }
+
+        var effectiveInput = OpenAiInstagramPostGenerator.ResolveEffectiveInput(productInput, officialData?.Title ?? meta.Title, affiliateLink ?? productInput);
+        var effectiveContext = !string.IsNullOrWhiteSpace(offerContext) ? offerContext : (string.IsNullOrWhiteSpace(officialContext) ? meta.Description : officialContext);
+        
+        var title = officialData?.Title ?? meta.Title;
+        var description = string.IsNullOrWhiteSpace(officialContext) ? meta.Description : officialContext;
+
+        var prompt = OpenAiInstagramPostGenerator.BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images ?? new List<string>(), title, description, instaSettings);
 
         var payload = new
         {
@@ -74,19 +97,25 @@ public sealed class GeminiInstagramPostGenerator
         {
             var client = _httpClientFactory.CreateClient("gemini");
             string? lastErrorBody = null;
+            
+            var startIndex = unchecked((int)((uint)Interlocked.Increment(ref _currentKeyIndex) % (uint)apiKeys.Count));
+
             for (var i = 0; i < apiKeys.Count; i++)
             {
-                var apiKey = apiKeys[i];
+                var keyIndex = (startIndex + i) % apiKeys.Count;
+                var apiKey = apiKeys[keyIndex];
                 var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(apiKey)}";
                 using var response = await client.PostAsync(url, new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                
                 if (!response.IsSuccessStatusCode)
                 {
                     lastErrorBody = body;
                     var canTryNext = i < apiKeys.Count - 1 && ShouldTryNextGeminiKey(response.StatusCode, body);
                     if (canTryNext)
                     {
-                        _logger.LogWarning("Gemini chave {KeyIndex}/{Total} falhou com {Status}. Tentando proxima chave.", i + 1, apiKeys.Count, response.StatusCode);
+                        // Use keyIndex instead of i for accurate logging
+                        _logger.LogWarning("Gemini chave {KeyIndex}/{Total} falhou com {Status}. Tentando proxima chave.", keyIndex + 1, apiKeys.Count, response.StatusCode);
                         continue;
                     }
 

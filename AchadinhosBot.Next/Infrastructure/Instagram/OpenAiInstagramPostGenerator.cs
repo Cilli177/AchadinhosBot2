@@ -5,6 +5,8 @@ using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Settings;
 
+using AchadinhosBot.Next.Infrastructure.ProductData;
+
 namespace AchadinhosBot.Next.Infrastructure.Instagram;
 
 public sealed class OpenAiInstagramPostGenerator
@@ -14,19 +16,22 @@ public sealed class OpenAiInstagramPostGenerator
     private readonly IInstagramAiLogStore _logStore;
     private readonly InstagramLinkMetaService _metaService;
     private readonly InstagramImageDownloadService _imageDownloadService;
+    private readonly OfficialProductDataService _officialService;
 
     public OpenAiInstagramPostGenerator(
         IHttpClientFactory httpClientFactory,
         ILogger<OpenAiInstagramPostGenerator> logger,
         IInstagramAiLogStore logStore,
         InstagramLinkMetaService metaService,
-        InstagramImageDownloadService imageDownloadService)
+        InstagramImageDownloadService imageDownloadService,
+        OfficialProductDataService officialService)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _logStore = logStore;
         _metaService = metaService;
         _imageDownloadService = imageDownloadService;
+        _officialService = officialService;
     }
 
     public async Task<string?> GenerateAsync(string productInput, string? offerContext, string? affiliateLink, InstagramPostSettings instaSettings, OpenAISettings aiSettings, CancellationToken cancellationToken)
@@ -39,9 +44,11 @@ public sealed class OpenAiInstagramPostGenerator
         var model = string.IsNullOrWhiteSpace(aiSettings.Model) ? "gpt-4o-mini" : aiSettings.Model.Trim();
         var baseUrl = string.IsNullOrWhiteSpace(aiSettings.BaseUrl) ? "https://api.openai.com/v1" : aiSettings.BaseUrl.Trim();
 
+        var officialData = await _officialService.TryGetBestAsync(productInput, affiliateLink, cancellationToken);
         var meta = await _metaService.GetMetaAsync(affiliateLink ?? productInput, cancellationToken);
-        var images = meta.Images;
-        if (instaSettings.UseImageDownload && images.Count > 0)
+        
+        var images = officialData?.Images?.Count > 0 ? officialData.Images : meta.Images;
+        if (instaSettings.UseImageDownload && images?.Count > 0)
         {
             var downloaded = await _imageDownloadService.DownloadAsync(images, cancellationToken);
             if (downloaded.Count > 0)
@@ -49,9 +56,23 @@ public sealed class OpenAiInstagramPostGenerator
                 images = downloaded;
             }
         }
-        var effectiveInput = ResolveEffectiveInput(productInput, meta.Title, affiliateLink ?? productInput);
-        var effectiveContext = !string.IsNullOrWhiteSpace(offerContext) ? offerContext : meta.Description;
-        var prompt = BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images, meta.Title, meta.Description, instaSettings);
+        
+        var officialContext = string.Empty;
+        if (officialData != null)
+        {
+            officialContext = $"Produto: {officialData.Title}\nPreço Atual: {officialData.CurrentPrice}";
+            if (!string.IsNullOrWhiteSpace(officialData.PreviousPrice)) officialContext += $"\nPreço Anterior: {officialData.PreviousPrice}";
+            if (officialData.DiscountPercent > 0) officialContext += $"\nDesconto: {officialData.DiscountPercent}%";
+            if (!string.IsNullOrWhiteSpace(officialData.EstimatedDelivery)) officialContext += $"\nEntrega: {officialData.EstimatedDelivery}";
+        }
+
+        var effectiveInput = ResolveEffectiveInput(productInput, officialData?.Title ?? meta.Title, affiliateLink ?? productInput);
+        var effectiveContext = !string.IsNullOrWhiteSpace(offerContext) ? offerContext : (string.IsNullOrWhiteSpace(officialContext) ? meta.Description : officialContext);
+        
+        var title = officialData?.Title ?? meta.Title;
+        var description = string.IsNullOrWhiteSpace(officialContext) ? meta.Description : officialContext;
+
+        var prompt = BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images ?? new List<string>(), title, description, instaSettings);
 
         var payload = new
         {
