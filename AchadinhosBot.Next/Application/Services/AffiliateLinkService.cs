@@ -404,6 +404,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private async Task<string?> ConvertMercadoLivreAsync(Uri uri, CancellationToken cancellationToken)
     {
+        var startedFromMercadoLivreShortOrSocial = IsMercadoLivreSocialOrShortUri(uri);
         var mlbId = ExtractMercadoLivreId(uri.ToString());
         var resolvedUri = uri;
         if (string.IsNullOrWhiteSpace(mlbId))
@@ -413,6 +414,16 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             {
                 resolvedUri = expanded;
                 mlbId = ExtractMercadoLivreId(expanded.ToString());
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(mlbId))
+        {
+            var chainedExpansion = await ExpandMercadoLivreChainAsync(resolvedUri, cancellationToken);
+            if (chainedExpansion is not null)
+            {
+                resolvedUri = chainedExpansion;
+                mlbId = ExtractMercadoLivreId(resolvedUri.ToString());
             }
         }
 
@@ -467,7 +478,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
             if (string.IsNullOrWhiteSpace(mlbId))
             {
-                if (IsMercadoLivreSocialOrShortUri(resolvedUri))
+                if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
                 {
                     // Fallback para links sociais/curtos do ML quando o ID do item nÃ£o
                     // estÃ¡ disponÃ­vel no HTML/redirect. MantÃ©m rastreio com parÃ¢metros
@@ -504,6 +515,38 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var url = $"https://produto.mercadolivre.com.br/MLB-{cleanMlbId}";
         var full = ApplyQuery(url, query);
         return full;
+    }
+
+    private async Task<Uri?> ExpandMercadoLivreChainAsync(Uri seedUri, CancellationToken cancellationToken)
+    {
+        var current = seedUri;
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            if (TryExtractGoUrl(current, out var goUri) && goUri is not null)
+            {
+                current = goUri;
+            }
+
+            if (!string.IsNullOrWhiteSpace(ExtractMercadoLivreId(current.ToString())))
+            {
+                return current;
+            }
+
+            var expanded = await ExpandUrlAsync(current, cancellationToken);
+            if (expanded is null || string.Equals(expanded.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                expanded = await ExpandUrlRecursiveAsync(current.ToString(), 0, cancellationToken);
+            }
+
+            if (expanded is null || string.Equals(expanded.ToString(), current.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                return current;
+            }
+
+            current = expanded;
+        }
+
+        return current;
     }
 
     private async Task<Uri?> ResolveMercadoLivreProductFromSocialAsync(Uri socialUri, CancellationToken cancellationToken)
@@ -927,11 +970,74 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private static string? ExtractMercadoLivreId(string text)
     {
-        var match = Regex.Match(text, @"(MLB-?\d{6,})", RegexOptions.IgnoreCase);
-        if (!match.Success) return null;
-        var id = match.Groups[1].Value.ToUpperInvariant();
-        if (id.Contains("-")) id = id.Replace("-", "");
-        return id;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        static string? MatchId(string input)
+        {
+            var match = Regex.Match(input, @"(MLB-?\d{6,})", RegexOptions.IgnoreCase);
+            if (!match.Success) return null;
+            var id = match.Groups[1].Value.ToUpperInvariant();
+            if (id.Contains("-")) id = id.Replace("-", "");
+            return id;
+        }
+
+        var direct = MatchId(text);
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return direct;
+        }
+
+        var htmlDecoded = WebUtility.HtmlDecode(text);
+        if (!string.Equals(htmlDecoded, text, StringComparison.Ordinal))
+        {
+            var htmlDecodedId = MatchId(htmlDecoded);
+            if (!string.IsNullOrWhiteSpace(htmlDecodedId))
+            {
+                return htmlDecodedId;
+            }
+        }
+
+        var unescapedOnce = TryUnescapeUrlComponent(htmlDecoded);
+        if (!string.IsNullOrWhiteSpace(unescapedOnce))
+        {
+            var unescapedOnceId = MatchId(unescapedOnce);
+            if (!string.IsNullOrWhiteSpace(unescapedOnceId))
+            {
+                return unescapedOnceId;
+            }
+
+            var unescapedTwice = TryUnescapeUrlComponent(unescapedOnce);
+            if (!string.IsNullOrWhiteSpace(unescapedTwice))
+            {
+                var unescapedTwiceId = MatchId(unescapedTwice);
+                if (!string.IsNullOrWhiteSpace(unescapedTwiceId))
+                {
+                    return unescapedTwiceId;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryUnescapeUrlComponent(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Uri.UnescapeDataString(value);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<string?> ExtractMercadoLivreIdFromHtmlAsync(string url, CancellationToken cancellationToken, bool allowLooseMatch = true)
