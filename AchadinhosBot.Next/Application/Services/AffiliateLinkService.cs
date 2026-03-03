@@ -974,14 +974,6 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             var html = await res.Content.ReadAsStringAsync(cancellationToken);
-            
-            // DEBUG: Save to wwwroot for absolute visibility
-            try { 
-                await File.WriteAllTextAsync(@"C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\wwwroot\debug_social.html", html, cancellationToken);
-                Console.WriteLine($"[DEBUG_ML] HTML SAVED TO WWWROOT. Length: {html.Length}");
-            } catch (Exception ex) {
-                Console.WriteLine($"[DEBUG_ML] ERROR SAVING: {ex.Message}");
-            }
 
             _logger.LogInformation("[ML Social] HTML Length: {Length}", html?.Length ?? 0);
 
