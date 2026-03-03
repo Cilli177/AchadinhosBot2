@@ -405,6 +405,52 @@ app.MapPost("/api/conversor", async (
             else
             {
                 var convertedUrl = conversion.ConvertedUrl.Trim();
+                static bool IsMercadoLivreSocialOrShortUrl(string? value)
+                {
+                    if (string.IsNullOrWhiteSpace(value) || !Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                    {
+                        return false;
+                    }
+
+                    var host = uri.Host.Trim().Trim('.').ToLowerInvariant();
+                    if (host is "meli.la" or "meli.co")
+                    {
+                        return true;
+                    }
+
+                    var absolute = uri.AbsoluteUri.ToLowerInvariant();
+                    return absolute.Contains("/social/")
+                           || absolute.Contains("/sec/")
+                           || absolute.Contains("/loja/")
+                           || absolute.Contains("/perfil/");
+                }
+
+                // If ML conversion still resolves to social/short destination (including via shortened links),
+                // try one more pass from the fully resolved URL to force a canonical product link.
+                if (string.Equals(conversion.Store, "Mercado Livre", StringComparison.OrdinalIgnoreCase))
+                {
+                    var resolvedConvertedUrl = await TryResolveFinalUrlForMetaAsync(convertedUrl, httpClientFactory, ct);
+                    var shouldRetryMercadoLivre = IsMercadoLivreSocialOrShortUrl(convertedUrl)
+                                                  || IsMercadoLivreSocialOrShortUrl(resolvedConvertedUrl);
+
+                    if (shouldRetryMercadoLivre)
+                    {
+                        var retryInput = !string.IsNullOrWhiteSpace(resolvedConvertedUrl)
+                            ? resolvedConvertedUrl
+                            : normalizedInputUrl;
+                        var retryConversion = await affiliateLinkService.ConvertAsync(retryInput, ct, requestedSource);
+                        if (retryConversion.Success && !string.IsNullOrWhiteSpace(retryConversion.ConvertedUrl))
+                        {
+                            var retryUrl = retryConversion.ConvertedUrl.Trim();
+                            var retryResolved = await TryResolveFinalUrlForMetaAsync(retryUrl, httpClientFactory, ct);
+                            if (!IsMercadoLivreSocialOrShortUrl(retryUrl) && !IsMercadoLivreSocialOrShortUrl(retryResolved))
+                            {
+                                convertedUrl = retryUrl;
+                            }
+                        }
+                    }
+                }
+
                 var settings = await settingsStore.GetAsync(ct);
                 var publicBaseUrl = ResolvePublicBaseUrl(
                     settings.BioHub?.PublicBaseUrl,
