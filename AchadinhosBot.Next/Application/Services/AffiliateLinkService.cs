@@ -405,7 +405,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     private async Task<string?> ConvertMercadoLivreAsync(Uri uri, CancellationToken cancellationToken)
     {
         var startedFromMercadoLivreShortOrSocial = IsMercadoLivreSocialOrShortUri(uri);
-        var mlbId = ExtractMercadoLivreId(uri.ToString());
+        var mlbId = ExtractPreferredMercadoLivreIdFromUrl(uri.ToString());
         var resolvedUri = uri;
         if (string.IsNullOrWhiteSpace(mlbId))
         {
@@ -413,7 +413,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             if (expanded is not null)
             {
                 resolvedUri = expanded;
-                mlbId = ExtractMercadoLivreId(expanded.ToString());
+                mlbId = ExtractPreferredMercadoLivreIdFromUrl(expanded.ToString());
             }
         }
 
@@ -423,7 +423,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             if (chainedExpansion is not null)
             {
                 resolvedUri = chainedExpansion;
-                mlbId = ExtractMercadoLivreId(resolvedUri.ToString());
+                mlbId = ExtractPreferredMercadoLivreIdFromUrl(resolvedUri.ToString());
             }
         }
 
@@ -432,7 +432,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             resolvedUri = goUri!;
             if (string.IsNullOrWhiteSpace(mlbId))
             {
-                mlbId = ExtractMercadoLivreId(resolvedUri.ToString());
+                mlbId = ExtractPreferredMercadoLivreIdFromUrl(resolvedUri.ToString());
             }
         }
 
@@ -468,7 +468,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                         resolvedUri = goUriFromSocial!;
                     }
 
-                    mlbId = ExtractMercadoLivreId(resolvedUri.ToString());
+                    mlbId = ExtractPreferredMercadoLivreIdFromUrl(resolvedUri.ToString());
                     if (string.IsNullOrWhiteSpace(mlbId))
                     {
                         mlbId = await ExtractMercadoLivreIdFromHtmlAsync(resolvedUri.ToString(), cancellationToken, allowLooseMatch: false);
@@ -495,8 +495,16 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var itemValidation = await ValidateMercadoLivreItemWithApiAsync(mlbId, cancellationToken);
         if (itemValidation == MercadoLivreItemValidation.Invalid)
         {
-            _logger.LogWarning("Mercado Livre item invÃ¡lido ou nÃ£o encontrado via API. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
-            return null;
+            var initialInvalidId = mlbId;
+            _logger.LogWarning("Mercado Livre item invÃ¡lido ou nÃ£o encontrado via API. Id={MlbId} Url={ResolvedUrl}. Tentando recuperar item alternativo.", mlbId, resolvedUri.ToString());
+            var recoveredMlbId = await TryRecoverMercadoLivreIdAsync(uri, resolvedUri, mlbId, cancellationToken);
+            if (string.IsNullOrWhiteSpace(recoveredMlbId))
+            {
+                return null;
+            }
+
+            mlbId = recoveredMlbId;
+            _logger.LogInformation("Mercado Livre item alternativo recuperado com sucesso. IdAnterior={OldId} IdAtual={NewId} Url={ResolvedUrl}", initialInvalidId, mlbId, resolvedUri.ToString());
         }
         if (itemValidation == MercadoLivreItemValidation.Unknown)
         {
@@ -517,6 +525,90 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         return full;
     }
 
+    private async Task<string?> TryRecoverMercadoLivreIdAsync(Uri originalUri, Uri resolvedUri, string invalidMlbId, CancellationToken cancellationToken)
+    {
+        var candidateIds = new List<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddId(string? id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return;
+            }
+
+            if (id.Equals(invalidMlbId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (!candidateIds.Contains(id, StringComparer.OrdinalIgnoreCase))
+            {
+                candidateIds.Add(id);
+            }
+        }
+
+        async Task HarvestFromUriAsync(Uri? candidateUri)
+        {
+            if (candidateUri is null)
+            {
+                return;
+            }
+
+            var raw = candidateUri.ToString();
+            if (!visited.Add(raw))
+            {
+                return;
+            }
+
+            AddId(ExtractMercadoLivreId(raw));
+            AddId(ExtractPreferredMercadoLivreIdFromUrl(raw));
+            AddId(ExtractMercadoLivreId(candidateUri.AbsolutePath));
+
+            if (TryExtractGoUrl(candidateUri, out var goUri) && goUri is not null)
+            {
+                AddId(ExtractMercadoLivreId(goUri.ToString()));
+                AddId(ExtractPreferredMercadoLivreIdFromUrl(goUri.ToString()));
+            }
+
+            var expanded = await ExpandMercadoLivreChainAsync(candidateUri, cancellationToken);
+            if (expanded is not null && visited.Add(expanded.ToString()))
+            {
+                AddId(ExtractMercadoLivreId(expanded.ToString()));
+                AddId(ExtractPreferredMercadoLivreIdFromUrl(expanded.ToString()));
+                AddId(ExtractMercadoLivreId(expanded.AbsolutePath));
+            }
+
+            var pageIdStrict = await ExtractMercadoLivreIdFromHtmlAsync(raw, cancellationToken, allowLooseMatch: false);
+            AddId(pageIdStrict);
+
+            var pageIdLoose = await ExtractMercadoLivreIdFromHtmlAsync(raw, cancellationToken, allowLooseMatch: true);
+            AddId(pageIdLoose);
+
+            var socialResolved = await ResolveMercadoLivreProductFromSocialAsync(candidateUri, cancellationToken);
+            if (socialResolved is not null)
+            {
+                AddId(ExtractMercadoLivreId(socialResolved.ToString()));
+                AddId(ExtractPreferredMercadoLivreIdFromUrl(socialResolved.ToString()));
+                AddId(ExtractMercadoLivreId(socialResolved.AbsolutePath));
+            }
+        }
+
+        await HarvestFromUriAsync(originalUri);
+        await HarvestFromUriAsync(resolvedUri);
+
+        foreach (var candidateId in candidateIds)
+        {
+            var validation = await ValidateMercadoLivreItemWithApiAsync(candidateId, cancellationToken);
+            if (validation == MercadoLivreItemValidation.Valid || validation == MercadoLivreItemValidation.Unknown)
+            {
+                return candidateId;
+            }
+        }
+
+        return null;
+    }
+
     private async Task<Uri?> ExpandMercadoLivreChainAsync(Uri seedUri, CancellationToken cancellationToken)
     {
         var current = seedUri;
@@ -527,7 +619,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 current = goUri;
             }
 
-            if (!string.IsNullOrWhiteSpace(ExtractMercadoLivreId(current.ToString())))
+            if (!string.IsNullOrWhiteSpace(ExtractPreferredMercadoLivreIdFromUrl(current.ToString())))
             {
                 return current;
             }
@@ -1021,6 +1113,62 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         return null;
+    }
+
+    private static string? ExtractPreferredMercadoLivreIdFromUrl(string rawUrl)
+    {
+        if (string.IsNullOrWhiteSpace(rawUrl))
+        {
+            return null;
+        }
+
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri))
+        {
+            return ExtractMercadoLivreId(rawUrl);
+        }
+
+        var query = ParseQuery(uri.Query);
+        if (query.TryGetValue("wid", out var wid))
+        {
+            var id = ExtractMercadoLivreId(wid);
+            if (!string.IsNullOrWhiteSpace(id))
+            {
+                return id;
+            }
+        }
+
+        if (query.TryGetValue("item_id", out var itemId))
+        {
+            var id = ExtractMercadoLivreId(itemId);
+            if (!string.IsNullOrWhiteSpace(id))
+            {
+                return id;
+            }
+        }
+
+        if (query.TryGetValue("pdp_filters", out var filters))
+        {
+            var decodedFilters = WebUtility.HtmlDecode(filters);
+            var filterItem = Regex.Match(decodedFilters, @"item_id[:=](MLB-?\d{6,})", RegexOptions.IgnoreCase);
+            if (filterItem.Success)
+            {
+                return ExtractMercadoLivreId(filterItem.Groups[1].Value);
+            }
+
+            var filterFallback = ExtractMercadoLivreId(decodedFilters);
+            if (!string.IsNullOrWhiteSpace(filterFallback))
+            {
+                return filterFallback;
+            }
+        }
+
+        var pathId = ExtractMercadoLivreId(uri.AbsolutePath);
+        if (!string.IsNullOrWhiteSpace(pathId))
+        {
+            return pathId;
+        }
+
+        return ExtractMercadoLivreId(uri.ToString());
     }
 
     private static string? TryUnescapeUrlComponent(string value)
