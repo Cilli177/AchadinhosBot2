@@ -668,7 +668,9 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                 }
 
                 _logger.LogWarning("Falha ao consultar estado da instancia Evolution: {Status} {Body}", res.StatusCode, body);
-                return new WhatsAppSendResult(false, $"Falha ao consultar estado da instancia {instanceName}");
+                // Some providers keep connectionState unstable/intermittent even when send endpoints work.
+                // Do not block message delivery when this health probe fails.
+                return new WhatsAppSendResult(true, $"Falha ao consultar estado da instancia {instanceName}; envio sera tentado mesmo assim");
             }
 
             var state = ExtractInstanceState(body);
@@ -679,19 +681,21 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
 
             if (string.IsNullOrWhiteSpace(state))
             {
-                return new WhatsAppSendResult(false, $"Instancia {instanceName} sem estado definido na Evolution");
+                _logger.LogWarning("Instancia {InstanceName} sem estado definido na Evolution; prosseguindo com tentativa de envio.", instanceName);
+                return new WhatsAppSendResult(true, $"Instancia {instanceName} sem estado definido; envio sera tentado");
             }
 
             return new WhatsAppSendResult(false, $"Instancia {instanceName} esta {state}; conecte no Evolution antes de enviar");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new WhatsAppSendResult(false, $"Timeout ao consultar estado da instancia {instanceName}");
+            _logger.LogWarning("Timeout ao consultar estado da instancia {InstanceName}; prosseguindo com tentativa de envio.", instanceName);
+            return new WhatsAppSendResult(true, $"Timeout ao consultar estado da instancia {instanceName}; envio sera tentado");
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Erro ao consultar estado da instancia Evolution para envio");
-            return new WhatsAppSendResult(false, $"Erro ao consultar estado da instancia {instanceName}: {ex.Message}");
+            return new WhatsAppSendResult(true, $"Erro ao consultar estado da instancia {instanceName}; envio sera tentado");
         }
     }
 
@@ -865,4 +869,3 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
         }
     }
 }
-

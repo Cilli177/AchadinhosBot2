@@ -934,18 +934,25 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        if (!settings.TelegramForwarding.Enabled)
+        var tgForwarding = settings.TelegramForwarding ?? new TelegramForwardingSettings();
+        var telegramToWhatsAppRoutes = ResolveTelegramToWhatsAppRoutes(settings);
+        var hasEnabledTelegramToWhatsAppRoute = telegramToWhatsAppRoutes.Any(route => route.Enabled);
+        if (!tgForwarding.Enabled && !hasEnabledTelegramToWhatsAppRoute)
         {
             return;
         }
 
-        var sourceIds = settings.TelegramForwarding.SourceChatIds;
-        if (sourceIds.Count == 0)
+        var tgSources = tgForwarding.SourceChatIds ?? new List<long>();
+        var waSources = settings.TelegramToWhatsApp?.SourceChatIds ?? new List<long>();
+        var legacyWaSources = settings.TelegramToWhatsAppRoutes?.SelectMany(r => r.SourceChatIds).ToList() ?? new List<long>();
+        var allSources = tgSources.Union(waSources).Union(legacyWaSources).Distinct().ToList();
+
+        if (allSources.Count == 0)
         {
             return;
         }
 
-        if (!IsSourceMatch(originId, sourceIds))
+        if (!IsSourceMatch(originId, allSources))
         {
             return;
         }
@@ -959,7 +966,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         if (!TryGetStrictForwardText(text, result.Success, result.ConvertedLinks, result.ConvertedText, out var finalText))
         {
             _logger.LogWarning(
-                "TelegramUserbot bloqueou encaminhamento por conversao invalida. Origin={OriginChatId} MsgId={MessageId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                "TelegramUserbot bloqueou encaminhamento automatico por conversao invalida ou nao afiliada. Origin={OriginChatId} MsgId={MessageId} ConvertedLinks={ConvertedLinks} Success={Success}",
                 originId,
                 msg.id,
                 result.ConvertedLinks,
@@ -970,21 +977,16 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         var enrichment = await _messageProcessor.EnrichTextWithProductDataAsync(finalText, text, CancellationToken.None);
         finalText = enrichment.EnrichedText;
 
-        var destinationId = settings.TelegramForwarding.DestinationChatId;
-        if (destinationId == 0)
+        var destinationId = tgForwarding.DestinationChatId;
+        var destinationPeer = destinationId != 0 ? ResolvePeer(destinationId) : null;
+        if (destinationPeer is null && destinationId != 0)
         {
-            _logger.LogWarning("TelegramUserbot: DestinationChatId nÃ£o configurado.");
-            return;
+            _logger.LogWarning("TelegramUserbot: destino {DestinationId} nao encontrado nos dialogs.", destinationId);
         }
 
-        var destinationPeer = ResolvePeer(destinationId);
-        if (destinationPeer is null)
-        {
-            _logger.LogWarning("TelegramUserbot: destino {DestinationId} nÃ£o encontrado nos dialogs.", destinationId);
-            return;
-        }
+        var shouldSendToTelegram = tgForwarding.Enabled && destinationPeer is not null && IsSourceMatch(originId, tgSources);
 
-        if (settings.TelegramForwarding.AppendSheinCode &&
+        if (tgForwarding.AppendSheinCode &&
             ContainsShein(finalText) &&
             !string.IsNullOrWhiteSpace(_affiliateOptions.SheinCode) &&
             !finalText.Contains(_affiliateOptions.SheinCode, StringComparison.OrdinalIgnoreCase))
@@ -992,9 +994,9 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             finalText += $"\n\nCodigo Shein: {_affiliateOptions.SheinCode}";
         }
 
-        if (!string.IsNullOrWhiteSpace(settings.TelegramForwarding.FooterText))
+        if (!string.IsNullOrWhiteSpace(tgForwarding.FooterText))
         {
-            finalText += $"\n\n{settings.TelegramForwarding.FooterText}";
+            finalText += $"\n\n{tgForwarding.FooterText}";
         }
 
         byte[]? waImageBytes = null;
@@ -1002,38 +1004,28 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         var client = _client;
         if (client is null)
         {
-            _logger.LogWarning("TelegramUserbot: cliente nÃ£o inicializado para enviar mensagem ao destino {DestinationId}.", destinationId);
-            return;
+            _logger.LogWarning("TelegramUserbot: cliente nÃ£o inicializado.");
+            shouldSendToTelegram = false;
         }
 
         try
         {
             if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
             {
-                var inputMedia = new InputMediaPhoto
+                if (shouldSendToTelegram)
                 {
-                    id = new InputPhoto
-                    {
-                        id = photo.id,
-                        access_hash = photo.access_hash,
-                        file_reference = photo.file_reference
-                    }
-                };
-                await client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                    var inputMedia = new InputMediaPhoto { id = new InputPhoto { id = photo.id, access_hash = photo.access_hash, file_reference = photo.file_reference } };
+                    await client!.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                }
                 (waImageBytes, waImageMime) = await TryDownloadPhotoAsync(photo);
             }
             else if (msg.media is MessageMediaDocument mmDoc && mmDoc.document is Document doc)
             {
-                var inputMedia = new InputMediaDocument
+                if (shouldSendToTelegram)
                 {
-                    id = new InputDocument
-                    {
-                        id = doc.id,
-                        access_hash = doc.access_hash,
-                        file_reference = doc.file_reference
-                    }
-                };
-                await client.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                    var inputMedia = new InputMediaDocument { id = new InputDocument { id = doc.id, access_hash = doc.access_hash, file_reference = doc.file_reference } };
+                    await client!.Messages_SendMedia(destinationPeer, inputMedia, finalText, WTelegram.Helpers.RandomLong());
+                }
                 if (!string.IsNullOrWhiteSpace(doc.mime_type) && doc.mime_type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 {
                     (waImageBytes, waImageMime) = await TryDownloadDocumentAsync(doc);
@@ -1041,12 +1033,12 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
             else if (msg.media is MessageMediaWebPage mmWeb && mmWeb.webpage is WebPage webPage && webPage.photo is Photo webPhoto)
             {
-                await client.SendMessageAsync(destinationPeer, finalText);
+                if (shouldSendToTelegram) await client!.SendMessageAsync(destinationPeer, finalText);
                 (waImageBytes, waImageMime) = await TryDownloadPhotoAsync(webPhoto);
             }
             else
             {
-                await client.SendMessageAsync(destinationPeer, finalText);
+                if (shouldSendToTelegram) await client!.SendMessageAsync(destinationPeer, finalText);
                 if (msg.grouped_id != 0)
                 {
                     var grouped = await TryDownloadGroupedMediaAsync(msg);
@@ -1069,7 +1061,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Falha ao enviar mensagem para destino {DestinationId}.", destinationId);
+            _logger.LogWarning(ex, "Falha ao processar ou enviar mensagem para destinos configurados.");
         }
 
         if ((msg.media is not null || msg.grouped_id != 0) && (waImageBytes is null || waImageBytes.Length == 0))

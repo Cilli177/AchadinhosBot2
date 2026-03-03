@@ -807,6 +807,8 @@ app.MapPost("/webhooks/evolution", async (
 app.MapPost("/webhook/bot-conversor", async (
     HttpRequest request,
     IPublishEndpoint publishEndpoint,
+    IHttpClientFactory httpClientFactory,
+    ILogger<Program> logger,
     IOptions<EvolutionOptions> evolutionOptions,
     IOptions<WebhookOptions> webhookOptions,
     CancellationToken ct) =>
@@ -826,9 +828,40 @@ app.MapPost("/webhook/bot-conversor", async (
     }
 
     var headers = request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString());
+    try
+    {
+        await publishEndpoint.Publish(new ProcessEvolutionWebhookEvent(body, headers), ct);
+        return Results.Ok(new { success = true, mode = "queue" });
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "RabbitMQ indisponivel no webhook bot-conversor. Aplicando fallback direto para endpoint interno.");
 
-    await publishEndpoint.Publish(new ProcessEvolutionWebhookEvent(body, headers), ct);
-    return Results.Ok(new { success = true });
+        var client = httpClientFactory.CreateClient("evolution-webhook-internal");
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/internal/webhook/bot-conversor")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+
+        if (!string.IsNullOrWhiteSpace(webhookOptions.Value.ApiKey))
+        {
+            req.Headers.TryAddWithoutValidation("x-api-key", webhookOptions.Value.ApiKey);
+        }
+
+        using var res = await client.SendAsync(req, ct);
+        var resBody = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            logger.LogWarning(
+                "Fallback interno do webhook bot-conversor falhou. Status={Status} Body={Body}",
+                res.StatusCode,
+                string.IsNullOrWhiteSpace(resBody) ? "(vazio)" : resBody[..Math.Min(400, resBody.Length)]);
+
+            return Results.StatusCode(StatusCodes.Status502BadGateway);
+        }
+
+        return Results.Ok(new { success = true, mode = "fallback-internal" });
+    }
 });
 
 app.MapPost("/internal/webhook/bot-conversor", async (
