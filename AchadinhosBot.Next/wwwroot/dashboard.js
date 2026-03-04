@@ -22,7 +22,7 @@ let currentRole = null;
         currentRole = role;
         document.getElementById('sessionInfo').textContent = `Autenticado como ${username} (${role})`;
         document.getElementById('saveBtn').disabled = role !== 'admin';
-        showSection('ops');
+        showSection(localStorage.getItem('activeTab') || 'ops');
       }
     }
 
@@ -3046,3 +3046,154 @@ let currentRole = null;
     loadTheme();
     setEnvironmentBadge(null);
     checkSession();
+// --- Contextual Help & Toasts (Fase 2) ---
+const sectionGuides = {
+  'connections': 
+    <h3>Conexões e Integrações</h3>
+    <ul>
+      <li><strong>Telegram:</strong> Insira o Token do Bot API para envio de imagens. O Userbot é usado para "ouvir" grupos usando seu próprio número.</li>
+      <li><strong>WhatsApp:</strong> Usamos a Evolution API. Defina um nome de instância e escaneie o QRCode gerado na tela.</li>
+      <li><strong>Mercado Livre:</strong> A autenticação é feita via backend. Teste a conexão para garantir que os links estão sendo encurtados com seu afiliado.</li>
+    </ul>,
+  'ops': 
+    <h3>Operações e Saúde</h3>
+    <ul>
+      <li><strong>Telegram Userbot:</strong> Repassa ofertas de canais originais do Telegram para os seus canais do Telegram.</li>
+      <li><strong>WhatsApp Origem/Destino:</strong> Defina quais grupos do WhatsApp o bot deve observar (escutar), e para onde deve copiar (rotear).</li>
+    </ul>,
+  'route': 
+    <h3>Rota Telegram -> WhatsApp</h3>
+    <ul>
+      <li><strong>Propósito:</strong> Capture ofertas silenciosamente em canais VIP do Telegram, e repasse-as automaticamente convertidas para seus Grupos de Oferta do WhatsApp.</li>
+    </ul>,
+  'linkresponder': 
+    <h3>Resposta de Links (Auto-Responder)</h3>
+    <ul>
+      <li>Quando alguém te manda uma DM com um link da Amazon, Shopee, ou Mercado Livre, o bot responde automaticamente com seu link de afiliado por cima!</li>
+    </ul>,
+  'mercadolivre': 
+    <h3>Compliance Mercado Livre</h3>
+    <ul>
+      <li>Bloqueia links indesejados e previne que o algoritmo do ML suspenda sua conta de afiliado exigindo aprovações manuais ou baseadas em Whitelist.</li>
+    </ul>,
+  'instagram': 
+    <h3>Instagram Prompts e IA</h3>
+    <ul>
+      <li>Defina como o conteúdo do post será montado pelo ChatGPT ou Gemini.</li>
+      <li>Templates prontos podem ser escolhidos na caixa de seleção. Lembre-se de definir a chave (sk-...) da API.</li>
+    </ul>,
+  'instagram-publish': 
+    <h3>Publicação Instagram (Meta Graph)</h3>
+    <ul>
+      <li>O robô pode postar carrosséis automaticamente no Feed da conta comercial.</li>
+      <li>Configure respostas automáticas de comentários avisando que o link foi enviado no Direct!</li>
+    </ul>,
+  'instagram-story': 
+    <h3>Story Automático</h3>
+    <ul>
+      <li><strong>AutoPilot:</strong> Pega os produtos mais clicados e posta periodicamente nos stories. É a máquina de fazer dinheiro no automático.</li>
+    </ul>,
+  'bio-growth': 
+    <h3>Hub de Bio (Links)</h3>
+    <ul>
+      <li>Uma central única de agrupamento de links. Todos os botões postados no Insta apontarão pra cá.</li>
+    </ul>,
+  'autoreplies': 
+    <h3>Respostas Automáticas Clássicas</h3>
+    <ul>
+      <li>Regras simples padrão chave => valor.</li>
+    </ul>,
+  'logs': 
+    <h3>Logs e Monitoramento</h3>
+    <ul>
+      <li>Acompanhe em tempo real quem clicou no quê, onde o bot falhou em ler mídia ou se a API caiu.</li>
+    </ul>,
+  'playground': 
+    <h3>Playground</h3>
+    <ul>
+      <li>Cole um texto cru e teste se o regex de encurtamento do backend está detectando o link afiliado.</li>
+    </ul>,
+  'debug': 
+    <h3>Debug JSON</h3>
+    <ul>
+      <li>A visão raio-X de todas as variáveis ativas no sistema neste exato milissegundo.</li>
+    </ul>
+};
+
+function openDoc(tab) {
+  const modal = document.getElementById('docModal');
+  const body = document.getElementById('docBody');
+  const title = document.getElementById('docTitle');
+  if (!modal || !body) return;
+  
+  let name = tab.toUpperCase();
+  const btn = document.querySelector(\utton[data-tab="\"]\);
+  if (btn) name = btn.textContent.replace('0', '').trim();
+  
+  title.innerHTML = 'Guia: ' + name;
+  body.innerHTML = sectionGuides[tab] || '<p>Guia em construção para esta aba.</p>';
+  modal.classList.add('show');
+}
+
+function closeDoc() {
+  const modal = document.getElementById('docModal');
+  if (modal) modal.classList.remove('show');
+}
+
+function showToast(msg, type = 'success') {
+  let container = document.getElementById('toastContainer');
+  if (!container) return;
+  
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.innerHTML = msg;
+  
+  container.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+const originalSetData = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').set;
+Object.defineProperty(Node.prototype, 'textContent', {
+    set: function(val) {
+        if (this.id && this.id.toLowerCase().includes('status') && !this.id.includes('stat') && !this.id.includes('health') && !this.id.includes('mercadolivre') && this.id !== 'loginStatus' && this.id !== 'telegramStatus') {
+            if (val && val.toString().trim() !== '') {
+                const isErr = val.toString().toLowerCase().includes('erro') || val.toString().toLowerCase().includes('falha');
+                showToast(val, isErr ? 'error' : 'success');
+            }
+        }
+        originalSetData.call(this, val);
+    }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('section[id^="section-"]').forEach(section => {
+      const firstH2 = section.querySelector('.card:first-child h2:first-of-type, div:first-child > .card:first-child h2:first-of-type');
+      if (firstH2 && !firstH2.querySelector('.icon-btn')) {
+          const tabId = section.id.replace('section-', '');
+          const btn = document.createElement('button');
+          btn.className = 'icon-btn';
+          btn.innerHTML = '? Ajuda';
+          btn.onclick = (e) => { e.preventDefault(); openDoc(tabId); };
+          
+          if(firstH2.style.display !== 'flex') {
+              firstH2.style.display = 'flex';
+              firstH2.style.alignItems = 'center';
+              firstH2.style.justifyContent = 'space-between';
+          }
+          firstH2.appendChild(btn);
+      }
+  });
+
+  window.onclick = function(event) {
+    const modal = document.getElementById('docModal');
+    if (event.target == modal) closeDoc();
+  }
+});
+
+setTimeout(() => {
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+}, 500);
