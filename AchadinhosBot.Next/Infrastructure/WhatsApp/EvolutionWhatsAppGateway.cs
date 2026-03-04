@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Compliance;
+using AchadinhosBot.Next.Infrastructure.Safety;
 using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Infrastructure.WhatsApp;
@@ -14,15 +17,21 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly EvolutionOptions _options;
+    private readonly DeliverySafetyPolicy _deliverySafetyPolicy;
+    private readonly IMercadoLivreApprovalStore _approvalStore;
     private readonly ILogger<EvolutionWhatsAppGateway> _logger;
 
     public EvolutionWhatsAppGateway(
         IHttpClientFactory httpClientFactory,
         IOptions<EvolutionOptions> options,
+        DeliverySafetyPolicy deliverySafetyPolicy,
+        IMercadoLivreApprovalStore approvalStore,
         ILogger<EvolutionWhatsAppGateway> logger)
     {
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
+        _deliverySafetyPolicy = deliverySafetyPolicy;
+        _approvalStore = approvalStore;
         _logger = logger;
     }
 
@@ -333,6 +342,17 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                 return new WhatsAppSendResult(false, "Evolution ApiKey nao configurada");
             if (string.IsNullOrWhiteSpace(to))
                 return new WhatsAppSendResult(false, "Destino invalido");
+            if (!_deliverySafetyPolicy.IsWhatsAppDestinationAllowed(to, out var blockReason))
+            {
+                _logger.LogWarning("Envio WhatsApp bloqueado por safety policy. Destino={Destination} Reason={Reason}", to, blockReason);
+                await QueueManualApprovalAsync(
+                    source: "DeliverySafetyWhatsApp",
+                    reason: blockReason ?? "Destino bloqueado por safety policy",
+                    originalText: text,
+                    destinationChatRef: to,
+                    cancellationToken);
+                return new WhatsAppSendResult(true, "Mensagem enviada para fila de aprovação manual no dashboard.");
+            }
 
             var client = _httpClientFactory.CreateClient("evolution");
             client.BaseAddress = new Uri(_options.BaseUrl);
@@ -413,6 +433,18 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                 return new WhatsAppSendResult(false, "Destino invalido");
             if (imageBytes is null || imageBytes.Length == 0)
                 return new WhatsAppSendResult(false, "Imagem vazia");
+            if (!_deliverySafetyPolicy.IsWhatsAppDestinationAllowed(to, out var blockReason))
+            {
+                _logger.LogWarning("Envio WhatsApp de imagem bloqueado por safety policy. Destino={Destination} Reason={Reason}", to, blockReason);
+                var pendingText = string.IsNullOrWhiteSpace(caption) ? "[midia sem legenda]" : caption;
+                await QueueManualApprovalAsync(
+                    source: "DeliverySafetyWhatsApp",
+                    reason: blockReason ?? "Destino bloqueado por safety policy",
+                    originalText: pendingText,
+                    destinationChatRef: to,
+                    cancellationToken);
+                return new WhatsAppSendResult(true, "Mídia enviada para fila de aprovação manual no dashboard.");
+            }
 
             var client = _httpClientFactory.CreateClient("evolution");
             client.BaseAddress = new Uri(_options.BaseUrl);
@@ -533,6 +565,20 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
                 return new WhatsAppSendResult(false, "Destino invalido");
             if (string.IsNullOrWhiteSpace(mediaUrl))
                 return new WhatsAppSendResult(false, "Media URL invalida");
+            if (!_deliverySafetyPolicy.IsWhatsAppDestinationAllowed(to, out var blockReason))
+            {
+                _logger.LogWarning("Envio WhatsApp de imagem por URL bloqueado por safety policy. Destino={Destination} Reason={Reason}", to, blockReason);
+                var pendingText = string.IsNullOrWhiteSpace(caption)
+                    ? $"[midia-url] {mediaUrl}"
+                    : $"{caption}\n\n[midia-url] {mediaUrl}";
+                await QueueManualApprovalAsync(
+                    source: "DeliverySafetyWhatsApp",
+                    reason: blockReason ?? "Destino bloqueado por safety policy",
+                    originalText: pendingText,
+                    destinationChatRef: to,
+                    cancellationToken);
+                return new WhatsAppSendResult(true, "Mídia enviada para fila de aprovação manual no dashboard.");
+            }
 
             var client = _httpClientFactory.CreateClient("evolution");
             client.BaseAddress = new Uri(_options.BaseUrl);
@@ -647,6 +693,28 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
             _logger.LogError(ex, "Erro ao enviar imagem Evolution (url)");
             return new WhatsAppSendResult(false, $"Erro: {ex.Message}");
         }
+    }
+
+    private async Task QueueManualApprovalAsync(
+        string source,
+        string reason,
+        string originalText,
+        string destinationChatRef,
+        CancellationToken cancellationToken)
+    {
+        var urls = Regex.Matches(originalText ?? string.Empty, @"https?://[^\s]+", RegexOptions.IgnoreCase)
+            .Select(m => m.Value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        await _approvalStore.AppendAsync(new MercadoLivrePendingApproval
+        {
+            Source = source,
+            Reason = reason,
+            OriginalText = originalText ?? string.Empty,
+            ExtractedUrls = urls,
+            DestinationChatRef = destinationChatRef
+        }, cancellationToken);
     }
 
     private async Task<WhatsAppSendResult> EnsureInstanceOpenForSendAsync(HttpClient client, string instanceName, CancellationToken cancellationToken)

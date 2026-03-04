@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using Microsoft.Extensions.Options;
@@ -18,24 +18,33 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
         _logger = logger;
     }
 
-    public async Task<TelegramConnectResult> ConnectAsync(CancellationToken cancellationToken)
+    public async Task<TelegramConnectResult> ConnectAsync(string? botToken, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_options.BotToken))
+        var tokenToUse = string.IsNullOrWhiteSpace(botToken) ? _options.BotToken : botToken.Trim();
+        if (!string.IsNullOrWhiteSpace(tokenToUse) && tokenToUse.StartsWith("bot", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning("Telegram BotToken não configurado");
-            return new TelegramConnectResult(false, null, "BotToken não configurado - verifique variável TELEGRAM_BOT_TOKEN no .env");
+            tokenToUse = tokenToUse[3..].Trim();
+        }
+        if (string.IsNullOrWhiteSpace(tokenToUse))
+        {
+            _logger.LogWarning("Telegram BotToken nÃ£o configurado");
+            return new TelegramConnectResult(false, null, "BotToken nÃ£o configurado - verifique variÃ¡vel TELEGRAM_BOT_TOKEN no .env");
         }
 
         try
         {
             _logger.LogInformation("Validando Telegram Bot Token");
             var client = _factory.CreateClient("default");
-            var res = await client.GetAsync($"https://api.telegram.org/bot{_options.BotToken}/getMe", cancellationToken);
+            var res = await client.GetAsync($"https://api.telegram.org/bot{tokenToUse}/getMe", cancellationToken);
             var body = await res.Content.ReadAsStringAsync(cancellationToken);
 
             if (!res.IsSuccessStatusCode)
             {
                 var msg = $"Falha getMe: {res.StatusCode} - {body}";
+                if (res.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    msg = "Token Telegram invalido. Copie novamente do BotFather no formato 123456:ABC...";
+                }
                 _logger.LogWarning(msg);
                 return new TelegramConnectResult(false, null, msg);
             }
@@ -44,8 +53,8 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
             var root = doc.RootElement;
             if (!root.TryGetProperty("ok", out var okNode) || !okNode.GetBoolean())
             {
-                _logger.LogWarning("Token Telegram inválido ou expirado");
-                return new TelegramConnectResult(false, null, "Token inválido ou expirado");
+                _logger.LogWarning("Token Telegram invÃ¡lido ou expirado");
+                return new TelegramConnectResult(false, null, "Token invÃ¡lido ou expirado");
             }
 
             var username = root.GetProperty("result").GetProperty("username").GetString();
@@ -54,7 +63,7 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
         }
         catch (HttpRequestException hexc)
         {
-            var msg = $"Erro de conexão Telegram API: {hexc.Message}";
+            var msg = $"Erro de conexÃ£o Telegram API: {hexc.Message}";
             _logger.LogError(hexc, msg);
             return new TelegramConnectResult(false, null, msg);
         }
@@ -65,3 +74,4 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
         }
     }
 }
+

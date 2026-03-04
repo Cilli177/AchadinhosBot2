@@ -246,9 +246,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 }
 
                 var taggedMercadoLivre = ApplyTrackingTags(sanitized, "Mercado Livre", source);
-                var shortened = await ShortenAsync(taggedMercadoLivre, cancellationToken) ?? taggedMercadoLivre;
-                LogStore("Mercado Livre", uri.ToString(), shortened);
-                return new AffiliateLinkResult(true, shortened, "Mercado Livre", true, null, null, ensured.CorrectionApplied, ensured.CorrectionNote);
+                LogStore("Mercado Livre", uri.ToString(), taggedMercadoLivre);
+                return new AffiliateLinkResult(true, taggedMercadoLivre, "Mercado Livre", true, null, null, ensured.CorrectionApplied, ensured.CorrectionNote);
             }
 
             return new AffiliateLinkResult(
@@ -262,9 +261,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 null);
         }
 
-        if (IsShopeeHost(host))
+        if (IsShopeeHost(host) || uri.AbsoluteUri.Contains("shopee", StringComparison.OrdinalIgnoreCase))
         {
-            var shopee = await ConvertShopeeAsync(uri, cancellationToken);
+            var shopee = await ConvertShopeeAsync(uri, source, cancellationToken);
             if (!string.IsNullOrWhiteSpace(shopee))
             {
                 var validation = await ValidateAffiliateAsync("Shopee", shopee, cancellationToken);
@@ -278,6 +277,16 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 LogStore("Shopee", uri.ToString(), taggedShopee);
                 return new AffiliateLinkResult(true, taggedShopee, "Shopee", true, null, null, false, null);
             }
+
+            return new AffiliateLinkResult(
+                false,
+                null,
+                "Shopee",
+                false,
+                "Falha ao gerar link via API Shopee",
+                "Verifique ShopeeAppId/ShopeeSecret e assinatura da API oficial da Shopee.",
+                false,
+                null);
         }
 
         _logger.LogDebug("Host nÃ£o suportado para afiliaÃ§Ã£o: {Host}", host);
@@ -380,7 +389,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     private static bool IsShopeeHost(string host)
     {
         var normalized = NormalizeHost(host);
-        return normalized.Contains("shopee.com", StringComparison.OrdinalIgnoreCase)
+        return normalized.Contains("shopee", StringComparison.OrdinalIgnoreCase)
+               || normalized.Contains("shopee.com", StringComparison.OrdinalIgnoreCase)
                || normalized.Contains("shopee.com.br", StringComparison.OrdinalIgnoreCase)
                || normalized.Contains("shopeemobile.com", StringComparison.OrdinalIgnoreCase);
     }
@@ -480,12 +490,11 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             {
                 if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
                 {
-                    // Fallback para links sociais/curtos do ML quando o ID do item nÃ£o
-                    // estÃ¡ disponÃ­vel no HTML/redirect. MantÃ©m rastreio com parÃ¢metros
-                    // de afiliaÃ§Ã£o no prÃ³prio link social.
-                    var social = CleanMercadoLivreSocial(resolvedUri.ToString());
-                    var ensuredFallback = EnsureMercadoLivreAffiliate(social, uri.ToString());
-                    return ensuredFallback.Url;
+                    _logger.LogWarning(
+                        "Mercado Livre: link social/curto sem MLB-ID confiavel. Conversao abortada para evitar link invalido. Original={OriginalUrl} Resolved={ResolvedUrl}",
+                        uri.ToString(),
+                        resolvedUri.ToString());
+                    return null;
                 }
 
                 return null;
@@ -502,9 +511,11 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             {
                 if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
                 {
-                    var socialFallback = CleanMercadoLivreSocial(resolvedUri.ToString());
-                    var ensuredFallback = EnsureMercadoLivreAffiliate(socialFallback, uri.ToString());
-                    return ensuredFallback.Url;
+                    _logger.LogWarning(
+                        "Mercado Livre: item invalido e sem recuperacao de MLB-ID em link social/curto. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl}",
+                        uri.ToString(),
+                        resolvedUri.ToString());
+                    return null;
                 }
 
                 return null;
@@ -744,7 +755,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private sealed record AffiliateCorrectionResult(string Url, bool CorrectionApplied, string? CorrectionNote);
 
-    private async Task<string?> ConvertShopeeAsync(Uri uri, CancellationToken cancellationToken)
+    private async Task<string?> ConvertShopeeAsync(Uri uri, string? source, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.ShopeeAppId) || string.IsNullOrWhiteSpace(_options.ShopeeSecret))
         {
@@ -755,7 +766,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         try
         {
             var client = _httpClientFactory.CreateClient("default");
-            var payload = BuildShopeePayload(uri.ToString());
+            var subIds = ResolveShopeeSubIds(source);
+            var payload = BuildShopeePayload(uri.ToString(), subIds);
             if (payload is null)
             {
                 _logger.LogWarning("Shopee payload nÃ£o configurado. Informe a query GraphQL do projeto antigo.");
@@ -776,8 +788,40 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Shopee GraphQL falhou: {Status} {Body}", res.StatusCode, body);
                 return null;
             }
+            var shortLink = ExtractShopeeShortLink(body);
+            if (!string.IsNullOrWhiteSpace(shortLink))
+            {
+                return shortLink;
+            }
 
-            return ExtractShopeeShortLink(body);
+            if (ContainsShopeeInvalidSubIdError(body))
+            {
+                var fallbackPayload = BuildShopeePayload(uri.ToString(), Array.Empty<string>());
+                if (!string.IsNullOrWhiteSpace(fallbackPayload))
+                {
+                    using var retryReq = new HttpRequestMessage(HttpMethod.Post, "https://open-api.affiliate.shopee.com.br/graphql");
+                    retryReq.Content = new StringContent(fallbackPayload, System.Text.Encoding.UTF8, "application/json");
+                    var retryTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    var retrySignature = ComputeShopeeSignature(_options.ShopeeAppId, _options.ShopeeSecret, retryTimestamp, fallbackPayload);
+                    var retryAuthHeader = $"SHA256 Credential={_options.ShopeeAppId}, Timestamp={retryTimestamp}, Signature={retrySignature}";
+                    retryReq.Headers.TryAddWithoutValidation("Authorization", retryAuthHeader);
+
+                    var retryRes = await client.SendAsync(retryReq, cancellationToken);
+                    var retryBody = await retryRes.Content.ReadAsStringAsync(cancellationToken);
+                    if (retryRes.IsSuccessStatusCode)
+                    {
+                        var retryShortLink = ExtractShopeeShortLink(retryBody);
+                        if (!string.IsNullOrWhiteSpace(retryShortLink))
+                        {
+                            _logger.LogWarning("Shopee retornou invalid sub id; conversao refeita sem subIds.");
+                            return retryShortLink;
+                        }
+                    }
+                }
+            }
+
+            _logger.LogWarning("Shopee GraphQL sem shortLink no retorno: {Body}", body);
+            return null;
         }
         catch (Exception ex)
         {
@@ -786,11 +830,124 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
     }
 
-    private static string? BuildShopeePayload(string url)
+    private static string? BuildShopeePayload(string url, IReadOnlyList<string> subIds)
     {
-        var escapedUrl = JsonEncodedText.Encode(url).ToString();
-        var query = $"mutation {{ generateShortLink(input: {{ originUrl: \\\"{escapedUrl}\\\" }}) {{ shortLink }} }}";
-        return $"{{\"query\":\"{query}\"}}";
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var escapedUrl = EscapeGraphQlString(url.Trim());
+        var sanitizedSubIds = subIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Select(static id => EscapeGraphQlString(id.Trim()))
+            .Take(5)
+            .ToArray();
+        var subIdsLiteral = sanitizedSubIds.Length == 0
+            ? string.Empty
+            : $", subIds: [{string.Join(", ", sanitizedSubIds.Select(id => $"\"{id}\""))}]";
+        var query = $"mutation {{ generateShortLink(input: {{ originUrl: \"{escapedUrl}\"{subIdsLiteral} }}) {{ shortLink }} }}";
+        return JsonSerializer.Serialize(new { query });
+    }
+
+    private static string EscapeGraphQlString(string value)
+        => value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    private static IReadOnlyList<string> ResolveShopeeSubIds(string? source)
+    {
+        var normalizedSource = NormalizeShopeeSubIdValue(source, "conversorweb");
+        var entryPoint = NormalizeShopeeSubIdValue(ResolveTrackingEntryPoint(source), "conversorweb");
+        var channel = NormalizeShopeeSubIdValue(ResolveTrackingChannel(source), "conversor");
+        var surface = NormalizeShopeeSubIdValue(ResolveTrackingSurface(source), "site");
+        var flow = NormalizeShopeeSubIdValue(ResolveTrackingFlow(source), "direct");
+        return new[] { normalizedSource, entryPoint, channel, surface, flow };
+    }
+
+    private static string ResolveTrackingChannel(string? source)
+    {
+        var normalized = (source ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized.Contains("whatsapp", StringComparison.Ordinal))
+        {
+            return "whatsapp";
+        }
+
+        if (normalized.Contains("telegram", StringComparison.Ordinal))
+        {
+            return "telegram";
+        }
+
+        if (normalized.Contains("instagram", StringComparison.Ordinal))
+        {
+            return "instagram";
+        }
+
+        if (normalized.Contains("catalog", StringComparison.Ordinal))
+        {
+            return "catalogo";
+        }
+
+        return "conversor";
+    }
+
+    private static string ResolveTrackingSurface(string? source)
+    {
+        var normalized = (source ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized.Contains("grupo", StringComparison.Ordinal))
+        {
+            return "grupo";
+        }
+
+        if (normalized.Contains("dm", StringComparison.Ordinal) || normalized.Contains("manual", StringComparison.Ordinal))
+        {
+            return "dm";
+        }
+
+        if (normalized.Contains("story", StringComparison.Ordinal))
+        {
+            return "story";
+        }
+
+        if (normalized.Contains("post", StringComparison.Ordinal))
+        {
+            return "post";
+        }
+
+        return "site";
+    }
+
+    private static string ResolveTrackingFlow(string? source)
+    {
+        var normalized = (source ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized.Contains("crosspost", StringComparison.Ordinal) || normalized.Contains("forward", StringComparison.Ordinal))
+        {
+            return "crosspost";
+        }
+
+        if (normalized.Contains("catalog", StringComparison.Ordinal))
+        {
+            return "catalog_sync";
+        }
+
+        return "direct";
+    }
+
+    private static string NormalizeShopeeSubIdValue(string? value, string fallback)
+    {
+        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return fallback;
+        }
+
+        normalized = Regex.Replace(normalized, @"[^a-z0-9]+", string.Empty);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return fallback;
+        }
+
+        return normalized.Length <= 32 ? normalized : normalized[..32];
     }
 
     private static string? ExtractShopeeShortLink(string json)
@@ -1120,6 +1277,16 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         return null;
+    }
+
+    private static bool ContainsShopeeInvalidSubIdError(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return false;
+        }
+
+        return json.Contains("invalid sub id", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? ExtractPreferredMercadoLivreIdFromUrl(string rawUrl)
@@ -2489,9 +2656,19 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return "whatsapp";
         }
 
+        if (normalized.Contains("telegram", StringComparison.Ordinal))
+        {
+            return "telegram";
+        }
+
         if (normalized.Contains("instagram", StringComparison.Ordinal))
         {
             return "instagram_ofertas";
+        }
+
+        if (normalized.Contains("catalog", StringComparison.Ordinal))
+        {
+            return "catalogo_site";
         }
 
         if (normalized.Contains("conversor", StringComparison.Ordinal) || normalized.Contains("web", StringComparison.Ordinal))

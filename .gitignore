@@ -13,6 +13,7 @@
 
 # Local secrets and runtime sessions
 AchadinhosBot.Next/.env
+.env.prod
 AchadinhosBot.Next/WTelegram.session
 AchadinhosBot.Next/bin/**/WTelegram.session
 .dotnet
@@ -100,6 +101,8 @@ StyleCopReport.xml
 *.tmp_proj
 *_wpftmp.csproj
 *.log
+*.out
+*.err
 *.tlog
 *.vspscc
 *.vssscc

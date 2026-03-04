@@ -1,6 +1,10 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Compliance;
+using AchadinhosBot.Next.Infrastructure.Safety;
 using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Infrastructure.Telegram;
@@ -9,15 +13,21 @@ public sealed class TelegramAlertSender
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly TelegramOptions _telegramOptions;
+    private readonly DeliverySafetyPolicy _deliverySafetyPolicy;
+    private readonly IMercadoLivreApprovalStore _approvalStore;
     private readonly ILogger<TelegramAlertSender> _logger;
 
     public TelegramAlertSender(
         IHttpClientFactory httpClientFactory,
         IOptions<TelegramOptions> telegramOptions,
+        DeliverySafetyPolicy deliverySafetyPolicy,
+        IMercadoLivreApprovalStore approvalStore,
         ILogger<TelegramAlertSender> logger)
     {
         _httpClientFactory = httpClientFactory;
         _telegramOptions = telegramOptions.Value;
+        _deliverySafetyPolicy = deliverySafetyPolicy;
+        _approvalStore = approvalStore;
         _logger = logger;
     }
 
@@ -27,6 +37,12 @@ public sealed class TelegramAlertSender
         {
             _logger.LogWarning("TelegramAlertSender: chatId invalido para envio de alerta.");
             return false;
+        }
+        if (!_deliverySafetyPolicy.IsTelegramDestinationAllowed(chatId, out var blockReason))
+        {
+            _logger.LogWarning("TelegramAlertSender: envio bloqueado por safety policy. ChatId={ChatId} Reason={Reason}", chatId, blockReason);
+            await QueueManualApprovalAsync(chatId, text, blockReason, ct);
+            return true;
         }
 
         if (string.IsNullOrWhiteSpace(_telegramOptions.BotToken))
@@ -62,5 +78,23 @@ public sealed class TelegramAlertSender
             _logger.LogWarning(ex, "TelegramAlertSender: erro ao enviar alerta.");
             return false;
         }
+    }
+
+    private async Task QueueManualApprovalAsync(long chatId, string text, string? reason, CancellationToken ct)
+    {
+        var urls = Regex.Matches(text ?? string.Empty, @"https?://[^\s]+", RegexOptions.IgnoreCase)
+            .Select(m => m.Value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        await _approvalStore.AppendAsync(new MercadoLivrePendingApproval
+        {
+            Source = "DeliverySafetyTelegram",
+            Reason = reason ?? "Destino bloqueado por safety policy",
+            OriginalText = text ?? string.Empty,
+            ExtractedUrls = urls,
+            DestinationChatId = chatId,
+            DestinationChatRef = chatId.ToString()
+        }, ct);
     }
 }

@@ -5,6 +5,7 @@ using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Instagram;
+using AchadinhosBot.Next.Infrastructure.Safety;
 using Microsoft.Extensions.Options;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -29,6 +30,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
     private readonly IConversionLogStore _conversionLogStore;
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly InstagramConversationStore _instagramStore;
+    private readonly DeliverySafetyPolicy _deliverySafetyPolicy;
     private readonly ILogger<TelegramUserbotService> _logger;
     private Client? _client;
     private UpdateManager? _manager;
@@ -43,6 +45,8 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
     private string? _runtimePassword;
     private long? _selfUserId;
     private volatile bool _ready;
+    private volatile bool _awaitingVerificationCode;
+    private volatile bool _awaitingPassword;
 
     public bool IsReady => _ready;
 
@@ -57,6 +61,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         IConversionLogStore conversionLogStore,
         IInstagramPostComposer instagramComposer,
         InstagramConversationStore instagramStore,
+        DeliverySafetyPolicy deliverySafetyPolicy,
         IMediaStore mediaStore,
         IMediaFailureLogStore mediaFailureLogStore,
         ILogger<TelegramUserbotService> logger)
@@ -71,6 +76,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         _conversionLogStore = conversionLogStore;
         _instagramComposer = instagramComposer;
         _instagramStore = instagramStore;
+        _deliverySafetyPolicy = deliverySafetyPolicy;
         _mediaStore = mediaStore;
         _mediaFailureLogStore = mediaFailureLogStore;
         _logger = logger;
@@ -148,6 +154,28 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     continue;
                 }
 
+                if (_awaitingVerificationCode && string.IsNullOrWhiteSpace(GetCurrentRuntimeVerificationCode()))
+                {
+                    waitCredentialsCount++;
+                    if (waitCredentialsCount == 1 || waitCredentialsCount % 12 == 0)
+                    {
+                        _logger.LogWarning("TelegramUserbotService: codigo de verificacao pendente. Informe no painel para concluir login.");
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+                    continue;
+                }
+
+                if (_awaitingPassword && string.IsNullOrWhiteSpace(GetCurrentRuntimePassword()))
+                {
+                    waitCredentialsCount++;
+                    if (waitCredentialsCount == 1 || waitCredentialsCount % 12 == 0)
+                    {
+                        _logger.LogWarning("TelegramUserbotService: senha 2FA pendente. Informe no painel para concluir login.");
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+                    continue;
+                }
+
                 waitCredentialsCount = 0;
                 _client = new Client(Config);
                 await using (_client)
@@ -156,6 +184,8 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     await _client.LoginUserIfNeeded();
                     _selfUserId = _client.User?.id;
                     _ready = true;
+                    _awaitingVerificationCode = false;
+                    _awaitingPassword = false;
                     retryCount = 0;
                     _logger.LogInformation("TelegramUserbot conectado. UserId={UserId}. Session={SessionPath}", _selfUserId, sessionPath);
 
@@ -176,6 +206,41 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
             catch (Exception ex)
             {
+                if (IsVerificationCodeRequired(ex))
+                {
+                    _awaitingVerificationCode = true;
+                    _awaitingPassword = false;
+                    retryCount = 0;
+                    _logger.LogWarning("TelegramUserbotService: codigo de verificacao solicitado. Envie o codigo no painel para continuar.");
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                if (IsPasswordRequired(ex))
+                {
+                    _awaitingPassword = true;
+                    retryCount = 0;
+                    _logger.LogWarning("TelegramUserbotService: senha 2FA solicitada. Envie a senha no painel para continuar.");
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
                 retryCount++;
                 var isBadMsg = IsBadMsgSessionOrClockError(ex);
                 var delay = GetRetryDelay(retryCount);
@@ -224,6 +289,19 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         return ex.ToString().Contains("PHONE_NUMBER_INVALID", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsVerificationCodeRequired(Exception ex)
+    {
+        return ex.ToString().Contains("verification_code", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPasswordRequired(Exception ex)
+    {
+        var dump = ex.ToString();
+        return dump.Contains("SESSION_PASSWORD_NEEDED", StringComparison.OrdinalIgnoreCase)
+               || dump.Contains("PASSWORD_HASH_INVALID", StringComparison.OrdinalIgnoreCase)
+               || dump.Contains("password", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static TimeSpan GetRetryDelay(int retryCount)
     {
         var seconds = Math.Min(60, Math.Max(5, retryCount * 5));
@@ -238,29 +316,48 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         var code = NormalizeSecret(request.VerificationCode);
         var password = NormalizeSecret(request.Password);
         var updated = false;
+        var phoneUpdated = request.PhoneNumber is not null;
+        var codeUpdated = request.VerificationCode is not null;
+        var passwordUpdated = request.Password is not null;
 
         lock (_runtimeAuthLock)
         {
-            if (request.PhoneNumber is not null)
+            if (phoneUpdated)
             {
                 _runtimePhoneNumber = phone;
                 updated = true;
             }
 
-            if (request.VerificationCode is not null)
+            if (codeUpdated)
             {
                 _runtimeVerificationCode = code;
                 updated = true;
             }
 
-            if (request.Password is not null)
+            if (passwordUpdated)
             {
                 _runtimePassword = password;
                 updated = true;
             }
         }
 
-        var reconnectRequested = request.ForceReconnect || request.VerificationCode is not null || request.Password is not null;
+        if (phoneUpdated)
+        {
+            _awaitingVerificationCode = false;
+            _awaitingPassword = false;
+        }
+
+        if (codeUpdated && !string.IsNullOrWhiteSpace(code))
+        {
+            _awaitingVerificationCode = false;
+        }
+
+        if (passwordUpdated && !string.IsNullOrWhiteSpace(password))
+        {
+            _awaitingPassword = false;
+        }
+
+        var reconnectRequested = request.ForceReconnect || codeUpdated || passwordUpdated || (phoneUpdated && !_ready);
         if (reconnectRequested)
         {
             RequestReconnect("userbot_auth_update");
@@ -372,7 +469,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         return NormalizePhone(envPhone) ?? NormalizePhone(_options.UserbotPhone) ?? string.Empty;
     }
 
-    private string GetVerificationCodeForLogin()
+    private string? GetVerificationCodeForLogin()
     {
         lock (_runtimeAuthLock)
         {
@@ -384,10 +481,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE")) ?? string.Empty;
+        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_VERIFICATION_CODE"));
     }
 
-    private string GetPasswordForLogin()
+    private string? GetPasswordForLogin()
     {
         var runtime = GetCurrentRuntimePassword();
         if (!string.IsNullOrWhiteSpace(runtime))
@@ -395,7 +492,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             return runtime;
         }
 
-        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD")) ?? string.Empty;
+        return NormalizeSecret(Environment.GetEnvironmentVariable("TELEGRAM_PASSWORD"));
     }
 
     private string? GetCurrentRuntimePhoneNumber()
@@ -630,8 +727,11 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 {
                     try
                     {
-                        var telegramText = BuildTelegramForwardText(settings, replayText);
-                        await _client.SendMessageAsync(telegramDestinationPeer, telegramText);
+                        if (IsTelegramDestinationAllowed(settings.TelegramForwarding.DestinationChatId))
+                        {
+                            var telegramText = BuildTelegramForwardText(settings, replayText);
+                            await _client.SendMessageAsync(telegramDestinationPeer, telegramText);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -800,7 +900,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             {
                 var post = await _instagramComposer.BuildAsync(text, convo.Context, instaSettings, CancellationToken.None);
                 var peer = ResolvePeer(msg.peer_id.ID);
-                if (peer is not null && _client is not null)
+                if (peer is not null && _client is not null && IsTelegramDestinationAllowed(msg.peer_id.ID))
                 {
                     foreach (var chunk in SplitInstagramMessages(post))
                     {
@@ -816,7 +916,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 {
                     var post = await _instagramComposer.BuildAsync(inlineProduct, null, instaSettings, CancellationToken.None);
                     var peer = ResolvePeer(msg.peer_id.ID);
-                    if (peer is not null && _client is not null)
+                    if (peer is not null && _client is not null && IsTelegramDestinationAllowed(msg.peer_id.ID))
                     {
                         foreach (var chunk in SplitInstagramMessages(post))
                         {
@@ -828,7 +928,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 {
                     _instagramStore.SetPending(instaKey, text);
                     var peer = ResolvePeer(msg.peer_id.ID);
-                    if (peer is not null && _client is not null)
+                    if (peer is not null && _client is not null && IsTelegramDestinationAllowed(msg.peer_id.ID))
                     {
                         await _client.SendMessageAsync(peer, "Qual produto? Envie o nome ou o link.");
                     }
@@ -842,7 +942,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         if (!string.IsNullOrWhiteSpace(autoReply))
         {
             var peer = ResolvePeer(msg.peer_id.ID);
-            if (peer is not null && _client is not null)
+            if (peer is not null && _client is not null && IsTelegramDestinationAllowed(msg.peer_id.ID))
             {
                 var trackedReply = await ApplyTrackingAsync(autoReply, settings.LinkResponder?.TrackingEnabled ?? true, CancellationToken.None);
                 await _client.SendMessageAsync(peer, trackedReply.Text);
@@ -899,7 +999,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
                     var tracked = await ApplyTrackingAsync(responseText, responder.TrackingEnabled, CancellationToken.None);
                     responseText = tracked.Text;
-                    await _client.SendMessageAsync(originPeer, responseText);
+                    if (IsTelegramDestinationAllowed(originId))
+                    {
+                        await _client.SendMessageAsync(originPeer, responseText);
+                    }
                     _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = "TelegramUserbotResponder",
@@ -929,7 +1032,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 else if (!IsTelegramGroupPeer(msg.peer_id) && !string.IsNullOrWhiteSpace(responder.ReplyOnFailure))
                 {
                     var trackedFail = await ApplyTrackingAsync(responder.ReplyOnFailure, responder.TrackingEnabled, CancellationToken.None);
-                    await _client.SendMessageAsync(originPeer, trackedFail.Text);
+                    if (IsTelegramDestinationAllowed(originId))
+                    {
+                        await _client.SendMessageAsync(originPeer, trackedFail.Text);
+                    }
                 }
             }
         }
@@ -984,7 +1090,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             _logger.LogWarning("TelegramUserbot: destino {DestinationId} nao encontrado nos dialogs.", destinationId);
         }
 
-        var shouldSendToTelegram = tgForwarding.Enabled && destinationPeer is not null && IsSourceMatch(originId, tgSources);
+        var shouldSendToTelegram = tgForwarding.Enabled
+                                   && destinationPeer is not null
+                                   && IsSourceMatch(originId, tgSources)
+                                   && IsTelegramDestinationAllowed(destinationId);
 
         if (tgForwarding.AppendSheinCode &&
             ContainsShein(finalText) &&
@@ -1557,6 +1666,17 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         return null;
+    }
+
+    private bool IsTelegramDestinationAllowed(long chatId)
+    {
+        if (_deliverySafetyPolicy.IsTelegramDestinationAllowed(chatId, out _))
+        {
+            return true;
+        }
+
+        _logger.LogWarning("Envio Telegram bloqueado por safety policy. ChatId={ChatId}", chatId);
+        return false;
     }
 
     private static IReadOnlyList<TelegramToWhatsAppRouteSettings> ResolveTelegramToWhatsAppRoutes(AutomationSettings settings)

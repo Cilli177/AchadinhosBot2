@@ -1,0 +1,6 @@
+tunnel: f6d2ecf7-e188-46c8-a0a3-f29f48a2d109
+credentials-file: C:\Users\overl\.cloudflared\f6d2ecf7-e188-46c8-a0a3-f29f48a2d109.json
+ingress:
+  - hostname: achadinhos-dev.reidasofertas.ia.br
+    service: http://127.0.0.1:8081
+  - service: http_status:404

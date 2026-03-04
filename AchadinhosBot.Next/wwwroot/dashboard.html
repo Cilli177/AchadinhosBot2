@@ -377,6 +377,30 @@
       font-size: 12px;
     }
 
+    .env-pill {
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .env-pill.env-dev {
+      background: linear-gradient(135deg, #ff4d4d, #ff8a00);
+      border-color: #ffd28a;
+      color: #1b0a00;
+      box-shadow: 0 0 0 2px rgba(255, 138, 0, 0.32);
+    }
+
+    .env-pill.env-prod {
+      background: linear-gradient(135deg, #0f8f5f, #16a34a);
+      border-color: #52d399;
+      color: #ecfff5;
+    }
+
+    .env-pill.env-other {
+      background: linear-gradient(135deg, #1f2937, #374151);
+      border-color: #6b7280;
+      color: #f3f4f6;
+    }
+
     .theme-toggle {
       width: 100%;
       margin-top: 14px;
@@ -619,7 +643,7 @@
             <span id="chipWhatsApp" class="chip warn">WhatsApp: Não conectado</span>
             <span id="chipMercadoLivre" class="chip warn">Mercado Livre: Não validado</span>
           </div>
-          <div class="pill">Ambiente: Development</div>
+          <div id="envPill" class="pill env-pill env-other">Ambiente: Detectando...</div>
         </div>
 
         <section id="loginCard" class="card">
@@ -645,11 +669,14 @@
             <div class="grid" style="margin-top:16px;">
               <section class="card">
                 <h2>Telegram (Bot API)</h2>
-                <p class="muted">Valide o token e o status do bot oficial.</p>
+                <p class="muted">Adicione/valide um token de bot e teste o status no Telegram.</p>
+                <label>Bot Token (opcional)</label>
+                <input id="telegramBotToken" type="password" placeholder="123456:AA..." />
                 <div class="row">
-                  <button id="btnTelegramConnect" onclick="connectTelegram()">Testar conexão</button>
+                  <button id="btnTelegramConnect" onclick="connectTelegram()">Adicionar bot e testar</button>
                   <span id="telegramStatus" class="status warn">Não conectado</span>
                 </div>
+                <p id="telegramStatusDetail" class="status muted">Sem teste recente.</p>
               </section>
 
               <section class="card">
@@ -662,7 +689,7 @@
                 <label>Senha 2FA (opcional)</label>
                 <input id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
                 <div class="row">
-                  <label class="switch"><input type="checkbox" id="userbotForceReconnect" checked /><span
+                  <label class="switch"><input type="checkbox" id="userbotForceReconnect" /><span
                       class="slider"></span></label>
                   <span class="muted">Forçar reconexão após aplicar</span>
                 </div>
@@ -993,7 +1020,7 @@
             </section>
 
             <section class="card" style="margin-top:16px;">
-              <h2>Pendências Mercado Livre</h2>
+              <h2>Pendências de Aprovação Manual</h2>
               <div class="row">
                 <select id="mlPendingStatus" style="max-width:220px;">
                   <option value="pending">Pendente</option>
@@ -1001,7 +1028,7 @@
                   <option value="rejected">Rejeitado</option>
                   <option value="">Todos</option>
                 </select>
-                <button onclick="loadMercadoLivrePending()">Carregar</button>
+                <button onclick="loadMercadoLivrePending()">Carregar fila</button>
                 <span id="mlPendingCount" class="status muted"></span>
               </div>
               <div class="table-wrap" style="margin-top:8px;">
@@ -1974,12 +2001,74 @@
       el.className = `badge ${state}`;
     }
 
+    function lockTelegramStatus(message, state) {
+      const statusEl = document.getElementById('telegramStatus');
+      const detailEl = document.getElementById('telegramStatusDetail');
+      const safeMessage = message || 'Sem detalhes.';
+      window.__telegramStatusLockUntil = Date.now() + 15000;
+      window.__telegramStatusLockedText = safeMessage;
+      window.__telegramStatusLockedState = state || 'warn';
+      if (statusEl) {
+        statusEl.textContent = safeMessage;
+        statusEl.className = 'status ' + (state || 'warn');
+      }
+      if (detailEl) {
+        detailEl.textContent = safeMessage;
+        detailEl.className = 'status ' + (state || 'warn');
+      }
+    }
+
+    function setEnvironmentBadge(runtimeEnvironment) {
+      const envPill = document.getElementById('envPill');
+      if (!envPill) return;
+
+      const rawEnv = (runtimeEnvironment || '').trim();
+      const host = (window.location.host || '').toLowerCase();
+      const inferredEnv = host.includes('dev') || host.includes('localhost') || host.includes('127.0.0.1')
+        ? 'Development'
+        : 'Production';
+      const effectiveEnv = rawEnv || inferredEnv;
+      const normalized = effectiveEnv.toLowerCase();
+
+      envPill.className = 'pill env-pill';
+      if (normalized.includes('dev')) {
+        envPill.classList.add('env-dev');
+      } else if (normalized.includes('prod')) {
+        envPill.classList.add('env-prod');
+      } else {
+        envPill.classList.add('env-other');
+      }
+
+      envPill.textContent = `Ambiente: ${effectiveEnv}`;
+    }
+
     function renderSettings(s) {
       window.__settingsCache = s;
-      document.getElementById('telegramStatus').textContent = s.integrations.telegram.connected
+      setEnvironmentBadge(s.runtimeEnvironment);
+      const now = Date.now();
+      const lockUntil = window.__telegramStatusLockUntil || 0;
+      const isLocked = now < lockUntil;
+      const telegramStatusText = s.integrations.telegram.connected
         ? `Conectado (${s.integrations.telegram.identifier || 'sem id'})`
         : 'Não conectado';
-      document.getElementById('telegramStatus').className = 'status ' + (s.integrations.telegram.connected ? 'ok' : 'warn');
+      const telegramStatusState = s.integrations.telegram.connected ? 'ok' : 'warn';
+      if (!isLocked) {
+        const telegramStatusEl = document.getElementById('telegramStatus');
+        if (telegramStatusEl) {
+          telegramStatusEl.textContent = telegramStatusText;
+          telegramStatusEl.className = 'status ' + telegramStatusState;
+        }
+      }
+      const telegramDetail = document.getElementById('telegramStatusDetail');
+      if (telegramDetail) {
+        if (isLocked) {
+          telegramDetail.textContent = window.__telegramStatusLockedText || telegramStatusText;
+          telegramDetail.className = 'status ' + (window.__telegramStatusLockedState || telegramStatusState);
+        } else {
+          telegramDetail.textContent = telegramStatusText;
+          telegramDetail.className = 'status ' + telegramStatusState;
+        }
+      }
 
       document.getElementById('whatsappStatus').textContent = s.integrations.whatsApp.connected
         ? `Conectado (${s.integrations.whatsApp.identifier || 'sem id'})`
@@ -3343,14 +3432,15 @@
     async function connectTelegram() {
       setButtonBusy('btnTelegramConnect', true, 'Validando...');
       try {
-        const r = await api('/api/integrations/telegram/connect', 'POST', {});
-        document.getElementById('telegramStatus').textContent = r.success
+        const botToken = (document.getElementById('telegramBotToken')?.value || '').trim();
+        const r = await api('/api/integrations/telegram/connect', 'POST', { botToken: botToken || null });
+        const message = r.success
           ? `Conectado (${r.username || 'ok'})`
           : `Erro: ${r.message || 'Falha na conexão'}`;
-        document.getElementById('telegramStatus').className = 'status ' + (r.success ? 'ok' : 'bad');
+        lockTelegramStatus(message, r.success ? 'ok' : 'bad');
       } catch (e) {
-        document.getElementById('telegramStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
-        document.getElementById('telegramStatus').className = 'status bad';
+        const message = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+        lockTelegramStatus(message, 'bad');
       }
       await loadSettings();
       setButtonBusy('btnTelegramConnect', false);
@@ -4636,6 +4726,7 @@
     }
 
     loadTheme();
+    setEnvironmentBadge(null);
     checkSession();
   </script>
 </body>

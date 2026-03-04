@@ -4,10 +4,12 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Compliance;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Instagram;
+using AchadinhosBot.Next.Infrastructure.Safety;
 using Microsoft.Extensions.Options;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -30,6 +32,8 @@ public sealed class TelegramBotPollingService : BackgroundService
     private readonly WebhookOptions _webhookOptions;
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly InstagramConversationStore _instagramStore;
+    private readonly DeliverySafetyPolicy _deliverySafetyPolicy;
+    private readonly IMercadoLivreApprovalStore _approvalStore;
     private readonly ILogger<TelegramBotPollingService> _logger;
     private long _offset;
     private long? _botUserId;
@@ -55,6 +59,8 @@ public sealed class TelegramBotPollingService : BackgroundService
         IOptions<WebhookOptions> webhookOptions,
         IInstagramPostComposer instagramComposer,
         InstagramConversationStore instagramStore,
+        DeliverySafetyPolicy deliverySafetyPolicy,
+        IMercadoLivreApprovalStore approvalStore,
         ILogger<TelegramBotPollingService> logger)
     {
         _httpClientFactory = httpClientFactory;
@@ -71,6 +77,8 @@ public sealed class TelegramBotPollingService : BackgroundService
         _webhookOptions = webhookOptions.Value;
         _instagramComposer = instagramComposer;
         _instagramStore = instagramStore;
+        _deliverySafetyPolicy = deliverySafetyPolicy;
+        _approvalStore = approvalStore;
         _logger = logger;
     }
 
@@ -2742,6 +2750,25 @@ public sealed class TelegramBotPollingService : BackgroundService
 
     private async Task SendMessageAsync(long chatId, string text, CancellationToken ct)
     {
+        if (!_deliverySafetyPolicy.IsTelegramDestinationAllowed(chatId, out var blockReason))
+        {
+            _logger.LogWarning("Envio Telegram bloqueado por safety policy. ChatId={ChatId} Reason={Reason}", chatId, blockReason);
+            var urls = Regex.Matches(text ?? string.Empty, @"https?://[^\s]+", RegexOptions.IgnoreCase)
+                .Select(m => m.Value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            await _approvalStore.AppendAsync(new MercadoLivrePendingApproval
+            {
+                Source = "DeliverySafetyTelegram",
+                Reason = blockReason ?? "Destino bloqueado por safety policy",
+                OriginalText = text ?? string.Empty,
+                ExtractedUrls = urls,
+                DestinationChatId = chatId,
+                DestinationChatRef = chatId.ToString()
+            }, ct);
+            return;
+        }
+
         var client = _httpClientFactory.CreateClient("default");
         var url = $"https://api.telegram.org/bot{_options.BotToken}/sendMessage";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);

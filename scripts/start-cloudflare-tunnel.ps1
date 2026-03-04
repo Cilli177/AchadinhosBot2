@@ -50,10 +50,11 @@ function Resolve-TunnelId {
         [string]$Name
     )
 
+    $uuidPattern = "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
     $info = & $CloudflaredPath --loglevel error tunnel info $Name 2>$null
     if ($LASTEXITCODE -eq 0 -and $info) {
-        $idLine = $info | Where-Object { $_ -match "^ID:\s+" } | Select-Object -First 1
-        if ($idLine -and $idLine -match "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})") {
+        $infoText = ($info | Out-String)
+        if ($infoText -match $uuidPattern) {
             return $matches[1]
         }
     }
@@ -64,13 +65,13 @@ function Resolve-TunnelId {
     }
 
     $allText = ($createOutput | Out-String)
-    if ($allText -match "id ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})") {
+    if ($allText -match "id $uuidPattern") {
         return $matches[1]
     }
 
     $infoRetry = & $CloudflaredPath --loglevel error tunnel info $Name
-    $idLineRetry = $infoRetry | Where-Object { $_ -match "^ID:\s+" } | Select-Object -First 1
-    if ($idLineRetry -and $idLineRetry -match "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})") {
+    $infoRetryText = ($infoRetry | Out-String)
+    if ($infoRetryText -match $uuidPattern) {
         return $matches[1]
     }
 

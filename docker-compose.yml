@@ -1,10 +1,9 @@
-version: "3.9"
 services:
   achadinhos-next:
     build:
       context: .
       dockerfile: AchadinhosBot.Next/Dockerfile
-    container_name: achadinhos-next
+    container_name: achadinhos-next-dev
     restart: unless-stopped
     ports:
       - "8081:8081"
@@ -12,22 +11,29 @@ services:
       - AchadinhosBot.Next/.env
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
-      WEBHOOK__PORT: ${WEBHOOK__PORT:-8081}
+      WEBHOOK__PORT: 8081
+      KESTREL__ENDPOINTS__HTTP__URL: http://0.0.0.0:8081
       WEBHOOK__API_KEY: ${WEBHOOK__API_KEY:-dev-local-key}
       AUTH__ADMIN__USERNAME: ${AUTH__ADMIN__USERNAME:-admin}
       AUTH__ADMIN__PASSWORD_HASH: ${AUTH__ADMIN__PASSWORD_HASH}
       AUTH__OPERATOR__USERNAME: ${AUTH__OPERATOR__USERNAME:-operator}
       AUTH__OPERATOR__PASSWORD_HASH: ${AUTH__OPERATOR__PASSWORD_HASH}
-      EVOLUTION__BASE_URL: ${EVOLUTION__BASE_URL:-http://evolution:8082}
+      EVOLUTION__BASE_URL: ${EVOLUTION__BASE_URL:-http://host.docker.internal:8082}
       EVOLUTION__API_KEY: ${EVOLUTION__API_KEY}
-      EVOLUTION__INSTANCE_NAME: ${EVOLUTION__INSTANCE_NAME:-achadinhos-next}
+      EVOLUTION__INSTANCE_NAME: ${EVOLUTION__INSTANCE_NAME:-achadinhos-next-dev}
       EVOLUTION__WEBHOOK_SECRET: ${EVOLUTION__WEBHOOK_SECRET}
-      TELEGRAM__BOT_TOKEN: ${TELEGRAM__BOT_TOKEN}
+      TELEGRAM__BOTTOKEN: ${TELEGRAM__BOTTOKEN}
       AFFILIATE__AMAZON_TAG: ${AFFILIATE__AMAZON_TAG:-seu-tag-20}
       AFFILIATE__SHEIN_ID: ${AFFILIATE__SHEIN_ID:-affiliate_id}
       AFFILIATE__SHEIN_CODE: ${AFFILIATE__SHEIN_CODE:-CODIGO}
+      AFFILIATE__SHOPEEAPPID: ${AFFILIATE__SHOPEE_APP_ID}
+      AFFILIATE__SHOPEESECRET: ${AFFILIATE__SHOPEE_SECRET}
+      RABBITMQ__HOST: ${RABBITMQ__HOST:-host.docker.internal}
+      RABBITMQ__VIRTUALHOST: ${RABBITMQ__VIRTUALHOST:-/}
+      RABBITMQ__USERNAME: ${RABBITMQ__USERNAME:-guest}
+      RABBITMQ__PASSWORD: ${RABBITMQ__PASSWORD:-guest}
     volumes:
-      - achadinhos_data:/app/data
+      - achadinhos_dev_data:/app/data
 
 volumes:
-  achadinhos_data:
+  achadinhos_dev_data:

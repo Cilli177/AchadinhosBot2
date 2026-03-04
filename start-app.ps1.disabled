@@ -1,0 +1,20 @@
+﻿# Script para manter AchadinhosBot.Next online
+`$appPath = "c:\AchadinhoBot2\AchadinhosBot2"
+`$projectFile = "AchadinhosBot.Next\AchadinhosBot.Next.csproj"
+
+Set-Location `$appPath
+
+# Loop infinito para manter o app rodando
+while (`$true) {
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Iniciando AchadinhosBot.Next..." -ForegroundColor Green
+    
+    try {
+        & dotnet run --project `$projectFile
+    }
+    catch {
+        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Erro: `$_" -ForegroundColor Red
+    }
+    
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - App desligou. Reiniciando em 5 segundos..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 5
+}

@@ -37,6 +37,7 @@ using AchadinhosBot.Next.Infrastructure.Telegram;
 using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.WhatsApp;
 using AchadinhosBot.Next.Infrastructure.Resilience;
+using AchadinhosBot.Next.Infrastructure.Safety;
 using Serilog;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
 
@@ -108,6 +109,10 @@ builder.Services
 builder.Services
     .AddOptions<HeartbeatOptions>()
     .Bind(builder.Configuration.GetSection("Heartbeat"));
+
+builder.Services
+    .AddOptions<DeliverySafetyOptions>()
+    .Bind(builder.Configuration.GetSection("DeliverySafety"));
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -220,6 +225,7 @@ builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<IIdempotencyStore, MemoryIdempotencyStore>();
 builder.Services.AddSingleton<LoginAttemptStore>();
 builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
+builder.Services.AddSingleton<DeliverySafetyPolicy>();
 builder.Services.AddHostedService<UptimeHeartbeatService>();
 builder.Services.AddHostedService<InstagramAutoPilotWorker>();
 builder.Services.AddHostedService<ContentCalendarWorker>();
@@ -229,9 +235,14 @@ builder.Services.AddMassTransit(x =>
     x.AddConsumer<EvolutionWebhookConsumer>();
     x.UsingRabbitMq((context, cfg) =>
     {
-        cfg.Host("localhost", "/", h => {
-            h.Username("guest");
-            h.Password("guest");
+        var rabbitHost = builder.Configuration["RabbitMq:Host"] ?? "localhost";
+        var rabbitVirtualHost = builder.Configuration["RabbitMq:VirtualHost"] ?? "/";
+        var rabbitUser = builder.Configuration["RabbitMq:Username"] ?? "guest";
+        var rabbitPass = builder.Configuration["RabbitMq:Password"] ?? "guest";
+        cfg.Host(rabbitHost, rabbitVirtualHost, h =>
+        {
+            h.Username(rabbitUser);
+            h.Password(rabbitPass);
         });
         cfg.ConfigureEndpoints(context);
     });
@@ -451,15 +462,7 @@ app.MapPost("/api/conversor", async (
                     }
                 }
 
-                var settings = await settingsStore.GetAsync(ct);
-                var publicBaseUrl = ResolvePublicBaseUrl(
-                    settings.BioHub?.PublicBaseUrl,
-                    webhookOptions.Value.PublicBaseUrl,
-                    request.Scheme,
-                    request.Host.ToString());
-
-                var tracked = await trackingStore.GetOrCreateAsync(convertedUrl, ct);
-                var trackedUrl = BuildTrackedRedirectUrl(publicBaseUrl, tracked.Id, "conversor", null);
+                var trackedUrl = convertedUrl;
 
                 // =================== PARALLEL METADATA FETCH ===================
                 // All metadata sources run concurrently to minimize total latency.
@@ -1699,6 +1702,7 @@ var api = app.MapGroup("/api").RequireAuthorization("ReadAccess");
 api.MapGet("/settings", async (
     ISettingsStore store,
     IOptions<WebhookOptions> webhookOptions,
+    IHostEnvironment hostEnvironment,
     HttpContext context,
     CancellationToken ct) =>
 {
@@ -1735,6 +1739,8 @@ api.MapGet("/settings", async (
         webhookOptions.Value.PublicBaseUrl,
         context.Request.Scheme,
         context.Request.Host.ToString());
+    payload["runtimeEnvironment"] = hostEnvironment.EnvironmentName;
+    payload["isProduction"] = hostEnvironment.IsProduction();
 
     return Results.Json(payload);
 });
@@ -1988,13 +1994,14 @@ api.MapPost("/integrations/whatsapp/instance", async (
 }).RequireAuthorization("AdminOnly");
 
 api.MapPost("/integrations/telegram/connect", async (
+    TelegramBotConnectRequest payload,
     ITelegramGateway gateway,
     ISettingsStore store,
     IAuditTrail audit,
     HttpContext context,
     CancellationToken ct) =>
 {
-    var result = await gateway.ConnectAsync(ct);
+    var result = await gateway.ConnectAsync(payload.BotToken, ct);
 
     var settings = await store.GetAsync(ct);
     settings.Integrations.Telegram.Connected = result.Success;
@@ -2691,6 +2698,8 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
     IMessageProcessor processor,
     ISettingsStore settingsStore,
     IWhatsAppGateway gateway,
+    IHttpClientFactory httpClientFactory,
+    IOptions<TelegramOptions> telegramOptions,
     IAuditTrail audit,
     HttpContext context,
     CancellationToken ct) =>
@@ -2715,16 +2724,20 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
         originChatRef: item.OriginChatRef,
         destinationChatRef: item.DestinationChatRef);
 
-    if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+    var convertedText = (!string.IsNullOrWhiteSpace(result.ConvertedText) && result.Success)
+        ? result.ConvertedText!
+        : item.OriginalText;
+    var convertedLinks = result.Success ? result.ConvertedLinks : 0;
+    if (string.IsNullOrWhiteSpace(convertedText))
     {
-        return Results.BadRequest(new { error = "Falha ao converter link durante aprovacao manual." });
+        return Results.BadRequest(new { error = "Pendencia sem texto para aprovar." });
     }
 
-    var convertedText = result.ConvertedText ?? item.OriginalText;
     var sendNow = payload.SendNow ?? true;
     var sendSuccess = 0;
     var sendFailures = new List<string>();
-    var targets = Array.Empty<string>();
+    var whatsAppTargets = Array.Empty<string>();
+    var telegramTargets = new List<long>();
 
     if (sendNow)
     {
@@ -2732,12 +2745,12 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
         var rawTargets = string.IsNullOrWhiteSpace(item.DestinationChatRef)
             ? item.OriginChatRef
             : item.DestinationChatRef;
-        targets = ParseChatRefs(rawTargets)
+        whatsAppTargets = ParseChatRefs(rawTargets)
             .Where(x => x.Contains("@", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        foreach (var target in targets)
+        foreach (var target in whatsAppTargets)
         {
             var sendResult = await gateway.SendTextAsync(settings.WhatsAppForwarding?.InstanceName, target, convertedText, ct);
             if (sendResult.Success)
@@ -2747,6 +2760,31 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
             else
             {
                 sendFailures.Add($"{target}: {sendResult.Message}");
+            }
+        }
+
+        if (item.DestinationChatId.HasValue && item.DestinationChatId.Value != 0)
+        {
+            telegramTargets.Add(item.DestinationChatId.Value);
+        }
+        if (item.OriginChatId.HasValue && item.OriginChatId.Value != 0 && string.IsNullOrWhiteSpace(item.DestinationChatRef))
+        {
+            telegramTargets.Add(item.OriginChatId.Value);
+        }
+
+        var uniqueTelegramTargets = telegramTargets
+            .Distinct()
+            .ToArray();
+        foreach (var chatId in uniqueTelegramTargets)
+        {
+            var sent = await SendTelegramManualApprovalAsync(httpClientFactory, telegramOptions.Value, chatId, convertedText, ct);
+            if (sent)
+            {
+                sendSuccess++;
+            }
+            else
+            {
+                sendFailures.Add($"{chatId}: falha no envio Telegram durante aprovacao manual.");
             }
         }
     }
@@ -2775,7 +2813,7 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
     await audit.WriteAsync("mercadolivre.pending.approved", context.User.Identity?.Name ?? "unknown", new
     {
         id,
-        result.ConvertedLinks,
+        convertedLinks,
         sendNow,
         sendSuccess,
         sendFailures = sendFailures.Count
@@ -2784,7 +2822,7 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
     {
         success = true,
         converted = convertedText,
-        convertedLinks = result.ConvertedLinks,
+        convertedLinks,
         sendNow,
         sentTargets = sendSuccess,
         sendFailures
@@ -3428,6 +3466,39 @@ static string[] ParseChatRefs(string? input)
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Select(x => x.Trim())
         .ToArray();
+}
+
+static async Task<bool> SendTelegramManualApprovalAsync(
+    IHttpClientFactory httpClientFactory,
+    TelegramOptions telegramOptions,
+    long chatId,
+    string text,
+    CancellationToken ct)
+{
+    if (chatId == 0 || string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(telegramOptions.BotToken))
+    {
+        return false;
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient("default");
+        var url = $"https://api.telegram.org/bot{telegramOptions.BotToken}/sendMessage";
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        var payload = JsonSerializer.Serialize(new
+        {
+            chat_id = chatId,
+            text
+        });
+        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+
+        using var response = await client.SendAsync(request, ct);
+        return response.IsSuccessStatusCode;
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 static IReadOnlyList<WhatsAppForwardingRouteSettings> ResolveWhatsAppForwardingRoutes(AutomationSettings settings)
@@ -10571,18 +10642,33 @@ static string EscapeJsonValue(string value)
 static string NormalizeWebConversorSource(string? source)
 {
     var normalized = (source ?? string.Empty).Trim().ToLowerInvariant();
-    return normalized switch
+    if (string.IsNullOrWhiteSpace(normalized))
     {
-        "instagram_ofertas" => "instagram_ofertas",
-        "whatsapp" => "whatsapp",
-        _ => "conversor_web"
-    };
+        return "conversor_web";
+    }
+
+    if (normalized is "instagram_ofertas" or "whatsapp" or "telegram")
+    {
+        return normalized;
+    }
+
+    if (normalized.StartsWith("telegram_", StringComparison.Ordinal)
+        || normalized.StartsWith("whatsapp_", StringComparison.Ordinal)
+        || normalized.StartsWith("instagram_", StringComparison.Ordinal)
+        || normalized.StartsWith("catalogo_", StringComparison.Ordinal)
+        || normalized is "site_conversor" or "conversor_web")
+    {
+        return normalized;
+    }
+
+    return "conversor_web";
 }
 
 internal sealed record LoginRequest(string Username, string Password);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
+internal sealed record TelegramBotConnectRequest(string? BotToken);
 internal sealed record TelegramUserbotReplayRequest(long SourceChatId, int Count = 10, bool AllowOfficialDestination = false);
 internal sealed record CouponUpsertRequest(
     string? Id,
