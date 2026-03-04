@@ -794,3 +794,31 @@ pre {
 .toast.warning {
   border-left: 4px solid var(--warn);
 }
+
+/* Unauthenticated State */
+body.unauthenticated .sidebar,
+body.unauthenticated .hero {
+  display: none !important;
+}
+
+body.unauthenticated .content {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 20px !important;
+  width: 100vw;
+  height: 100vh;
+}
+
+body.unauthenticated .container {
+  width: 100% !important;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+body.unauthenticated #loginCard {
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+}
