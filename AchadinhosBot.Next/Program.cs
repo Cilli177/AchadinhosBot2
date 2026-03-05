@@ -92,7 +92,20 @@ builder.Services
     .ValidateDataAnnotations();
 
 var telegramStartupOptions = builder.Configuration.GetSection("Telegram").Get<TelegramOptions>() ?? new TelegramOptions();
-var startTelegramBotWorker = !string.IsNullOrWhiteSpace(telegramStartupOptions.BotToken);
+var persistedTelegramBotTokenPath =
+    Environment.GetEnvironmentVariable("TELEGRAM__BOTTOKEN_FILE")?.Trim()
+    ?? Path.Combine(AppContext.BaseDirectory, "data", "telegram-bot-token.txt");
+var hasPersistedTelegramBotToken = false;
+try
+{
+    hasPersistedTelegramBotToken = File.Exists(persistedTelegramBotTokenPath)
+        && !string.IsNullOrWhiteSpace(File.ReadAllText(persistedTelegramBotTokenPath).Trim());
+}
+catch
+{
+    hasPersistedTelegramBotToken = false;
+}
+var startTelegramBotWorker = !string.IsNullOrWhiteSpace(telegramStartupOptions.BotToken) || hasPersistedTelegramBotToken;
 var startTelegramUserbotWorker = telegramStartupOptions.ApiId > 0 && !string.IsNullOrWhiteSpace(telegramStartupOptions.ApiHash);
 
 builder.Services

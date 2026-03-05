@@ -20,11 +20,9 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
 
     public async Task<TelegramConnectResult> ConnectAsync(string? botToken, CancellationToken cancellationToken)
     {
-        var tokenToUse = string.IsNullOrWhiteSpace(botToken) ? _options.BotToken : botToken.Trim();
-        if (!string.IsNullOrWhiteSpace(tokenToUse) && tokenToUse.StartsWith("bot", StringComparison.OrdinalIgnoreCase))
-        {
-            tokenToUse = tokenToUse[3..].Trim();
-        }
+        var tokenToUse = NormalizeBotToken(botToken)
+            ?? NormalizeBotToken(_options.BotToken)
+            ?? LoadPersistedBotToken();
         if (string.IsNullOrWhiteSpace(tokenToUse))
         {
             _logger.LogWarning("Telegram BotToken nÃ£o configurado");
@@ -58,6 +56,7 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
             }
 
             var username = root.GetProperty("result").GetProperty("username").GetString();
+            PersistBotToken(tokenToUse);
             _logger.LogInformation("Telegram Bot conectado: @{Username}", username);
             return new TelegramConnectResult(true, username, "Telegram conectado com sucesso");
         }
@@ -71,6 +70,73 @@ public sealed class TelegramBotApiGateway : ITelegramGateway
         {
             _logger.LogError(ex, "Erro ao conectar Telegram Bot API");
             return new TelegramConnectResult(false, null, $"Erro: {ex.Message}");
+        }
+    }
+
+    private static string? NormalizeBotToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var normalized = token.Trim();
+        if (normalized.StartsWith("bot", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[3..].Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private string GetTokenFilePath()
+    {
+        var configured = Environment.GetEnvironmentVariable("TELEGRAM__BOTTOKEN_FILE");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.Trim();
+        }
+
+        var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
+        return Path.Combine(dataDir, "telegram-bot-token.txt");
+    }
+
+    private string? LoadPersistedBotToken()
+    {
+        try
+        {
+            var path = GetTokenFilePath();
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var raw = File.ReadAllText(path);
+            return NormalizeBotToken(raw);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao ler token persistido do Telegram bot.");
+            return null;
+        }
+    }
+
+    private void PersistBotToken(string token)
+    {
+        try
+        {
+            var path = GetTokenFilePath();
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllText(path, token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao persistir token do Telegram bot.");
         }
     }
 }

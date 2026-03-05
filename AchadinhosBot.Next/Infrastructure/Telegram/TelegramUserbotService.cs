@@ -93,7 +93,10 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         var sessionPath = Environment.GetEnvironmentVariable("WTELEGRAM_SESSION");
         if (string.IsNullOrWhiteSpace(sessionPath))
         {
-            sessionPath = Path.Combine(AppContext.BaseDirectory, "WTelegram.session");
+            // Keep userbot session under /app/data so container restarts do not require a new login.
+            var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
+            Directory.CreateDirectory(dataDir);
+            sessionPath = Path.Combine(dataDir, "WTelegram.session");
         }
 
         var hasSession = File.Exists(sessionPath);

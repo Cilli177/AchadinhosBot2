@@ -35,6 +35,7 @@ public sealed class TelegramBotPollingService : BackgroundService
     private readonly DeliverySafetyPolicy _deliverySafetyPolicy;
     private readonly IMercadoLivreApprovalStore _approvalStore;
     private readonly ILogger<TelegramBotPollingService> _logger;
+    private string? _botToken;
     private long _offset;
     private long? _botUserId;
     private string? _botUsername;
@@ -84,19 +85,29 @@ public sealed class TelegramBotPollingService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (string.IsNullOrWhiteSpace(_options.BotToken))
+        _botToken = ResolveBotToken();
+        if (string.IsNullOrWhiteSpace(_botToken))
         {
-            _logger.LogWarning("Telegram BotToken nÃ£o configurado. Polling nÃ£o iniciado.");
-            return;
+            _logger.LogWarning("Telegram BotToken nao configurado. Aguardando token em env/arquivo para iniciar polling.");
         }
 
         _logger.LogInformation("TelegramBotPollingService iniciado.");
-        await DeleteWebhookAsync(stoppingToken);
+        if (!string.IsNullOrWhiteSpace(_botToken))
+        {
+            await DeleteWebhookAsync(stoppingToken);
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                _botToken = ResolveBotToken();
+                if (string.IsNullOrWhiteSpace(_botToken))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    continue;
+                }
+
                 if (_botUserId is null)
                 {
                     _botUserId = await TryGetBotIdentityAsync(stoppingToken);
@@ -123,10 +134,16 @@ public sealed class TelegramBotPollingService : BackgroundService
 
     private async Task<long?> TryGetBotIdentityAsync(CancellationToken ct)
     {
+        var token = _botToken;
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
         try
         {
             var client = _httpClientFactory.CreateClient("default");
-            var url = $"https://api.telegram.org/bot{_options.BotToken}/getMe";
+            var url = $"https://api.telegram.org/bot{token}/getMe";
             var res = await client.GetAsync(url, ct);
             if (!res.IsSuccessStatusCode)
             {
@@ -165,10 +182,16 @@ public sealed class TelegramBotPollingService : BackgroundService
 
     private async Task DeleteWebhookAsync(CancellationToken ct)
     {
+        var token = _botToken;
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return;
+        }
+
         try
         {
             var client = _httpClientFactory.CreateClient("default");
-            var url = $"https://api.telegram.org/bot{_options.BotToken}/deleteWebhook?drop_pending_updates=true";
+            var url = $"https://api.telegram.org/bot{token}/deleteWebhook?drop_pending_updates=true";
             var res = await client.GetAsync(url, ct);
             if (!res.IsSuccessStatusCode)
             {
@@ -183,8 +206,14 @@ public sealed class TelegramBotPollingService : BackgroundService
 
     private async Task<IReadOnlyList<TelegramUpdate>> GetUpdatesAsync(long offset, CancellationToken ct)
     {
+        var token = _botToken;
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return Array.Empty<TelegramUpdate>();
+        }
+
         var client = _httpClientFactory.CreateClient("default");
-        var url = $"https://api.telegram.org/bot{_options.BotToken}/getUpdates?offset={offset}&timeout=30";
+        var url = $"https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=30";
 
         using var res = await client.GetAsync(url, ct);
         if (!res.IsSuccessStatusCode)
@@ -1127,7 +1156,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         {
             "STATUS BOT",
             $"Uptime: {uptime:dd\\.hh\\:mm\\:ss}",
-            $"Bot: {(!string.IsNullOrWhiteSpace(_options.BotToken) ? "configurado" : "nao configurado")}",
+            $"Bot: {(!string.IsNullOrWhiteSpace(_botToken) ? "configurado" : "nao configurado")}",
             $"Link responder telegram: {(responder.Enabled && responder.AllowTelegramBot ? "ON" : "OFF")}",
             $"Autopilot feed: {(instaPublish.AutoPilotEnabled ? "ON" : "OFF")} (intervalo {instaPublish.AutoPilotIntervalMinutes}m)",
             $"Autostory: {(instaPublish.StoryAutoPilotEnabled ? "ON" : "OFF")} (intervalo {instaPublish.StoryAutoPilotIntervalMinutes}m)",
@@ -2769,8 +2798,14 @@ public sealed class TelegramBotPollingService : BackgroundService
             return;
         }
 
+        var token = _botToken;
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return;
+        }
+
         var client = _httpClientFactory.CreateClient("default");
-        var url = $"https://api.telegram.org/bot{_options.BotToken}/sendMessage";
+        var url = $"https://api.telegram.org/bot{token}/sendMessage";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         var payload = JsonSerializer.Serialize(new
         {
@@ -2788,6 +2823,58 @@ public sealed class TelegramBotPollingService : BackgroundService
         }
 
         _ = await res.Content.ReadAsStringAsync(ct);
+    }
+
+    private static string? NormalizeBotToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var normalized = token.Trim();
+        if (normalized.StartsWith("bot", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[3..].Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private string ResolveBotToken()
+    {
+        var fromOptions = NormalizeBotToken(_options.BotToken);
+        if (!string.IsNullOrWhiteSpace(fromOptions))
+        {
+            return fromOptions;
+        }
+
+        var fromEnv = NormalizeBotToken(Environment.GetEnvironmentVariable("TELEGRAM__BOTTOKEN"));
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+        {
+            return fromEnv;
+        }
+
+        try
+        {
+            var configured = Environment.GetEnvironmentVariable("TELEGRAM__BOTTOKEN_FILE");
+            var path = string.IsNullOrWhiteSpace(configured)
+                ? Path.Combine(AppContext.BaseDirectory, "data", "telegram-bot-token.txt")
+                : configured.Trim();
+
+            if (!File.Exists(path))
+            {
+                return string.Empty;
+            }
+
+            var raw = File.ReadAllText(path);
+            return NormalizeBotToken(raw) ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao ler token persistido do Telegram bot.");
+            return string.Empty;
+        }
     }
 
     private static string? GetString(JsonElement node, string property)
@@ -2834,3 +2921,6 @@ public sealed class TelegramBotPollingService : BackgroundService
         public string ChatType { get; set; } = string.Empty;
     }
 }
+
+
+
