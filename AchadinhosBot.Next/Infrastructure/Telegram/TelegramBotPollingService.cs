@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Compliance;
 using AchadinhosBot.Next.Domain.Instagram;
@@ -460,8 +461,14 @@ public sealed class TelegramBotPollingService : BackgroundService
             ct,
             originChatId: update.Message.ChatId,
             destinationChatId: update.Message.ChatId);
-        if (!result.Success || string.IsNullOrWhiteSpace(result.ConvertedText))
+        if (!ForwardingSafety.TryGetStrictForwardText(result, out var strictResponderText, out var strictReason))
         {
+            _logger.LogWarning(
+                "Telegram bot responder bloqueado por conversao invalida ou nao afiliada. Chat={ChatId} Reason={Reason} ConvertedLinks={ConvertedLinks} Success={Success}",
+                update.Message.ChatId,
+                strictReason,
+                result.ConvertedLinks,
+                result.Success);
             if (!IsTelegramGroupChat(update.Message.ChatType) && !string.IsNullOrWhiteSpace(responder.ReplyOnFailure))
             {
                 await SendMessageAsync(update.Message.ChatId, responder.ReplyOnFailure, ct);
@@ -469,7 +476,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             return;
         }
 
-        var response = BuildResponderMessage(responder, result.ConvertedText);
+        var response = BuildResponderMessage(responder, strictResponderText);
         if (responder.AppendSheinCode &&
             response.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(_affiliateOptions.SheinCode) &&

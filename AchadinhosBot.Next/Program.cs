@@ -1289,9 +1289,9 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 originChatRef: msg.ChatId,
                 destinationChatRef: msg.ChatId);
 
-            if (responderResult.Success && !string.IsNullOrWhiteSpace(responderResult.ConvertedText))
+            if (ForwardingSafety.TryGetStrictForwardText(responderResult, out var strictResponderText, out var strictResponderReason))
             {
-                var replyText = BuildResponderMessage(responder, responderResult.ConvertedText);
+                var replyText = BuildResponderMessage(responder, strictResponderText);
 
                 // Enriquecer com metadados de produto (Amazon/Shopee/ML)
                 var (enrichedReply, responderProductImageUrl) = await processor.EnrichTextWithProductDataAsync(
@@ -1354,6 +1354,12 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             }
             else if (!IsWhatsAppGroupChat(msg.ChatId) && !string.IsNullOrWhiteSpace(responder.ReplyOnFailure))
             {
+                logger.LogWarning(
+                    "WhatsApp responder bloqueado por conversao invalida ou nao afiliada. Chat={ChatId} Reason={Reason} ConvertedLinks={ConvertedLinks} Success={Success}",
+                    msg.ChatId,
+                    strictResponderReason,
+                    responderResult.ConvertedLinks,
+                    responderResult.Success);
                 await gateway.SendTextAsync(responderInstance, msg.ChatId, responder.ReplyOnFailure, ct);
                 responderProcessed++;
             }
@@ -1408,17 +1414,16 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 originChatRef: msg.ChatId,
                 destinationChatRef: string.Join(",", destinations));
 
-            if (!result.Success || result.ConvertedLinks <= 0 || string.IsNullOrWhiteSpace(result.ConvertedText))
+            if (!ForwardingSafety.TryGetStrictForwardText(result, out var finalText, out var strictForwardReason))
             {
                 logger.LogWarning(
-                    "WhatsApp forwarding bloqueado por conversao invalida. Chat={ChatId} ConvertedLinks={ConvertedLinks} Success={Success}",
+                    "WhatsApp forwarding bloqueado por conversao invalida ou nao afiliada. Chat={ChatId} Reason={Reason} ConvertedLinks={ConvertedLinks} Success={Success}",
                     msg.ChatId,
+                    strictForwardReason,
                     result.ConvertedLinks,
                     result.Success);
                 continue;
             }
-
-            var finalText = result.ConvertedText;
 
             // Enriquecer com metadados de produto (Amazon/Shopee/ML)
             var (enrichedFinal, forwardProductImageUrl) = await processor.EnrichTextWithProductDataAsync(
