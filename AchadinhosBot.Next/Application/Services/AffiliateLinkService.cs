@@ -526,6 +526,16 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
         if (itemValidation == MercadoLivreItemValidation.Unknown)
         {
+            if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
+            {
+                _logger.LogWarning(
+                    "Mercado Livre: validacao de item inconclusiva via API em link social/curto. Conversao abortada para evitar pagina inexistente. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                    uri.ToString(),
+                    resolvedUri.ToString(),
+                    mlbId);
+                return null;
+            }
+
             _logger.LogWarning("ValidaÃ§Ã£o de item Mercado Livre inconclusiva via API. Prosseguindo com heurÃ­stica. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
         }
 
@@ -618,7 +628,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         foreach (var candidateId in candidateIds)
         {
             var validation = await ValidateMercadoLivreItemWithApiAsync(candidateId, cancellationToken);
-            if (validation == MercadoLivreItemValidation.Valid || validation == MercadoLivreItemValidation.Unknown)
+            if (validation == MercadoLivreItemValidation.Valid)
             {
                 return candidateId;
             }
