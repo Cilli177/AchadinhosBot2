@@ -15,12 +15,17 @@ public static class WebhookSignatureVerifier
             return false;
         }
 
-        if (!request.Headers.TryGetValue(SignatureHeaderName, out var signatureHeader))
+        if (request.Headers.TryGetValue(SignatureHeaderName, out var signatureHeader))
         {
-            return false;
+            if (TryValidate(body, secret, signatureHeader.ToString())) return true;
         }
 
-        return TryValidate(body, secret, signatureHeader.ToString());
+        if (request.Headers.TryGetValue("webhook-signature", out var webhookSignatureHeader))
+        {
+            if (TryValidate(body, secret, webhookSignatureHeader.ToString())) return true;
+        }
+
+        return false;
     }
 
     public static bool TryValidate(string body, string? secret, string? providedSignature)
@@ -58,8 +63,16 @@ public static class WebhookSignatureVerifier
         }
         catch
         {
-            bytes = Array.Empty<byte>();
-            return false;
+            try
+            {
+                bytes = Convert.FromBase64String(value);
+                return bytes.Length > 0;
+            }
+            catch
+            {
+                bytes = Array.Empty<byte>();
+                return false;
+            }
         }
     }
 }

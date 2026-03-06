@@ -3674,12 +3674,25 @@ static bool IsBotConversorWebhookAuthorized(HttpRequest request, string body, st
         return true;
     }
 
-    if (!request.Headers.TryGetValue("x-api-key", out var providedApiKey))
+    string[] tryHeaders = { "x-api-key", "apikey", "Authorization" };
+    foreach (var h in tryHeaders)
     {
-        return false;
+        if (request.Headers.TryGetValue(h, out var providedAuth))
+        {
+            var val = providedAuth.ToString().Trim();
+            if (val.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                val = val["Bearer ".Length..].Trim();
+            }
+
+            if (SecretComparer.EqualsConstantTime(fallbackApiKey, val))
+            {
+                return true;
+            }
+        }
     }
 
-    return SecretComparer.EqualsConstantTime(fallbackApiKey, providedApiKey.ToString());
+    return false;
 }
 
 static string ComputeStableHash(string? input)

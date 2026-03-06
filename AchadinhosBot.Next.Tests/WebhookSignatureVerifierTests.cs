@@ -41,6 +41,19 @@ public sealed class WebhookSignatureVerifierTests
         Assert.False(ok);
     }
 
+    [Fact]
+    public void TryValidate_ReturnsTrue_ForValidBase64Signature()
+    {
+        const string secret = "super-secret";
+        const string body = "{\"event\":\"connection.update\"}";
+        var signatureHex = ComputeHmacHex(secret, body);
+        var signatureBase64 = Convert.ToBase64String(Convert.FromHexString(signatureHex));
+
+        var ok = WebhookSignatureVerifier.TryValidate(body, secret, signatureBase64);
+
+        Assert.True(ok);
+    }
+
     private static string ComputeHmacHex(string secret, string body)
     {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
