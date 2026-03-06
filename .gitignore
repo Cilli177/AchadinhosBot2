@@ -489,3 +489,9 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 .azure
+
+# Local temp and generated validation artifacts
+.tmp_*
+tmp-*
+tmp_*.json
+_build_check/

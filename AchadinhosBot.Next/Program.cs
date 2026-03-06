@@ -8,6 +8,7 @@ using System.Globalization;
 using System.Runtime.Versioning;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Net;
 using System.Net.Http.Headers;
 using System.IO;
 using AchadinhosBot.Next.Application.Abstractions;
@@ -868,7 +869,6 @@ app.MapPost("/webhooks/evolution", async (
 
 app.MapPost("/webhook/bot-conversor", async (
     HttpRequest request,
-    IPublishEndpoint publishEndpoint,
     IHttpClientFactory httpClientFactory,
     ILogger<Program> logger,
     IOptions<EvolutionOptions> evolutionOptions,
@@ -889,41 +889,30 @@ app.MapPost("/webhook/bot-conversor", async (
         return Results.Ok(new { success = true, ignored = true });
     }
 
-    var headers = request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString());
-    try
+    var client = httpClientFactory.CreateClient("evolution-webhook-internal");
+    using var req = new HttpRequestMessage(HttpMethod.Post, "/internal/webhook/bot-conversor")
     {
-        await publishEndpoint.Publish(new ProcessEvolutionWebhookEvent(body, headers), ct);
-        return Results.Ok(new { success = true, mode = "queue" });
-    }
-    catch (Exception ex)
+        Content = new StringContent(body, Encoding.UTF8, "application/json")
+    };
+
+    if (!string.IsNullOrWhiteSpace(webhookOptions.Value.ApiKey))
     {
-        logger.LogWarning(ex, "RabbitMQ indisponivel no webhook bot-conversor. Aplicando fallback direto para endpoint interno.");
-
-        var client = httpClientFactory.CreateClient("evolution-webhook-internal");
-        using var req = new HttpRequestMessage(HttpMethod.Post, "/internal/webhook/bot-conversor")
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json")
-        };
-
-        if (!string.IsNullOrWhiteSpace(webhookOptions.Value.ApiKey))
-        {
-            req.Headers.TryAddWithoutValidation("x-api-key", webhookOptions.Value.ApiKey);
-        }
-
-        using var res = await client.SendAsync(req, ct);
-        var resBody = await res.Content.ReadAsStringAsync(ct);
-        if (!res.IsSuccessStatusCode)
-        {
-            logger.LogWarning(
-                "Fallback interno do webhook bot-conversor falhou. Status={Status} Body={Body}",
-                res.StatusCode,
-                string.IsNullOrWhiteSpace(resBody) ? "(vazio)" : resBody[..Math.Min(400, resBody.Length)]);
-
-            return Results.StatusCode(StatusCodes.Status502BadGateway);
-        }
-
-        return Results.Ok(new { success = true, mode = "fallback-internal" });
+        req.Headers.TryAddWithoutValidation("x-api-key", webhookOptions.Value.ApiKey);
     }
+
+    using var res = await client.SendAsync(req, ct);
+    var resBody = await res.Content.ReadAsStringAsync(ct);
+    if (!res.IsSuccessStatusCode)
+    {
+        logger.LogWarning(
+            "Webhook bot-conversor direto falhou. Status={Status} Body={Body}",
+            res.StatusCode,
+            string.IsNullOrWhiteSpace(resBody) ? "(vazio)" : resBody[..Math.Min(400, resBody.Length)]);
+
+        return Results.StatusCode(StatusCodes.Status502BadGateway);
+    }
+
+    return Results.Ok(new { success = true, mode = "direct-internal" });
 });
 
 app.MapPost("/internal/webhook/bot-conversor", async (
@@ -946,6 +935,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     IIdempotencyStore idempotency,
     OfficialProductDataService officialProductDataService,
     IOptions<AffiliateOptions> affiliate,
+    IOptions<TelegramOptions> telegramOptions,
     IOptions<EvolutionOptions> evolutionOptions,
     IOptions<WebhookOptions> webhookOptions,
     IHttpClientFactory httpClientFactory,
@@ -953,7 +943,10 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     CancellationToken ct) =>
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
-    if (!IsBotConversorWebhookAuthorized(request, body, evolutionOptions.Value.WebhookSecret, webhookOptions.Value.ApiKey))
+    var remoteIp = request.HttpContext.Connection.RemoteIpAddress;
+    var isLoopbackCaller = remoteIp is not null && IPAddress.IsLoopback(remoteIp);
+    if (!isLoopbackCaller &&
+        !IsBotConversorWebhookAuthorized(request, body, evolutionOptions.Value.WebhookSecret, webhookOptions.Value.ApiKey))
     {
         return Results.Unauthorized();
     }
@@ -991,6 +984,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     var responderProcessed = 0;
     foreach (var msg in messages)
     {
+        var mercadoLivreQueuedToBridge = false;
         if (!string.IsNullOrWhiteSpace(msg.MessageId))
         {
             var waEventKey = $"wa-msg:{msg.InstanceName ?? "default"}:{msg.ChatId}:{msg.MessageId}";
@@ -1287,7 +1281,13 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 "WhatsAppResponder",
                 ct,
                 originChatRef: msg.ChatId,
-                destinationChatRef: msg.ChatId);
+                destinationChatRef: msg.ChatId,
+                sourceImageUrl: msg.HasMedia &&
+                                !string.IsNullOrWhiteSpace(msg.MediaUrl) &&
+                                (string.IsNullOrWhiteSpace(msg.MediaMimeType) ||
+                                 msg.MediaMimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                    ? msg.MediaUrl
+                    : null);
 
             if (ForwardingSafety.TryGetStrictForwardText(responderResult, out var strictResponderText, out var strictResponderReason))
             {
@@ -1372,15 +1372,34 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 continue;
             }
 
-            const string protectedOfficialGroupId = "120363405661434395@g.us";
+            var protectedOfficialGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "120363405661434395@g.us"
+            };
+            var configuredOfficialGroupId = Environment.GetEnvironmentVariable("OFFICIAL_WHATSAPP_GROUP_ID");
+            if (!string.IsNullOrWhiteSpace(configuredOfficialGroupId))
+            {
+                protectedOfficialGroupIds.Add(configuredOfficialGroupId.Trim());
+            }
+
             var isTestRoute = !string.IsNullOrWhiteSpace(waRoute.Name)
-                && waRoute.Name.Contains("teste", StringComparison.OrdinalIgnoreCase);
+                && (waRoute.Name.Contains("teste", StringComparison.OrdinalIgnoreCase)
+                    || waRoute.Name.Contains("test", StringComparison.OrdinalIgnoreCase));
 
             var destinations = waRoute.DestinationGroupIds
                 .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Where(x => !(isTestRoute && string.Equals(x.Trim(), protectedOfficialGroupId, StringComparison.OrdinalIgnoreCase)))
+                .Where(x => !(isTestRoute && protectedOfficialGroupIds.Contains(x.Trim())))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+            if (isTestRoute && destinations.Length == 0 && waRoute.DestinationGroupIds.Count > 0)
+            {
+                logger.LogWarning(
+                    "Rota de teste bloqueada por protecao do grupo oficial. Route={RouteName} Destinations={Destinations}",
+                    waRoute.Name,
+                    string.Join(",", waRoute.DestinationGroupIds));
+            }
+
             if (destinations.Length == 0 || waRoute.SourceChatIds.Count == 0)
             {
                 continue;
@@ -1412,7 +1431,13 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 "WhatsApp",
                 ct,
                 originChatRef: msg.ChatId,
-                destinationChatRef: string.Join(",", destinations));
+                destinationChatRef: string.Join(",", destinations),
+                sourceImageUrl: msg.HasMedia &&
+                                !string.IsNullOrWhiteSpace(msg.MediaUrl) &&
+                                (string.IsNullOrWhiteSpace(msg.MediaMimeType) ||
+                                 msg.MediaMimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                    ? msg.MediaUrl
+                    : null);
 
             if (!ForwardingSafety.TryGetStrictForwardText(result, out var finalText, out var strictForwardReason))
             {
@@ -1422,6 +1447,42 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                     strictForwardReason,
                     result.ConvertedLinks,
                     result.Success);
+
+                if (!mercadoLivreQueuedToBridge)
+                {
+                    var hasMercadoLivreLink =
+                        ExtractUrlsFromText(normalizedText).Any(IsMercadoLivreUrlLike)
+                        || (!string.IsNullOrWhiteSpace(result.ConvertedText)
+                            && ExtractUrlsFromText(result.ConvertedText).Any(IsMercadoLivreUrlLike));
+                    if (hasMercadoLivreLink)
+                    {
+                        var bridgeChatId = ResolveMercadoLivreApprovalTelegramBridgeChatId();
+                        if (bridgeChatId != 0)
+                        {
+                            var bridgeText = string.IsNullOrWhiteSpace(normalizedText)
+                                ? "Oferta Mercado Livre pendente de aprovacao manual."
+                                : normalizedText;
+                            var bridgeImageUrl = msg.HasMedia ? msg.MediaUrl : null;
+                            var bridgeSent = await SendTelegramManualApprovalAsync(
+                                httpClientFactory,
+                                telegramOptions.Value,
+                                bridgeChatId,
+                                bridgeText,
+                                bridgeImageUrl,
+                                ct);
+                            if (bridgeSent)
+                            {
+                                mercadoLivreQueuedToBridge = true;
+                            }
+                            else
+                            {
+                                logger.LogWarning(
+                                    "Falha ao enviar pendencia Mercado Livre para ponte Telegram. ChatId={ChatId}",
+                                    bridgeChatId);
+                            }
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -1429,6 +1490,56 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             var (enrichedFinal, forwardProductImageUrl) = await processor.EnrichTextWithProductDataAsync(
                 finalText, normalizedText, ct);
             finalText = enrichedFinal;
+
+            var hasImageCandidate =
+                (msg.HasMedia && (!string.IsNullOrWhiteSpace(msg.MediaUrl) || !string.IsNullOrWhiteSpace(msg.MediaBase64)))
+                || !string.IsNullOrWhiteSpace(forwardProductImageUrl);
+            var qualityGate = OfferQualityGate.ValidateForAutoForward(finalText, hasImageCandidate);
+            if (!qualityGate.Allowed)
+            {
+                logger.LogWarning(
+                    "WhatsApp forwarding bloqueado por quality gate. Chat={ChatId} Reason={Reason} Detail={Detail} HasImageCandidate={HasImageCandidate}",
+                    msg.ChatId,
+                    qualityGate.Reason,
+                    qualityGate.Detail ?? "n/a",
+                    hasImageCandidate);
+
+                if (!mercadoLivreQueuedToBridge)
+                {
+                    var hasMercadoLivreLink =
+                        ExtractUrlsFromText(normalizedText).Any(IsMercadoLivreUrlLike)
+                        || ExtractUrlsFromText(finalText).Any(IsMercadoLivreUrlLike);
+                    if (hasMercadoLivreLink)
+                    {
+                        var bridgeChatId = ResolveMercadoLivreApprovalTelegramBridgeChatId();
+                        if (bridgeChatId != 0)
+                        {
+                            var bridgeText = string.IsNullOrWhiteSpace(normalizedText)
+                                ? finalText
+                                : normalizedText;
+                            var bridgeImageUrl = msg.HasMedia ? msg.MediaUrl : null;
+                            var bridgeSent = await SendTelegramManualApprovalAsync(
+                                httpClientFactory,
+                                telegramOptions.Value,
+                                bridgeChatId,
+                                bridgeText,
+                                bridgeImageUrl,
+                                ct);
+                            if (bridgeSent)
+                            {
+                                mercadoLivreQueuedToBridge = true;
+                            }
+                            else
+                            {
+                                logger.LogWarning(
+                                    "Falha ao enviar pendencia Mercado Livre para ponte Telegram apos quality gate. ChatId={ChatId}",
+                                    bridgeChatId);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
 
             if (waRoute.AppendSheinCode &&
                 finalText.Contains("shein", StringComparison.OrdinalIgnoreCase) &&
@@ -2703,10 +2814,65 @@ api.MapGet("/mercadolivre/pending", async (
     [FromQuery] string? status,
     [FromQuery] int? limit,
     IMercadoLivreApprovalStore approvalStore,
+    IMessageProcessor processor,
     CancellationToken ct) =>
 {
     var items = await approvalStore.ListAsync(status, limit ?? 200, ct);
-    return Results.Ok(new { items });
+    var previewBudget = 50;
+    var previewUsed = 0;
+    var enriched = new List<object>(items.Count);
+
+    foreach (var item in items)
+    {
+        var previewConvertedUrls = new List<string>();
+        if (previewUsed < previewBudget
+            && string.Equals(item.Status, "pending", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(item.OriginalText))
+        {
+            var preview = await processor.ProcessAsync(
+                item.OriginalText,
+                "MercadoLivreManualApproval",
+                ct,
+                originChatId: item.OriginChatId,
+                destinationChatId: item.DestinationChatId,
+                originChatRef: item.OriginChatRef,
+                destinationChatRef: item.DestinationChatRef);
+
+            previewUsed++;
+            if (!string.IsNullOrWhiteSpace(preview.ConvertedText))
+            {
+                previewConvertedUrls = ExtractUrlsFromText(preview.ConvertedText!)
+                    .Where(IsMercadoLivreUrlLike)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(10)
+                    .ToList();
+            }
+        }
+
+        enriched.Add(new
+        {
+            item.Id,
+            item.CreatedAt,
+            item.Status,
+            item.Source,
+            item.Reason,
+            item.OriginalText,
+            item.ExtractedUrls,
+            item.OriginChatId,
+            item.DestinationChatId,
+            item.OriginChatRef,
+            item.DestinationChatRef,
+            item.ReviewedAt,
+            item.ReviewedBy,
+            item.ReviewNote,
+            item.ConvertedText,
+            item.ConvertedLinks,
+            item.OriginalImageUrl,
+            previewConvertedUrls
+        });
+    }
+
+    return Results.Ok(new { items = enriched });
 }).RequireAuthorization("AdminOnly");
 
 api.MapPost("/mercadolivre/pending/{id}/approve", async (
@@ -2730,62 +2896,113 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
 
     if (!string.Equals(item.Status, "pending", StringComparison.OrdinalIgnoreCase))
     {
-        return Results.BadRequest(new { error = $"Pendencia ja foi analisada ({item.Status})." });
+        return Results.Ok(new
+        {
+            success = true,
+            alreadyReviewed = true,
+            status = item.Status,
+            converted = item.ConvertedText ?? item.OriginalText,
+            convertedLinks = item.ConvertedLinks,
+            sendNow = false,
+            sentTargets = 0,
+            sendFailures = Array.Empty<string>()
+        });
     }
 
-    var result = await processor.ProcessAsync(
-        item.OriginalText,
-        "MercadoLivreManualApproval",
-        ct,
-        originChatId: item.OriginChatId,
-        destinationChatId: item.DestinationChatId,
-        originChatRef: item.OriginChatRef,
-        destinationChatRef: item.DestinationChatRef);
+    if (string.IsNullOrWhiteSpace(payload.OverrideUrl))
+    {
+        return Results.BadRequest(new
+        {
+            error = "Link corrigido obrigatorio para aprovar ofertas do Mercado Livre."
+        });
+    }
 
-    var convertedText = (!string.IsNullOrWhiteSpace(result.ConvertedText) && result.Success)
-        ? result.ConvertedText!
-        : item.OriginalText;
-    var convertedLinks = result.Success ? result.ConvertedLinks : 0;
+    var convertedText = ApplyMercadoLivreManualOverride(
+        item.OriginalText ?? string.Empty,
+        item.ExtractedUrls,
+        payload.OverrideUrl);
+    var convertedLinks = CountUrlsInText(convertedText);
+    var convertedTextForStore = convertedText;
+    var convertedLinksForStore = convertedLinks;
+
     if (string.IsNullOrWhiteSpace(convertedText))
     {
         return Results.BadRequest(new { error = "Pendencia sem texto para aprovar." });
     }
 
+    // Guarda uma versao normalizada para cruzar aprovacao mesmo quando
+    // o link aprovado (ex.: meli.la) for expandido depois no fluxo.
+    var normalizedForStore = await processor.ProcessAsync(
+        convertedText,
+        "MercadoLivreManualApproval",
+        ct,
+        originChatId: item.OriginChatId,
+        destinationChatId: item.DestinationChatId,
+        originChatRef: item.OriginChatRef,
+        destinationChatRef: item.DestinationChatRef,
+        sourceImageUrl: item.OriginalImageUrl);
+    if (!string.IsNullOrWhiteSpace(normalizedForStore.ConvertedText))
+    {
+        convertedTextForStore = normalizedForStore.ConvertedText!;
+        convertedLinksForStore = normalizedForStore.ConvertedLinks;
+    }
+
+    // Persistir a aprovacao antes do envio evita re-bloqueio imediato quando a
+    // mensagem publicada no Telegram e processada em seguida pelo userbot.
+    var initialReviewNote = payload.Note;
+    var initialSaveOk = await approvalStore.DecideAsync(
+        id,
+        "approved",
+        context.User.Identity?.Name ?? "unknown",
+        initialReviewNote,
+        convertedTextForStore,
+        convertedLinksForStore,
+        ct);
+
+    if (!initialSaveOk)
+    {
+        return Results.BadRequest(new { error = "Falha ao salvar aprovacao." });
+    }
+
     var sendNow = payload.SendNow ?? true;
     var sendSuccess = 0;
     var sendFailures = new List<string>();
-    var whatsAppTargets = Array.Empty<string>();
     var telegramTargets = new List<long>();
+    var outboundText = convertedText;
+    string? outboundImageUrl = item.OriginalImageUrl;
 
     if (sendNow)
     {
         var settings = await settingsStore.GetAsync(ct);
-        var rawTargets = string.IsNullOrWhiteSpace(item.DestinationChatRef)
-            ? item.OriginChatRef
-            : item.DestinationChatRef;
-        whatsAppTargets = ParseChatRefs(rawTargets)
-            .Where(x => x.Contains("@", StringComparison.OrdinalIgnoreCase))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        foreach (var target in whatsAppTargets)
+        var (enrichedText, productImageUrl) = await processor.EnrichTextWithProductDataAsync(convertedText, item.OriginalText, ct);
+        if (!string.IsNullOrWhiteSpace(enrichedText))
         {
-            var sendResult = await gateway.SendTextAsync(settings.WhatsAppForwarding?.InstanceName, target, convertedText, ct);
-            if (sendResult.Success)
-            {
-                sendSuccess++;
-            }
-            else
-            {
-                sendFailures.Add($"{target}: {sendResult.Message}");
-            }
+            outboundText = enrichedText;
+        }
+        if (string.IsNullOrWhiteSpace(outboundImageUrl))
+        {
+            outboundImageUrl = productImageUrl;
         }
 
         if (item.DestinationChatId.HasValue && item.DestinationChatId.Value != 0)
         {
             telegramTargets.Add(item.DestinationChatId.Value);
         }
-        if (item.OriginChatId.HasValue && item.OriginChatId.Value != 0 && string.IsNullOrWhiteSpace(item.DestinationChatRef))
+
+        if (settings.TelegramForwarding.DestinationChatId != 0)
+        {
+            telegramTargets.Add(settings.TelegramForwarding.DestinationChatId);
+        }
+
+        if (telegramOptions.Value.DestinationChatId != 0)
+        {
+            telegramTargets.Add(telegramOptions.Value.DestinationChatId);
+        }
+
+        if (item.OriginChatId.HasValue
+            && item.OriginChatId.Value != 0
+            && telegramTargets.Count == 0
+            && string.IsNullOrWhiteSpace(item.DestinationChatRef))
         {
             telegramTargets.Add(item.OriginChatId.Value);
         }
@@ -2795,7 +3012,7 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
             .ToArray();
         foreach (var chatId in uniqueTelegramTargets)
         {
-            var sent = await SendTelegramManualApprovalAsync(httpClientFactory, telegramOptions.Value, chatId, convertedText, ct);
+            var sent = await SendTelegramManualApprovalAsync(httpClientFactory, telegramOptions.Value, chatId, outboundText, outboundImageUrl, ct);
             if (sent)
             {
                 sendSuccess++;
@@ -2810,7 +3027,7 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
     var reviewNote = payload.Note;
     if (sendNow)
     {
-        var summary = $"Envio WhatsApp manual: sucesso={sendSuccess}, falhas={sendFailures.Count}.";
+        var summary = $"Envio Telegram manual: sucesso={sendSuccess}, falhas={sendFailures.Count}.";
         reviewNote = string.IsNullOrWhiteSpace(reviewNote) ? summary : $"{reviewNote} | {summary}";
     }
 
@@ -2819,8 +3036,8 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
         "approved",
         context.User.Identity?.Name ?? "unknown",
         reviewNote,
-        convertedText,
-        result.ConvertedLinks,
+        convertedTextForStore,
+        convertedLinksForStore,
         ct);
 
     if (!ok)
@@ -2839,7 +3056,7 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
     return Results.Ok(new
     {
         success = true,
-        converted = convertedText,
+        converted = outboundText,
         convertedLinks,
         sendNow,
         sentTargets = sendSuccess,
@@ -3486,11 +3703,93 @@ static string[] ParseChatRefs(string? input)
         .ToArray();
 }
 
+static IEnumerable<string> ExtractUrlsFromText(string text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return Array.Empty<string>();
+    }
+
+    return Regex.Matches(text, @"https?://[^\s]+", RegexOptions.IgnoreCase)
+        .Select(m => m.Value.Trim().TrimEnd('.', ',', ';', '!', '?', ')', ']', '}'))
+        .Where(x => !string.IsNullOrWhiteSpace(x));
+}
+
+static bool IsMercadoLivreUrlLike(string url)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return false;
+    }
+
+    return url.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
+           || url.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
+           || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
+           || url.Contains("compre.link", StringComparison.OrdinalIgnoreCase);
+}
+
+static int CountUrlsInText(string? text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return 0;
+    }
+
+    return Regex.Matches(text, @"https?://[^\s]+", RegexOptions.IgnoreCase).Count;
+}
+
+static string ApplyMercadoLivreManualOverride(string text, IReadOnlyCollection<string>? extractedUrls, string? overrideUrl)
+{
+    if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(overrideUrl))
+    {
+        return text;
+    }
+
+    var replacement = overrideUrl.Trim();
+    if (!Uri.TryCreate(replacement, UriKind.Absolute, out _))
+    {
+        return text;
+    }
+
+    var result = text;
+    if (extractedUrls is not null)
+    {
+        foreach (var original in extractedUrls
+                     .Where(x => !string.IsNullOrWhiteSpace(x))
+                     .Select(x => x.Trim())
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            result = result.Replace(original, replacement, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    result = Regex.Replace(
+        result,
+        @"https?://[^\s]+",
+        match =>
+        {
+            var url = match.Value;
+            var lowered = url.ToLowerInvariant();
+            if (lowered.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
+                || lowered.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
+                || lowered.Contains("meli.la", StringComparison.OrdinalIgnoreCase))
+            {
+                return replacement;
+            }
+
+            return url;
+        },
+        RegexOptions.IgnoreCase);
+
+    return result;
+}
+
 static async Task<bool> SendTelegramManualApprovalAsync(
     IHttpClientFactory httpClientFactory,
     TelegramOptions telegramOptions,
     long chatId,
     string text,
+    string? imageUrl,
     CancellationToken ct)
 {
     if (chatId == 0 || string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(telegramOptions.BotToken))
@@ -3501,22 +3800,182 @@ static async Task<bool> SendTelegramManualApprovalAsync(
     try
     {
         var client = httpClientFactory.CreateClient("default");
-        var url = $"https://api.telegram.org/bot{telegramOptions.BotToken}/sendMessage";
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        var payload = JsonSerializer.Serialize(new
-        {
-            chat_id = chatId,
-            text
-        });
-        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        var hasImage = !string.IsNullOrWhiteSpace(imageUrl);
+        var caption = text.Length > 1000 ? text[..1000] : text;
+        var remainingText = text.Length > 1000 ? text[1000..].Trim() : null;
 
-        using var response = await client.SendAsync(request, ct);
-        return response.IsSuccessStatusCode;
+        if (hasImage)
+        {
+            var photoUrl = $"https://api.telegram.org/bot{telegramOptions.BotToken}/sendPhoto";
+            using var photoRequest = new HttpRequestMessage(HttpMethod.Post, photoUrl);
+            var photoPayload = JsonSerializer.Serialize(new
+            {
+                chat_id = chatId,
+                photo = imageUrl,
+                caption
+            });
+            photoRequest.Content = new StringContent(photoPayload, Encoding.UTF8, "application/json");
+
+            using var photoResponse = await client.SendAsync(photoRequest, ct);
+            if (photoResponse.IsSuccessStatusCode)
+            {
+                if (!string.IsNullOrWhiteSpace(remainingText))
+                {
+                    var sendRemaining = await SendTelegramTextAsync(client, telegramOptions.BotToken, chatId, remainingText, ct);
+                    if (!sendRemaining)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            // Fallback: baixa a imagem e envia como arquivo multipart.
+            if (Uri.TryCreate(imageUrl, UriKind.Absolute, out _))
+            {
+                using var imageReq = new HttpRequestMessage(HttpMethod.Get, imageUrl);
+                imageReq.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; AchadinhosBot/1.0)");
+                imageReq.Headers.Accept.ParseAdd("image/*,*/*;q=0.8");
+                using var imageRes = await client.SendAsync(imageReq, ct);
+                if (imageRes.IsSuccessStatusCode)
+                {
+                    var bytes = await imageRes.Content.ReadAsByteArrayAsync(ct);
+                    if (bytes.Length > 0)
+                    {
+                        var multipartPhotoUrl = $"https://api.telegram.org/bot{telegramOptions.BotToken}/sendPhoto";
+                        using var form = new MultipartFormDataContent();
+                        form.Add(new StringContent(chatId.ToString()), "chat_id");
+                        form.Add(new StringContent(caption), "caption");
+                        var mime = imageRes.Content.Headers.ContentType?.MediaType
+                                   ?? DetectMimeTypeFromBytes(bytes)
+                                   ?? "image/jpeg";
+                        var fileName = mime.Contains("png", StringComparison.OrdinalIgnoreCase)
+                            ? "photo.png"
+                            : "photo.jpg";
+                        var file = new ByteArrayContent(bytes);
+                        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mime);
+                        form.Add(file, "photo", fileName);
+
+                        using var multipartReq = new HttpRequestMessage(HttpMethod.Post, multipartPhotoUrl)
+                        {
+                            Content = form
+                        };
+                        using var multipartRes = await client.SendAsync(multipartReq, ct);
+                        if (multipartRes.IsSuccessStatusCode)
+                        {
+                            if (!string.IsNullOrWhiteSpace(remainingText))
+                            {
+                                var sendRemaining = await SendTelegramTextAsync(client, telegramOptions.BotToken, chatId, remainingText, ct);
+                                if (!sendRemaining)
+                                {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return await SendTelegramTextAsync(client, telegramOptions.BotToken, chatId, text, ct);
     }
     catch
     {
         return false;
     }
+}
+
+static async Task<bool> SendTelegramTextAsync(
+    HttpClient client,
+    string botToken,
+    long chatId,
+    string text,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return false;
+    }
+
+    var messageUrl = $"https://api.telegram.org/bot{botToken}/sendMessage";
+    using var messageRequest = new HttpRequestMessage(HttpMethod.Post, messageUrl);
+    var messagePayload = JsonSerializer.Serialize(new
+    {
+        chat_id = chatId,
+        text
+    });
+    messageRequest.Content = new StringContent(messagePayload, Encoding.UTF8, "application/json");
+
+    using var messageResponse = await client.SendAsync(messageRequest, ct);
+    return messageResponse.IsSuccessStatusCode;
+}
+
+static long ResolveMercadoLivreApprovalTelegramBridgeChatId()
+{
+    var fromEnv = Environment.GetEnvironmentVariable("MERCADOLIVRE_APPROVAL_TELEGRAM_BRIDGE_CHAT_ID");
+    if (!string.IsNullOrWhiteSpace(fromEnv) && long.TryParse(fromEnv.Trim(), out var parsed) && parsed != 0)
+    {
+        return parsed;
+    }
+
+    // Fallback operacional solicitado: ponte Telegram para encaminhamento ao WhatsApp.
+    return 5169049471;
+}
+
+static async Task<WhatsAppSendResult> SendWhatsAppManualApprovalWithFallbackAsync(
+    IWhatsAppGateway gateway,
+    IHttpClientFactory httpClientFactory,
+    string? instanceName,
+    string target,
+    string text,
+    string? imageUrl,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(imageUrl))
+    {
+        return await gateway.SendTextAsync(instanceName, target, text, ct);
+    }
+
+    var byUrl = await gateway.SendImageUrlAsync(instanceName, target, imageUrl, text, "image/jpeg", null, ct);
+    if (byUrl.Success)
+    {
+        return byUrl;
+    }
+
+    try
+    {
+        var client = httpClientFactory.CreateClient("default");
+        using var req = new HttpRequestMessage(HttpMethod.Get, imageUrl);
+        req.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; AchadinhosBot/1.0)");
+        req.Headers.Accept.ParseAdd("image/*,*/*;q=0.8");
+        using var res = await client.SendAsync(req, ct);
+        if (res.IsSuccessStatusCode)
+        {
+            var bytes = await res.Content.ReadAsByteArrayAsync(ct);
+            if (bytes.Length > 0)
+            {
+                var mime = DetectMimeTypeFromBytes(bytes) ?? "image/jpeg";
+                var byBytes = await gateway.SendImageAsync(instanceName, target, bytes, text, mime, ct);
+                if (byBytes.Success)
+                {
+                    return byBytes;
+                }
+            }
+        }
+    }
+    catch
+    {
+        // Fallback final para texto simples.
+    }
+
+    var textFallback = await gateway.SendTextAsync(instanceName, target, text, ct);
+    if (textFallback.Success)
+    {
+        return new WhatsAppSendResult(true, "Imagem falhou; enviado como texto.");
+    }
+
+    return new WhatsAppSendResult(false, $"Falha imagem={byUrl.Message}; falha texto={textFallback.Message}");
 }
 
 static IReadOnlyList<WhatsAppForwardingRouteSettings> ResolveWhatsAppForwardingRoutes(AutomationSettings settings)
@@ -10684,7 +11143,7 @@ static string NormalizeWebConversorSource(string? source)
 
 internal sealed record LoginRequest(string Username, string Password);
 internal sealed record PlaygroundRequest(string Text);
-internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow);
+internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow, string? OverrideUrl);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
 internal sealed record TelegramBotConnectRequest(string? BotToken);
 internal sealed record TelegramUserbotReplayRequest(long SourceChatId, int Count = 10, bool AllowOfficialDestination = false);

@@ -43,7 +43,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
         long? originChatId = null,
         long? destinationChatId = null,
         string? originChatRef = null,
-        string? destinationChatRef = null)
+        string? destinationChatRef = null,
+        string? sourceImageUrl = null)
     {
         if (string.IsNullOrWhiteSpace(input))
         {
@@ -71,10 +72,16 @@ public sealed partial class MessageProcessor : IMessageProcessor
             .Select(x => x.CleanedUrl)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var approvedMercadoLivreUrls = mercadoLivreUrls.Length > 0
+            ? await _mercadoLivreApprovalStore.GetApprovedUrlsAsync(mercadoLivreUrls, cancellationToken)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unapprovedMercadoLivreUrls = mercadoLivreUrls
+            .Where(x => !approvedMercadoLivreUrls.Contains(NormalizeUrl(x)))
+            .ToArray();
         var isAutomaticSource = IsAutomaticSource(source);
         MercadoLivreComplianceSettings? mercadoLivreCompliance = null;
 
-        if (mercadoLivreUrls.Length > 0)
+        if (unapprovedMercadoLivreUrls.Length > 0)
         {
             var compliance = settings.MercadoLivreCompliance ?? new MercadoLivreComplianceSettings();
             mercadoLivreCompliance = compliance;
@@ -95,7 +102,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         Source = source,
                         Reason = reason!,
                         OriginalText = input,
-                        ExtractedUrls = mercadoLivreUrls.ToList(),
+                        ExtractedUrls = unapprovedMercadoLivreUrls.ToList(),
+                        OriginalImageUrl = sourceImageUrl,
                         OriginChatId = originChatId,
                         DestinationChatId = destinationChatId,
                         OriginChatRef = originChatRef,
@@ -109,7 +117,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     Store = "Mercado Livre",
                     Success = false,
                     Error = reason,
-                    OriginalUrl = string.Join(" | ", mercadoLivreUrls),
+                    OriginalUrl = string.Join(" | ", unapprovedMercadoLivreUrls),
                     ConvertedUrl = string.Empty,
                     OriginChatId = originChatId,
                     DestinationChatId = destinationChatId,
@@ -122,7 +130,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     "Compliance Mercado Livre bloqueou processamento. Source={Source} Reason={Reason} Urls={Urls}",
                     source,
                     reason,
-                    string.Join(" | ", mercadoLivreUrls));
+                    string.Join(" | ", unapprovedMercadoLivreUrls));
 
                 return new ConversionResult(false, null, 0, source);
             }
@@ -138,26 +146,110 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
         await Task.WhenAll(tasks);
 
-        if (mercadoLivreUrls.Length > 0 && isAutomaticSource)
+        var detectedMercadoLivreUrls = new HashSet<string>(mercadoLivreUrls, StringComparer.OrdinalIgnoreCase);
+        var invalidMercadoLivreUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < items.Count; i++)
         {
-            var invalidMercadoLivreUrls = new List<string>();
-            for (var i = 0; i < items.Count; i++)
+            var item = items[i];
+            if (item.IsBlocked)
             {
-                var item = items[i];
-                if (!IsMercadoLivreUrl(item.CleanedUrl))
-                {
-                    continue;
-                }
-
-                var result = tasks[i].Result;
-                var valid = result.Success && result.IsAffiliated && !string.IsNullOrWhiteSpace(result.ConvertedUrl);
-                if (!valid)
-                {
-                    invalidMercadoLivreUrls.Add(item.CleanedUrl);
-                }
+                continue;
             }
 
-            if (invalidMercadoLivreUrls.Count > 0)
+            var result = tasks[i].Result;
+            var detectedStore = string.IsNullOrWhiteSpace(result.Store)
+                ? DetectStore(result.ConvertedUrl, item.CleanedUrl)
+                : result.Store;
+            var detectedAsMercadoLivre =
+                IsMercadoLivreUrl(item.CleanedUrl)
+                || IsMercadoLivreUrl(result.ConvertedUrl)
+                || string.Equals(detectedStore, "Mercado Livre", StringComparison.OrdinalIgnoreCase);
+            if (!detectedAsMercadoLivre)
+            {
+                continue;
+            }
+
+            detectedMercadoLivreUrls.Add(item.CleanedUrl);
+            if (!string.IsNullOrWhiteSpace(result.ConvertedUrl))
+            {
+                detectedMercadoLivreUrls.Add(result.ConvertedUrl);
+            }
+
+            var valid = result.Success && result.IsAffiliated && !string.IsNullOrWhiteSpace(result.ConvertedUrl);
+            if (!valid)
+            {
+                invalidMercadoLivreUrls.Add(item.CleanedUrl);
+            }
+        }
+
+        if (detectedMercadoLivreUrls.Count > 0 && isAutomaticSource)
+        {
+            var approvedDetectedUrls = await _mercadoLivreApprovalStore.GetApprovedUrlsAsync(detectedMercadoLivreUrls.ToArray(), cancellationToken);
+            var unapprovedDetectedUrls = detectedMercadoLivreUrls
+                .Where(x => !approvedDetectedUrls.Contains(NormalizeUrl(x)))
+                .ToArray();
+            if (unapprovedDetectedUrls.Length > 0)
+            {
+                var compliance = mercadoLivreCompliance ?? settings.MercadoLivreCompliance ?? new MercadoLivreComplianceSettings();
+                var reason = EvaluateMercadoLivreCompliance(
+                    compliance,
+                    source,
+                    originChatId,
+                    destinationChatId,
+                    originChatRef,
+                    destinationChatRef);
+
+                if (!string.IsNullOrWhiteSpace(reason))
+                {
+                    if (compliance.RequireManualApproval)
+                    {
+                        await _mercadoLivreApprovalStore.AppendAsync(new MercadoLivrePendingApproval
+                        {
+                            Source = source,
+                            Reason = reason!,
+                            OriginalText = input,
+                            ExtractedUrls = unapprovedDetectedUrls.ToList(),
+                            OriginalImageUrl = sourceImageUrl,
+                            OriginChatId = originChatId,
+                            DestinationChatId = destinationChatId,
+                            OriginChatRef = originChatRef,
+                            DestinationChatRef = destinationChatRef
+                        }, cancellationToken);
+                    }
+
+                    await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                    {
+                        Source = source,
+                        Store = "Mercado Livre",
+                        Success = false,
+                        Error = reason,
+                        OriginalUrl = string.Join(" | ", unapprovedDetectedUrls),
+                        ConvertedUrl = string.Empty,
+                        OriginChatId = originChatId,
+                        DestinationChatId = destinationChatId,
+                        OriginChatRef = originChatRef,
+                        DestinationChatRef = destinationChatRef,
+                        ElapsedMs = sw.ElapsedMilliseconds
+                    }, cancellationToken);
+
+                    _logger.LogWarning(
+                        "Compliance Mercado Livre (expandido) bloqueou processamento. Source={Source} Reason={Reason} Urls={Urls}",
+                        source,
+                        reason,
+                        string.Join(" | ", unapprovedDetectedUrls));
+
+                    return new ConversionResult(false, null, 0, source);
+                }
+            }
+        }
+
+        if (invalidMercadoLivreUrls.Count > 0 && isAutomaticSource)
+        {
+            var approvedInvalidUrls = await _mercadoLivreApprovalStore.GetApprovedUrlsAsync(invalidMercadoLivreUrls.ToArray(), cancellationToken);
+            var invalidUnapprovedUrls = invalidMercadoLivreUrls
+                .Where(x => !approvedInvalidUrls.Contains(NormalizeUrl(x)))
+                .ToArray();
+            if (invalidUnapprovedUrls.Length > 0)
             {
                 var reason = "Verificacao obrigatoria do Mercado Livre falhou. Link nao sera enviado automaticamente.";
                 if (mercadoLivreCompliance?.RequireManualApproval ?? true)
@@ -167,7 +259,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         Source = source,
                         Reason = reason,
                         OriginalText = input,
-                        ExtractedUrls = invalidMercadoLivreUrls.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                        ExtractedUrls = invalidUnapprovedUrls.ToList(),
+                        OriginalImageUrl = sourceImageUrl,
                         OriginChatId = originChatId,
                         DestinationChatId = destinationChatId,
                         OriginChatRef = originChatRef,
@@ -181,7 +274,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     Store = "Mercado Livre",
                     Success = false,
                     Error = reason,
-                    OriginalUrl = string.Join(" | ", invalidMercadoLivreUrls.Distinct(StringComparer.OrdinalIgnoreCase)),
+                    OriginalUrl = string.Join(" | ", invalidUnapprovedUrls),
                     ConvertedUrl = string.Empty,
                     OriginChatId = originChatId,
                     DestinationChatId = destinationChatId,
@@ -192,7 +285,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
                 _logger.LogWarning("Bloqueio automatico Mercado Livre por validacao obrigatoria. Source={Source} Urls={Urls}",
                     source,
-                    string.Join(" | ", invalidMercadoLivreUrls.Distinct(StringComparer.OrdinalIgnoreCase)));
+                    string.Join(" | ", invalidUnapprovedUrls));
 
                 return new ConversionResult(false, null, 0, source);
             }
@@ -610,6 +703,26 @@ public sealed partial class MessageProcessor : IMessageProcessor
         if (lower.Contains("shein")) return "Shein";
         return "Unknown";
     }
+
+    private static string NormalizeUrl(string url)
+    {
+        if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+        {
+            return url?.Trim() ?? string.Empty;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Fragment = string.Empty
+        };
+        if ((builder.Scheme == Uri.UriSchemeHttp && builder.Port == 80) ||
+            (builder.Scheme == Uri.UriSchemeHttps && builder.Port == 443))
+        {
+            builder.Port = -1;
+        }
+
+        return builder.Uri.ToString().TrimEnd('/');
+    }
     public async Task<(string EnrichedText, string? ProductImageUrl)> EnrichTextWithProductDataAsync(
         string convertedText,
         string originalText,
@@ -638,6 +751,19 @@ public sealed partial class MessageProcessor : IMessageProcessor
             var convertedUrl = convertedUrlMatch.Success ? convertedUrlMatch.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}') : null;
 
             var productData = await _productDataService.TryGetBestAsync(originalUrl, convertedUrl, cancellationToken);
+            if (productData is null && isML)
+            {
+                // Fallback: force conversion of ML short/social URL and retry product data.
+                var candidate = convertedUrl ?? originalUrl;
+                if (!string.IsNullOrWhiteSpace(candidate))
+                {
+                    var convertedCandidate = await _affiliateLinkService.ConvertAsync(candidate, cancellationToken, source: "manual");
+                    if (convertedCandidate.Success && !string.IsNullOrWhiteSpace(convertedCandidate.ConvertedUrl))
+                    {
+                        productData = await _productDataService.TryGetBestAsync(candidate, convertedCandidate.ConvertedUrl, cancellationToken);
+                    }
+                }
+            }
             if (productData is null)
             {
                 return (convertedText, null);

@@ -1,0 +1,325 @@
+{
+  "name": "Cenario 01 - Oferta para Draft",
+  "flow": [
+    {
+      "id": 1,
+      "module": "telegram:WatchUpdates",
+      "version": 1,
+      "parameters": {
+        "__IMTHOOK__": 1965644
+      },
+      "mapper": {},
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "filter": {
+        "name": "Comando /oferta",
+        "conditions": [
+          [
+            {
+              "a": "{{1.message.text}}",
+              "b": "/oferta",
+              "o": "text:startsWith"
+            }
+          ]
+        ]
+      },
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/sendMessage",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"chat_id\": \"{{1.message.chat.id}}\",\n  \"reply_to_message_id\": \"{{1.message.message_id}}\",\n  \"text\": \"Envie agora a oferta original encaminhada (com imagem).\"\n}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": -140
+        }
+      }
+    },
+    {
+      "id": 3,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "filter": {
+        "name": "Mensagem com imagem + texto",
+        "conditions": [
+          [
+            {
+              "a": "{{length(1.message.photo)}}",
+              "b": "0",
+              "o": "number:greater"
+            },
+            {
+              "a": "{{ifempty(1.message.caption;1.message.text)}}",
+              "b": "",
+              "o": "text:notequal"
+            }
+          ]
+        ]
+      },
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDortoZ8bGV-K5WaizY-hEXKRTxp9HIzFk",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"Extraia dados de oferta em portugues-BR e retorne SOMENTE JSON valido com: product_name, catchy_description, product_description, original_price, current_price, affiliate_link. Texto da oferta: {{ifempty(1.message.caption;1.message.text)}}\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.2,\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 120
+        }
+      }
+    },
+    {
+      "id": 4,
+      "module": "json:ParseJSON",
+      "version": 1,
+      "parameters": {},
+      "mapper": {
+        "json": "{{3.data.candidates[0].content.parts[0].text}}"
+      },
+      "metadata": {
+        "designer": {
+          "x": 600,
+          "y": 120
+        }
+      }
+    },
+    {
+      "id": 5,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/getFile",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"file_id\": \"{{1.message.photo[length(1.message.photo)-1].file_id}}\"\n}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 900,
+          "y": 120
+        }
+      }
+    },
+    {
+      "id": 6,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/auth/login",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 1200,
+          "y": 120
+        }
+      }
+    },
+    {
+      "id": 7,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/instagram/publish/drafts",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"postType\": \"feed\",\n  \"productName\": \"{{4.product_name}}\",\n  \"caption\": \"{{4.catchy_description}}\\n\\n{{4.product_description}}\\n\\nPreco VIP: {{4.current_price}}\\nPreco original: {{4.original_price}}\",\n  \"hashtags\": \"#achadinhos #oferta #vip\",\n  \"imageUrls\": [\n    \"https://api.telegram.org/file/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/{{5.data.result.file_path}}\"\n  ],\n  \"ctas\": [\n    {\n      \"keyword\": \"VIP\",\n      \"link\": \"{{4.affiliate_link}}\"\n    }\n  ]\n}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 1500,
+          "y": 120
+        }
+      }
+    },
+    {
+      "id": 8,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/sendMessage",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"chat_id\": \"{{1.message.chat.id}}\",\n  \"text\": \"Novo draft para validacao\\nDraftId: {{7.data.id}}\\nProduto: {{4.product_name}}\\nLink: {{4.affiliate_link}}\\nComandos: /aprovar {{7.data.id}} | /reprovar {{7.data.id}} motivo\"\n}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 1800,
+          "y": 120
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "instant": true,
+    "version": 1,
+    "scenario": {
+      "roundtrips": 1,
+      "maxErrors": 3,
+      "autoCommit": true,
+      "autoCommitTriggerLast": true,
+      "sequential": false,
+      "slots": null,
+      "confidential": false,
+      "dataloss": false,
+      "dlq": false,
+      "freshVariables": false
+    },
+    "designer": {
+      "orphans": []
+    },
+    "zone": "us2.make.com",
+    "notes": []
+  }
+}

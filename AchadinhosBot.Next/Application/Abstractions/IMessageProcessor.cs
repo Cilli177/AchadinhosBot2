@@ -11,7 +11,8 @@ public interface IMessageProcessor
         long? originChatId = null,
         long? destinationChatId = null,
         string? originChatRef = null,
-        string? destinationChatRef = null);
+        string? destinationChatRef = null,
+        string? sourceImageUrl = null);
     Task<(string EnrichedText, string? ProductImageUrl)> EnrichTextWithProductDataAsync(
         string convertedText,
         string originalText,

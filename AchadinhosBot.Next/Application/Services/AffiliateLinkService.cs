@@ -523,20 +523,36 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
             mlbId = recoveredMlbId;
             _logger.LogInformation("Mercado Livre item alternativo recuperado com sucesso. IdAnterior={OldId} IdAtual={NewId} Url={ResolvedUrl}", initialInvalidId, mlbId, resolvedUri.ToString());
-        }
-        if (itemValidation == MercadoLivreItemValidation.Unknown)
-        {
-            if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
+
+            var recoveredValidation = await ValidateMercadoLivreItemWithApiAsync(mlbId, cancellationToken);
+            if (recoveredValidation == MercadoLivreItemValidation.Invalid)
             {
                 _logger.LogWarning(
-                    "Mercado Livre: validacao de item inconclusiva via API em link social/curto. Conversao abortada para evitar pagina inexistente. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                    "Mercado Livre: MLB-ID recuperado continuou invalido na API. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
                     uri.ToString(),
                     resolvedUri.ToString(),
                     mlbId);
                 return null;
             }
 
-            _logger.LogWarning("ValidaÃ§Ã£o de item Mercado Livre inconclusiva via API. Prosseguindo com heurÃ­stica. Id={MlbId} Url={ResolvedUrl}", mlbId, resolvedUri.ToString());
+            if (recoveredValidation == MercadoLivreItemValidation.Unknown)
+            {
+                _logger.LogWarning(
+                    "Mercado Livre: MLB-ID recuperado com validacao inconclusiva na API. Conversao abortada para evitar link quebrado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                    uri.ToString(),
+                    resolvedUri.ToString(),
+                    mlbId);
+                return null;
+            }
+        }
+        if (itemValidation == MercadoLivreItemValidation.Unknown)
+        {
+            _logger.LogWarning(
+                "Mercado Livre: validacao de item inconclusiva via API. Conversao abortada para evitar link quebrado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                uri.ToString(),
+                resolvedUri.ToString(),
+                mlbId);
+            return null;
         }
 
         var query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -548,7 +564,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var cleanMlbId = mlbId.ToUpperInvariant();
         if (cleanMlbId.StartsWith("MLB")) cleanMlbId = cleanMlbId[3..];
 
-        var url = $"https://produto.mercadolivre.com.br/MLB-{cleanMlbId}";
+        var canonicalUrl = await ResolveMercadoLivreCanonicalUrlAsync(mlbId, cancellationToken);
+        var url = !string.IsNullOrWhiteSpace(canonicalUrl)
+            ? canonicalUrl
+            : $"https://produto.mercadolivre.com.br/MLB-{cleanMlbId}";
         var full = ApplyQuery(url, query);
         return full;
     }
@@ -2407,6 +2426,89 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         catch
         {
             return HttpStatusCode.InternalServerError;
+        }
+    }
+
+    private async Task<string?> ResolveMercadoLivreCanonicalUrlAsync(string mlbId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(mlbId))
+        {
+            return null;
+        }
+
+        var normalizedId = mlbId.ToUpperInvariant();
+        if (!normalizedId.StartsWith("MLB", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedId = "MLB" + normalizedId;
+        }
+
+        var token = await _mercadoLivreOAuthService.GetAccessTokenAsync(cancellationToken);
+
+        var permalink = await QueryMercadoLivrePermalinkAsync($"https://api.mercadolibre.com/items/{normalizedId}", token, cancellationToken);
+        if (string.IsNullOrWhiteSpace(permalink))
+        {
+            permalink = await QueryMercadoLivrePermalinkAsync($"https://api.mercadolibre.com/products/{normalizedId}", token, cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(permalink) && !string.IsNullOrWhiteSpace(token))
+        {
+            permalink = await QueryMercadoLivrePermalinkAsync($"https://api.mercadolibre.com/items/{normalizedId}", null, cancellationToken);
+            if (string.IsNullOrWhiteSpace(permalink))
+            {
+                permalink = await QueryMercadoLivrePermalinkAsync($"https://api.mercadolibre.com/products/{normalizedId}", null, cancellationToken);
+            }
+        }
+
+        return permalink;
+    }
+
+    private async Task<string?> QueryMercadoLivrePermalinkAsync(string apiUrl, string? accessToken, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            using var req = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+            if (!string.IsNullOrWhiteSpace(accessToken))
+            {
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            }
+
+            using var res = await client.SendAsync(req, cancellationToken);
+            if (!res.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var payload = await res.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("permalink", out var permalinkProp))
+            {
+                var permalink = permalinkProp.GetString();
+                if (Uri.TryCreate(permalink, UriKind.Absolute, out _))
+                {
+                    return permalink;
+                }
+            }
+
+            if (doc.RootElement.TryGetProperty("canonical", out var canonicalProp))
+            {
+                var canonical = canonicalProp.GetString();
+                if (Uri.TryCreate(canonical, UriKind.Absolute, out _))
+                {
+                    return canonical;
+                }
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

@@ -1,0 +1,285 @@
+{
+  "name": "telegram_to_instagram_and_catalog_with_approval",
+  "version": "1.0.0",
+  "environment": "DEV",
+  "goal": "Receber oferta via Telegram, gerar copy + card, enviar para validacao e publicar no Instagram e catalogo apos aprovacao.",
+  "approval_definition": {
+    "where": "Grupo Telegram de operacao (ex.: -1001234567890) com o bot interno ativo",
+    "how": "Make envia mensagem de validacao contendo draftId e instrucoes /revisar, /aprovar, /reprovar",
+    "approval_commands": {
+      "approve": "/aprovar <draft_short_id_ou_id>",
+      "reject": "/reprovar <draft_short_id_ou_id> <motivo>"
+    },
+    "approval_source_of_truth": "status do draft em /api/instagram/publish/drafts"
+  },
+  "secrets": {
+    "base_url": "http://localhost:8081",
+    "admin_username": "admin",
+    "admin_password": "admin123",
+    "converter_api_key": "SET_THIS",
+    "telegram_bot_token": "SET_THIS",
+    "telegram_ops_chat_id": "-1001234567890",
+    "card_provider_api_key": "SET_THIS"
+  },
+  "input_contract": {
+    "source": "Telegram (mensagem com texto, link e opcionalmente imagem)",
+    "fields": [
+      "telegram_message_id",
+      "telegram_chat_id",
+      "telegram_text",
+      "offer_original_url",
+      "offer_image_url",
+      "product_name_hint",
+      "message_context"
+    ]
+  },
+  "output_contract": {
+    "fields": [
+      "draft_id",
+      "draft_status",
+      "instagram_media_id",
+      "catalog_sync_result",
+      "card_url",
+      "final_caption",
+      "final_affiliate_url"
+    ]
+  },
+  "scenario_modules": [
+    {
+      "id": "M1",
+      "type": "telegram.watch_updates",
+      "purpose": "Receber nova oferta no Telegram",
+      "config": {
+        "allowed_chat_ids": [
+          "-1009876543210"
+        ],
+        "accepted_content": [
+          "text",
+          "photo_with_caption"
+        ]
+      }
+    },
+    {
+      "id": "M2",
+      "type": "tools.text_parser",
+      "purpose": "Extrair link, nome do produto e contexto",
+      "map": {
+        "offer_original_url": "{{extract_url(M1.text_or_caption)}}",
+        "product_name_hint": "{{extract_product_name(M1.text_or_caption)}}",
+        "message_context": "{{M1.text_or_caption}}",
+        "offer_image_url": "{{M1.photo_url_or_empty}}"
+      }
+    },
+    {
+      "id": "M3",
+      "type": "http.request",
+      "purpose": "Validar/converter link afiliado no backend",
+      "request": {
+        "method": "POST",
+        "url": "{{secrets.base_url}}/converter",
+        "headers": {
+          "x-api-key": "{{secrets.converter_api_key}}",
+          "content-type": "application/json"
+        },
+        "body": {
+          "text": "{{M2.offer_original_url}}",
+          "source": "make_telegram_ingest"
+        }
+      },
+      "expect": {
+        "success_field": "success",
+        "converted_url_field": "convertedLinks[0]"
+      },
+      "error_policy": "stop_if_not_affiliated"
+    },
+    {
+      "id": "M4",
+      "type": "openai_or_gemini.generate_text",
+      "purpose": "Gerar copy do post e story",
+      "prompt_template": "Use contexto, produto e link convertido para gerar: 1) legenda Instagram feed, 2) texto story, 3) CTA curto.",
+      "input": {
+        "product_name": "{{M2.product_name_hint}}",
+        "context": "{{M2.message_context}}",
+        "affiliate_url": "{{M3.response.convertedLinks[0]}}"
+      },
+      "output_fields": [
+        "caption_feed",
+        "caption_story",
+        "cta_keyword"
+      ]
+    },
+    {
+      "id": "M5",
+      "type": "card_generator.create",
+      "provider": "bannerbear_or_equivalent",
+      "purpose": "Gerar card para site/catalogo",
+      "input": {
+        "title": "{{M2.product_name_hint}}",
+        "subtitle": "{{M4.output.cta_keyword}}",
+        "image_url": "{{first_non_empty(M2.offer_image_url, fallback_image_url)}}",
+        "cta_text": "Comprar agora",
+        "offer_url": "{{M3.response.convertedLinks[0]}}"
+      },
+      "output_fields": [
+        "card_url"
+      ]
+    },
+    {
+      "id": "M6",
+      "type": "http.request",
+      "purpose": "Login admin para chamadas /api protegidas",
+      "request": {
+        "method": "POST",
+        "url": "{{secrets.base_url}}/auth/login",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "username": "{{secrets.admin_username}}",
+          "password": "{{secrets.admin_password}}"
+        }
+      },
+      "store_cookie_session_as": "admin_session_cookie"
+    },
+    {
+      "id": "M7",
+      "type": "http.request",
+      "purpose": "Criar draft no backend para validacao operacional",
+      "request": {
+        "method": "POST",
+        "url": "{{secrets.base_url}}/api/instagram/publish/drafts",
+        "headers": {
+          "content-type": "application/json",
+          "cookie": "{{M6.admin_session_cookie}}"
+        },
+        "body": {
+          "postType": "feed",
+          "productName": "{{M2.product_name_hint}}",
+          "caption": "{{M4.output.caption_feed}}",
+          "hashtags": "#achadinhos #oferta",
+          "imageUrls": [
+            "{{M5.output.card_url}}"
+          ],
+          "ctas": [
+            {
+              "keyword": "{{M4.output.cta_keyword}}",
+              "link": "{{M3.response.convertedLinks[0]}}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "draft_id_field": "id"
+      }
+    },
+    {
+      "id": "M8",
+      "type": "telegram.send_message",
+      "purpose": "Enviar para validacao humana",
+      "config": {
+        "bot_token": "{{secrets.telegram_bot_token}}",
+        "chat_id": "{{secrets.telegram_ops_chat_id}}",
+        "message": "Novo draft para validacao\\nDraftId: {{M7.response.id}}\\nProduto: {{M2.product_name_hint}}\\nLink: {{M3.response.convertedLinks[0]}}\\nCard: {{M5.output.card_url}}\\nComandos: /revisar {{short(M7.response.id)}} | /aprovar {{short(M7.response.id)}} | /reprovar {{short(M7.response.id)}} motivo"
+      }
+    },
+    {
+      "id": "M9",
+      "type": "tools.sleep_and_poll",
+      "purpose": "Aguardar aprovacao/reprovacao no Telegram",
+      "config": {
+        "max_wait_minutes": 180,
+        "poll_interval_seconds": 30
+      },
+      "poll_request": {
+        "method": "GET",
+        "url": "{{secrets.base_url}}/api/instagram/publish/drafts",
+        "headers": {
+          "cookie": "{{M6.admin_session_cookie}}"
+        }
+      },
+      "approval_rules": {
+        "approved_when": "draft.id == M7.response.id AND draft.status == 'approved'",
+        "rejected_when": "draft.id == M7.response.id AND draft.status == 'rejected'"
+      }
+    },
+    {
+      "id": "M10",
+      "type": "router",
+      "purpose": "Decisao por status",
+      "routes": [
+        "approved",
+        "rejected",
+        "timeout"
+      ]
+    },
+    {
+      "id": "M11",
+      "type": "http.request",
+      "route": "approved",
+      "purpose": "Publicar no Instagram",
+      "request": {
+        "method": "POST",
+        "url": "{{secrets.base_url}}/api/instagram/publish/drafts/{{M7.response.id}}/publish",
+        "headers": {
+          "content-type": "application/json",
+          "cookie": "{{M6.admin_session_cookie}}"
+        },
+        "body": {}
+      }
+    },
+    {
+      "id": "M12",
+      "type": "http.request",
+      "route": "approved",
+      "purpose": "Sincronizar card no catalogo/site",
+      "request": {
+        "method": "POST",
+        "url": "{{secrets.base_url}}/api/catalog/sync",
+        "headers": {
+          "content-type": "application/json",
+          "cookie": "{{M6.admin_session_cookie}}"
+        },
+        "body": {}
+      }
+    },
+    {
+      "id": "M13",
+      "type": "telegram.send_message",
+      "route": "approved",
+      "purpose": "Notificar sucesso",
+      "config": {
+        "bot_token": "{{secrets.telegram_bot_token}}",
+        "chat_id": "{{secrets.telegram_ops_chat_id}}",
+        "message": "Publicado com sucesso\\nDraftId: {{M7.response.id}}\\nMediaId: {{M11.response.mediaId}}\\nCard no catalogo sincronizado."
+      }
+    },
+    {
+      "id": "M14",
+      "type": "telegram.send_message",
+      "route": "rejected",
+      "purpose": "Notificar reprovacao",
+      "config": {
+        "bot_token": "{{secrets.telegram_bot_token}}",
+        "chat_id": "{{secrets.telegram_ops_chat_id}}",
+        "message": "Draft reprovado\\nDraftId: {{M7.response.id}}\\nAcao: ajustar copy/imagem e reenviar."
+      }
+    },
+    {
+      "id": "M15",
+      "type": "telegram.send_message",
+      "route": "timeout",
+      "purpose": "Notificar timeout de aprovacao",
+      "config": {
+        "bot_token": "{{secrets.telegram_bot_token}}",
+        "chat_id": "{{secrets.telegram_ops_chat_id}}",
+        "message": "Timeout de aprovacao\\nDraftId: {{M7.response.id}}\\nAcao: revisar fila de aprovacoes."
+      }
+    }
+  ],
+  "operational_rules": {
+    "dev_first": true,
+    "prod_requires_backup_approval": true,
+    "no_raw_link_policy": true,
+    "all_publication_paths_require_human_approval": true
+  }
+}

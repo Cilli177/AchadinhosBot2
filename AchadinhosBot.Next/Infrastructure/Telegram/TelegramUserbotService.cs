@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Media;
@@ -28,6 +29,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
     private readonly WebhookOptions _webhookOptions;
     private readonly ILinkTrackingStore _linkTrackingStore;
     private readonly IConversionLogStore _conversionLogStore;
+    private readonly IMercadoLivreApprovalStore _mercadoLivreApprovalStore;
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly InstagramConversationStore _instagramStore;
     private readonly DeliverySafetyPolicy _deliverySafetyPolicy;
@@ -59,6 +61,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         IWhatsAppGateway whatsAppGateway,
         ILinkTrackingStore linkTrackingStore,
         IConversionLogStore conversionLogStore,
+        IMercadoLivreApprovalStore mercadoLivreApprovalStore,
         IInstagramPostComposer instagramComposer,
         InstagramConversationStore instagramStore,
         DeliverySafetyPolicy deliverySafetyPolicy,
@@ -74,6 +77,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         _whatsAppGateway = whatsAppGateway;
         _linkTrackingStore = linkTrackingStore;
         _conversionLogStore = conversionLogStore;
+        _mercadoLivreApprovalStore = mercadoLivreApprovalStore;
         _instagramComposer = instagramComposer;
         _instagramStore = instagramStore;
         _deliverySafetyPolicy = deliverySafetyPolicy;
@@ -725,6 +729,30 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
                 var enrichment = await _messageProcessor.EnrichTextWithProductDataAsync(replayText, text, cancellationToken);
                 replayText = enrichment.EnrichedText;
+                var (imageBytes, imageMime) = await TryExtractImageForWhatsAppAsync(msg);
+                var replayHasImageCandidate = imageBytes is { Length: > 0 };
+                var replayQualityGate = OfferQualityGate.ValidateForAutoForward(replayText, replayHasImageCandidate);
+                if (!replayQualityGate.Allowed)
+                {
+                    _logger.LogWarning(
+                        "Replay bloqueado por quality gate. SourceChat={SourceChatId} MsgId={MessageId} Reason={Reason} Detail={Detail} HasImageCandidate={HasImageCandidate}",
+                        sourceChatId,
+                        msg.id,
+                        replayQualityGate.Reason,
+                        replayQualityGate.Detail ?? "n/a",
+                        replayHasImageCandidate);
+
+                    var hasMercadoLivreLink = ExtractMercadoLivreUrls(text)
+                        .Union(ExtractMercadoLivreUrls(replayText))
+                        .Any();
+                    if (hasMercadoLivreLink)
+                    {
+                        await ForwardMercadoLivreToReviewBridgeAsync(msg, text, sourceChatId);
+                    }
+
+                    failed++;
+                    continue;
+                }
 
                 if (telegramReplayEnabled && telegramDestinationPeer is not null)
                 {
@@ -742,7 +770,6 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     }
                 }
 
-                var (imageBytes, imageMime) = await TryExtractImageForWhatsAppAsync(msg);
                 await SendToWhatsAppIfEnabled(settings, replayText, sourceChatId, imageBytes, imageMime, allowOfficialDestination);
                 replayed++;
             }
@@ -1074,17 +1101,55 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             destinationChatId: settings.TelegramForwarding.DestinationChatId);
         if (!TryGetStrictForwardText(text, result.Success, result.ConvertedLinks, result.ConvertedText, out var finalText))
         {
+            var mercadoLivreUrls = ExtractMercadoLivreUrls(text)
+                .Union(ExtractMercadoLivreUrls(result.ConvertedText))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (IsTrustedReiDasOfertasMessage(settings, msg))
+            {
+                // Blindagem do Rei das Ofertas:
+                // para ML, so libera repasse se os links estiverem aprovados no store.
+                if (mercadoLivreUrls.Length > 0)
+                {
+                    var approved = await _mercadoLivreApprovalStore.GetApprovedUrlsAsync(mercadoLivreUrls, CancellationToken.None);
+                    var approvedAll = approved.Count >= mercadoLivreUrls.Length;
+                    if (!approvedAll)
+                    {
+                        _logger.LogWarning(
+                            "TelegramUserbot bloqueou ML no Rei das Ofertas por ausencia de aprovacao no store. Origin={OriginChatId} MsgId={MessageId} Urls={Urls}",
+                            originId,
+                            msg.id,
+                            string.Join(",", mercadoLivreUrls));
+
+                        await ForwardMercadoLivreToReviewBridgeAsync(msg, text, originId);
+                        return;
+                    }
+                }
+
+                finalText = string.IsNullOrWhiteSpace(result.ConvertedText) ? text : result.ConvertedText!;
+            }
+            else
+            {
             _logger.LogWarning(
                 "TelegramUserbot bloqueou encaminhamento automatico por conversao invalida ou nao afiliada. Origin={OriginChatId} MsgId={MessageId} ConvertedLinks={ConvertedLinks} Success={Success}",
                 originId,
                 msg.id,
                 result.ConvertedLinks,
                 result.Success);
+
+            var hasMercadoLivreLink = mercadoLivreUrls.Length > 0;
+            if (hasMercadoLivreLink)
+            {
+                await ForwardMercadoLivreToReviewBridgeAsync(msg, text, originId);
+            }
             return;
+            }
         }
 
         var enrichment = await _messageProcessor.EnrichTextWithProductDataAsync(finalText, text, CancellationToken.None);
         finalText = enrichment.EnrichedText;
+        var productImageUrl = enrichment.ProductImageUrl;
 
         var destinationId = tgForwarding.DestinationChatId;
         var destinationPeer = destinationId != 0 ? ResolvePeer(destinationId) : null;
@@ -1207,10 +1272,39 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }, CancellationToken.None);
         }
 
-        await SendToWhatsAppIfEnabled(settings, finalText, originId, waImageBytes, waImageMime);
+        var hasImageCandidate = (waImageBytes is { Length: > 0 }) || !string.IsNullOrWhiteSpace(productImageUrl);
+        var qualityGate = OfferQualityGate.ValidateForAutoForward(finalText, hasImageCandidate);
+        if (!qualityGate.Allowed)
+        {
+            _logger.LogWarning(
+                "TelegramUserbot bloqueou envio para WhatsApp por quality gate. Origin={OriginChatId} MsgId={MessageId} Reason={Reason} Detail={Detail} HasImageCandidate={HasImageCandidate}",
+                originId,
+                msg.id,
+                qualityGate.Reason,
+                qualityGate.Detail ?? "n/a",
+                hasImageCandidate);
+
+            var hasMercadoLivreLink = ExtractMercadoLivreUrls(text)
+                .Union(ExtractMercadoLivreUrls(finalText))
+                .Any();
+            if (hasMercadoLivreLink)
+            {
+                await ForwardMercadoLivreToReviewBridgeAsync(msg, text, originId);
+            }
+            return;
+        }
+
+        await SendToWhatsAppIfEnabled(settings, finalText, originId, waImageBytes, waImageMime, productImageUrl: productImageUrl);
     }
 
-    private async Task SendToWhatsAppIfEnabled(AutomationSettings settings, string convertedText, long originId, byte[]? imageBytes, string? imageMime, bool allowOfficialDestination = true)
+    private async Task SendToWhatsAppIfEnabled(
+        AutomationSettings settings,
+        string convertedText,
+        long originId,
+        byte[]? imageBytes,
+        string? imageMime,
+        bool allowOfficialDestination = true,
+        string? productImageUrl = null)
     {
         var wa = settings.WhatsAppForwarding ?? new WhatsAppForwardingSettings();
         var routes = ResolveTelegramToWhatsAppRoutes(settings);
@@ -1309,16 +1403,24 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         {
             if (string.IsNullOrWhiteSpace(destination)) continue;
             WhatsAppSendResult result;
-            if (wa.SendMediaEnabled && !string.IsNullOrWhiteSpace(mediaUrl))
+            if (wa.SendMediaEnabled && imageBytes is not null && imageBytes.Length > 0)
             {
-                result = await _whatsAppGateway.SendImageUrlAsync(wa.InstanceName, destination, mediaUrl, text, imageMime, "oferta.jpg", CancellationToken.None);
+                // Prioriza envio por bytes/base64 para evitar falhas com URL local/temporaria.
+                result = await _whatsAppGateway.SendImageAsync(wa.InstanceName, destination, imageBytes, text, imageMime, CancellationToken.None);
                 if (!result.Success)
                 {
-                    _logger.LogWarning("Falha ao enviar WhatsApp imagem (url) (origem TG {Origin} -> {Destination}): {Message}", originId, destination, result.Message);
-                    result = await _whatsAppGateway.SendImageAsync(wa.InstanceName, destination, imageBytes!, text, imageMime, CancellationToken.None);
+                    _logger.LogWarning("Falha ao enviar WhatsApp imagem (base64) (origem TG {Origin} -> {Destination}): {Message}", originId, destination, result.Message);
+                    if (!string.IsNullOrWhiteSpace(mediaUrl))
+                    {
+                        result = await _whatsAppGateway.SendImageUrlAsync(wa.InstanceName, destination, mediaUrl, text, imageMime, "oferta.jpg", CancellationToken.None);
+                        if (!result.Success)
+                        {
+                            _logger.LogWarning("Falha ao enviar WhatsApp imagem (url) (origem TG {Origin} -> {Destination}): {Message}", originId, destination, result.Message);
+                        }
+                    }
+
                     if (!result.Success)
                     {
-                        _logger.LogWarning("Falha ao enviar WhatsApp imagem (base64) (origem TG {Origin} -> {Destination}): {Message}", originId, destination, result.Message);
                         await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
                         {
                             OriginChatId = originId,
@@ -1337,17 +1439,34 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                             Success = result.Success
                         }, CancellationToken.None);
                     }
-                    else
+                }
+                else
+                {
+                    await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
                     {
-                        await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
-                        {
-                            OriginChatId = originId,
-                            DestinationChatRef = destination,
-                            Reason = "whatsapp_media_sent_base64",
-                            Detail = "Imagem enviada (base64)",
-                            Success = true
-                        }, CancellationToken.None);
-                    }
+                        OriginChatId = originId,
+                        DestinationChatRef = destination,
+                        Reason = "whatsapp_media_sent_base64",
+                        Detail = "Imagem enviada (base64)",
+                        Success = true
+                    }, CancellationToken.None);
+                }
+            }
+            else if (wa.SendMediaEnabled && !string.IsNullOrWhiteSpace(mediaUrl))
+            {
+                result = await _whatsAppGateway.SendImageUrlAsync(wa.InstanceName, destination, mediaUrl, text, imageMime, "oferta.jpg", CancellationToken.None);
+                if (!result.Success)
+                {
+                    _logger.LogWarning("Falha ao enviar WhatsApp imagem (url) (origem TG {Origin} -> {Destination}): {Message}", originId, destination, result.Message);
+                    await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
+                    {
+                        OriginChatId = originId,
+                        DestinationChatRef = destination,
+                        Reason = "whatsapp_media_failed_url_only",
+                        Detail = result.Message,
+                        Success = false
+                    }, CancellationToken.None);
+                    result = await _whatsAppGateway.SendTextAsync(wa.InstanceName, destination, text, CancellationToken.None);
                 }
                 else
                 {
@@ -1357,6 +1476,48 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         DestinationChatRef = destination,
                         Reason = "whatsapp_media_sent_url",
                         Detail = "Imagem enviada (url)",
+                        Success = true
+                    }, CancellationToken.None);
+                }
+            }
+            else if (wa.SendMediaEnabled && !string.IsNullOrWhiteSpace(productImageUrl))
+            {
+                result = await _whatsAppGateway.SendImageUrlAsync(
+                    wa.InstanceName,
+                    destination,
+                    productImageUrl,
+                    text,
+                    "image/jpeg",
+                    "oferta.jpg",
+                    CancellationToken.None);
+                if (!result.Success)
+                {
+                    await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
+                    {
+                        OriginChatId = originId,
+                        DestinationChatRef = destination,
+                        Reason = "whatsapp_product_image_failed",
+                        Detail = result.Message,
+                        Success = false
+                    }, CancellationToken.None);
+                    result = await _whatsAppGateway.SendTextAsync(wa.InstanceName, destination, text, CancellationToken.None);
+                    await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
+                    {
+                        OriginChatId = originId,
+                        DestinationChatRef = destination,
+                        Reason = "whatsapp_product_image_fallback_text",
+                        Detail = result.Success ? "Texto enviado" : (result.Message ?? "Falha ao enviar texto"),
+                        Success = result.Success
+                    }, CancellationToken.None);
+                }
+                else
+                {
+                    await _mediaFailureLogStore.AppendAsync(new Domain.Logs.MediaFailureEntry
+                    {
+                        OriginChatId = originId,
+                        DestinationChatRef = destination,
+                        Reason = "whatsapp_product_image_sent_url",
+                        Detail = "Imagem de produto enviada (url)",
                         Success = true
                     }, CancellationToken.None);
                 }
@@ -2109,5 +2270,162 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
     private static bool ContainsShein(string text)
     {
         return text.Contains("shein", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsReiDasOfertasChat(AutomationSettings settings, long originChatId)
+    {
+        if (originChatId == 0)
+        {
+            return false;
+        }
+
+        if (settings.TelegramForwarding?.DestinationChatId == originChatId)
+        {
+            return true;
+        }
+
+        if (_options.DestinationChatId == originChatId)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool IsTrustedReiDasOfertasMessage(AutomationSettings settings, Message msg)
+    {
+        if (!IsReiDasOfertasChat(settings, msg.peer_id.ID))
+        {
+            return false;
+        }
+
+        // Decisao operacional: qualquer conteudo que chega ao Rei das Ofertas
+        // deve seguir para o fluxo Telegram -> WhatsApp sem nova retriagem ML.
+        return true;
+    }
+
+    private static IEnumerable<string> ExtractMercadoLivreUrls(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            yield break;
+        }
+
+        foreach (Match match in UrlRegex.Matches(text))
+        {
+            var candidate = match.Value.Trim();
+            if (candidate.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) ||
+                candidate.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase) ||
+                candidate.Contains("meli.la", StringComparison.OrdinalIgnoreCase) ||
+                candidate.Contains("compre.link", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return candidate;
+            }
+        }
+    }
+
+    private async Task<bool> ForwardMercadoLivreToReviewBridgeAsync(Message msg, string text, long originChatId)
+    {
+        var bridgeChatId = ResolveMercadoLivreApprovalTelegramBridgeChatId();
+        if (bridgeChatId == 0 || bridgeChatId == originChatId)
+        {
+            return false;
+        }
+
+        var client = _client;
+        if (client is null)
+        {
+            return false;
+        }
+
+        var bridgePeer = ResolvePeer(bridgeChatId);
+        if (bridgePeer is null)
+        {
+            _logger.LogWarning("TelegramUserbot: ponte de aprovacao Mercado Livre nao encontrada. ChatId={ChatId}", bridgeChatId);
+            return false;
+        }
+
+        var outboundText = string.IsNullOrWhiteSpace(text)
+            ? "Oferta Mercado Livre pendente de aprovacao manual."
+            : text;
+
+        try
+        {
+            if (msg.media is MessageMediaPhoto mmPhoto && mmPhoto.photo is Photo photo)
+            {
+                var inputMedia = new InputMediaPhoto
+                {
+                    id = new InputPhoto { id = photo.id, access_hash = photo.access_hash, file_reference = photo.file_reference }
+                };
+                await client.Messages_SendMedia(bridgePeer, inputMedia, outboundText, WTelegram.Helpers.RandomLong());
+            }
+            else if (msg.media is MessageMediaDocument mmDoc && mmDoc.document is Document doc)
+            {
+                var inputMedia = new InputMediaDocument
+                {
+                    id = new InputDocument { id = doc.id, access_hash = doc.access_hash, file_reference = doc.file_reference }
+                };
+                await client.Messages_SendMedia(bridgePeer, inputMedia, outboundText, WTelegram.Helpers.RandomLong());
+            }
+            else
+            {
+                await client.SendMessageAsync(bridgePeer, outboundText);
+            }
+
+            _logger.LogInformation(
+                "TelegramUserbot: oferta Mercado Livre enviada para triagem manual. Origin={OriginChatId} Bridge={BridgeChatId} MsgId={MessageId}",
+                originChatId,
+                bridgeChatId,
+                msg.id);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "TelegramUserbot: falha ao enviar oferta Mercado Livre para triagem manual. Origin={OriginChatId} Bridge={BridgeChatId} MsgId={MessageId}",
+                originChatId,
+                bridgeChatId,
+                msg.id);
+            return false;
+        }
+    }
+
+    private static bool ContainsMercadoLivreLink(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        foreach (Match match in UrlRegex.Matches(text))
+        {
+            var candidate = match.Value?.Trim();
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (candidate.Contains("meli.la", StringComparison.OrdinalIgnoreCase) ||
+                candidate.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) ||
+                candidate.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase) ||
+                candidate.Contains("compre.link", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static long ResolveMercadoLivreApprovalTelegramBridgeChatId()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("MERCADOLIVRE_APPROVAL_TELEGRAM_BRIDGE_CHAT_ID");
+        if (!string.IsNullOrWhiteSpace(fromEnv) && long.TryParse(fromEnv.Trim(), out var parsed) && parsed != 0)
+        {
+            return parsed;
+        }
+
+        return 5169049471;
     }
 }

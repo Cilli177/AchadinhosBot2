@@ -1,4 +1,4 @@
-let currentRole = null;
+﻿let currentRole = null;
 let logsAutoTimer = null;
 
 async function api(url, method = 'GET', body = null) {
@@ -81,7 +81,7 @@ function escapeHtml(text) {
 function shortId(text) {
   const s = String(text || '');
   if (s.length <= 18) return s;
-  return `${s.slice(0, 6)}…${s.slice(-6)}`;
+  return `${s.slice(0, 6)}â€¦${s.slice(-6)}`;
 }
 
 function getGeminiApiKeyRowsFromDom() {
@@ -295,7 +295,7 @@ async function login() {
     document.getElementById('loginStatus').className = 'status ok';
     await checkSession();
   } catch (e) {
-    const msg = e?.status === 423 ? 'Conta bloqueada temporariamente' : 'Credenciais inválidas';
+    const msg = e?.status === 423 ? 'Conta bloqueada temporariamente' : 'Credenciais invÃ¡lidas';
     document.getElementById('loginStatus').textContent = msg;
     document.getElementById('loginStatus').className = 'status bad';
   }
@@ -369,7 +369,7 @@ function renderSettings(s) {
   const isLocked = now < lockUntil;
   const telegramStatusText = s.integrations.telegram.connected
     ? `Conectado (${s.integrations.telegram.identifier || 'sem id'})`
-    : 'Não conectado';
+    : 'NÃ£o conectado';
   const telegramStatusState = s.integrations.telegram.connected ? 'ok' : 'warn';
   if (!isLocked) {
     const telegramStatusEl = document.getElementById('telegramStatus');
@@ -391,7 +391,7 @@ function renderSettings(s) {
 
   document.getElementById('whatsappStatus').textContent = s.integrations.whatsApp.connected
     ? `Conectado (${s.integrations.whatsApp.identifier || 'sem id'})`
-    : 'Não conectado';
+    : 'NÃ£o conectado';
   document.getElementById('whatsappStatus').className = 'status ' + (s.integrations.whatsApp.connected ? 'ok' : 'warn');
 
   const ml = s.integrations?.mercadoLivre || {};
@@ -400,7 +400,7 @@ function renderSettings(s) {
   if (mlStatus) {
     mlStatus.textContent = mlConnected
       ? `Conectado (${ml.identifier || 'sem id'})`
-      : 'Não validado';
+      : 'NÃ£o validado';
     mlStatus.className = 'status ' + (mlConnected ? 'ok' : 'warn');
   }
 
@@ -860,6 +860,15 @@ function renderMercadoLivrePending(items) {
   const tbody = document.getElementById('mlPendingBody');
   const count = document.getElementById('mlPendingCount');
   if (!tbody) return;
+  const renderLinkList = (urls) => {
+    if (!urls || urls.length === 0) return '-';
+    return urls.map((u) => {
+      const href = String(u || '').trim();
+      if (!href) return '';
+      const safe = escapeHtml(href);
+      return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`;
+    }).filter(Boolean).join('<br>');
+  };
 
   if (!items || items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pendências.</td></tr>';
@@ -871,7 +880,16 @@ function renderMercadoLivrePending(items) {
   tbody.innerHTML = items.map(item => {
     const status = String(item.status || '').toLowerCase();
     const badgeClass = status === 'pending' ? 'warn' : (status === 'approved' ? 'ok' : 'bad');
-    const urls = (item.extractedUrls || []).join('\n');
+    const originalUrls = (item.extractedUrls || []);
+    const convertedPreviewUrls = (item.previewConvertedUrls || []);
+    const originalLinksHtml = renderLinkList(originalUrls);
+    const convertedLinksHtml = renderLinkList(convertedPreviewUrls);
+    const originalImageUrl = String(item.originalImageUrl || '').trim();
+    const originalImageHtml = originalImageUrl
+      ? `<div style="margin-top:6px;">
+          <small><strong>Imagem original:</strong><br><a href="${escapeHtml(originalImageUrl)}" target="_blank" rel="noopener noreferrer">abrir imagem</a></small>
+        </div>`
+      : '';
     const channel = [item.originChatRef || item.originChatId || '-', item.destinationChatRef || item.destinationChatId || '-'].join(' -> ');
     const actions = status === 'pending'
       ? `<button class="secondary" onclick="approveMercadoLivrePending('${item.id}')">Aprovar</button>
@@ -885,7 +903,15 @@ function renderMercadoLivrePending(items) {
         <td>${escapeHtml(item.source || '-')}</td>
         <td><small>${escapeHtml(channel)}</small></td>
         <td><small>${escapeHtml(item.reason || '-')}</small></td>
-        <td><small>${escapeHtml(urls || '-')}</small></td>
+        <td>
+          <div><small><strong>Original:</strong><br>${originalLinksHtml}</small></div>
+          <div style="margin-top:6px;"><small><strong>Convertido (prévia):</strong><br>${convertedLinksHtml}</small></div>
+          ${originalImageHtml}
+          ${status === 'pending' ? `<div style="margin-top:6px;">
+            <small><strong>Link corrigido:</strong></small>
+            <input id="mlOverride_${item.id}" placeholder="https://..." style="width:100%;margin-top:4px;" />
+          </div>` : ''}
+        </td>
         <td>
           ${actions}
           ${item.convertedText ? `<button class="copy-btn" data-copy="${encodeURIComponent(item.convertedText)}">Copiar convertido</button>` : ''}
@@ -911,7 +937,6 @@ function renderMercadoLivrePending(items) {
     });
   });
 }
-
 async function loadMercadoLivrePending() {
   try {
     const status = document.getElementById('mlPendingStatus')?.value ?? 'pending';
@@ -928,9 +953,18 @@ async function loadMercadoLivrePending() {
 async function approveMercadoLivrePending(id) {
   if (currentRole !== 'admin') return;
   const note = prompt('Observação de aprovação (opcional):', '') || '';
+  const overrideUrl = (document.getElementById(`mlOverride_${id}`)?.value || '').trim();
+  if (!overrideUrl) {
+    alert('Informe o link corrigido antes de aprovar.');
+    return;
+  }
+  if (!/^https?:\/\//i.test(overrideUrl)) {
+    alert('Link corrigido inválido. Use URL completa com http(s).');
+    return;
+  }
   const sendNow = confirm('Enviar o texto aprovado para o(s) destino(s) agora?');
   try {
-    const result = await api(`/api/mercadolivre/pending/${id}/approve`, 'POST', { note, sendNow });
+    const result = await api(`/api/mercadolivre/pending/${id}/approve`, 'POST', { note, sendNow, overrideUrl: overrideUrl || null });
     await loadMercadoLivrePending();
     await loadConversionLogs();
     if (sendNow) {
@@ -944,15 +978,14 @@ async function approveMercadoLivrePending(id) {
     alert(e?.data?.error || e?.message || 'Erro ao aprovar pendência.');
   }
 }
-
 async function rejectMercadoLivrePending(id) {
   if (currentRole !== 'admin') return;
-  const note = prompt('Motivo da rejeição (opcional):', '') || '';
+  const note = prompt('Motivo da rejeiÃ§Ã£o (opcional):', '') || '';
   try {
     await api(`/api/mercadolivre/pending/${id}/reject`, 'POST', { note });
     await loadMercadoLivrePending();
   } catch (e) {
-    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendência.');
+    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendÃªncia.');
   }
 }
 
@@ -991,7 +1024,7 @@ async function saveSettings() {
     document.getElementById('saveStatus').textContent = result.errors.join(' | ');
     document.getElementById('saveStatus').className = 'status bad';
   } else {
-    document.getElementById('saveStatus').textContent = 'Configurações salvas.';
+    document.getElementById('saveStatus').textContent = 'ConfiguraÃ§Ãµes salvas.';
     document.getElementById('saveStatus').className = 'status ok';
   }
   await loadSettings();
@@ -1755,10 +1788,10 @@ async function connectTelegram() {
     const r = await api('/api/integrations/telegram/connect', 'POST', { botToken: botToken || null });
     const message = r.success
       ? `Conectado (${r.username || 'ok'})`
-      : `Erro: ${r.message || 'Falha na conexão'}`;
+      : `Erro: ${r.message || 'Falha na conexÃ£o'}`;
     lockTelegramStatus(message, r.success ? 'ok' : 'bad');
   } catch (e) {
-    const message = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+    const message = `Erro: ${e.data?.error || e.message || 'Falha na requisiÃ§Ã£o'}`;
     lockTelegramStatus(message, 'bad');
   }
   await loadSettings();
@@ -1799,14 +1832,14 @@ async function connectWhatsApp() {
       document.getElementById('whatsappStatus').textContent = 'QR gerado. Aguardando leitura...';
       document.getElementById('whatsappStatus').className = 'status warn';
     } else if (r.success) {
-      document.getElementById('whatsappStatus').textContent = r.message || 'Instância já conectada.';
+      document.getElementById('whatsappStatus').textContent = r.message || 'InstÃ¢ncia jÃ¡ conectada.';
       document.getElementById('whatsappStatus').className = 'status ok';
     } else {
       document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao gerar QR'}`;
       document.getElementById('whatsappStatus').className = 'status bad';
     }
   } catch (e) {
-    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisiÃ§Ã£o'}`;
     document.getElementById('whatsappStatus').className = 'status bad';
   }
   setButtonBusy('btnWhatsAppConnect', false);
@@ -1826,17 +1859,17 @@ async function createWhatsAppInstance() {
       document.getElementById('qrImage').src = r.qrCode;
       document.getElementById('qrImage').classList.remove('hidden');
       document.getElementById('qrHint').classList.remove('hidden');
-      document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada. QR gerado.';
+      document.getElementById('whatsappStatus').textContent = r.message || 'InstÃ¢ncia criada. QR gerado.';
       document.getElementById('whatsappStatus').className = 'status warn';
     } else if (r.success) {
-      document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada com sucesso.';
+      document.getElementById('whatsappStatus').textContent = r.message || 'InstÃ¢ncia criada com sucesso.';
       document.getElementById('whatsappStatus').className = 'status ok';
     } else {
-      document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao criar instância'}`;
+      document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao criar instÃ¢ncia'}`;
       document.getElementById('whatsappStatus').className = 'status bad';
     }
   } catch (e) {
-    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisiÃ§Ã£o'}`;
     document.getElementById('whatsappStatus').className = 'status bad';
   }
 }
@@ -1851,7 +1884,7 @@ async function applyUserbotAuth() {
   const statusEl = document.getElementById('userbotAuthStatus');
   if (currentRole !== 'admin') {
     if (statusEl) {
-      statusEl.textContent = 'Permissão insuficiente para atualizar credenciais.';
+      statusEl.textContent = 'PermissÃ£o insuficiente para atualizar credenciais.';
       statusEl.className = 'status bad';
     }
     return;
@@ -1871,7 +1904,7 @@ async function applyUserbotAuth() {
 
   if (!payload.phoneNumber && !payload.verificationCode && !payload.password && !payload.forceReconnect) {
     if (statusEl) {
-      statusEl.textContent = 'Informe ao menos um campo ou marque reconexão.';
+      statusEl.textContent = 'Informe ao menos um campo ou marque reconexÃ£o.';
       statusEl.className = 'status bad';
     }
     return;
@@ -1910,10 +1943,10 @@ function renderUserbotChats(payload, settings) {
   const chips = document.getElementById('userbotSelectedChips');
   if (!payload || !payload.chats) {
     container.textContent = 'Nenhum grupo carregado.';
-    status.textContent = 'Userbot indisponível';
+    status.textContent = 'Userbot indisponÃ­vel';
     status.className = 'status bad';
-    setChipStatus('chipUserbot', 'Telegram Userbot: Indisponível', 'bad');
-    setHealthBadge('healthUserbot', 'Userbot Indisponível', 'bad');
+    setChipStatus('chipUserbot', 'Telegram Userbot: IndisponÃ­vel', 'bad');
+    setHealthBadge('healthUserbot', 'Userbot IndisponÃ­vel', 'bad');
     return;
   }
 
@@ -2000,7 +2033,7 @@ async function saveUserbotSelection() {
   if (currentRole !== 'admin') {
     const el = document.getElementById('userbotSaveStatus');
     if (el) {
-      el.textContent = 'Permissão insuficiente para salvar.';
+      el.textContent = 'PermissÃ£o insuficiente para salvar.';
       el.className = 'status bad';
     }
     return;
@@ -2008,7 +2041,7 @@ async function saveUserbotSelection() {
 
   const el = document.getElementById('userbotSaveStatus');
   if (el) {
-    el.textContent = 'Salvando seleção...';
+    el.textContent = 'Salvando seleÃ§Ã£o...';
     el.className = 'status warn';
   }
 
@@ -2026,7 +2059,7 @@ async function saveUserbotSelection() {
   try {
     await api('/api/settings', 'PUT', existing);
     if (el) {
-      el.textContent = 'Seleção salva.';
+      el.textContent = 'SeleÃ§Ã£o salva.';
       el.className = 'status ok';
     }
   } catch (e) {
@@ -2815,7 +2848,7 @@ function getMediaStatusForLog(log) {
 function formatMediaBadge(media) {
   if (!media) return '<span class="badge muted">-</span>';
   if (media.reason === 'media_disabled_text_only') return '<span class="badge warn">Desativado</span>';
-  if (media.reason === 'media_missing_text_only') return '<span class="badge warn">Sem mídia</span>';
+  if (media.reason === 'media_missing_text_only') return '<span class="badge warn">Sem mÃ­dia</span>';
   return media.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">Falha</span>';
 }
 
@@ -2923,8 +2956,8 @@ async function loadConversionLogs() {
     const alert = document.getElementById('logAlert');
     if (invalid.length > 0 || corrected.length > 0) {
       const parts = [];
-      if (invalid.length > 0) parts.push(`Atenção: ${invalid.length} link(s) inválido(s) sem afiliado.`);
-      if (corrected.length > 0) parts.push(`Correções aplicadas: ${corrected.length}.`);
+      if (invalid.length > 0) parts.push(`AtenÃ§Ã£o: ${invalid.length} link(s) invÃ¡lido(s) sem afiliado.`);
+      if (corrected.length > 0) parts.push(`CorreÃ§Ãµes aplicadas: ${corrected.length}.`);
       alert.textContent = parts.join(' ');
       alert.classList.remove('hidden');
     } else {
@@ -2964,7 +2997,7 @@ async function loadMediaFailures() {
         alert.classList.add('hidden');
       } else {
         const latest = items[0];
-        alert.textContent = `Log de mídia: ${items.length}. Última: ${new Date(latest.timestamp).toLocaleString()} (${latest.destinationChatRef || '-'})`;
+        alert.textContent = `Log de mÃ­dia: ${items.length}. Ãšltima: ${new Date(latest.timestamp).toLocaleString()} (${latest.destinationChatRef || '-'})`;
         alert.classList.remove('hidden');
       }
     }
@@ -3050,14 +3083,14 @@ checkSession();
 // --- Contextual Help & Toasts (Fase 2) ---
 const sectionGuides = {
   'connections': `
-    <h3>Conexões e Integrações</h3>
+    <h3>ConexÃµes e IntegraÃ§Ãµes</h3>
     <ul>
-      <li><strong>Telegram:</strong> Insira o Token do Bot API para envio de imagens. O Userbot é usado para "ouvir" grupos usando seu próprio número.</li>
-      <li><strong>WhatsApp:</strong> Usamos a Evolution API. Defina um nome de instância e escaneie o QRCode gerado na tela.</li>
-      <li><strong>Mercado Livre:</strong> A autenticação é feita via backend. Teste a conexão para garantir que os links estão sendo encurtados com seu afiliado.</li>
+      <li><strong>Telegram:</strong> Insira o Token do Bot API para envio de imagens. O Userbot Ã© usado para "ouvir" grupos usando seu prÃ³prio nÃºmero.</li>
+      <li><strong>WhatsApp:</strong> Usamos a Evolution API. Defina um nome de instÃ¢ncia e escaneie o QRCode gerado na tela.</li>
+      <li><strong>Mercado Livre:</strong> A autenticaÃ§Ã£o Ã© feita via backend. Teste a conexÃ£o para garantir que os links estÃ£o sendo encurtados com seu afiliado.</li>
     </ul>`,
   'ops': `
-    <h3>Operações e Saúde</h3>
+    <h3>OperaÃ§Ãµes e SaÃºde</h3>
     <ul>
       <li><strong>Telegram Userbot:</strong> Repassa ofertas de canais originais do Telegram para os seus canais do Telegram.</li>
       <li><strong>WhatsApp Origem/Destino:</strong> Defina quais grupos do WhatsApp o bot deve observar (escutar), e para onde deve copiar (rotear).</li>
@@ -3065,59 +3098,59 @@ const sectionGuides = {
   'route': `
     <h3>Rota Telegram -> WhatsApp</h3>
     <ul>
-      <li><strong>Propósito:</strong> Capture ofertas silenciosamente em canais VIP do Telegram, e repasse-as automaticamente convertidas para seus Grupos de Oferta do WhatsApp.</li>
+      <li><strong>PropÃ³sito:</strong> Capture ofertas silenciosamente em canais VIP do Telegram, e repasse-as automaticamente convertidas para seus Grupos de Oferta do WhatsApp.</li>
     </ul>`,
   'linkresponder': `
     <h3>Resposta de Links (Auto-Responder)</h3>
     <ul>
-      <li>Quando alguém te manda uma DM com um link da Amazon, Shopee, ou Mercado Livre, o bot responde automaticamente com seu link de afiliado por cima!</li>
+      <li>Quando alguÃ©m te manda uma DM com um link da Amazon, Shopee, ou Mercado Livre, o bot responde automaticamente com seu link de afiliado por cima!</li>
     </ul>`,
   'mercadolivre': `
     <h3>Compliance Mercado Livre</h3>
     <ul>
-      <li>Bloqueia links indesejados e previne que o algoritmo do ML suspenda sua conta de afiliado exigindo aprovações manuais ou baseadas em Whitelist.</li>
+      <li>Bloqueia links indesejados e previne que o algoritmo do ML suspenda sua conta de afiliado exigindo aprovaÃ§Ãµes manuais ou baseadas em Whitelist.</li>
     </ul>`,
   'instagram': `
     <h3>Instagram Prompts e IA</h3>
     <ul>
-      <li>Defina como o conteúdo do post será montado pelo ChatGPT ou Gemini.</li>
-      <li>Templates prontos podem ser escolhidos na caixa de seleção. Lembre-se de definir a chave (sk-...) da API.</li>
+      <li>Defina como o conteÃºdo do post serÃ¡ montado pelo ChatGPT ou Gemini.</li>
+      <li>Templates prontos podem ser escolhidos na caixa de seleÃ§Ã£o. Lembre-se de definir a chave (sk-...) da API.</li>
     </ul>`,
   'instagram-publish': `
-    <h3>Publicação Instagram (Meta Graph)</h3>
+    <h3>PublicaÃ§Ã£o Instagram (Meta Graph)</h3>
     <ul>
-      <li>O robô pode postar carrosséis automaticamente no Feed da conta comercial.</li>
-      <li>Configure respostas automáticas de comentários avisando que o link foi enviado no Direct!</li>
+      <li>O robÃ´ pode postar carrossÃ©is automaticamente no Feed da conta comercial.</li>
+      <li>Configure respostas automÃ¡ticas de comentÃ¡rios avisando que o link foi enviado no Direct!</li>
     </ul>`,
   'instagram-story': `
-    <h3>Story Automático</h3>
+    <h3>Story AutomÃ¡tico</h3>
     <ul>
-      <li><strong>AutoPilot:</strong> Pega os produtos mais clicados e posta periodicamente nos stories. É a máquina de fazer dinheiro no automático.</li>
+      <li><strong>AutoPilot:</strong> Pega os produtos mais clicados e posta periodicamente nos stories. Ã‰ a mÃ¡quina de fazer dinheiro no automÃ¡tico.</li>
     </ul>`,
   'bio-growth': `
     <h3>Hub de Bio (Links)</h3>
     <ul>
-      <li>Uma central única de agrupamento de links. Todos os botões postados no Insta apontarão pra cá.</li>
+      <li>Uma central Ãºnica de agrupamento de links. Todos os botÃµes postados no Insta apontarÃ£o pra cÃ¡.</li>
     </ul>`,
   'autoreplies': `
-    <h3>Respostas Automáticas Clássicas</h3>
+    <h3>Respostas AutomÃ¡ticas ClÃ¡ssicas</h3>
     <ul>
-      <li>Regras simples padrão chave => valor.</li>
+      <li>Regras simples padrÃ£o chave => valor.</li>
     </ul>`,
   'logs': `
     <h3>Logs e Monitoramento</h3>
     <ul>
-      <li>Acompanhe em tempo real quem clicou no quê, onde o bot falhou em ler mídia ou se a API caiu.</li>
+      <li>Acompanhe em tempo real quem clicou no quÃª, onde o bot falhou em ler mÃ­dia ou se a API caiu.</li>
     </ul>`,
   'playground': `
     <h3>Playground</h3>
     <ul>
-      <li>Cole um texto cru e teste se o regex de encurtamento do backend está detectando o link afiliado.</li>
+      <li>Cole um texto cru e teste se o regex de encurtamento do backend estÃ¡ detectando o link afiliado.</li>
     </ul>`,
   'debug': `
     <h3>Debug JSON</h3>
     <ul>
-      <li>A visão raio-X de todas as variáveis ativas no sistema neste exato milissegundo.</li>
+      <li>A visÃ£o raio-X de todas as variÃ¡veis ativas no sistema neste exato milissegundo.</li>
     </ul>`
 };
 
@@ -3132,7 +3165,7 @@ function openDoc(tab) {
   if (btn) name = btn.textContent.replace('0', '').trim();
 
   title.innerHTML = 'Guia: ' + name;
-  body.innerHTML = sectionGuides[tab] || '<p>Guia em construção para esta aba.</p>';
+  body.innerHTML = sectionGuides[tab] || '<p>Guia em construÃ§Ã£o para esta aba.</p>';
   modal.classList.add('show');
 }
 
@@ -3177,7 +3210,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const tabId = section.id.replace('section-', '');
       const btn = document.createElement('button');
       btn.className = 'icon-btn';
-      btn.innerHTML = '❔ Ajuda';
+      btn.innerHTML = 'â” Ajuda';
       btn.onclick = (e) => { e.preventDefault(); openDoc(tabId); };
 
       if (firstH2.style.display !== 'flex') {
@@ -3198,3 +3231,4 @@ document.addEventListener('DOMContentLoaded', () => {
 setTimeout(() => {
   document.dispatchEvent(new Event('DOMContentLoaded'));
 }, 500);
+

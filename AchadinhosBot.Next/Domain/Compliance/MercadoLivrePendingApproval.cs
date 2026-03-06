@@ -18,4 +18,5 @@ public sealed class MercadoLivrePendingApproval
     public string? ReviewNote { get; set; }
     public string? ConvertedText { get; set; }
     public int ConvertedLinks { get; set; }
+    public string? OriginalImageUrl { get; set; }
 }

@@ -1,0 +1,93 @@
+{
+  "scenario_name": "02 - Aprovacao e publicacao",
+  "modules": [
+    {
+      "step": 1,
+      "app": "Telegram Bot",
+      "module": "Watch updates",
+      "type": "trigger",
+      "config": {
+        "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg",
+        "update_types": [
+          "message"
+        ]
+      }
+    },
+    {
+      "step": 2,
+      "app": "Tools",
+      "module": "Set variables",
+      "filter": {
+        "all": [
+          {
+            "left": "{{1.message.text}}",
+            "operator": "starts_with",
+            "right": "/aprovar "
+          }
+        ]
+      },
+      "config": {
+        "variables": [
+          {
+            "name": "draft_id",
+            "value": "{{trim(get(split(1.message.text;\" \");2))}}"
+          }
+        ]
+      }
+    },
+    {
+      "step": 3,
+      "app": "HTTP",
+      "module": "Make a request",
+      "config": {
+        "method": "POST",
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/auth/login",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body_type": "raw",
+        "body": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+        "store_cookies": true
+      }
+    },
+    {
+      "step": 4,
+      "app": "HTTP",
+      "module": "Make a request",
+      "config": {
+        "method": "POST",
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/instagram/publish/drafts/{{2.draft_id}}/publish",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body_type": "raw",
+        "body": "{}",
+        "use_cookies_from_step": 3
+      }
+    },
+    {
+      "step": 5,
+      "app": "HTTP",
+      "module": "Make a request",
+      "config": {
+        "method": "POST",
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/catalog/sync",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body_type": "raw",
+        "body": "{}",
+        "use_cookies_from_step": 3
+      }
+    },
+    {
+      "step": 6,
+      "app": "Telegram Bot",
+      "module": "Send a message",
+      "config": {
+        "chat_id": "{{1.message.chat.id}}",
+        "text": "Publicacao concluida\nDraftId: {{2.draft_id}}\nMediaId: {{4.body.mediaId}}\nCatalogo sincronizado."
+      }
+    }
+  ]
+}

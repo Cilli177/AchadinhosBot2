@@ -1,0 +1,231 @@
+{
+  "name": "make_v2_telegram_oferta_to_instagram_catalog",
+  "note": "Configuracao pronta para montar no editor novo do Make (modulos nativos Telegram).",
+  "scenarios": [
+    {
+      "scenario_name": "01 - Captura oferta e cria draft",
+      "modules": [
+        {
+          "step": 1,
+          "app": "Telegram Bot",
+          "module": "Watch updates",
+          "type": "trigger",
+          "config": {
+            "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg",
+            "update_types": [
+              "message"
+            ]
+          }
+        },
+        {
+          "step": 2,
+          "app": "Flow Control",
+          "module": "Router",
+          "type": "router",
+          "routes": [
+            "route_comando_oferta",
+            "route_oferta_encaminhada"
+          ]
+        },
+        {
+          "step": 3,
+          "route": "route_comando_oferta",
+          "filter": {
+            "all": [
+              {
+                "left": "{{1.message.text}}",
+                "operator": "starts_with",
+                "right": "/oferta"
+              }
+            ]
+          },
+          "app": "Telegram Bot",
+          "module": "Send a message",
+          "config": {
+            "chat_id": "{{1.message.chat.id}}",
+            "text": "Envie agora a oferta original encaminhada (com imagem).",
+            "reply_to_message_id": "{{1.message.message_id}}"
+          }
+        },
+        {
+          "step": 4,
+          "route": "route_oferta_encaminhada",
+          "filter": {
+            "all": [
+              {
+                "left": "{{length(1.message.photo)}}",
+                "operator": "greater_than",
+                "right": 0
+              },
+              {
+                "left": "{{ifempty(1.message.caption;1.message.text)}}",
+                "operator": "not_equal",
+                "right": ""
+              }
+            ]
+          },
+          "app": "HTTP",
+          "module": "Make a request",
+          "config": {
+            "method": "POST",
+            "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDortoZ8bGV-K5WaizY-hEXKRTxp9HIzFk",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body_type": "raw",
+            "body": "{\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"Extraia dados de oferta em portugues-BR e retorne SOMENTE JSON valido com os campos: product_name, catchy_description, product_description, original_price, current_price, affiliate_link. Texto da oferta: {{ifempty(1.message.caption;1.message.text)}}\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.2,\n    \"responseMimeType\": \"application/json\"\n  }\n}"
+          }
+        },
+        {
+          "step": 5,
+          "app": "JSON",
+          "module": "Parse JSON",
+          "config": {
+            "json_string": "{{4.body.candidates[0].content.parts[0].text}}"
+          }
+        },
+        {
+          "step": 6,
+          "app": "Telegram Bot",
+          "module": "Get a file",
+          "config": {
+            "file_id": "{{1.message.photo[length(1.message.photo)-1].file_id}}",
+            "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg"
+          }
+        },
+        {
+          "step": 7,
+          "app": "HTTP",
+          "module": "Make a request",
+          "config": {
+            "method": "POST",
+            "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/auth/login",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body_type": "raw",
+            "body": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+            "store_cookies": true
+          }
+        },
+        {
+          "step": 8,
+          "app": "HTTP",
+          "module": "Make a request",
+          "config": {
+            "method": "POST",
+            "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/instagram/publish/drafts",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body_type": "raw",
+            "body": "{\n  \"postType\": \"feed\",\n  \"productName\": \"{{5.product_name}}\",\n  \"caption\": \"{{5.catchy_description}}\\n\\n{{5.product_description}}\\n\\nPreco VIP: {{5.current_price}}\\nPreco original: {{5.original_price}}\",\n  \"hashtags\": \"#achadinhos #oferta #vip\",\n  \"imageUrls\": [\n    \"https://api.telegram.org/file/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/{{6.file_path}}\"\n  ],\n  \"ctas\": [\n    {\n      \"keyword\": \"VIP\",\n      \"link\": \"{{5.affiliate_link}}\"\n    }\n  ]\n}",
+            "use_cookies_from_step": 7
+          }
+        },
+        {
+          "step": 9,
+          "app": "Telegram Bot",
+          "module": "Send a message",
+          "config": {
+            "chat_id": "{{1.message.chat.id}}",
+            "text": "Novo draft para validacao\nDraftId: {{8.body.id}}\nProduto: {{5.product_name}}\nLink: {{5.affiliate_link}}\nComandos: /aprovar {{8.body.id}} | /reprovar {{8.body.id}} motivo"
+          }
+        }
+      ]
+    },
+    {
+      "scenario_name": "02 - Aprovar e publicar",
+      "modules": [
+        {
+          "step": 1,
+          "app": "Telegram Bot",
+          "module": "Watch updates",
+          "type": "trigger",
+          "config": {
+            "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg",
+            "update_types": [
+              "message"
+            ]
+          }
+        },
+        {
+          "step": 2,
+          "app": "Tools",
+          "module": "Set variables",
+          "filter": {
+            "all": [
+              {
+                "left": "{{1.message.text}}",
+                "operator": "starts_with",
+                "right": "/aprovar "
+              }
+            ]
+          },
+          "config": {
+            "variables": [
+              {
+                "name": "draft_id",
+                "value": "{{trim(get(split(1.message.text;\" \");2))}}"
+              }
+            ]
+          }
+        },
+        {
+          "step": 3,
+          "app": "HTTP",
+          "module": "Make a request",
+          "config": {
+            "method": "POST",
+            "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/auth/login",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body_type": "raw",
+            "body": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+            "store_cookies": true
+          }
+        },
+        {
+          "step": 4,
+          "app": "HTTP",
+          "module": "Make a request",
+          "config": {
+            "method": "POST",
+            "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/instagram/publish/drafts/{{2.draft_id}}/publish",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body_type": "raw",
+            "body": "{}",
+            "use_cookies_from_step": 3
+          }
+        },
+        {
+          "step": 5,
+          "app": "HTTP",
+          "module": "Make a request",
+          "config": {
+            "method": "POST",
+            "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/catalog/sync",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body_type": "raw",
+            "body": "{}",
+            "use_cookies_from_step": 3
+          }
+        },
+        {
+          "step": 6,
+          "app": "Telegram Bot",
+          "module": "Send a message",
+          "config": {
+            "chat_id": "{{1.message.chat.id}}",
+            "text": "Publicacao concluida\nDraftId: {{2.draft_id}}\nMediaId: {{4.body.mediaId}}\nCatalogo sincronizado."
+          }
+        }
+      ]
+    }
+  ]
+}

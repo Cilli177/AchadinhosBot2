@@ -1,0 +1,252 @@
+{
+  "name": "DEV - Telegram Aprovacao -> Instagram + Catalogo",
+  "flow": [
+    {
+      "id": 1,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/getUpdates",
+        "serializeUrl": false,
+        "method": "get",
+        "headers": [],
+        "qs": [],
+        "bodyType": "",
+        "parseResponse": true,
+        "authUser": "",
+        "authPass": "",
+        "timeout": "",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 300
+        }
+      }
+    },
+    {
+      "id": 2,
+      "module": "builtin:BasicFeeder",
+      "version": 1,
+      "parameters": {},
+      "mapper": {
+        "array": "{{1.data.result}}"
+      },
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 300
+        }
+      }
+    },
+    {
+      "id": 3,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "filter": {
+        "name": "Somente /aprovar",
+        "conditions": [
+          [
+            {
+              "a": "{{2.message.text}}",
+              "b": "/aprovar ",
+              "o": "text:startsWith"
+            }
+          ]
+        ]
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/auth/login",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+        "parseResponse": true,
+        "authUser": "",
+        "authPass": "",
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 600,
+          "y": 300
+        }
+      }
+    },
+    {
+      "id": 4,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/instagram/publish/drafts/{{trim(get(split(2.message.text; \" \"); 2))}}/publish",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{}",
+        "parseResponse": true,
+        "authUser": "",
+        "authPass": "",
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 900,
+          "y": 300
+        }
+      }
+    },
+    {
+      "id": 5,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/catalog/sync",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{}",
+        "parseResponse": true,
+        "authUser": "",
+        "authPass": "",
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 1200,
+          "y": 300
+        }
+      }
+    },
+    {
+      "id": 6,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/sendMessage",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"chat_id\": \"{{2.message.chat.id}}\",\n  \"text\": \"Publicacao concluida\\nDraftId: {{trim(get(split(2.message.text; \\\" \\\"); 2))}}\\nMediaId: {{4.data.mediaId}}\\nCatalogo sincronizado.\"\n}",
+        "parseResponse": true,
+        "authUser": "",
+        "authPass": "",
+        "timeout": "",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 1500,
+          "y": 300
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "version": 1,
+    "scenario": {
+      "roundtrips": 1,
+      "maxErrors": 3,
+      "autoCommit": true,
+      "autoCommitTriggerLast": true,
+      "sequential": false,
+      "confidential": false,
+      "dataloss": false,
+      "dlq": false,
+      "freshVariables": false
+    },
+    "designer": {
+      "orphans": []
+    }
+  }
+}

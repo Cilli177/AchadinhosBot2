@@ -1,0 +1,213 @@
+{
+  "name": "Cenario 02 - Aprovacao e Publicacao",
+  "flow": [
+    {
+      "id": 1,
+      "module": "telegram:WatchUpdates",
+      "version": 1,
+      "parameters": {
+        "__IMTHOOK__": 1965644
+      },
+      "mapper": {},
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "filter": {
+        "name": "Comando /aprovar",
+        "conditions": [
+          [
+            {
+              "a": "{{1.message.text}}",
+              "b": "/aprovar ",
+              "o": "text:startsWith"
+            }
+          ]
+        ]
+      },
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/auth/login",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/instagram/publish/drafts/{{trim(get(split(1.message.text;\" \");2))}}/publish",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 600,
+          "y": 0
+        }
+      }
+    },
+    {
+      "id": 4,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://stylish-acceptance-cameras-tuesday.trycloudflare.com/api/catalog/sync",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": true,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 900,
+          "y": 0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/sendMessage",
+        "serializeUrl": false,
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"chat_id\": \"{{1.message.chat.id}}\",\n  \"text\": \"Publicacao concluida\\nDraftId: {{trim(get(split(1.message.text;\\\" \\\");2))}}\\nMediaId: {{3.data.mediaId}}\\nCatalogo sincronizado.\"\n}",
+        "parseResponse": true,
+        "timeout": "",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "followAllRedirects": false
+      },
+      "metadata": {
+        "designer": {
+          "x": 1200,
+          "y": 0
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "instant": true,
+    "version": 1,
+    "scenario": {
+      "roundtrips": 1,
+      "maxErrors": 3,
+      "autoCommit": true,
+      "autoCommitTriggerLast": true,
+      "sequential": false,
+      "slots": null,
+      "confidential": false,
+      "dataloss": false,
+      "dlq": false,
+      "freshVariables": false
+    },
+    "designer": {
+      "orphans": []
+    },
+    "zone": "us2.make.com",
+    "notes": []
+  }
+}
