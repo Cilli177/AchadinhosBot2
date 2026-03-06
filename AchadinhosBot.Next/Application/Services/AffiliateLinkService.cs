@@ -417,6 +417,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var startedFromMercadoLivreShortOrSocial = IsMercadoLivreSocialOrShortUri(uri);
         var mlbId = ExtractPreferredMercadoLivreIdFromUrl(uri.ToString());
         var resolvedUri = uri;
+        string? fallbackReason = null;
         if (string.IsNullOrWhiteSpace(mlbId))
         {
             var expanded = await ExpandUrlAsync(uri, cancellationToken);
@@ -537,24 +538,81 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
             if (recoveredValidation == MercadoLivreItemValidation.Unknown)
             {
+                if (!CanUseMercadoLivreManualFallback(uri, resolvedUri, mlbId))
+                {
+                    _logger.LogWarning(
+                        "Mercado Livre: MLB-ID recuperado com validacao inconclusiva na API, mas sem fallback manual confiavel. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                        uri.ToString(),
+                        resolvedUri.ToString(),
+                        mlbId);
+                    return null;
+                }
+
+                fallbackReason = "recovered_id_validation_unknown";
                 _logger.LogWarning(
-                    "Mercado Livre: MLB-ID recuperado com validacao inconclusiva na API. Conversao abortada para evitar link quebrado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                    "Mercado Livre: MLB-ID recuperado com validacao inconclusiva na API. Fallback manual sera usado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                    uri.ToString(),
+                    resolvedUri.ToString(),
+                    mlbId);
+            }
+        }
+        if (itemValidation == MercadoLivreItemValidation.Unknown)
+        {
+            if (!CanUseMercadoLivreManualFallback(uri, resolvedUri, mlbId))
+            {
+                _logger.LogWarning(
+                    "Mercado Livre: validacao de item inconclusiva via API e sem fallback manual confiavel. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
                     uri.ToString(),
                     resolvedUri.ToString(),
                     mlbId);
                 return null;
             }
-        }
-        if (itemValidation == MercadoLivreItemValidation.Unknown)
-        {
+
+            fallbackReason = "item_validation_unknown";
             _logger.LogWarning(
-                "Mercado Livre: validacao de item inconclusiva via API. Conversao abortada para evitar link quebrado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+                "Mercado Livre: validacao de item inconclusiva via API. Fallback manual sera usado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
                 uri.ToString(),
                 resolvedUri.ToString(),
                 mlbId);
-            return null;
         }
 
+        var canonicalUrl = await ResolveMercadoLivreCanonicalUrlAsync(mlbId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(canonicalUrl))
+        {
+            _logger.LogWarning(
+                "Mercado Livre: URL canonica indisponivel. Aplicando fallback manual. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId} Reason={Reason}",
+                uri.ToString(),
+                resolvedUri.ToString(),
+                mlbId,
+                fallbackReason ?? "canonical_unavailable");
+        }
+
+        return BuildMercadoLivreAffiliateUrl(mlbId, canonicalUrl);
+    }
+
+    private bool CanUseMercadoLivreManualFallback(Uri originalUri, Uri resolvedUri, string? mlbId)
+    {
+        if (string.IsNullOrWhiteSpace(mlbId))
+        {
+            return false;
+        }
+
+        if (IsMercadoLivreProductUri(resolvedUri))
+        {
+            return true;
+        }
+
+        if (!IsMercadoLivreSocialOrShortUri(originalUri) && !IsMercadoLivreSocialOrShortUri(resolvedUri))
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(ExtractMercadoLivreId(resolvedUri.AbsolutePath))
+               || !string.IsNullOrWhiteSpace(ExtractPreferredMercadoLivreIdFromUrl(resolvedUri.ToString()));
+    }
+
+    private string BuildMercadoLivreAffiliateUrl(string mlbId, string? canonicalUrl)
+    {
         var query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["matt_tool"] = MercadoLivreMattTool,
@@ -562,14 +620,15 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         };
 
         var cleanMlbId = mlbId.ToUpperInvariant();
-        if (cleanMlbId.StartsWith("MLB")) cleanMlbId = cleanMlbId[3..];
+        if (cleanMlbId.StartsWith("MLB", StringComparison.Ordinal))
+        {
+            cleanMlbId = cleanMlbId[3..];
+        }
 
-        var canonicalUrl = await ResolveMercadoLivreCanonicalUrlAsync(mlbId, cancellationToken);
         var url = !string.IsNullOrWhiteSpace(canonicalUrl)
             ? canonicalUrl
             : $"https://produto.mercadolivre.com.br/MLB-{cleanMlbId}";
-        var full = ApplyQuery(url, query);
-        return full;
+        return ApplyQuery(url, query);
     }
 
     private async Task<string?> TryRecoverMercadoLivreIdAsync(Uri originalUri, Uri resolvedUri, string invalidMlbId, CancellationToken cancellationToken)
