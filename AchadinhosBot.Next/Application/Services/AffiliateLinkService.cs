@@ -970,7 +970,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return fallback;
         }
 
-        normalized = Regex.Replace(normalized, @"[^a-z0-9]+", string.Empty);
+        normalized = Regex.Replace(normalized, @"[^a-z0-9]+", "_");
+        normalized = Regex.Replace(normalized, @"_+", "_").Trim('_');
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return fallback;

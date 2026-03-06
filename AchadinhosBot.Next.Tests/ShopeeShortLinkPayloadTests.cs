@@ -30,6 +30,14 @@ public sealed class ShopeeShortLinkPayloadTests
         Assert.Null(payload);
     }
 
+    [Fact]
+    public void ResolveShopeeSubIds_PreservesUnderscoreTokens()
+    {
+        var subIds = InvokeResolveShopeeSubIds("catalog forward");
+
+        Assert.Equal(["catalog_forward", "catalogo_site", "catalogo", "site", "crosspost"], subIds);
+    }
+
     private static IReadOnlyList<string> InvokeResolveShopeeSubIds(string? source)
     {
         var method = typeof(AffiliateLinkService).GetMethod(
