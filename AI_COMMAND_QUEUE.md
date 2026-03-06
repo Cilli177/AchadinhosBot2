@@ -9,6 +9,40 @@ Como usar:
 
 ## Inbox
 
+### CMD-2026-03-06-06
+- Status: DONE
+- Origem: Gemini
+- Data: 2026-03-06
+- Objetivo: Corrigir expansão de links `meli.la` e erro 404 em URLs de catálogo (Prioridade Alta).
+- Contexto: Links curtos gerados pelo app eram devolvidos sem converter. Adicionalmente, IDs de catálogo resolvidos de vitrines geravam URLs inválidas.
+- Escopo: `AffiliateLinkService.cs` (Expansão e Formação de URL).
+- Restricoes: Manter suporte a vitrines sociais.
+- Validacao esperada: Teste `RealLinkValidationTests` passando com 7 links reais (curtos, catálogo e itens).
+- Saida esperada do Codex: Leia `templates/AI_HANDOFF_ML_MELI_LA_FIX.md` para conhecimento técnico das alterações e sincronização de base.
+- Leitura tecnica: Identificado que o score de `meli.la` (95) impedia expansão HTTP. Identificado que IDs ≤8 dígitos (catálogo) exigem formato `/p/` em vez de `produto.mercadolivre...`.
+- Acoes executadas: Aplicada penalidade de -100pts para `meli.la`, implementada detecção inteligente de catálogo vs item no `BuildMercadoLivreAffiliateUrl`, e atualizadas as credenciais reais do usuário (`land177`/`98187057`).
+- Arquivos alterados: `Application/Services/AffiliateLinkService.cs`, `AchadinhosBot.Next.Tests/RealLinkValidationTests.cs`, `templates/AI_HANDOFF_ML_MELI_LA_FIX.md`.
+- Validacao executada: Execução de `dotnet test --filter RealLinkValidationTests`. 7/7 casos aprovados com URLs funcionais e tags de afiliado corretas.
+- Resultado: Expansão de links do app (`meli.la`) e suporte a catálogo 100% estabilizados.
+- Proximo passo: Monitorar conversão real em produção e prosseguir para `CMD-2026-03-06-05` (Webhook 401).
+
+### CMD-2026-03-06-05
+- Status: NEW
+- Origem: Gemini
+- Data: 2026-03-06
+- Objetivo: Investigar e solucionar HTTP 401 Unauthorized no Webhook `/webhook/bot-conversor` (Sprint 0 - Prioridade 2).
+- Contexto: A aplicacao falha ao decodificar a assinatura ou validar o token de entrada do Telegram/Emissor do link, matando a requisicao logo na porta e gerando 401. Isso impede o funcionamento basico da conversao automatizada de links.
+- Escopo: Autenticacao/Middlewares em `AchadinhosBot.Next` (Controllers/Middlewares/Attributes).
+- Restricoes: Nao remover a seguranca. O endpoint deve ainda exigir validacao severa, mas a logica criptografica/comparativa da assinatura precisa ser tratada, ou o token precisa ser atualizado caso o middleware esteja ok.
+- Validacao esperada: Um teste demonstrando que uma requisicao com a assinatura valida configurada no `.env` devolve um HTTP `200` ao invez de `401`.
+- Saida esperada do Codex: Leia o arquivo detalhado em `templates/AI_HANDOFF_WEBHOOK_401.md`. Faca primeiramente o levantamento investigativo focando no Arquivo de Testes de Webhooks e na implementacao real de seguranca. Retorne na fila neste card o **que esta errado** na validacao para eu aprovar e entao arrumarmos na Fase 2.
+- Leitura tecnica:
+- Acoes executadas:
+- Arquivos alterados:
+- Validacao executada:
+- Resultado:
+- Proximo passo:
+
 ### CMD-2026-03-06-04
 - Status: DONE
 - Origem: Gemini
