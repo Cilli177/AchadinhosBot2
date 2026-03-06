@@ -42,6 +42,8 @@
 - testes executados;
 - proximo passo.
 - O template padrao de handoff desta base fica em `templates/AI_HANDOFF_ANTIGRAVITY_v00.md`.
+- A fila oficial de comandos entre Gemini e Codex fica em `AI_COMMAND_QUEUE.md`.
+- O protocolo operacional dessa fila fica em `docs/governanca/PROTOCOLO_FILA_COMANDOS_MULTI_IA_v00.md`.
 - Segredos, tokens, cookies e dados sensiveis nao devem ser colados em prompts quando houver alternativa por variavel de ambiente ou arquivo local protegido.
 - Mudancas de producao, hotfix e rollback seguem o fluxo normal do repositorio e da pipeline; Antigravity nao substitui gate tecnico.
 
