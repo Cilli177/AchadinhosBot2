@@ -1,36 +1,62 @@
-name: Build Backend and Frontend
+name: CI DEV Baseline
 
 on:
   pull_request:
     branches:
       - main
-      
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
 permissions:
   contents: read
 
-jobs:
-  build:
-    name: Build All Projects
-    runs-on: ubuntu-latest
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
-    strategy:
-      fail-fast: false
-      matrix:
-        project:
-          - SampleApp/BackEnd/BackEnd.csproj
-          - SampleApp/FrontEnd/FrontEnd.csproj
+jobs:
+  validate:
+    name: Build, Test and Publish
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup .NET
+      - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: 8.0.x
 
-      - name: Restore dependencies
-        run: dotnet restore ${{ matrix.project }}
+      - name: Restore solution
+        run: dotnet restore AchadinhosBot2.sln
 
-      - name: Build project
-        run: dotnet build ${{ matrix.project }} --no-restore --configuration Release
+      - name: Build solution
+        run: dotnet build AchadinhosBot2.sln -c Release --no-restore
+
+      - name: Test AchadinhosBot.Next.Tests
+        run: dotnet test AchadinhosBot.Next.Tests/AchadinhosBot.Next.Tests.csproj -c Release --no-build --logger "trx;LogFileName=AchadinhosBot.Next.Tests.trx"
+
+      - name: Test AchadinhosBot.Tests
+        run: dotnet test AchadinhosBot.Tests/AchadinhosBot.Tests.csproj -c Release --no-build --logger "trx;LogFileName=AchadinhosBot.Tests.trx"
+
+      - name: Publish AchadinhosBot.Next
+        run: dotnet publish AchadinhosBot.Next/AchadinhosBot.Next.csproj -c Release -o artifacts/publish /p:UseAppHost=false
+
+      - name: Upload publish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: achadinhos-next-publish
+          path: artifacts/publish
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/*.trx
