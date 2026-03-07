@@ -508,96 +508,17 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
         }
 
-        var itemValidation = await ValidateMercadoLivreItemWithApiAsync(mlbId, cancellationToken);
-        if (itemValidation == MercadoLivreItemValidation.Invalid)
-        {
-            var initialInvalidId = mlbId;
-            _logger.LogWarning("Mercado Livre item inválido ou não encontrado via API. Id={MlbId} Url={ResolvedUrl}. Tentando recuperar item alternativo.", mlbId, resolvedUri.ToString());
-            var recoveredMlbId = await TryRecoverMercadoLivreIdAsync(uri, resolvedUri, mlbId, cancellationToken);
-            if (string.IsNullOrWhiteSpace(recoveredMlbId))
-            {
-                if (isSocialUrl)
-                {
-                    _logger.LogInformation("Mercado Livre: Item original invalido, mas URL e social (Vitrine). Prosseguindo com afiliação da URL social.");
-                    return BuildMercadoLivreAffiliateUrl(null, resolvedUrl);
-                }
+        // Validação via API desativada temporariamente. Motivo: a URL canônica retornada 
+        // frequentemente aponta para o domínio incorreto (produto.mercadolivre.com.br) 
+        // para IDs curtos (catálogos), gerando erros 404 intermitentes nas pontas.
+        // Toda a conversão confiará apenas na lógica interna de BuildMercadoLivreAffiliateUrl.
+        string? canonicalUrl = null;
 
-                if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
-                {
-                    _logger.LogWarning(
-                        "Mercado Livre: item invalido e sem recuperacao de MLB-ID em link social/curto. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl}",
-                        uri.ToString(),
-                        resolvedUri.ToString());
-                    return null;
-                }
-
-                return null;
-            }
-
-            mlbId = recoveredMlbId;
-            _logger.LogInformation("Mercado Livre item alternativo recuperado com sucesso. IdAnterior={OldId} IdAtual={NewId} Url={ResolvedUrl}", initialInvalidId, mlbId, resolvedUri.ToString());
-
-            var recoveredValidation = await ValidateMercadoLivreItemWithApiAsync(mlbId, cancellationToken);
-            if (recoveredValidation == MercadoLivreItemValidation.Invalid)
-            {
-                _logger.LogWarning(
-                    "Mercado Livre: MLB-ID recuperado continuou invalido na API. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
-                    uri.ToString(),
-                    resolvedUri.ToString(),
-                    mlbId);
-                return null;
-            }
-
-            if (recoveredValidation == MercadoLivreItemValidation.Unknown)
-            {
-                if (!CanUseMercadoLivreManualFallback(uri, resolvedUri, mlbId))
-                {
-                    _logger.LogWarning(
-                        "Mercado Livre: MLB-ID recuperado com validacao inconclusiva na API, mas sem fallback manual confiavel. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
-                        uri.ToString(),
-                        resolvedUri.ToString(),
-                        mlbId);
-                    return null;
-                }
-
-                fallbackReason = "recovered_id_validation_unknown";
-                _logger.LogWarning(
-                    "Mercado Livre: MLB-ID recuperado com validacao inconclusiva na API. Fallback manual sera usado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
-                    uri.ToString(),
-                    resolvedUri.ToString(),
-                    mlbId);
-            }
-        }
-        if (itemValidation == MercadoLivreItemValidation.Unknown)
-        {
-            if (!CanUseMercadoLivreManualFallback(uri, resolvedUri, mlbId))
-            {
-                _logger.LogWarning(
-                    "Mercado Livre: validacao de item inconclusiva via API e sem fallback manual confiavel. Conversao abortada. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
-                    uri.ToString(),
-                    resolvedUri.ToString(),
-                    mlbId);
-                return null;
-            }
-
-            fallbackReason = "item_validation_unknown";
-            _logger.LogWarning(
-                "Mercado Livre: validacao de item inconclusiva via API. Fallback manual sera usado. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
-                uri.ToString(),
-                resolvedUri.ToString(),
-                mlbId);
-        }
-
-        var canonicalUrl = await ResolveMercadoLivreCanonicalUrlAsync(mlbId, cancellationToken);
-        if (string.IsNullOrWhiteSpace(canonicalUrl))
-        {
-            _logger.LogWarning(
-                "Mercado Livre: URL canonica indisponivel. Aplicando fallback manual. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId} Reason={Reason}",
-                uri.ToString(),
-                resolvedUri.ToString(),
-                mlbId,
-                fallbackReason ?? "canonical_unavailable");
-        }
+        _logger.LogInformation(
+            "Mercado Livre: Validacao de API desativada. Aplicando fallback manual local. Original={OriginalUrl} Resolved={ResolvedUrl} Id={MlbId}",
+            uri.ToString(),
+            resolvedUri.ToString(),
+            mlbId);
 
         return BuildMercadoLivreAffiliateUrl(mlbId, canonicalUrl);
     }

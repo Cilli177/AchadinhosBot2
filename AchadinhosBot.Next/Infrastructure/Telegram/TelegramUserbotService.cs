@@ -1098,7 +1098,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             "TelegramUserbot",
             CancellationToken.None,
             originChatId: originId,
-            destinationChatId: settings.TelegramForwarding.DestinationChatId);
+            destinationChatId: tgForwarding.DestinationChatId);
         if (!TryGetStrictForwardText(text, result.Success, result.ConvertedLinks, result.ConvertedText, out var finalText))
         {
             var mercadoLivreUrls = ExtractMercadoLivreUrls(text)
@@ -1108,8 +1108,9 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
 
             if (IsTrustedReiDasOfertasMessage(settings, msg))
             {
-                // Blindagem do Rei das Ofertas:
-                // para ML, so libera repasse se os links estiverem aprovados no store.
+                // Blindagem do Rei das Ofertas TEMPORARIAMENTE DESATIVADA A PEDIDO DO USUARIO
+                // para ML ir direto sem auditoria
+                /*
                 if (mercadoLivreUrls.Length > 0)
                 {
                     var approved = await _mercadoLivreApprovalStore.GetApprovedUrlsAsync(mercadoLivreUrls, CancellationToken.None);
@@ -1126,6 +1127,7 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                         return;
                     }
                 }
+                */
 
                 finalText = string.IsNullOrWhiteSpace(result.ConvertedText) ? text : result.ConvertedText!;
             }
