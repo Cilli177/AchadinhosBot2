@@ -13,6 +13,7 @@ public sealed class InstagramPublishDraft
     public List<string> ImageUrls { get; set; } = new();
     public List<int> SelectedImageIndexes { get; set; } = new();
     public List<InstagramCtaOption> Ctas { get; set; } = new();
+    public bool AutoReplyEnabled { get; set; }
     public string Status { get; set; } = "draft";
     public string? MediaId { get; set; }
     public string? Error { get; set; }
