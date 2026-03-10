@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Security.Claims;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Consumers;
 using AchadinhosBot.Next.Configuration;
@@ -11,8 +12,8 @@ using Microsoft.Extensions.Options;
 namespace AchadinhosBot.Next.Endpoints;
 
 /// <summary>
-/// Admin-only endpoints for the conversor admin panel.
-/// All routes are protected by X-Admin-Key header, which must match WebhookOptions.ApiKey.
+/// Admin endpoints for the conversor admin panel.
+/// Routes accept an authenticated session (admin/operator) or the legacy X-Admin-Key header.
 /// </summary>
 public static class AdminEndpoints
 {
@@ -98,6 +99,7 @@ public static class AdminEndpoints
         app.MapPost("/api/admin/upload-media", async (
             HttpContext context,
             IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
             CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -135,6 +137,13 @@ public static class AdminEndpoints
             }
 
             var url = $"/media/admin/{fileName}";
+            await audit.WriteAsync("admin.upload_media", ResolveActor(context), new
+            {
+                file = file.FileName,
+                storedAs = fileName,
+                size = file.Length,
+                contentType = file.ContentType
+            }, ct);
             return Results.Ok(new { success = true, url });
         });
 
@@ -144,6 +153,7 @@ public static class AdminEndpoints
             HttpContext context,
             IInstagramPublishStore store,
             IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
             CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -167,6 +177,14 @@ public static class AdminEndpoints
             ApplyCatalogIntent(draft, req.SendToCatalog, req.CatalogTarget);
 
             await store.SaveAsync(draft, ct);
+            await audit.WriteAsync("admin.draft.created", ResolveActor(context), new
+            {
+                draftId = draft.Id,
+                draft.ProductName,
+                draft.PostType,
+                draft.SendToCatalog,
+                draft.CatalogTarget
+            }, ct);
             return Results.Ok(new { success = true, draftId = draft.Id });
         });
 
@@ -177,6 +195,7 @@ public static class AdminEndpoints
             IInstagramPublishStore draftStore,
             IInstagramPublishService publishService,
             IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
             CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -199,6 +218,15 @@ public static class AdminEndpoints
             }
 
             var result = await publishService.QueuePublishAsync(req.DraftId, "admin_panel", ct);
+            await audit.WriteAsync("admin.publish.instagram", ResolveActor(context), new
+            {
+                req.DraftId,
+                accepted = result.Accepted,
+                result.Mode,
+                result.MessageId,
+                result.Error,
+                draft.CatalogTarget
+            }, ct);
             return Results.Ok(new
             {
                 success = result.Accepted,
@@ -214,6 +242,7 @@ public static class AdminEndpoints
             HttpContext context,
             IWhatsAppGateway whatsapp,
             IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
             CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -229,6 +258,12 @@ public static class AdminEndpoints
                 result = await whatsapp.SendTextAsync(null, req.TargetId, req.Content, ct);
             }
 
+            await audit.WriteAsync("admin.publish.whatsapp", ResolveActor(context), new
+            {
+                req.TargetId,
+                result.Success,
+                result.Message
+            }, ct);
             return Results.Ok(new { success = result.Success, message = result.Message });
         });
 
@@ -238,6 +273,7 @@ public static class AdminEndpoints
             HttpContext context,
             ITelegramGateway telegram,
             IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
             CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -249,6 +285,12 @@ public static class AdminEndpoints
                 var result = !string.IsNullOrWhiteSpace(req.ImageUrl)
                     ? await telegram.SendPhotoAsync(null, chatId, req.ImageUrl, req.Content, ct)
                     : await telegram.SendTextAsync(null, chatId, req.Content, ct);
+                await audit.WriteAsync("admin.publish.telegram", ResolveActor(context), new
+                {
+                    chatId,
+                    result.Success,
+                    result.Message
+                }, ct);
                 return Results.Ok(new { success = result.Success, message = result.Message });
             }
             catch (Exception ex)
@@ -267,6 +309,7 @@ public static class AdminEndpoints
             IInstagramPublishStore draftStore,
             ICatalogOfferStore catalogStore,
             IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
             CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -388,6 +431,18 @@ public static class AdminEndpoints
                 }
             }
 
+            await audit.WriteAsync("admin.publish.master", ResolveActor(context), new
+            {
+                req.DraftId,
+                req.PublishInstagram,
+                req.PublishTelegram,
+                req.PublishWhatsApp,
+                req.PublishCatalog,
+                req.TelegramChatId,
+                req.WhatsAppTargetId,
+                catalogTarget = draft?.CatalogTarget ?? req.CatalogTarget,
+                success = allSucceeded
+            }, ct);
             return Results.Ok(new { success = allSucceeded, channels = results });
         });
 
@@ -398,6 +453,7 @@ public static class AdminEndpoints
             ICatalogOfferStore catalogStore,
             IInstagramPublishStore draftStore,
             IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
             CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -427,6 +483,12 @@ public static class AdminEndpoints
             }
 
             var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
+            await audit.WriteAsync("admin.catalog.sync_single", ResolveActor(context), new
+            {
+                req.DraftId,
+                draft.CatalogTarget,
+                itemsUpdated = syncResult.Created + syncResult.Updated
+            }, ct);
             return Results.Ok(new
             {
                 success = true,
@@ -496,9 +558,36 @@ public static class AdminEndpoints
 
     private static bool IsAdminAuthorized(HttpContext ctx, string apiKey)
     {
+        if (ctx.User.Identity?.IsAuthenticated == true)
+        {
+            var role = ctx.User.FindFirst(ClaimTypes.Role)?.Value;
+            if (string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(role, "operator", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
         if (ctx.Request.Headers.TryGetValue("X-Admin-Key", out var provided))
-            return SecretComparer.EqualsConstantTime(apiKey, provided.ToString());
+            return !string.IsNullOrWhiteSpace(provided.ToString()) &&
+                   SecretComparer.EqualsConstantTime(apiKey, provided.ToString());
         return false;
+    }
+
+    private static string ResolveActor(HttpContext ctx)
+    {
+        if (!string.IsNullOrWhiteSpace(ctx.User.Identity?.Name))
+        {
+            return ctx.User.Identity!.Name!;
+        }
+
+        if (ctx.Request.Headers.TryGetValue("X-Admin-Key", out var provided) &&
+            !string.IsNullOrWhiteSpace(provided.ToString()))
+        {
+            return "api_key";
+        }
+
+        return "anonymous";
     }
 
     private static void ApplyCatalogIntent(InstagramPublishDraft draft, bool sendToCatalog, string? catalogTarget)

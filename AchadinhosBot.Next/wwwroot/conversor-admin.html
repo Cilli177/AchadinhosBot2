@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin VIP â€” Publicar Oferta</title>
+    <title>Admin VIP - Publicar Oferta</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <link
@@ -330,18 +330,21 @@
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 </svg>
             </div>
-            <h2 class="text-white font-display font-bold text-2xl">Ãrea Restrita</h2>
-            <p class="text-slate-400 text-sm text-center">Insira a chave de acesso admin para continuar.</p>
-            <input type="password" id="adminKeyInput" placeholder="Chave de administrador"
+                        <h2 class="text-white font-display font-bold text-2xl">Area Restrita</h2>
+            <p class="text-slate-400 text-sm text-center">Entre com usuario e senha para abrir o painel e registrar as acoes no log.</p>
+            <input type="text" id="adminUsernameInput" placeholder="Usuario"
+                class="w-full bg-primary border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500/50 focus:ring-2 focus:ring-red-500/20 transition-all"
+                onkeydown="if(event.key==='Enter') attemptLogin()">
+            <input type="password" id="adminPasswordInput" placeholder="Senha"
                 class="w-full bg-primary border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500/50 focus:ring-2 focus:ring-red-500/20 transition-all"
                 onkeydown="if(event.key==='Enter') attemptLogin()">
             <button onclick="attemptLogin()"
                 class="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-red-600/20">
                 Entrar
             </button>
-            <p id="loginError" class="text-red-400 text-sm hidden">Chave incorreta. Tente novamente.</p>
-            <a href="/conversor" class="text-slate-500 hover:text-white text-xs transition-colors">â† Voltar ao Conversor
-                PÃºblico</a>
+            <p id="loginHint" class="text-slate-500 text-xs text-center">Use um usuario de Auth.Users, como admin ou operator.</p>
+            <p id="loginError" class="text-red-400 text-sm hidden">Credenciais invalidas. Tente novamente.</p>
+            <a href="/conversor" class="text-slate-500 hover:text-white text-xs transition-colors">&larr; Voltar ao Conversor Publico</a>
         </div>
     </div>
 
@@ -378,7 +381,7 @@
                     placeholder="Cole o link do produto..." autocomplete="off">
                 <button type="button" id="submitBtn" onclick="handleConvert()"
                     class="w-full bg-accent hover:bg-accentHover text-primary font-bold text-lg px-6 py-4 rounded-2xl transition-all shadow-lg hover:shadow-accent/20 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                    <span class="btn-text">âœ¨ Converter Link</span>
+                    <span class="btn-text">Converter Link</span>
                     <div class="spinner" id="spinner"></div>
                 </button>
             </form>
@@ -413,7 +416,7 @@
                         <div>
                             <span id="storeBadge"
                                 class="inline-block px-2 py-0.5 bg-surface border border-white/10 rounded text-xs font-bold uppercase tracking-widest text-slate-300 mb-2">Loja</span>
-                            <h2 id="productTitle" class="text-lg font-semibold text-white leading-snug">â€”</h2>
+                            <h2 id="productTitle" class="text-lg font-semibold text-white leading-snug">-</h2>
                         </div>
                         <div class="mt-3 space-y-2">
                             <div class="flex items-baseline gap-2 flex-wrap">
@@ -440,13 +443,13 @@
                     <div class="flex border-b border-white/10 bg-surface/50">
                         <button onclick="switchTab('visual')"
                             class="tab-btn flex-1 py-4 text-sm font-bold uppercase tracking-wider text-slate-400 active"
-                            id="tab-visual-btn">ðŸ–¼ï¸ Visual</button>
+                            id="tab-visual-btn">Visual</button>
                         <button onclick="switchTab('caption')"
                             class="tab-btn flex-1 py-4 text-sm font-bold uppercase tracking-wider text-slate-400"
-                            id="tab-caption-btn">âœï¸ Legenda IA</button>
+                            id="tab-caption-btn">Legenda IA</button>
                         <button onclick="switchTab('publish')"
                             class="tab-btn flex-1 py-4 text-sm font-bold uppercase tracking-wider text-slate-400"
-                            id="tab-publish-btn">ðŸ“¤ Publicar</button>
+                            id="tab-publish-btn">Publicar</button>
                     </div>
 
                     <div class="p-4 md:p-6">
@@ -544,7 +547,7 @@
                                     <div class="bg-primary/30 p-4 rounded-2xl border border-white/5">
                                         <label
                                             class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Gerenciamento
-                                            de MÃ­dia</label>
+                                            de Midia</label>
                                         <div class="grid grid-cols-3 gap-3">
                                             <button onclick="document.getElementById('photoInput').click()"
                                                 class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
@@ -564,7 +567,7 @@
                                                             d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                                                     </svg></div>
                                                 <span class="text-[9px] font-bold uppercase tracking-tight">Add
-                                                    VÃ­deo</span>
+                                                    Video</span>
                                             </button>
                                             <button onclick="openEditorModal()"
                                                 class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
@@ -594,20 +597,20 @@
                                                 Card VIP</label>
                                             <button onclick="generateCard()" id="genCardBtn"
                                                 class="w-full bg-surface border border-white/5 text-white/70 hover:text-white py-2 rounded-lg text-[10px] font-bold transition-all">
-                                                âœ¨ Atualizar Imagem do Post
+                                                Atualizar Imagem do Post
                                             </button>
                                         </div>
                                     </div>
 
                                     <div class="bg-primary/30 p-4 rounded-2xl border border-white/5">
                                         <label
-                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">AÃ§Ã£o
-                                            de PublicaÃ§Ã£o</label>
+                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Acao
+                                            de Publicacao</label>
                                         <select id="postType"
                                             class="w-full bg-surface border border-white/5 rounded-xl px-4 py-3 text-xs text-white appearance-none focus:outline-none mb-3">
                                             <option value="feed">Post no Feed (Foto)</option>
-                                            <option value="story">Story (Foto/VÃ­deo)</option>
-                                            <option value="reels">Reels (VÃ­deo)</option>
+                                            <option value="story">Story (Foto/Video)</option>
+                                            <option value="reels">Reels (Video)</option>
                                         </select>
 
                                         <label
@@ -624,14 +627,14 @@
                                                 class="flex items-center gap-3 mb-2.5 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
                                                 <input type="checkbox" id="chkPublishIg" checked
                                                     class="rounded w-4 h-4 text-pink-500 focus:ring-pink-500 cursor-pointer bg-black/30 border border-white/10">
-                                                <span class="text-[11px] font-bold text-slate-200">ðŸ“¸ Publicar no
+                                                <span class="text-[11px] font-bold text-slate-200">Publicar no
                                                     Instagram</span>
                                             </label>
                                             <label
                                                 class="flex items-center gap-3 mb-2.5 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
                                                 <input type="checkbox" id="chkPublishTg" checked
                                                     class="rounded w-4 h-4 text-blue-500 focus:ring-blue-500 cursor-pointer bg-black/30 border border-white/10">
-                                                <span class="text-[11px] font-bold text-slate-200">âœˆï¸ Enviar ao
+                                                <span class="text-[11px] font-bold text-slate-200">Enviar ao
                                                     Telegram</span>
                                                 <input id="pubTgTarget" value="-1003632436217" class="hidden">
                                             </label>
@@ -639,7 +642,7 @@
                                                 class="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
                                                 <input type="checkbox" id="chkPublishWa" checked
                                                     class="rounded w-4 h-4 text-green-500 focus:ring-green-500 cursor-pointer bg-black/30 border border-white/10">
-                                                <span class="text-[11px] font-bold text-slate-200">ðŸ’¬ Enviar ao
+                                                <span class="text-[11px] font-bold text-slate-200">Enviar ao
                                                     WhatsApp</span>
                                                 <input id="pubWaTarget" value="120363405661434395@g.us" class="hidden">
                                             </label>
@@ -647,8 +650,8 @@
                                                 class="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
                                                 <input type="checkbox" id="chkPublishCatalog" checked onchange="toggleCatalogTargetState()"
                                                     class="rounded w-4 h-4 text-purple-500 focus:ring-purple-500 cursor-pointer bg-black/30 border border-white/10">
-                                                <span class="text-[11px] font-bold text-slate-200">ðŸ›’ Enviar ao
-                                                    CatÃ¡logo</span>
+                                                <span class="text-[11px] font-bold text-slate-200">Enviar ao
+                                                    Catalogo</span>
                                             </label>
                                             <div class="mt-2 pl-7">
                                                 <label for="catalogTargetSelect"
@@ -665,12 +668,12 @@
                                         <!-- MAIN POST BUTTON -->
                                         <button onclick="publishMaster()" id="pubMasterBtn"
                                             class="w-full py-4 rounded-xl font-black text-sm transition-all btn-status-idle flex items-center justify-center gap-2 shadow-xl shadow-accent/20">
-                                            ðŸš€ LANÃ‡AR CAMPANHA (OMNICHANNEL)
+                                            LANCAR CAMPANHA (OMNICHANNEL)
                                         </button>
 
                                         <button onclick="syncCatalog()" id="pubCatalogBtn"
                                             class="w-full mt-3 bg-yellow-600/10 hover:bg-yellow-600/20 text-yellow-500 border border-yellow-600/20 py-2 rounded-lg text-[9px] font-bold uppercase transition-all">
-                                            Add ao CatÃ¡logo Web
+                                            Add ao Catalogo Web
                                         </button>
                                     </div>
                                 </div>
@@ -692,15 +695,15 @@
                         </div>
                         <!-- Caption Splitter Container (Hidden by default) -->
                         <div id="captionOptionsContainer" class="hidden mb-4">
-                            <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">âœ¨
-                                OpÃ§Ãµes Sugeridas pela IA (Escolha uma)</label>
+                            <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨
+                                OpÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âµes Sugeridas pela IA (Escolha uma)</label>
                             <div id="captionCardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <!-- Cards will be injected here -->
                             </div>
                         </div>
                         <textarea id="captionText" rows="12"
                             class="w-full bg-primary/40 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600 leading-relaxed"
-                            placeholder="Sua legenda aparecerÃ¡ aqui. VocÃª pode editar livremente..."></textarea>
+                            placeholder="Sua legenda aparecerÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ aqui. VocÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âª pode editar livremente..."></textarea>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div class="bg-primary/20 p-4 rounded-xl border border-white/5 relative">
@@ -710,12 +713,12 @@
                                         do Post</label>
                                     <button onclick="suggestHashtags()" id="suggestTagsBtn"
                                         class="text-[9px] text-accent font-bold uppercase transition-all flex items-center gap-1 hover:text-white">
-                                        âœ¨ Sugerir
+                                        ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Sugerir
                                     </button>
                                 </div>
                                 <input id="hashtagInput"
                                     class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
-                                    placeholder="#oferta #achadinhos #promoÃ§Ã£o">
+                                    placeholder="#oferta #achadinhos #promoÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o">
                             </div>
                             <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
                                 <label
@@ -761,7 +764,7 @@
                                     do Direct (DM)</label>
                                 <textarea id="autoReplyMessage" rows="2" oninput="markAutoReplyManual(this)"
                                     class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600"
-                                    placeholder="Aqui estÃ¡ o link do produto que vocÃª pediu:"></textarea>
+                                    placeholder="Aqui estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ o link do produto que vocÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âª pediu:"></textarea>
                             </div>
                             <div>
                                 <label
@@ -777,7 +780,7 @@
                     <!-- TAB 3: PUBLISH (LOGS & STATUS) -->
                     <div id="tab-publish" class="tab-content space-y-4">
                         <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-sm font-bold text-slate-300">HistÃ³rico de PublicaÃ§Ãµes</h3>
+                            <h3 class="text-sm font-bold text-slate-300">Historico de Publicacoes</h3>
                             <button onclick="loadDraftsHistory()"
                                 class="bg-white/5 hover:bg-white/10 text-white/70 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -792,14 +795,14 @@
                             <div
                                 class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3">
                             </div>
-                            <p class="text-xs text-slate-500">Carregando histÃ³rico...</p>
+                            <p class="text-xs text-slate-500">Carregando historico...</p>
                         </div>
 
                         <div id="draftsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             <!-- Draft cards will be injected here -->
                             <div
                                 class="col-span-full bg-primary/30 rounded-2xl border border-white/5 p-6 text-center text-slate-400 text-sm">
-                                Nenhuma publicaÃ§Ã£o encontrada.
+                                Nenhuma publicacao encontrada.
                             </div>
                         </div>
                     </div>
@@ -813,11 +816,12 @@
                             <path
                                 d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                         </svg>
-                        Logout
+                        Sair
                     </button>
+                    <span id="sessionInfo" class="text-[10px] text-slate-500 uppercase tracking-widest">Sessao nao iniciada</span>
                     <button onclick="convertAnother()"
                         class="text-[10px] text-accent font-bold uppercase tracking-widest hover:text-white transition-all">
-                        Converter Outro â†º
+                        Converter Outro ->
                     </button>
                 </div>
             </div>
@@ -882,14 +886,14 @@
                             </button>
                             <button onclick="addEditorBadge('frete')"
                                 class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
-                                Frete GrÃ¡tis
+                                Frete GrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡tis
                             </button>
                         </div>
                     </div>
 
                     <div class="pt-4 border-t border-white/10">
                         <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
-                            para reposicionÃ¡-los.</p>
+                            para reposicionÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡-los.</p>
                     </div>
                 </div>
 
@@ -897,7 +901,7 @@
                 <div class="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
                     <button onclick="applyEditorChanges()"
                         class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
-                        Aplicar AlteraÃ§Ãµes
+                        Aplicar AlteraÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âµes
                     </button>
                     <button onclick="closeEditorModal()"
                         class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
@@ -952,14 +956,14 @@
                             </button>
                             <button onclick="addEditorBadge('frete')"
                                 class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
-                                Frete GrÃ¡tis
+                                Frete GrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡tis
                             </button>
                         </div>
                     </div>
 
                     <div class="pt-4 border-t border-white/10">
                         <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
-                            para reposicionÃ¡-los.</p>
+                            para reposicionÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡-los.</p>
                     </div>
                 </div>
 
@@ -967,7 +971,7 @@
                 <div class="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
                     <button onclick="applyEditorChanges()"
                         class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
-                        Aplicar AlteraÃ§Ãµes
+                        Aplicar AlteraÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âµes
                     </button>
                     <button onclick="closeEditorModal()"
                         class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
@@ -981,58 +985,117 @@
     <div id="toast" class="toast"></div>
 
     <script>
-        // === Auth ===
-        const ADMIN_KEY_STORAGE = 'vip_admin_key';
+                // === Auth ===
         let savedAdminKey = '';
-
+        let currentSession = null;
+        const rawFetch = window.fetch.bind(window);
+        window.fetch = function (input, init = {}) {
+            const url = typeof input === 'string' ? input : (input?.url || '');
+            const protectedPath = url.startsWith('/api/admin/') || url.startsWith('/auth/');
+            if (!protectedPath) {
+                return rawFetch(input, init);
+            }
+            const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+            if (savedAdminKey) {
+                headers.set('X-Admin-Key', savedAdminKey);
+            }
+            return rawFetch(input, {
+                ...init,
+                credentials: 'include',
+                headers
+            }).then(response => {
+                if (response.status === 401 &&
+                    !url.startsWith('/auth/login') &&
+                    !url.startsWith('/auth/me')) {
+                    showLoggedOutState('Sua sessao expirou. Faca login novamente.');
+                }
+                return response;
+            });
+        };
+        function showAuthenticatedState(session) {
+            currentSession = session || null;
+            document.getElementById('passwordGate').classList.add('hidden');
+            document.getElementById('mainContent').classList.remove('hidden');
+            document.getElementById('loginError').classList.add('hidden');
+            const username = session?.username || 'desconhecido';
+            const role = session?.role || 'operator';
+            const sessionInfo = document.getElementById('sessionInfo');
+            if (sessionInfo) {
+                sessionInfo.textContent = `${username} (${role})`;
+            }
+        }
+        function showLoggedOutState(message = '') {
+            currentSession = null;
+            document.getElementById('passwordGate').classList.remove('hidden');
+            document.getElementById('mainContent').classList.add('hidden');
+            document.getElementById('adminPasswordInput').value = '';
+            const sessionInfo = document.getElementById('sessionInfo');
+            if (sessionInfo) {
+                sessionInfo.textContent = 'Sessao nao iniciada';
+            }
+            const errorEl = document.getElementById('loginError');
+            if (message) {
+                errorEl.textContent = message;
+                errorEl.classList.remove('hidden');
+            } else {
+                errorEl.classList.add('hidden');
+            }
+        }
         async function attemptLogin() {
-            const key = document.getElementById('adminKeyInput').value.trim();
-            if (!key) return;
-
+            const username = document.getElementById('adminUsernameInput').value.trim();
+            const password = document.getElementById('adminPasswordInput').value;
+            if (!username || !password) return;
             const btn = document.querySelector('#passwordGate button[onclick="attemptLogin()"]');
             const errorEl = document.getElementById('loginError');
             errorEl.classList.add('hidden');
             btn.disabled = true;
-            btn.textContent = 'Verificando...';
-
+            btn.textContent = 'Entrando...';
             try {
-                const res = await fetch('/api/admin/validate-key', {
-                    headers: { 'X-Admin-Key': key }
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
                 });
-                if (res.ok) {
-                    savedAdminKey = key;
-                    sessionStorage.setItem(ADMIN_KEY_STORAGE, key);
-                    document.getElementById('passwordGate').classList.add('hidden');
-                    document.getElementById('mainContent').classList.remove('hidden');
-                } else {
-                    errorEl.textContent = 'âŒ Chave incorreta. Tente novamente.';
-                    errorEl.classList.remove('hidden');
-                    document.getElementById('adminKeyInput').value = '';
-                    document.getElementById('adminKeyInput').focus();
+                if (!res.ok) {
+                    const message = res.status === 423
+                        ? 'Conta bloqueada temporariamente.'
+                        : 'Credenciais invalidas. Tente novamente.';
+                    showLoggedOutState(message);
+                    document.getElementById('adminPasswordInput').focus();
+                    return;
                 }
+                const session = await res.json();
+                showAuthenticatedState(session);
             } catch {
-                errorEl.textContent = 'âŒ Erro de conexÃ£o com o servidor.';
-                errorEl.classList.remove('hidden');
+                showLoggedOutState('Erro de conexao com o servidor.');
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Entrar';
             }
         }
-
-        function logout() {
-            sessionStorage.removeItem(ADMIN_KEY_STORAGE);
-            location.reload();
+        async function logout() {
+            try {
+                await fetch('/auth/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } finally {
+                showLoggedOutState();
+            }
         }
-
-        window.addEventListener('load', () => {
-            const stored = sessionStorage.getItem(ADMIN_KEY_STORAGE);
-            if (stored) {
-                savedAdminKey = stored;
-                document.getElementById('passwordGate').classList.add('hidden');
-                document.getElementById('mainContent').classList.remove('hidden');
+        window.addEventListener('load', async () => {
+            try {
+                const res = await fetch('/auth/me');
+                if (!res.ok) {
+                    showLoggedOutState();
+                    return;
+                }
+                const session = await res.json();
+                showAuthenticatedState(session);
+            } catch {
+                showLoggedOutState('Erro ao validar a sessao.');
             }
         });
-
         // === State ===
         let currentConvertedUrl = '';
         let currentShareText = '';
@@ -1066,7 +1129,7 @@
                     body: JSON.stringify({ url: urlInput })
                 });
                 const data = await response.json();
-                if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversÃ£o.');
+                if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o.');
 
                 currentData = data;
                 currentConvertedUrl = data.trackedUrl || data.convertedUrl || data.originalUrl || urlInput;
@@ -1074,7 +1137,7 @@
                 document.getElementById('productImage').src = data.imageUrl || '';
                 document.getElementById('storeBadge').textContent = data.store || 'Loja';
                 document.getElementById('productTitle').textContent = data.title || 'Oferta';
-                document.getElementById('productPrice').textContent = data.price || 'PreÃ§o sob consulta';
+                document.getElementById('productPrice').textContent = data.price || 'PreÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§o sob consulta';
 
                 const oldPriceEl = document.getElementById('productOldPrice');
                 if (data.previousPrice && data.previousPrice !== data.price) {
@@ -1092,8 +1155,8 @@
                     deliveryEl.style.display = 'flex';
                 } else { deliveryEl.style.display = 'none'; }
 
-                const couponText = data.hasCoupon && data.couponCode ? `\nðŸŽŸï¸ Cupom: ${data.couponCode}` : '';
-                currentShareText = `*${data.title}*\nâš¡ Por apenas: *${data.price}*${couponText}\n\nðŸ›’ Compre aqui: ${currentConvertedUrl}`;
+                const couponText = data.hasCoupon && data.couponCode ? `\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Cupom: ${data.couponCode}` : '';
+                currentShareText = `*${data.title}*\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ Por apenas: *${data.price}*${couponText}\n\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ Compre aqui: ${currentConvertedUrl}`;
 
                 skeletonLoader.classList.add('hidden');
                 resultArea.style.display = 'block';
@@ -1178,9 +1241,9 @@
         function updatePublishBtnText(dateVal) {
             const btn = document.getElementById('pubInstaBtn');
             if (dateVal) {
-                btn.innerHTML = 'ðŸ•’ AGENDAR NO INSTAGRAM';
+                btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ AGENDAR NO INSTAGRAM';
             } else {
-                btn.innerHTML = 'ðŸ“¸ PUBLICAR NO INSTAGRAM';
+                btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ PUBLICAR NO INSTAGRAM';
             }
         }
 
@@ -1188,7 +1251,7 @@
             if (!currentData) return;
             const btn = document.getElementById('genCardBtn');
             btn.disabled = true;
-            btn.textContent = 'â³ Gerando...';
+            btn.textContent = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Gerando...';
 
             try {
                 const res = await fetch('/api/admin/generate-card', {
@@ -1212,7 +1275,7 @@
                 }
             } finally {
                 btn.disabled = false;
-                btn.textContent = 'âœ¨ Atualizar Card';
+                btn.textContent = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Atualizar Card';
             }
         }
 
@@ -1252,7 +1315,7 @@
                         document.getElementById('captionText').value = data.caption;
                     }
 
-                    document.getElementById('hashtagInput').value = "#oferta #promoÃ§Ã£o #achadinhos";
+                    document.getElementById('hashtagInput').value = "#oferta #promoÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o #achadinhos";
                     syncPreview();
                     // Auto-switch to caption tab for review after generation
                     setTimeout(() => switchTab('caption'), 800);
@@ -1266,7 +1329,7 @@
             if (!rawText) return [];
 
             // Try to split by "Legenda X" markers
-            const regex = /Legenda \d+.*?:\s*([\s\S]*?)(?=Legenda \d+.*?:|Hashtags sugeridas:|Melhor variaÃ§Ã£o|$)/gi;
+            const regex = /Legenda \d+.*?:\s*([\s\S]*?)(?=Legenda \d+.*?:|Hashtags sugeridas:|Melhor variaÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o|$)/gi;
             const matches = [...rawText.matchAll(regex)];
 
             if (matches && matches.length > 0) {
@@ -1274,7 +1337,7 @@
             }
 
             // Fallback: If no strict markers, try splitting by double breaks if it looks like discrete blocks
-            const blocks = rawText.split(/\n\s*\n/).filter(b => b.trim().length > 30 && !b.toLowerCase().includes('formato obrigatÃ³rio'));
+            const blocks = rawText.split(/\n\s*\n/).filter(b => b.trim().length > 30 && !b.toLowerCase().includes('formato obrigatÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rio'));
             if (blocks.length > 1) return blocks;
 
             return [rawText.trim()];
@@ -1292,7 +1355,7 @@
                 grid.innerHTML += `
                     <div id="capCard_${index}" onclick="selectCaptionOption(\`${cap.replace(/`/g, '\\`')}\`, ${index})" class="caption-card bg-surface border border-white/10 p-4 rounded-xl cursor-pointer hover:border-accent/50 hover:bg-surface/80 transition-all text-left group">
                         <div class="flex justify-between items-center mb-2">
-                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest group-[.selected]:text-accent group-hover:text-accent">OpÃ§Ã£o ${index + 1}</span>
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest group-[.selected]:text-accent group-hover:text-accent">OpÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o ${index + 1}</span>
                             <div class="w-4 h-4 rounded-full border border-white/20 flex items-center justify-center group-[.selected]:bg-accent group-[.selected]:border-accent transition-colors">
                                 <svg class="w-2.5 h-2.5 text-primary opacity-0 group-[.selected]:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
                             </div>
@@ -1322,7 +1385,7 @@
             if (!currentData) return;
             const btn = document.getElementById('suggestTagsBtn');
             const originalText = btn.innerHTML;
-            btn.innerHTML = 'â³';
+            btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³';
             btn.disabled = true;
 
             try {
@@ -1337,12 +1400,12 @@
                 if (data.success && data.hashtags) {
                     document.getElementById('hashtagInput').value = data.hashtags;
                     syncPreview();
-                    showToast('âœ¨ Hashtags Sugeridas!');
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Hashtags Sugeridas!');
                 } else {
-                    showToast('âŒ Falha ao sugerir hashtags.', true);
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha ao sugerir hashtags.', true);
                 }
             } catch {
-                showToast('âŒ Erro de rede.', true);
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro de rede.', true);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalText;
@@ -1422,7 +1485,7 @@
             if (!file) return;
 
             const status = document.getElementById('mediaStatus');
-            status.textContent = `â³ Subindo ${type}...`;
+            status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Subindo ${type}...`;
             status.classList.remove('hidden');
 
             const formData = new FormData();
@@ -1436,7 +1499,7 @@
                 });
                 const data = await res.json();
                 if (data.success) {
-                    status.textContent = `âœ… ${type.toUpperCase()} carregado!`;
+                    status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ ${type.toUpperCase()} carregado!`;
                     if (type === 'photo') {
                         currentData.imageUrl = data.url;
                         document.getElementById('instaPreviewImg').src = data.url;
@@ -1452,10 +1515,10 @@
                         v.play();
                     }
                 } else {
-                    status.textContent = `âŒ Erro no upload.`;
+                    status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro no upload.`;
                 }
             } catch {
-                status.textContent = `âŒ Falha de rede.`;
+                status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha de rede.`;
             }
         }
 
@@ -1495,7 +1558,7 @@
             const linkInput = document.getElementById('autoReplyLink');
             const catalogTarget = resolveCatalogTargetSelection(document.getElementById('chkPublishCatalog').checked);
             const catalogLink = getCatalogLinkForTarget(catalogTarget);
-            const defaultMessage = `Oi {name}! Separei o link do nosso catÃ¡logo para vocÃª:\n{link}\n\nEntre tambÃ©m no WhatsApp para acompanhar todas as ofertas em primeira mÃ£o.`;
+            const defaultMessage = `Oi {name}! Separei o link do nosso catalogo para voce:\n{link}\n\nEntre tambem no WhatsApp para acompanhar todas as ofertas em primeira mao.`;
 
             if (force || !keywordInput.value.trim() || keywordInput.dataset.autogenerated === 'true') {
                 keywordInput.value = 'eu quero, link';
@@ -1522,11 +1585,11 @@
             const catalogTarget = resolveCatalogTargetSelection(btnCat);
 
             if (!btnIg && !btnWa && !btnTg && !btnCat) {
-                showToast('âš ï¸ Selecione pelo menos uma aÃ§Ã£o.');
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Selecione pelo menos uma aÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o.');
                 return;
             }
 
-            updateStatus('pubMasterBtn', 'loading', 'â³ LanÃ§ando Campanha...');
+            updateStatus('pubMasterBtn', 'loading', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ LanÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ando Campanha...');
 
             try {
                 const cap = document.getElementById('captionText').value + "\n\n" + document.getElementById('hashtagInput').value;
@@ -1541,7 +1604,7 @@
                     scheduledFor = new Date(scheduledEl.value).toISOString();
                 }
 
-                // 1. Sempre criamos o Draft primeiro (Registro de HistÃ³rico Central)
+                // 1. Sempre criamos o Draft primeiro (Registro de HistÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico Central)
                 const draftRes = await fetch('/api/admin/create-draft', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
@@ -1558,29 +1621,28 @@
                         scheduledFor: scheduledFor,
                         sendToCatalog: btnCat,
                         catalogTarget: catalogTarget
-                        offerContext: offerContext
                     })
                 });
 
                 const draftData = await draftRes.json();
                 if (!draftData.success) {
-                    updateStatus('pubMasterBtn', 'error', 'âŒ Erro no Rascunho');
+                    updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro no Rascunho');
                     return;
                 }
 
                 currentDraftId = draftData.draftId;
 
-                // 2. Se for agendado, parar por aqui, pois o worker de back-end cuidarÃ¡ do disparo.
+                // 2. Se for agendado, parar por aqui, pois o worker de back-end cuidarÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ do disparo.
                 if (scheduledFor) {
-                    updateStatus('pubMasterBtn', 'success', 'â³ Campanha Agendada!');
-                    showToast('âœ… PublicaÃ§Ã£o Agendada com Sucesso!');
+                    updateStatus('pubMasterBtn', 'success', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Campanha Agendada!');
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ PublicaÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o Agendada com Sucesso!');
                     return;
                 }
 
-                updateStatus('pubMasterBtn', 'loading', 'ðŸš€ Distribuindo Redes...');
+                updateStatus('pubMasterBtn', 'loading', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Distribuindo Redes...');
 
                 // 3. Disparar Omnichannel API
-                const contentWaTg = document.getElementById('captionText').value + "\n\nðŸ›’ Compre aqui: " + currentConvertedUrl;
+                const contentWaTg = document.getElementById('captionText').value + "\n\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ Compre aqui: " + currentConvertedUrl;
                 const pubRes = await fetch('/api/admin/publish-master', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
@@ -1600,22 +1662,22 @@
 
                 const pubData = await pubRes.json();
                 if (pubData.success) {
-                    updateStatus('pubMasterBtn', 'success', 'ðŸš€ Campanha no Ar!');
-                    showToast('âœ… DistribuiÃ§Ã£o ConcluÃ­da!');
+                    updateStatus('pubMasterBtn', 'success', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Campanha no Ar!');
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ DistribuiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o ConcluÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­da!');
                 } else {
-                    updateStatus('pubMasterBtn', 'error', 'âš ï¸ Parcial/Erro');
+                    updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Parcial/Erro');
                     console.error("Master Publish Errors: ", pubData.channels);
-                    showToast('âŒ Erro em alguns canais (veja o console).', true);
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro em alguns canais (veja o console).', true);
                 }
             } catch (err) {
-                updateStatus('pubMasterBtn', 'error', 'âŒ Falha de Rede');
+                updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha de Rede');
                 console.error(err);
             }
         }
 
         async function syncCatalog() {
-            if (!currentDraftId) { showToast('âš ï¸ Poste no Instagram primeiro.'); return; }
-            updateStatus('pubCatalogBtn', 'loading', 'â³ Sincronizando...');
+            if (!currentDraftId) { showToast('Poste no Instagram primeiro.'); return; }
+            updateStatus('pubCatalogBtn', 'loading', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Sincronizando...');
             try {
                 const res = await fetch('/api/admin/add-to-catalog', {
                     method: 'POST',
@@ -1626,9 +1688,9 @@
                     })
                 });
                 const data = await res.json();
-                if (data.success) updateStatus('pubCatalogBtn', 'success', 'âœ… No CatÃ¡logo!');
-                else updateStatus('pubCatalogBtn', 'error', 'âŒ Erro');
-            } catch { updateStatus('pubCatalogBtn', 'error', 'âŒ Falha'); }
+                if (data.success) updateStatus('pubCatalogBtn', 'success', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ No CatÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡logo!');
+                else updateStatus('pubCatalogBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro');
+            } catch { updateStatus('pubCatalogBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha'); }
         }
 
         // === Utils ===
@@ -1643,7 +1705,7 @@
         function copyCaption() {
             const txt = document.getElementById('captionText').value;
             navigator.clipboard.writeText(txt);
-            showToast('ðŸ“‹ Legenda copiada!');
+            showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ Legenda copiada!');
         }
 
         async function loadDraftsHistory() {
@@ -1688,23 +1750,23 @@
                                 </div>
                                 <div class="mt-3 pt-3 border-t border-white/5">
                                     <button class="w-full text-[10px] font-bold text-accent uppercase tracking-widest group-hover:bg-accent/10 py-1.5 rounded-lg transition-all">
-                                        Carregar no EstÃºdio â†º
+                                        Carregar no EstÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âºdio ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âº
                                     </button>
                                 </div>
                             </div>
                         `;
                     });
                 } else {
-                    grid.innerHTML = '<div class="col-span-full text-center py-6 text-slate-500 text-xs">Nenhum histÃ³rico encontrado.</div>';
+                    grid.innerHTML = '<div class="col-span-full text-center py-6 text-slate-500 text-xs">Nenhum histÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico encontrado.</div>';
                 }
             } catch (err) {
                 loader.classList.add('hidden');
-                grid.innerHTML = '<div class="col-span-full text-center py-6 text-red-400 text-xs">Erro ao carregar histÃ³rico.</div>';
+                grid.innerHTML = '<div class="col-span-full text-center py-6 text-red-400 text-xs">Erro ao carregar histÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico.</div>';
             }
         }
 
         async function loadDraftIntoEditor(draftId) {
-            showToast('â³ Carregando Rascunho...');
+            showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Carregando Rascunho...');
             try {
                 const res = await fetch(`/api/admin/draft/${draftId}`, {
                     headers: { 'X-Admin-Key': savedAdminKey }
@@ -1754,10 +1816,10 @@
 
                     // Switch to Visual tab to start working on it
                     switchTab('visual');
-                    showToast('âœ… Rascunho Carregado!');
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ Rascunho Carregado!');
                 }
             } catch {
-                showToast('âŒ Erro ao ler rascunho', true);
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro ao ler rascunho', true);
             }
         }
 
@@ -1785,7 +1847,7 @@
 
         function openEditorModal() {
             if (!currentData || !currentData.imageUrl) {
-                showToast('âš ï¸ Precisa de uma imagem base para editar.', true);
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Precisa de uma imagem base para editar.', true);
                 return;
             }
             if (!editorCanvas) initEditor();
@@ -1863,7 +1925,7 @@
                         editorCtx.fillStyle = '#ffffff';
                         editorCtx.font = `bold ${rh * 0.5}px sans-serif`;
                         editorCtx.textAlign = 'center';
-                        editorCtx.fillText('FRETE GRÃTIS', el.x + rw / 2, el.y + rh * 0.7);
+                        editorCtx.fillText('FRETE GRÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂTIS', el.x + rw / 2, el.y + rh * 0.7);
                         editorCtx.textAlign = 'left'; // reset
                     }
 
@@ -1956,7 +2018,7 @@
             document.getElementById('productImage').src = dataUrl;
 
             closeEditorModal();
-            showToast('â³ Salvando ediÃ§Ã£o...', false);
+            showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Salvando ediÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£o...', false);
 
             try {
                 const res = await fetch(dataUrl);
@@ -1977,13 +2039,13 @@
                     if (currentData.images && currentData.images.length > 0) {
                         currentData.images[0] = uploadData.url;
                     }
-                    showToast('âœ… Arte atualizada e salva!');
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ Arte atualizada e salva!');
                     syncPreview();
                 } else {
-                    showToast('âš ï¸ Arte aplicada visualmente, mas falhou salvar no servidor.', true);
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Arte aplicada visualmente, mas falhou salvar no servidor.', true);
                 }
             } catch {
-                showToast('âš ï¸ Arte aplicada visualmente, erro de rede.', true);
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Arte aplicada visualmente, erro de rede.', true);
             }
         }
 

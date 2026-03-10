@@ -38,6 +38,10 @@
       AUTH__USERS__1__PASSWORDHASH: pbkdf2$$100000$$lgw3JYEKR6WFADaJg/auCQ==$$0bxzgXwqPvaB0VXPouzWi/U9n6bv7x+3hroWiZ8ZRYc=
       AUTH__USERS__1__ROLE: operator
       AUTH__USERS__1__ENABLED: "true"
+      AUTH__USERS__2__USERNAME: Vanessa
+      AUTH__USERS__2__PASSWORDHASH: pbkdf2$$100000$$1dTtmqBUyX2uq7BdggofIg==$$p0gjeYgZuF+s0HNDsDPJVyCGjyeMDjIDDEr9NeEhOrI=
+      AUTH__USERS__2__ROLE: operator
+      AUTH__USERS__2__ENABLED: "true"
       TELEGRAM__BOTTOKEN: "${TELEGRAM__BOTTOKEN}"
       TELEGRAM__APIID: "31119088"
       TELEGRAM__APIHASH: "62988e712c3f839bb1a5ea094d33d047"
