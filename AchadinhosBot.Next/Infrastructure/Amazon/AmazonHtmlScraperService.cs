@@ -66,6 +66,22 @@ public sealed class AmazonHtmlScraperService
         return null;
     }
 
+    public async Task<AmazonScrapedProduct?> ScrapeUrlAsync(string url, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+
+        try
+        {
+            return await TryScrapeUrlAsync(url, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Amazon HTML scraper falhou para URL direta={Url}", url);
+            return null;
+        }
+    }
+
     private async Task<AmazonScrapedProduct?> TryScrapeUrlAsync(string url, CancellationToken ct)
     {
         using var handler = new HttpClientHandler
@@ -111,6 +127,9 @@ public sealed class AmazonHtmlScraperService
         var images = ExtractImages(html);
         var title = ExtractTitle(html);
         var (price, oldPrice, discount) = ExtractPrices(html);
+
+        if (LooksLikeGenericAmazonTitle(title))
+            title = null;
 
         if (string.IsNullOrWhiteSpace(title) && images.Count == 0)
             return null;
@@ -291,6 +310,15 @@ public sealed class AmazonHtmlScraperService
     }
 
     // ─── Price Extraction ─────────────────────────────────────────────────────
+
+    private static bool LooksLikeGenericAmazonTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return false;
+
+        var normalized = WebUtility.HtmlDecode(title).Trim().ToLowerInvariant();
+        return normalized is "amazon.com.br" or "amazon brasil" or "amazon brazil" or "amazon";
+    }
 
     private static (string? Price, string? OldPrice, int? Discount) ExtractPrices(string html)
     {

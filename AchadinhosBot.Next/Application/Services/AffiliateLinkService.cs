@@ -124,10 +124,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     }
                     else
                     {
-                        var creatorTagged = ApplyTrackingTags(creator.Url, "Amazon", source);
+                        var creatorTagged = EnsureAmazonMetadataUrl(ApplyTrackingTags(creator.Url, "Amazon", source));
                         var creatorShort = await ShortenAsync(creatorTagged, cancellationToken) ?? creatorTagged;
                         LogStore("Amazon", uri.ToString(), creatorShort);
-                        return new AffiliateLinkResult(true, creatorShort, "Amazon", true, null, null, creator.CorrectionApplied, creator.Note);
+                        return new AffiliateLinkResult(true, creatorShort, "Amazon", true, null, null, creator.CorrectionApplied, creator.Note)
+                        {
+                            EnrichmentUrl = creatorTagged
+                        };
                     }
                 }
                 else
@@ -152,10 +155,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                     }
                     else
                     {
-                        var officialTagged = ApplyTrackingTags(official.Url, "Amazon", source);
+                        var officialTagged = EnsureAmazonMetadataUrl(ApplyTrackingTags(official.Url, "Amazon", source));
                         var officialShort = await ShortenAsync(officialTagged, cancellationToken) ?? officialTagged;
                         LogStore("Amazon", uri.ToString(), officialShort);
-                        return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note);
+                        return new AffiliateLinkResult(true, officialShort, "Amazon", true, null, null, official.CorrectionApplied, official.Note)
+                        {
+                            EnrichmentUrl = officialTagged
+                        };
                     }
                 }
                 else
@@ -191,10 +197,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 _logger.LogWarning("Amazon sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", uri.ToString(), amazon);
             }
 
-            var taggedAmazon = ApplyTrackingTags(amazon, "Amazon", source);
+            var taggedAmazon = EnsureAmazonMetadataUrl(ApplyTrackingTags(amazon, "Amazon", source));
             var fallbackShort = await ShortenAsync(taggedAmazon, cancellationToken) ?? taggedAmazon;
             LogStore("Amazon", uri.ToString(), fallbackShort);
-            return new AffiliateLinkResult(true, fallbackShort, "Amazon", true, null, null, correctionApplied, correctionNote);
+            return new AffiliateLinkResult(true, fallbackShort, "Amazon", true, null, null, correctionApplied, correctionNote)
+            {
+                EnrichmentUrl = taggedAmazon
+            };
         }
 
         if (host.Contains("shein.com"))
@@ -221,7 +230,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
             var taggedShein = ApplyTrackingTags(shein, "Shein", source);
             LogStore("Shein", uri.ToString(), taggedShein);
-            return new AffiliateLinkResult(true, taggedShein, "Shein", true, null, null, correctionApplied, correctionNote);
+            return new AffiliateLinkResult(true, taggedShein, "Shein", true, null, null, correctionApplied, correctionNote)
+            {
+                EnrichmentUrl = taggedShein
+            };
         }
 
         if (IsMercadoLivreHost(host)
@@ -247,7 +259,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
                 var taggedMercadoLivre = ApplyTrackingTags(sanitized, "Mercado Livre", source);
                 LogStore("Mercado Livre", uri.ToString(), taggedMercadoLivre);
-                return new AffiliateLinkResult(true, taggedMercadoLivre, "Mercado Livre", true, null, null, ensured.CorrectionApplied, ensured.CorrectionNote);
+                return new AffiliateLinkResult(true, taggedMercadoLivre, "Mercado Livre", true, null, null, ensured.CorrectionApplied, ensured.CorrectionNote)
+                {
+                    EnrichmentUrl = taggedMercadoLivre
+                };
             }
 
             return new AffiliateLinkResult(
@@ -275,7 +290,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
                 var taggedShopee = ApplyTrackingTags(shopee, "Shopee", source);
                 LogStore("Shopee", uri.ToString(), taggedShopee);
-                return new AffiliateLinkResult(true, taggedShopee, "Shopee", true, null, null, false, null);
+                return new AffiliateLinkResult(true, taggedShopee, "Shopee", true, null, null, false, null)
+                {
+                    EnrichmentUrl = taggedShopee
+                };
             }
 
             return new AffiliateLinkResult(
@@ -315,6 +333,53 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                || normalized == "amzn.divulgador.link";
     }
 
+    private static string EnsureAmazonMetadataUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return url;
+        }
+
+        var host = NormalizeHost(uri.Host);
+        if (!host.Contains("amazon", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var asin = ExtractAmazonAsin(uri);
+        var metadataUri = uri;
+        if (!string.IsNullOrWhiteSpace(asin))
+        {
+            metadataUri = new UriBuilder(uri.Scheme, uri.Host)
+            {
+                Path = $"/dp/{asin}"
+            }.Uri;
+        }
+
+        if (string.IsNullOrWhiteSpace(query["th"]))
+        {
+            query["th"] = "1";
+        }
+
+        if (string.IsNullOrWhiteSpace(query["psc"]))
+        {
+            query["psc"] = "1";
+        }
+
+        if (!string.IsNullOrWhiteSpace(query["tag"]))
+        {
+            query["tag"] = query["tag"]?.Trim();
+        }
+
+        var builder = new UriBuilder(metadataUri)
+        {
+            Query = query.ToString() ?? string.Empty
+        };
+
+        return builder.Uri.ToString();
+    }
+
     private static readonly string[] SheinRemoveKeys =
     {
         "url_from",
@@ -348,20 +413,31 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
             client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
 
-            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
-            using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (res.Headers.Location is null)
+            var currentUri = uri;
+            for (int i = 0; i < 5; i++)
             {
-                return null;
+                using var req = new HttpRequestMessage(HttpMethod.Get, currentUri);
+                using var res = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                
+                if (res.Headers.Location is null)
+                {
+                    return i > 0 ? currentUri : null;
+                }
+
+                var location = res.Headers.Location;
+                if (!location.IsAbsoluteUri)
+                {
+                    location = new Uri(currentUri, location);
+                }
+
+                currentUri = location;
+                if (currentUri.Host.Contains("amazon", StringComparison.OrdinalIgnoreCase))
+                {
+                    return currentUri;
+                }
             }
 
-            var location = res.Headers.Location;
-            if (!location.IsAbsoluteUri)
-            {
-                location = new Uri(uri, location);
-            }
-
-            return location;
+            return currentUri;
         }
         catch
         {

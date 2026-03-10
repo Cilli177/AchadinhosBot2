@@ -105,6 +105,13 @@ public sealed class OfficialProductDataService
     private async Task<OfficialProductDataResult?> TryGetAmazonDataAsync(Uri uri, CancellationToken ct)
     {
         var asin = ExtractAmazonAsin(uri);
+        var resolvedAmazonUrl = await TryResolveFinalUrlAsync(uri.ToString(), ct);
+        if (string.IsNullOrWhiteSpace(asin) && !string.IsNullOrWhiteSpace(resolvedAmazonUrl) &&
+            Uri.TryCreate(resolvedAmazonUrl, UriKind.Absolute, out var resolvedAmazonUri))
+        {
+            asin = ExtractAmazonAsin(resolvedAmazonUri);
+            uri = resolvedAmazonUri;
+        }
         if (string.IsNullOrWhiteSpace(asin))
         {
             return null;
@@ -161,9 +168,14 @@ public sealed class OfficialProductDataService
             }
         }
 
-        // Fallback: HTML scraper (works without any API keys)
+        // Fallback: try the fully resolved product URL first, then the canonical ASIN templates.
         {
-            var scraped = await _amazonHtmlScraper.ScrapeAsync(asin, ct);
+            AmazonScrapedProduct? scraped = null;
+            if (!string.IsNullOrWhiteSpace(resolvedAmazonUrl))
+            {
+                scraped = await _amazonHtmlScraper.ScrapeUrlAsync(resolvedAmazonUrl, ct);
+            }
+            scraped ??= await _amazonHtmlScraper.ScrapeAsync(asin, ct);
             if (scraped is not null && (!string.IsNullOrWhiteSpace(scraped.Title) || scraped.Images.Count > 0))
             {
                 return new OfficialProductDataResult(
@@ -404,10 +416,13 @@ public sealed class OfficialProductDataService
             return null;
         }
 
+        return await TryGetShopeeGraphQlDataAsync(appId, secret, itemId.Value, targetUrl, ct);
+    }
+
+    private async Task<OfficialProductDataResult?> TryGetShopeeGraphQlDataAsync(string appId, string secret, long itemId, string targetUrl, CancellationToken ct)
+    {
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-        var payload = $$"""{"query":"query {\n  productOfferV2(\n    itemId: {{itemId}}\n    page: 1\n    limit: 1\n    listType: 0\n  ) {\n    nodes {\n      itemId\n      productName\n      price\n      priceDiscountRate\n      imageUrl\n      videoList {\n        videoUrl\n      }\n    }\n  }\n}"}""";
-
+        var payload = $$"""{"query":"query {\n  productOfferV2(\n    itemId: {{itemId}}\n    page: 1\n    limit: 1\n    listType: 0\n  ) {\n    nodes {\n      itemId\n      productName\n      price\n      priceDiscountRate\n      imageUrl\n    }\n  }\n}"}""";
         var baseString = appId + timestamp + payload + secret;
         var sign = string.Empty;
         using (var sha256 = System.Security.Cryptography.SHA256.Create())
@@ -416,11 +431,9 @@ public sealed class OfficialProductDataService
             sign = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
-        var url = "https://open-api.affiliate.shopee.com.br/graphql";
-
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            var request = new HttpRequestMessage(HttpMethod.Post, "https://open-api.affiliate.shopee.com.br/graphql");
             request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
             request.Headers.Add("Authorization", $"SHA256 Credential={appId}, Timestamp={timestamp}, Signature={sign}");
 
@@ -431,11 +444,11 @@ public sealed class OfficialProductDataService
                 return null;
             }
 
-            var body = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("data", out var dataNode) || !dataNode.TryGetProperty("productOfferV2", out var offerNode) || !offerNode.TryGetProperty("nodes", out var listNode) || listNode.ValueKind != JsonValueKind.Array)
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("data", out var dataNode) ||
+                !dataNode.TryGetProperty("productOfferV2", out var offerNode) ||
+                !offerNode.TryGetProperty("nodes", out var listNode) ||
+                listNode.ValueKind != JsonValueKind.Array)
             {
                 return null;
             }
@@ -449,9 +462,7 @@ public sealed class OfficialProductDataService
             var title = TryGetString(first, "productName");
             var priceRawStr = TryGetString(first, "price");
             decimal.TryParse(priceRawStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var priceRaw);
-            
             var discount = TryGetIntPercent(first, "priceDiscountRate");
-            
             var normalizedPrice = Math.Round(priceRaw, 2);
             var normalizedPrevious = discount.HasValue && discount.Value > 0 && discount.Value < 100
                 ? Math.Round(normalizedPrice / (1m - discount.Value / 100m), 2)
@@ -464,19 +475,9 @@ public sealed class OfficialProductDataService
                 images.Add(imageUrl.Trim());
             }
 
-            var videoUrl = (string?)null;
-            if (first.TryGetProperty("videoList", out var videoListNode) && videoListNode.ValueKind == JsonValueKind.Array)
-            {
-                var firstVideo = videoListNode.EnumerateArray().FirstOrDefault();
-                if (firstVideo.ValueKind == JsonValueKind.Object)
-                {
-                    videoUrl = TryGetString(firstVideo, "videoUrl");
-                }
-            }
-
             var current = FormatCurrency(normalizedPrice, "BRL");
             var previous = FormatCurrency(normalizedPrevious, "BRL");
-            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(current) && images.Count == 0 && string.IsNullOrWhiteSpace(videoUrl))
+            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(current) && images.Count == 0)
             {
                 return null;
             }
@@ -492,11 +493,98 @@ public sealed class OfficialProductDataService
                 DataSource: "shopee_affiliate_graphql",
                 SourceUrl: targetUrl,
                 EstimatedDelivery: null,
-                VideoUrl: videoUrl);
+                VideoUrl: null);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Falha ao obter dados oficiais da Shopee via GraphQL.");
+            return null;
+        }
+    }
+
+    private async Task<OfficialProductDataResult?> TryGetShopeePublicItemDataAsync(long shopId, long itemId, string targetUrl, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            using var response = await client.GetAsync($"https://shopee.com.br/api/v4/item/get?itemid={itemId}&shopid={shopId}", ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("data", out var dataNode) || dataNode.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var itemNode = dataNode.TryGetProperty("item_basic", out var itemBasicNode) && itemBasicNode.ValueKind == JsonValueKind.Object
+                ? itemBasicNode
+                : dataNode;
+
+            var title = TryGetString(itemNode, "name");
+            var price = NormalizeShopeePrice(TryGetDecimal(itemNode, "price"));
+            var previous = NormalizeShopeePrice(TryGetDecimal(itemNode, "price_before_discount"));
+            var discount = ComputeDiscount(previous, price);
+
+            var images = new List<string>();
+            if (itemNode.TryGetProperty("images", out var imagesNode) && imagesNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var imageNode in imagesNode.EnumerateArray().Take(10))
+                {
+                    var imageHash = imageNode.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(imageHash))
+                    {
+                        images.Add(BuildShopeeImageUrl(imageHash));
+                    }
+                }
+            }
+            else
+            {
+                var imageHash = TryGetString(itemNode, "image");
+                if (!string.IsNullOrWhiteSpace(imageHash))
+                {
+                    images.Add(BuildShopeeImageUrl(imageHash));
+                }
+            }
+
+            string? videoUrl = null;
+            if (itemNode.TryGetProperty("video_info_list", out var videoListNode) && videoListNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var videoNode in videoListNode.EnumerateArray())
+                {
+                    videoUrl = TryGetString(videoNode, "video_url") ?? TryGetString(videoNode, "videoUrl");
+                    if (!string.IsNullOrWhiteSpace(videoUrl))
+                    {
+                        break;
+                    }
+                }
+            }
+
+            var current = FormatCurrency(price, "BRL");
+            var previousDisplay = FormatCurrency(previous, "BRL");
+            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(current) && images.Count == 0 && string.IsNullOrWhiteSpace(videoUrl))
+            {
+                return null;
+            }
+
+            return new OfficialProductDataResult(
+                Store: "Shopee",
+                Title: title,
+                CurrentPrice: current,
+                PreviousPrice: previousDisplay,
+                DiscountPercent: discount,
+                Images: images.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                IsOfficial: false,
+                DataSource: "shopee_public_item_api",
+                SourceUrl: targetUrl,
+                EstimatedDelivery: null,
+                VideoUrl: videoUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao obter dados publicos da Shopee: {ShopId}/{ItemId}", shopId, itemId);
             return null;
         }
     }
@@ -547,6 +635,125 @@ public sealed class OfficialProductDataService
         urls.Add(value.Trim());
     }
 
+    private async Task<string?> TryResolveShopeeShortUrlAsync(Uri uri, CancellationToken ct)
+    {
+        try
+        {
+            var shortCode = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(shortCode))
+            {
+                return null;
+            }
+
+            var client = _httpClientFactory.CreateClient("default");
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://shopee.com.br/api/v4/pages/is_short_url/?path={Uri.EscapeDataString(shortCode)}");
+            request.Headers.Accept.ParseAdd("application/json");
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.TryGetProperty("data", out var dataNode) &&
+                dataNode.ValueKind == JsonValueKind.Object &&
+                dataNode.TryGetProperty("url", out var urlNode) &&
+                urlNode.ValueKind == JsonValueKind.String)
+            {
+                var resolved = urlNode.GetString()?.Trim();
+                return Uri.TryCreate(resolved, UriKind.Absolute, out _) ? resolved : null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao resolver short link da Shopee via API: {Url}", uri);
+        }
+
+        return null;
+    }
+
+    private static string? ExtractRedirectTargetFromHtml(string html, Uri baseUri)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return null;
+        }
+
+        var patterns = new[]
+        {
+            "<link[^>]+rel=[\"']canonical[\"'][^>]+href=[\"']([^\"']+)[\"']",
+            "<meta[^>]+property=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']",
+            "<meta[^>]+name=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']",
+            "http-equiv=[\"']refresh[\"'][^>]*content=[\"'][^\"']*url=([^\"'>]+)",
+            "location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']",
+            "location\\.replace\\(\\s*[\"']([^\"']+)[\"']\\s*\\)",
+            "window\\.location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var candidate = WebUtility.HtmlDecode(match.Groups[1].Value)?.Trim();
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (Uri.TryCreate(candidate, UriKind.Absolute, out var absolute))
+            {
+                return absolute.ToString();
+            }
+
+            if (Uri.TryCreate(baseUri, candidate, out var relative))
+            {
+                return relative.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryExtractShopeeIds(string url, out long shopId, out long itemId)
+    {
+        shopId = 0;
+        itemId = 0;
+
+        var match = Regex.Match(url, @"-i[._](?<shop>\d+)[._](?<item>\d+)", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            match = Regex.Match(url, @"shopee\.com\.br/[^/]+/(?<shop>\d+)/(?<item>\d+)", RegexOptions.IgnoreCase);
+        }
+
+        if (!match.Success && Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var shopRaw = query["shopid"] ?? query["shop_id"];
+            var itemRaw = query["itemid"] ?? query["item_id"] ?? query["product_id"] ?? query["itemId"];
+            if (long.TryParse(shopRaw, out shopId) && long.TryParse(itemRaw, out itemId) && shopId > 0 && itemId > 0)
+            {
+                return true;
+            }
+        }
+
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        return long.TryParse(match.Groups["shop"].Value, out shopId)
+            && long.TryParse(match.Groups["item"].Value, out itemId)
+            && shopId > 0
+            && itemId > 0;
+    }
+
+    private static string BuildShopeeImageUrl(string imageHash)
+        => $"https://down-br.img.susercontent.com/file/{imageHash}";
+
     private static string ComputeHmacSha256(string key, string data)
     {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
@@ -558,6 +765,12 @@ public sealed class OfficialProductDataService
         => host.Contains("amazon.", StringComparison.OrdinalIgnoreCase)
            || host.Equals("amzn.to", StringComparison.OrdinalIgnoreCase)
            || host.Equals("a.co", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsShopeeShortHost(string host)
+    {
+        var h = host.Trim().Trim('.').ToLowerInvariant();
+        return h is "s.shopee.com.br" or "shopee.com.br" or "shp.ee" or "shope.ee";
+    }
 
     private static bool IsShopeeHost(string host)
         => host.Contains("shopee", StringComparison.OrdinalIgnoreCase)

@@ -27,7 +27,10 @@ public sealed class InstagramLinkMetaService
         _logger = logger;
     }
 
-    public async Task<LinkMetaResult> GetMetaAsync(string link, CancellationToken ct)
+    public Task<LinkMetaResult> GetMetaAsync(string link, CancellationToken ct)
+        => GetMetaCoreAsync(link, ct, 0);
+
+    private async Task<LinkMetaResult> GetMetaCoreAsync(string link, CancellationToken ct, int depth)
     {
         if (string.IsNullOrWhiteSpace(link)) return new LinkMetaResult();
         if (TryGetFromCache(link, out var cached)) return cached;
@@ -35,11 +38,27 @@ public sealed class InstagramLinkMetaService
         try
         {
             // ── Amazon fast-path via PA-API ──────────────────────────────────────
-            LinkMetaResult? amazonMeta = null;
-            if (Uri.TryCreate(link, UriKind.Absolute, out var uri) &&
-                IsAmazonHost(uri.Host))
+            Uri.TryCreate(link, UriKind.Absolute, out var requestUri);
+            if (requestUri is not null && IsShopeeShortHost(requestUri.Host) && depth < 2)
             {
-                var asin = ExtractAmazonAsin(uri);
+                var shopeeResolvedUrl = await TryResolveShopeeShortUrlAsync(requestUri, ct);
+                if (!string.IsNullOrWhiteSpace(shopeeResolvedUrl) &&
+                    !string.Equals(shopeeResolvedUrl, link, StringComparison.OrdinalIgnoreCase))
+                {
+                    var redirectedMeta = await GetMetaCoreAsync(shopeeResolvedUrl, ct, depth + 1);
+                    if (HasUsefulMeta(redirectedMeta))
+                    {
+                        redirectedMeta.ResolvedUrl = FirstNonEmpty(redirectedMeta.ResolvedUrl ?? string.Empty, shopeeResolvedUrl);
+                        SetCache(link, redirectedMeta);
+                        return redirectedMeta;
+                    }
+                }
+            }
+            LinkMetaResult? amazonMeta = null;
+            if (requestUri is not null &&
+                IsAmazonHost(requestUri.Host))
+            {
+                var asin = ExtractAmazonAsin(requestUri);
                 if (!string.IsNullOrWhiteSpace(asin))
                 {
                     // 1st: try PA-API (fastest, most complete)
@@ -132,12 +151,29 @@ public sealed class InstagramLinkMetaService
             var html = await response.Content.ReadAsStringAsync(ct);
             if (string.IsNullOrWhiteSpace(html)) return amazonMeta ?? new LinkMetaResult();
 
+            var redirectTarget = ExtractRedirectTargetFromHtml(html, resolvedUri ?? requestUri);
+            var currentUrl = resolvedUri?.ToString() ?? link;
+            if (depth < 2 &&
+                !string.IsNullOrWhiteSpace(redirectTarget) &&
+                !string.Equals(redirectTarget, currentUrl, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(redirectTarget, link, StringComparison.OrdinalIgnoreCase))
+            {
+                var redirectedMeta = await GetMetaCoreAsync(redirectTarget, ct, depth + 1);
+                if (HasUsefulMeta(redirectedMeta))
+                {
+                    redirectedMeta.ResolvedUrl = FirstNonEmpty(redirectedMeta.ResolvedUrl ?? string.Empty, redirectTarget);
+                    SetCache(link, redirectedMeta);
+                    return redirectedMeta;
+                }
+            }
+
             // ── Shopee: extract from embedded __NEXT_DATA__ JSON ──────────
             if (resolvedUri is not null && IsShopeeHost(resolvedUri.Host))
             {
                 var shopeeResult = TryExtractShopeeMetaFromNextData(html);
                 if (shopeeResult is not null)
                 {
+                    shopeeResult.ResolvedUrl = FirstNonEmpty(resolvedUri?.ToString() ?? string.Empty, redirectTarget ?? string.Empty);
                     SetCache(link, shopeeResult);
                     return shopeeResult;
                 }
@@ -146,6 +182,7 @@ public sealed class InstagramLinkMetaService
                 shopeeResult = TryExtractShopeeMetaFromHtml(html);
                 if (shopeeResult is not null)
                 {
+                    shopeeResult.ResolvedUrl = FirstNonEmpty(resolvedUri?.ToString() ?? string.Empty, redirectTarget ?? string.Empty);
                     SetCache(link, shopeeResult);
                     return shopeeResult;
                 }
@@ -212,8 +249,8 @@ public sealed class InstagramLinkMetaService
 
             var result = new LinkMetaResult
             {
-                Title = WebUtility.HtmlDecode(title?.Trim() ?? string.Empty),
-                Description = WebUtility.HtmlDecode(description?.Trim() ?? string.Empty),
+                Title = NormalizePossiblyBrokenText(title),
+                Description = NormalizePossiblyBrokenText(description),
                 PriceText = FirstNonEmpty(
                     amazonMeta?.PriceText ?? string.Empty,
                     ExtractMetaPriceText(html),
@@ -223,7 +260,7 @@ public sealed class InstagramLinkMetaService
                 DiscountPercentFromHtml = ExtractDiscountPercentFromHtml(html),
                 Images = images,
                 Videos = videos,
-                ResolvedUrl = resolvedUri?.ToString()
+                ResolvedUrl = FirstNonEmpty(resolvedUri?.ToString() ?? string.Empty, redirectTarget ?? string.Empty)
             };
             SetCache(link, result);
             return result;
@@ -239,6 +276,12 @@ public sealed class InstagramLinkMetaService
     {
         var h = host.ToLowerInvariant();
         return h.Contains("shopee") || h.Contains("shp.ee");
+    }
+
+    private static bool IsShopeeShortHost(string host)
+    {
+        var h = host.Trim().Trim('.').ToLowerInvariant();
+        return h is "s.shopee.com.br" or "shopee.com.br" or "shp.ee" or "shope.ee";
     }
 
     private static LinkMetaResult? TryExtractShopeeMetaFromNextData(string html)
@@ -324,7 +367,7 @@ public sealed class InstagramLinkMetaService
 
             return new LinkMetaResult
             {
-                Title = WebUtility.HtmlDecode(title?.Trim() ?? string.Empty),
+                Title = NormalizePossiblyBrokenText(title),
                 PriceText = priceText ?? string.Empty,
                 Images = images
             };
@@ -401,7 +444,7 @@ public sealed class InstagramLinkMetaService
 
             return new LinkMetaResult
             {
-                Title = title?.Trim() ?? string.Empty,
+                Title = NormalizePossiblyBrokenText(title),
                 PriceText = priceText ?? string.Empty,
                 Images = images.Take(8).ToList()
             };
@@ -430,6 +473,127 @@ public sealed class InstagramLinkMetaService
         result = new LinkMetaResult();
         return false;
     }
+
+    private static bool HasUsefulMeta(LinkMetaResult? value)
+        => value is not null &&
+           (!string.IsNullOrWhiteSpace(value.Title)
+            || !string.IsNullOrWhiteSpace(value.PriceText)
+            || !string.IsNullOrWhiteSpace(value.Description)
+            || value.Images.Count > 0
+            || value.Videos.Count > 0);
+
+    private async Task<string?> TryResolveShopeeShortUrlAsync(Uri uri, CancellationToken ct)
+    {
+        try
+        {
+            var shortCode = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(shortCode))
+            {
+                return null;
+            }
+
+            var client = _httpClientFactory.CreateClient("default");
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://shopee.com.br/api/v4/pages/is_short_url/?path={Uri.EscapeDataString(shortCode)}");
+            request.Headers.Accept.ParseAdd("application/json");
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            using var doc = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (doc.RootElement.TryGetProperty("data", out var dataNode) &&
+                dataNode.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                dataNode.TryGetProperty("url", out var urlNode) &&
+                urlNode.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var resolved = urlNode.GetString()?.Trim();
+                return Uri.TryCreate(resolved, UriKind.Absolute, out _) ? resolved : null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao resolver short link da Shopee via API: {Url}", uri);
+        }
+
+        return null;
+    }
+
+    private static string? ExtractRedirectTargetFromHtml(string html, Uri? baseUri)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return null;
+        }
+
+        var patterns = new[]
+        {
+            "<link[^>]+rel=[\"']canonical[\"'][^>]+href=[\"']([^\"']+)[\"']",
+            "<meta[^>]+property=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']",
+            "<meta[^>]+name=[\"']og:url[\"'][^>]+content=[\"']([^\"']+)[\"']",
+            "http-equiv=[\"']refresh[\"'][^>]*content=[\"'][^\"']*url=([^\"'>]+)",
+            "location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']",
+            "location\\.replace\\(\\s*[\"']([^\"']+)[\"']\\s*\\)",
+            "window\\.location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']",
+            "top\\.location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var candidate = WebUtility.HtmlDecode(match.Groups[1].Value)?.Trim();
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (Uri.TryCreate(candidate, UriKind.Absolute, out var absolute))
+            {
+                return absolute.ToString();
+            }
+
+            if (baseUri is not null && Uri.TryCreate(baseUri, candidate, out var relative))
+            {
+                return relative.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    private static string NormalizePossiblyBrokenText(string? value)
+    {
+        var text = WebUtility.HtmlDecode(value?.Trim()) ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text) || !LooksLikeMojibake(text))
+        {
+            return text;
+        }
+
+        try
+        {
+            var repaired = System.Text.Encoding.UTF8.GetString(System.Text.Encoding.Latin1.GetBytes(text));
+            if (ScoreMojibake(repaired) < ScoreMojibake(text))
+            {
+                return repaired.Trim();
+            }
+        }
+        catch
+        {
+        }
+
+        return text;
+    }
+
+    private static bool LooksLikeMojibake(string value)
+        => value.Contains('Ã') || value.Contains('â') || value.Contains('�') || value.Contains('├');
+
+    private static int ScoreMojibake(string value)
+        => Regex.Matches(value, "[Ãâ�├]", RegexOptions.CultureInvariant).Count;
 
     private static void SetCache(string link, LinkMetaResult result)
     {

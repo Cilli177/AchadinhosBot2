@@ -364,7 +364,16 @@ app.MapPost("/auth/login", async (
     }
 
     var user = authOptions.Value.Users.FirstOrDefault(x => x.Enabled && x.Username.Equals(request.Username, StringComparison.OrdinalIgnoreCase));
+    Console.WriteLine($"[AUTH-DEBUG] Login attempt for user '{request.Username}'. Password length: {request.Password?.Length}. RememberMe: {request.RememberMe}");
+    Console.WriteLine($"[AUTH-DEBUG] Loaded {authOptions.Value.Users?.Count ?? 0} users from configuration.");
+    if (authOptions.Value.Users != null) {
+        foreach (var u in authOptions.Value.Users) {
+            Console.WriteLine($"[AUTH-DEBUG] Registered user: {u.Username}, Enabled: {u.Enabled}");
+        }
+    }
+    Console.WriteLine($"[AUTH-DEBUG] Found matching user config: {user != null}");
     var valid = user is not null && PasswordHasher.Verify(request.Password, user.PasswordHash);
+    Console.WriteLine($"[AUTH-DEBUG] Password valid: {valid}");
 
     if (!valid)
     {
@@ -382,7 +391,12 @@ app.MapPost("/auth/login", async (
     };
 
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-    await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    var authProps = new AuthenticationProperties();
+    if (request.RememberMe) {
+        authProps.IsPersistent = true;
+        authProps.ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30);
+    }
+    await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity), authProps);
     await audit.WriteAsync("auth.login.success", user.Username, new { ip, role = user.Role }, ct);
     return Results.Ok(new { success = true, username = user.Username, role = user.Role });
 }).RequireRateLimiting("login");
@@ -548,8 +562,8 @@ app.MapPost("/api/conversor", async (
 
                     viewModel.Success = true;
                     viewModel.Error = null;
-                    viewModel.Title = FirstNonEmpty(fallbackOfficial?.Title ?? string.Empty, mergedFallbackMeta.Title, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
-                    viewModel.Description = fallbackDescription;
+                    viewModel.Title = NormalizeConverterDisplayText(FirstNonEmpty(fallbackOfficial?.Title ?? string.Empty, mergedFallbackMeta.Title, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}");
+                    viewModel.Description = NormalizeConverterDisplayText(fallbackDescription);
                     viewModel.Price = FirstNonEmpty(
                         fallbackOfficial?.CurrentPrice ?? string.Empty,
                         mergedFallbackMeta.PriceText ?? string.Empty,
@@ -557,13 +571,13 @@ app.MapPost("/api/conversor", async (
                         "Preco sob consulta") ?? "Preco sob consulta";
                     viewModel.ImageUrl = SelectBestConverterImage(fallbackImages, viewModel.Title, viewModel.Description);
                     viewModel.VideoUrl = FirstNonEmpty(mergedFallbackMeta.Videos?.FirstOrDefault(), string.Empty) ?? string.Empty;
-                    viewModel.PreviousPrice = FirstNonEmpty(
+                    viewModel.PreviousPrice = NormalizeConverterDisplayText(FirstNonEmpty(
                         fallbackOfficial?.PreviousPrice ?? string.Empty,
-                        mergedFallbackMeta.PreviousPriceText ?? string.Empty) ?? string.Empty;
+                        mergedFallbackMeta.PreviousPriceText ?? string.Empty) ?? string.Empty);
                     viewModel.DiscountPercent = fallbackOfficial?.DiscountPercent
                         ?? mergedFallbackMeta.DiscountPercentFromHtml
                         ?? TryComputeDiscountFromDisplayPrices(viewModel.PreviousPrice, viewModel.Price);
-                    viewModel.EstimatedDelivery = fallbackOfficial?.EstimatedDelivery ?? string.Empty;
+                    viewModel.EstimatedDelivery = NormalizeConverterDisplayText(fallbackOfficial?.EstimatedDelivery ?? string.Empty);
                     viewModel.DataSource = !string.IsNullOrWhiteSpace(fallbackOfficial?.DataSource) ? fallbackOfficial!.DataSource : "meta-fallback";
                     viewModel.ConvertedUrl = FirstNonEmpty(fallbackResolvedUrl, normalizedInputUrl) ?? normalizedInputUrl;
                     viewModel.TrackedUrl = viewModel.ConvertedUrl;
@@ -627,12 +641,22 @@ app.MapPost("/api/conversor", async (
                 }
 
                 var trackedUrl = convertedUrl;
+                var enrichmentUrl = FirstNonEmpty(
+                    conversion.EnrichmentUrl ?? string.Empty,
+                    normalizedInputUrl,
+                    convertedUrl) ?? convertedUrl;
 
                 // =================== PARALLEL METADATA FETCH ===================
                 // All metadata sources run concurrently to minimize total latency.
                 // Previously sequential (~8-15s), now parallel (~3-5s).
                 var productPageMetaTask = Task.Run(async () =>
                 {
+                    if (!string.IsNullOrWhiteSpace(enrichmentUrl) &&
+                        !string.Equals(enrichmentUrl, convertedUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { return await instagramMeta.GetMetaAsync(enrichmentUrl, ct); } catch { }
+                    }
+
                     // Priority: fetch directly from the real ML product page URL
                     if (!string.IsNullOrWhiteSpace(convertedUrl) &&
                         !convertedUrl.Contains("mercadolivre.com.br", StringComparison.OrdinalIgnoreCase))
@@ -695,7 +719,17 @@ app.MapPost("/api/conversor", async (
                     catch { return new LinkMetaResult(); }
                 }, ct);
 
-                var officialDataTask = officialProductDataService.TryGetBestAsync(normalizedInputUrl, convertedUrl, ct);
+                var resolvedOriginalUrlTask = TryResolveFinalUrlForMetaAsync(normalizedInputUrl, httpClientFactory, ct);
+                var officialDataTask = Task.Run(async () =>
+                {
+                    var resolvedOriginalUrl = await resolvedOriginalUrlTask;
+                    var primaryOfficialInput = !string.IsNullOrWhiteSpace(conversion.EnrichmentUrl)
+                        ? conversion.EnrichmentUrl
+                        : !string.IsNullOrWhiteSpace(resolvedOriginalUrl)
+                        ? resolvedOriginalUrl
+                        : normalizedInputUrl;
+                    return await officialProductDataService.TryGetBestAsync(primaryOfficialInput, convertedUrl, ct);
+                }, ct);
                 var couponsTask = Task.Run(async () =>
                 {
                     try
@@ -710,18 +744,24 @@ app.MapPost("/api/conversor", async (
                     return Enumerable.Empty<AffiliateCoupon>();
                 }, ct);
 
-                await Task.WhenAll(productPageMetaTask, convertedMetaTask, originalMetaTask, officialDataTask, couponsTask);
+                await Task.WhenAll(productPageMetaTask, convertedMetaTask, originalMetaTask, officialDataTask, couponsTask, resolvedOriginalUrlTask);
 
                 var productPageMeta = await productPageMetaTask;
                 var convertedMeta = await convertedMetaTask;
                 var originalMeta = await originalMetaTask;
+                var resolvedOriginalUrl = await resolvedOriginalUrlTask;
                 var officialData = await officialDataTask;
                 
                 // Fallback for short links (e.g. meli.la) - if Official API couldn't resolve the ID organically,
                 // try again using the ResolvedUrl obtained by the metadata HTML scraper
                 if (officialData is null)
                 {
-                    var resolvedFromMeta = FirstNonEmpty(productPageMeta.ResolvedUrl, originalMeta.ResolvedUrl, convertedMeta.ResolvedUrl);
+                    var resolvedFromMeta = FirstNonEmpty(
+                        conversion.EnrichmentUrl ?? string.Empty,
+                        resolvedOriginalUrl,
+                        productPageMeta.ResolvedUrl,
+                        originalMeta.ResolvedUrl,
+                        convertedMeta.ResolvedUrl);
                     if (!string.IsNullOrWhiteSpace(resolvedFromMeta) && 
                         !string.Equals(resolvedFromMeta, normalizedInputUrl, StringComparison.OrdinalIgnoreCase) &&
                         !string.Equals(resolvedFromMeta, convertedUrl, StringComparison.OrdinalIgnoreCase))
@@ -762,8 +802,8 @@ app.MapPost("/api/conversor", async (
                 viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) || string.Equals(conversion.Store, "Unknown", StringComparison.OrdinalIgnoreCase)
                     ? ResolveStoreNameFromUrl(convertedUrl)
                     : conversion.Store.Trim();
-                viewModel.Title = FirstNonEmpty(officialData?.Title ?? string.Empty, mergedTitle, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
-                viewModel.Description = mergedDescription?.Trim() ?? string.Empty;
+                viewModel.Title = NormalizeConverterDisplayText(FirstNonEmpty(officialData?.Title ?? string.Empty, mergedTitle, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}");
+                viewModel.Description = NormalizeConverterDisplayText(mergedDescription?.Trim() ?? string.Empty);
                 viewModel.Price = FirstNonEmpty(mergedPrice, "Preco sob consulta") ?? "Preco sob consulta";
                 viewModel.ImageUrl = SelectBestConverterImage(mergedImages, viewModel.Title, viewModel.Description);
                 viewModel.VideoUrl = FirstNonEmpty(
@@ -773,11 +813,11 @@ app.MapPost("/api/conversor", async (
                     string.Empty) ?? string.Empty;
 
                 // Previous price: cascade from official data → HTML scraping of each meta source
-                viewModel.PreviousPrice = FirstNonEmpty(
+                viewModel.PreviousPrice = NormalizeConverterDisplayText(FirstNonEmpty(
                     officialData?.PreviousPrice ?? string.Empty,
                     productPageMeta.PreviousPriceText ?? string.Empty,
                     convertedMeta.PreviousPriceText ?? string.Empty,
-                    originalMeta.PreviousPriceText ?? string.Empty) ?? string.Empty;
+                    originalMeta.PreviousPriceText ?? string.Empty) ?? string.Empty);
 
                 // Validate previous price: must be greater than current price, otherwise discard
                 if (!string.IsNullOrWhiteSpace(viewModel.PreviousPrice) && !string.IsNullOrWhiteSpace(viewModel.Price))
@@ -818,7 +858,7 @@ app.MapPost("/api/conversor", async (
                     }
                 }
 
-                viewModel.EstimatedDelivery = officialData?.EstimatedDelivery ?? string.Empty;
+                viewModel.EstimatedDelivery = NormalizeConverterDisplayText(officialData?.EstimatedDelivery ?? string.Empty);
                 viewModel.DataSource = !string.IsNullOrWhiteSpace(officialData?.DataSource) ? officialData!.DataSource : "meta";
                 viewModel.ConvertedUrl = convertedUrl;
                 viewModel.TrackedUrl = trackedUrl;
@@ -6845,7 +6885,7 @@ static string ChooseBestConverterTitle(string? preferred, string? fallback)
 {
     var candidates = new[] { preferred, fallback }
         .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Select(x => System.Net.WebUtility.HtmlDecode(x?.Trim()) ?? string.Empty)
+        .Select(x => NormalizeConverterDisplayText(x))
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
@@ -6866,12 +6906,41 @@ static string ChooseBestConverterTitle(string? preferred, string? fallback)
 
 static string ChooseBestConverterDescription(string? preferred, string? fallback)
 {
-    var first = System.Net.WebUtility.HtmlDecode(preferred?.Trim()) ?? string.Empty;
-    var second = System.Net.WebUtility.HtmlDecode(fallback?.Trim()) ?? string.Empty;
+    var first = NormalizeConverterDisplayText(preferred);
+    var second = NormalizeConverterDisplayText(fallback);
     if (string.IsNullOrWhiteSpace(first)) return second;
     if (string.IsNullOrWhiteSpace(second)) return first;
     return second.Length > first.Length ? second : first;
 }
+
+static string NormalizeConverterDisplayText(string? value)
+{
+    var text = System.Net.WebUtility.HtmlDecode(value?.Trim()) ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(text) || !LooksLikeMojibake(text))
+    {
+        return text;
+    }
+
+    try
+    {
+        var repaired = Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(text));
+        if (ScoreMojibake(repaired) < ScoreMojibake(text))
+        {
+            return repaired.Trim();
+        }
+    }
+    catch
+    {
+    }
+
+    return text;
+}
+
+static bool LooksLikeMojibake(string value)
+    => value.Contains('Ã') || value.Contains('â') || value.Contains('�') || value.Contains('├');
+
+static int ScoreMojibake(string value)
+    => Regex.Matches(value, "[Ãâ�├]", RegexOptions.CultureInvariant).Count;
 
 static int ScoreConverterTitle(string title)
 {
@@ -11502,7 +11571,7 @@ static string NormalizeWebConversorSource(string? source)
     return "conversor_web";
 }
 
-internal sealed record LoginRequest(string Username, string Password);
+internal sealed record LoginRequest(string Username, string Password, bool RememberMe = false);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow, string? OverrideUrl);
 internal sealed record WhatsAppInstanceRequest(string? InstanceName);
