@@ -21,6 +21,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IMediaStore _mediaStore;
     private readonly IMetaGraphClient _metaGraphClient;
+    private readonly IVideoProcessingService _videoProcessingService;
     private readonly IInstagramOutboundPublisher _publisher;
     private readonly IInstagramOutboundOutboxStore _outboxStore;
     private readonly ICatalogOfferStore _catalogOfferStore;
@@ -34,6 +35,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         IHttpClientFactory httpClientFactory,
         IMediaStore mediaStore,
         IMetaGraphClient metaGraphClient,
+        IVideoProcessingService videoProcessingService,
         IInstagramOutboundPublisher publisher,
         IInstagramOutboundOutboxStore outboxStore,
         ICatalogOfferStore catalogOfferStore,
@@ -46,6 +48,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         _httpClientFactory = httpClientFactory;
         _mediaStore = mediaStore;
         _metaGraphClient = metaGraphClient;
+        _videoProcessingService = videoProcessingService;
         _publisher = publisher;
         _outboxStore = outboxStore;
         _catalogOfferStore = catalogOfferStore;
@@ -140,7 +143,34 @@ public sealed class InstagramPublishService : IInstagramPublishService
             publishImageUrls = normalized;
         }
 
-        var validationError = ValidateDraft(draft, effectiveCaption, publishImageUrls);
+        var publishMediaUrls = publishImageUrls;
+        if (!string.IsNullOrWhiteSpace(draft.VideoUrl))
+        {
+            var videoResult = await _videoProcessingService.PrepareForInstagramPublicationAsync(draft, _publicBaseUrl, cancellationToken);
+            if (!videoResult.Success || string.IsNullOrWhiteSpace(videoResult.VideoUrl))
+            {
+                var error = videoResult.Error ?? "Falha ao preparar video para publicacao.";
+                draft.Status = "failed";
+                draft.MediaId = null;
+                draft.Error = error;
+                await _publishStore.UpdateAsync(draft, cancellationToken);
+                await AppendLogAsync("publish", false, draft.Id, null, error, "quality=video-processing", cancellationToken);
+                return new InstagramPublishExecutionOutcome(false, StatusCodes.Status400BadRequest, null, error, draft.Id);
+            }
+
+            draft.VideoUrl = videoResult.VideoUrl;
+            if (!string.IsNullOrWhiteSpace(videoResult.CoverUrl))
+            {
+                draft.VideoCoverUrl = videoResult.CoverUrl;
+            }
+
+            if (draft.PostType is "reel" or "story" || publishImageUrls.Count == 0)
+            {
+                publishMediaUrls = new List<string> { videoResult.VideoUrl };
+            }
+        }
+
+        var validationError = ValidateDraft(draft, effectiveCaption, publishMediaUrls);
         if (validationError is not null)
         {
             draft.Status = "failed";
@@ -153,7 +183,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
 
         var caption = InstagramWorkflowSupport.BuildCaption(effectiveCaption, draft.Hashtags, draft.Ctas);
         var effectiveCatalogTarget = CatalogTargets.ResolveEffectiveTarget(draft, publishSettings);
-        var publishResult = await _metaGraphClient.PublishAsync(publishSettings, draft.PostType, publishImageUrls, caption, cancellationToken);
+        var publishResult = await _metaGraphClient.PublishAsync(publishSettings, draft.PostType, publishMediaUrls, caption, cancellationToken);
         if (!publishResult.Success &&
             normalized.Count > 0 &&
             selectedImageUrls.Count > 0 &&
@@ -249,16 +279,16 @@ public sealed class InstagramPublishService : IInstagramPublishService
         return null;
     }
 
-    private static string? ValidateDraft(InstagramPublishDraft draft, string effectiveCaption, IReadOnlyList<string> publishImageUrls)
+    private static string? ValidateDraft(InstagramPublishDraft draft, string effectiveCaption, IReadOnlyList<string> publishMediaUrls)
     {
         if (string.IsNullOrWhiteSpace(draft.ProductName))
         {
             return "Produto vazio no rascunho. Defina um produto real antes de publicar.";
         }
 
-        if (publishImageUrls.Count == 0 || publishImageUrls.All(string.IsNullOrWhiteSpace))
+        if (publishMediaUrls.Count == 0 || publishMediaUrls.All(string.IsNullOrWhiteSpace))
         {
-            return "Sem imagens para validar/publicar.";
+            return "Sem midia para validar/publicar.";
         }
 
         if (string.IsNullOrWhiteSpace(effectiveCaption))

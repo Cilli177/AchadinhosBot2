@@ -205,6 +205,7 @@ builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
 builder.Services.AddSingleton<AmazonCreatorApiClient>();
 builder.Services.AddSingleton<AmazonPaApiClient>();
 builder.Services.AddSingleton<AmazonHtmlScraperService>();
+builder.Services.AddSingleton<MercadoLivreHtmlScraperService>();
 builder.Services.AddSingleton<IAffiliateCouponSyncService, AffiliateCouponSyncService>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, AmazonOfficialCouponProvider>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, ShopeeOfficialCouponProvider>();
@@ -224,6 +225,7 @@ builder.Services.AddSingleton<OfficialProductDataService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
 builder.Services.AddSingleton<IMetaGraphClient, MetaGraphClient>();
 builder.Services.AddSingleton<IInstagramPublishService, InstagramPublishService>();
+builder.Services.AddSingleton<IVideoProcessingService, FfmpegVideoProcessingService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<IOperationalAnalyticsService, OperationalAnalyticsService>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
@@ -372,7 +374,9 @@ app.MapPost("/auth/login", async (
         }
     }
     Console.WriteLine($"[AUTH-DEBUG] Found matching user config: {user != null}");
-    var valid = user is not null && PasswordHasher.Verify(request.Password, user.PasswordHash);
+    var valid = user is not null
+        && !string.IsNullOrEmpty(request.Password)
+        && PasswordHasher.Verify(request.Password, user.PasswordHash);
     Console.WriteLine($"[AUTH-DEBUG] Password valid: {valid}");
 
     if (!valid)

@@ -11,6 +11,16 @@ public sealed class InstagramPublishDraft
     public int SelectedCaptionIndex { get; set; } = 1;
     public string Hashtags { get; set; } = string.Empty;
     public string? VideoUrl { get; set; }
+    public string? VideoCoverUrl { get; set; }
+    public double? VideoCoverAtSeconds { get; set; }
+    public string? VideoMusicCue { get; set; }
+    public double? VideoTrimStartSeconds { get; set; }
+    public double? VideoTrimEndSeconds { get; set; }
+    public string? MusicTrackUrl { get; set; }
+    public double? MusicStartSeconds { get; set; }
+    public double? MusicEndSeconds { get; set; }
+    public double? MusicVolume { get; set; }
+    public double? OriginalAudioVolume { get; set; }
     public List<string> ImageUrls { get; set; } = new();
     public List<int> SelectedImageIndexes { get; set; } = new();
     public List<InstagramCtaOption> Ctas { get; set; } = new();
@@ -21,6 +31,7 @@ public sealed class InstagramPublishDraft
     public DateTimeOffset? ScheduledFor { get; set; }
     public bool SendToCatalog { get; set; }
     public string CatalogTarget { get; set; } = "none";
+    public bool CatalogIntentLocked { get; set; }
     public string Status { get; set; } = "draft";
     public string? MediaId { get; set; }
     public string? Error { get; set; }

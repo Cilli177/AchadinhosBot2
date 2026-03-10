@@ -9,6 +9,7 @@ using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Infrastructure.Amazon;
 using Microsoft.Extensions.Options;
+using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 
 namespace AchadinhosBot.Next.Infrastructure.ProductData;
 
@@ -17,6 +18,7 @@ public sealed class OfficialProductDataService
     private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly AmazonCreatorApiClient _amazonCreatorApiClient;
     private readonly AmazonHtmlScraperService _amazonHtmlScraper;
+    private readonly MercadoLivreHtmlScraperService _mercadoLivreHtmlScraper;
     private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
     private readonly AffiliateOptions _affiliateOptions;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -26,6 +28,7 @@ public sealed class OfficialProductDataService
         AmazonPaApiClient amazonPaApiClient,
         AmazonCreatorApiClient amazonCreatorApiClient,
         AmazonHtmlScraperService amazonHtmlScraper,
+        MercadoLivreHtmlScraperService mercadoLivreHtmlScraper,
         IMercadoLivreOAuthService mercadoLivreOAuthService,
         IOptions<AffiliateOptions> affiliateOptions,
         IHttpClientFactory httpClientFactory,
@@ -34,6 +37,7 @@ public sealed class OfficialProductDataService
         _amazonPaApiClient = amazonPaApiClient;
         _amazonCreatorApiClient = amazonCreatorApiClient;
         _amazonHtmlScraper = amazonHtmlScraper;
+        _mercadoLivreHtmlScraper = mercadoLivreHtmlScraper;
         _mercadoLivreOAuthService = mercadoLivreOAuthService;
         _affiliateOptions = affiliateOptions.Value;
         _httpClientFactory = httpClientFactory;
@@ -198,9 +202,28 @@ public sealed class OfficialProductDataService
 
     private async Task<OfficialProductDataResult?> TryGetMercadoLivreDataAsync(Uri uri, CancellationToken ct)
     {
+        var resolvedUrl = await TryResolveFinalUrlAsync(uri.ToString(), ct) ?? uri.ToString();
+        var scrapedTask = _mercadoLivreHtmlScraper.ScrapeUrlAsync(resolvedUrl, ct);
+
         var itemId = await TryResolveMercadoLivreItemIdAsync(uri, ct);
         if (string.IsNullOrWhiteSpace(itemId))
         {
+            var scrapedFallback = await scrapedTask;
+            if (scrapedFallback != null && (!string.IsNullOrWhiteSpace(scrapedFallback.Title) || scrapedFallback.Images.Count > 0))
+            {
+                return new OfficialProductDataResult(
+                    Store: "Mercado Livre",
+                    Title: scrapedFallback.Title,
+                    CurrentPrice: scrapedFallback.Price,
+                    PreviousPrice: scrapedFallback.OldPrice,
+                    DiscountPercent: scrapedFallback.DiscountPercent,
+                    Images: scrapedFallback.Images,
+                    IsOfficial: false,
+                    DataSource: "mercadolivre_html_scraper",
+                    SourceUrl: resolvedUrl,
+                    EstimatedDelivery: scrapedFallback.Delivery,
+                    VideoUrl: null);
+            }
             return null;
         }
 
@@ -216,28 +239,58 @@ public sealed class OfficialProductDataService
             }
 
             using var response = await client.SendAsync(request, ct);
+            OfficialProductDataResult? apiResult = null;
+
             if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
             {
-                // Algumas políticas bloqueiam token inválido/expirado. Tenta chamada pública como fallback.
                 using var fallbackResponse = await client.GetAsync(endpoint, ct);
-                if (!fallbackResponse.IsSuccessStatusCode)
+                if (fallbackResponse.IsSuccessStatusCode)
                 {
-                    return null;
+                    var fallbackBody = await fallbackResponse.Content.ReadAsStringAsync(ct);
+                    using var fallbackDoc = JsonDocument.Parse(fallbackBody);
+                    apiResult = ParseMercadoLivreItemResponse(uri, fallbackDoc);
                 }
-
-                var fallbackBody = await fallbackResponse.Content.ReadAsStringAsync(ct);
-                using var fallbackDoc = JsonDocument.Parse(fallbackBody);
-                return ParseMercadoLivreItemResponse(uri, fallbackDoc);
             }
-
-            if (!response.IsSuccessStatusCode)
+            else if (response.IsSuccessStatusCode)
             {
-                return null;
+                 var body = await response.Content.ReadAsStringAsync(ct);
+                 using var doc = JsonDocument.Parse(body);
+                 apiResult = ParseMercadoLivreItemResponse(uri, doc);
             }
 
-            var body = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(body);
-            return ParseMercadoLivreItemResponse(uri, doc);
+            var scraped = await scrapedTask;
+            if (apiResult != null && scraped != null)
+            {
+                 return apiResult with
+                 {
+                     EstimatedDelivery = apiResult.EstimatedDelivery ?? scraped.Delivery,
+                     Title = apiResult.Title ?? scraped.Title,
+                     DataSource = "mercadolivre_api_and_scraper",
+                     PreviousPrice = scraped.IsLightningDeal ? scraped.OldPrice : apiResult.PreviousPrice,
+                     CurrentPrice = scraped.IsLightningDeal ? scraped.Price : apiResult.CurrentPrice,
+                     DiscountPercent = scraped.IsLightningDeal ? scraped.DiscountPercent : apiResult.DiscountPercent
+                 };
+            }
+            
+            if (apiResult != null) return apiResult;
+
+            if (scraped != null && (!string.IsNullOrWhiteSpace(scraped.Title) || scraped.Images.Count > 0))
+            {
+                return new OfficialProductDataResult(
+                    Store: "Mercado Livre",
+                    Title: scraped.Title,
+                    CurrentPrice: scraped.Price,
+                    PreviousPrice: scraped.OldPrice,
+                    DiscountPercent: scraped.DiscountPercent,
+                    Images: scraped.Images,
+                    IsOfficial: false,
+                    DataSource: "mercadolivre_html_scraper",
+                    SourceUrl: resolvedUrl,
+                    EstimatedDelivery: scraped.Delivery,
+                    VideoUrl: null);
+            }
+
+            return null;
         }
         catch (Exception ex)
         {

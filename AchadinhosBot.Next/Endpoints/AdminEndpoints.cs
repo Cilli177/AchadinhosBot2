@@ -164,6 +164,16 @@ public static class AdminEndpoints
                 ProductName = req.ProductName,
                 PostType = req.PostType ?? "feed",
                 VideoUrl = req.VideoUrl,
+                VideoCoverUrl = req.VideoCoverUrl,
+                VideoCoverAtSeconds = req.VideoCoverAtSeconds,
+                VideoMusicCue = req.VideoMusicCue,
+                VideoTrimStartSeconds = req.VideoTrimStartSeconds,
+                VideoTrimEndSeconds = req.VideoTrimEndSeconds,
+                MusicTrackUrl = req.MusicTrackUrl,
+                MusicStartSeconds = req.MusicStartSeconds,
+                MusicEndSeconds = req.MusicEndSeconds,
+                MusicVolume = req.MusicVolume,
+                OriginalAudioVolume = req.OriginalAudioVolume,
                 Caption = req.Caption,
                 ImageUrls = req.ImageUrls ?? new(),
                 Ctas = BuildDraftCtas(req.Caption, req.AutoReplyKeyword, req.AutoReplyLink),
@@ -182,6 +192,11 @@ public static class AdminEndpoints
                 draftId = draft.Id,
                 draft.ProductName,
                 draft.PostType,
+                draft.VideoCoverUrl,
+                draft.VideoCoverAtSeconds,
+                draft.VideoTrimStartSeconds,
+                draft.VideoTrimEndSeconds,
+                draft.MusicTrackUrl,
                 draft.SendToCatalog,
                 draft.CatalogTarget
             }, ct);
@@ -233,6 +248,55 @@ public static class AdminEndpoints
                 mode = result.Mode,
                 messageId = result.MessageId,
                 error = result.Error
+            });
+        });
+
+        app.MapPost("/api/admin/publish-instagram-now", async (
+            AdminPublishRequest req,
+            HttpContext context,
+            IInstagramPublishStore draftStore,
+            IInstagramPublishService publishService,
+            IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var draft = await draftStore.GetAsync(req.DraftId, ct);
+            if (draft is null)
+                return Results.NotFound(new { success = false, error = "Draft not found." });
+
+            if (req.SendToCatalog || !string.IsNullOrWhiteSpace(req.CatalogTarget))
+            {
+                var previousCatalogTarget = draft.CatalogTarget;
+                var previousSendToCatalog = draft.SendToCatalog;
+                ApplyCatalogIntent(draft, req.SendToCatalog, req.CatalogTarget);
+                if (!string.Equals(previousCatalogTarget, draft.CatalogTarget, StringComparison.OrdinalIgnoreCase) ||
+                    previousSendToCatalog != draft.SendToCatalog)
+                {
+                    await draftStore.UpdateAsync(draft, ct);
+                }
+            }
+
+            var result = await publishService.ExecutePublishAsync(req.DraftId, ct);
+            await audit.WriteAsync("admin.publish.instagram_now", ResolveActor(context), new
+            {
+                req.DraftId,
+                result.Success,
+                result.StatusCode,
+                result.MediaId,
+                result.Error,
+                draft.CatalogTarget
+            }, ct);
+
+            return Results.Ok(new
+            {
+                success = result.Success,
+                statusCode = result.StatusCode,
+                mediaId = result.MediaId,
+                error = result.Error,
+                draftId = result.DraftId
             });
         });
 
@@ -599,6 +663,7 @@ public static class AdminEndpoints
 
         draft.CatalogTarget = resolved;
         draft.SendToCatalog = CatalogTargets.IsEnabled(resolved);
+        draft.CatalogIntentLocked = true;
     }
 
     private static List<InstagramCtaOption> BuildDraftCtas(string? caption, string? rawKeywords, string? preferredLink)
@@ -635,7 +700,7 @@ public static class AdminEndpoints
 
 public sealed record AdminGenerateCardRequest(string Title, string? Price, string? PreviousPrice, int? DiscountPercent, string ImageUrl);
 public sealed record AdminGenerateCaptionRequest(string ProductName, string? OfferContext);
-public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false, string? CatalogTarget = null);
+public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, string? VideoCoverUrl, double? VideoCoverAtSeconds, string? VideoMusicCue, double? VideoTrimStartSeconds, double? VideoTrimEndSeconds, string? MusicTrackUrl, double? MusicStartSeconds, double? MusicEndSeconds, double? MusicVolume, double? OriginalAudioVolume, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false, string? CatalogTarget = null);
 public sealed record AdminPublishRequest(string DraftId, bool SendToCatalog = false, string? CatalogTarget = null);
 public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl);
 public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl, string? CatalogTarget = null);

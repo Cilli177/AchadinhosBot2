@@ -136,11 +136,11 @@ public sealed class OpenAiInstagramPostGenerator
             model,
             messages = new[]
             {
-                new { role = "system", content = "Você é um especialista em redes sociais. Responda apenas com uma lista de 10 a 15 hashtags altamente virais e relevantes para o produto informado, separadas por espaço." },
-                new { role = "user", content = $"Produto: {productInput}\n\nGere as hashtags:" }
+                new { role = "system", content = "Voc\u00ea \u00e9 um especialista em growth e copywriter premium de afiliados. Gere uma lista de 15 a 20 hashtags de alto n\u00edvel, misturando as mais virais do momento com hashtags espec\u00edficas para atrair compradores reais e visualiza\u00e7\u00f5es no Explorar. Responda apenas as hashtags separadas por espa\u00e7o." },
+                new { role = "user", content = $"Produto: {productInput}\n\nGere as hashtags de alto n\u00edvel para este produto:" }
             },
-            temperature = 0.7,
-            max_tokens = 100
+            temperature = 0.8,
+            max_tokens = 150
         };
 
         try
@@ -246,11 +246,12 @@ public sealed class OpenAiInstagramPostGenerator
 
         if (instaSettings.UseUltraPrompt)
         {
-            prompt = "Voce e um copywriter premium de afiliados no Brasil, especializado em high ticket.\n" +
-                     "Crie um post extremamente profissional, convincente e elegante.\n" +
-                     "Evite genericidade, repeticions e frases vazias. Use linguagem humana.\n" +
+            prompt = "Voc\u00ea \u00e9 um expert em growth e copywriter premium de afiliados no Brasil, n\u00edvel autoridade.\n" +
+                     "Crie um post de alt\u00edssima qualidade, elegante e altamente persuasivo para atrair novos usu\u00e1rios e gerar visualiza\u00e7\u00f5es.\n" +
+                     "Nas hashtags, inclua obrigatoriamente padr\u00f5es de alto n\u00edvel como #achadinhos #ofertas #promo\u00e7\u00e3o #compras #dicas e varia\u00e7\u00f5es virais.\n" +
+                     "Evite genericidade e use um tom que gere desejo imediato. Linguagem humana e engajadora.\n" +
                      "Crie legendas CLARAMENTE diferentes entre si.\n" +
-                     "Nao invente preco, garantia ou beneficios nao informados.\n\n" +
+                     "N\u00e3o invente dados que n\u00e3o foram fornecidos.\n\n" +
                      prompt;
         }
 

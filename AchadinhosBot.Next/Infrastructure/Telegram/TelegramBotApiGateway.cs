@@ -127,16 +127,37 @@ public sealed class TelegramBotApiGateway : ITelegramGateway, ITelegramTransport
         try
         {
             var client = _factory.CreateClient("default");
+            
+            // Fix: Download image first, then upload as multipart/form-data.
+            // This allows the bot to send both local origin files (/media/...) and any authenticated image
+            byte[] imageBytes;
+            try 
+            {
+                // Follow redirects if needed and fetch image content
+                var imgRes = await client.GetAsync(photoUrl, cancellationToken);
+                imgRes.EnsureSuccessStatusCode();
+                imageBytes = await imgRes.Content.ReadAsByteArrayAsync(cancellationToken);
+            } 
+            catch (Exception dlEx) 
+            {
+                _logger.LogWarning(dlEx, "Falha ao baixar imagem para envio via Telegram: {Url}", photoUrl);
+                return new TelegramSendResult(false, $"Falha ao baixar imagem origem: {dlEx.Message}");
+            }
+
             using var request = new HttpRequestMessage(HttpMethod.Post, $"https://api.telegram.org/bot{tokenToUse}/sendPhoto");
-            request.Content = new StringContent(
-                JsonSerializer.Serialize(new
-                {
-                    chat_id = chatId,
-                    photo = photoUrl,
-                    caption = caption ?? string.Empty
-                }),
-                Encoding.UTF8,
-                "application/json");
+            
+            var content = new MultipartFormDataContent();
+            content.Add(new StringContent(chatId.ToString()), "chat_id");
+            if (!string.IsNullOrWhiteSpace(caption))
+            {
+                content.Add(new StringContent(caption, Encoding.UTF8), "caption");
+            }
+            
+            var imageContent = new ByteArrayContent(imageBytes);
+            imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            content.Add(imageContent, "photo", "image.jpg");
+
+            request.Content = content;
 
             using var response = await client.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);

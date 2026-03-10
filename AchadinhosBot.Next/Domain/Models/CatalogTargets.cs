@@ -50,6 +50,11 @@ public static class CatalogTargets
 
     public static string ResolveEffectiveTarget(InstagramPublishDraft draft, InstagramPublishSettings settings)
     {
+        if (draft.CatalogIntentLocked)
+        {
+            return ResolveDraftTarget(draft);
+        }
+
         var draftTarget = ResolveDraftTarget(draft);
         if (!string.Equals(draftTarget, None, StringComparison.OrdinalIgnoreCase))
         {

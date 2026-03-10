@@ -487,6 +487,7 @@
                                     <div class="insta-media">
                                         <img id="instaPreviewImg" src="" alt="Post Preview">
                                         <video id="instaPreviewVid" class="hidden" controls loop></video>
+                                        <audio id="instaPreviewAudio" class="hidden"></audio>
 
                                         <!-- Carousel Navigation (Feed) -->
                                         <button id="carouselPrevBtn" onclick="navigateCarousel(-1)"
@@ -555,7 +556,7 @@
                                         <label
                                             class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Gerenciamento
                                             de Midia</label>
-                                        <div class="grid grid-cols-3 gap-3">
+                                        <div class="grid grid-cols-4 gap-3">
                                             <button onclick="document.getElementById('photoInput').click()"
                                                 class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
                                                 <div class="text-accent mb-1 flex justify-center"><svg class="w-5 h-5"
@@ -588,14 +589,144 @@
                                                 <span
                                                     class="text-[9px] font-bold uppercase tracking-tight">Editar</span>
                                             </button>
+                                            <button onclick="document.getElementById('musicInput').click()"
+                                                class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
+                                                <div class="text-emerald-400 mb-1 flex justify-center"><svg class="w-5 h-5"
+                                                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                            d="M9 19V6l12-2v13M9 19a2 2 0 11-4 0 2 2 0 014 0zm12-2a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                    </svg></div>
+                                                <span class="text-[9px] font-bold uppercase tracking-tight">Add
+                                                    Musica</span>
+                                            </button>
                                         </div>
                                         <input type="file" id="photoInput" class="hidden" accept="image/*"
                                             onchange="uploadMedia(this, 'photo')">
                                         <input type="file" id="videoInput" class="hidden" accept="video/*"
                                             onchange="uploadMedia(this, 'video')">
+                                        <input type="file" id="musicInput" class="hidden" accept="audio/*"
+                                            onchange="uploadMedia(this, 'music')">
 
                                         <div id="mediaStatus"
                                             class="mt-3 p-2 bg-accent/10 border border-accent/20 rounded-lg text-[10px] text-accent hidden">
+                                        </div>
+
+                                        <div id="videoToolsPanel"
+                                            class="hidden mt-4 bg-black/20 border border-white/10 rounded-xl p-3 space-y-3">
+                                            <div class="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <label
+                                                        class="block text-[9px] font-bold text-slate-400 uppercase tracking-widest">Video
+                                                        Studio</label>
+                                                    <p class="text-[10px] text-slate-500 mt-1">Defina capa e trim para
+                                                        o draft antes da publicacao.</p>
+                                                </div>
+                                                <button type="button" onclick="captureVideoCover()"
+                                                    class="bg-pink-500/10 hover:bg-pink-500/20 border border-pink-500/20 text-pink-300 rounded-lg px-3 py-2 text-[10px] font-bold transition-all">
+                                                    Capturar Capa
+                                                </button>
+                                            </div>
+                                            <div class="bg-surface/60 border border-white/10 rounded-xl p-3 space-y-2">
+                                                <div class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
+                                                    <span>Timeline de Video</span>
+                                                    <span id="videoCurrentTimeLabel">0.0s</span>
+                                                </div>
+                                                <input id="videoTimelineInput" type="range" min="0" max="100" step="0.1" value="0"
+                                                    class="w-full accent-pink-400" oninput="scrubVideoTimeline()">
+                                                <div class="grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+                                                    <span id="videoStartLabel">Inicio 0.0s</span>
+                                                    <span class="text-center" id="videoCoverLabel">Capa 0.0s</span>
+                                                    <span class="text-right" id="videoEndLabel">Fim auto</span>
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label
+                                                        class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Inicio
+                                                        (s)</label>
+                                                    <input id="videoTrimStartInput" type="number" min="0" step="0.1"
+                                                        value="0"
+                                                        class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                        oninput="updateVideoTrimState()">
+                                                </div>
+                                                <div>
+                                                    <label
+                                                        class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Fim
+                                                        (s)</label>
+                                                    <input id="videoTrimEndInput" type="number" min="0" step="0.1"
+                                                        placeholder="auto"
+                                                        class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                        oninput="updateVideoTrimState()">
+                                                </div>
+                                            </div>
+                                            <div class="flex gap-2">
+                                                <button type="button" onclick="seekVideoTrim('start')"
+                                                    class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                    Usar tempo atual no inicio
+                                                </button>
+                                                <button type="button" onclick="seekVideoTrim('end')"
+                                                    class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                    Usar tempo atual no fim
+                                                </button>
+                                            </div>
+                                            <div class="flex gap-2">
+                                                <button type="button" onclick="useCurrentTimeAsCover()"
+                                                    class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                    Usar tempo atual na capa
+                                                </button>
+                                            </div>
+                                            <div class="bg-surface/60 border border-white/10 rounded-xl p-3 space-y-3">
+                                                <div class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
+                                                    <span>Timeline de Musica</span>
+                                                    <span id="musicCurrentTimeLabel">0.0s</span>
+                                                </div>
+                                                <div class="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Inicio
+                                                            da musica</label>
+                                                        <input id="musicStartInput" type="number" min="0" step="0.1" value="0"
+                                                            class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                            oninput="updateMusicState()">
+                                                    </div>
+                                                    <div>
+                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Fim
+                                                            da musica</label>
+                                                        <input id="musicEndInput" type="number" min="0" step="0.1" placeholder="auto"
+                                                            class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                            oninput="updateMusicState()">
+                                                    </div>
+                                                </div>
+                                                <input id="musicTimelineInput" type="range" min="0" max="100" step="0.1" value="0"
+                                                    class="w-full accent-emerald-400" oninput="scrubMusicTimeline()">
+                                                <div class="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Volume
+                                                            da musica</label>
+                                                        <input id="musicVolumeInput" type="range" min="0" max="1" step="0.05" value="0.7"
+                                                            class="w-full accent-emerald-400" oninput="updateMusicState()">
+                                                    </div>
+                                                    <div>
+                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Audio
+                                                            original</label>
+                                                        <input id="originalAudioVolumeInput" type="range" min="0" max="1" step="0.05" value="0.25"
+                                                            class="w-full accent-slate-400" oninput="updateMusicState()">
+                                                    </div>
+                                                </div>
+                                                <div class="flex gap-2">
+                                                    <button type="button" onclick="seekMusicStartFromVideo()"
+                                                        class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                        Usar ponto atual na musica
+                                                    </button>
+                                                    <button type="button" onclick="toggleMusicPreview()"
+                                                        class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                        Preview musica
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div id="videoMetaStatus"
+                                                class="text-[10px] text-slate-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                                                Nenhum ajuste de video aplicado.
+                                            </div>
                                         </div>
 
                                         <div class="mt-4">
@@ -852,27 +983,87 @@
         </div>
     </div>
 
-    <!-- Mini Visual Editor Modal -->
+    <!-- Studio Editor Modal -->
     <div id="editorModal"
-        class="hidden fixed inset-0 z-50 bg-[#0f1115]/90 backdrop-blur-sm flex items-center justify-center pt-16">
+        class="hidden fixed inset-0 z-50 bg-[#0f1115]/92 backdrop-blur-sm flex items-center justify-center pt-16">
         <div
-            class="bg-surface border border-white/10 rounded-[24px] overflow-hidden shadow-2xl w-full max-w-4xl flex h-[80vh]">
+            class="bg-surface border border-white/10 rounded-[24px] overflow-hidden shadow-2xl w-full max-w-7xl flex h-[86vh]">
             <!-- Canvas Area -->
-            <div class="flex-1 bg-black/50 flex items-center justify-center p-8 relative overflow-hidden">
+            <div class="flex-1 bg-black/60 flex items-center justify-center p-6 relative overflow-hidden">
+                <div id="instaStageOverlay"
+                    class="pointer-events-none absolute inset-6 rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_55%)]"></div>
                 <canvas id="imageEditorCanvas"
-                    class="max-w-full max-h-full rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"></canvas>
+                    class="max-w-full max-h-full rounded-[22px] shadow-[0_0_40px_rgba(0,0,0,0.55)] bg-[#111827]"></canvas>
             </div>
             <!-- Tools Sidebar -->
-            <div class="w-80 bg-surface border-l border-white/10 p-6 flex flex-col h-full overflow-y-auto">
+            <div class="w-[390px] bg-surface border-l border-white/10 p-6 flex flex-col h-full overflow-y-auto">
                 <h3 class="text-white font-bold text-lg mb-6 flex items-center gap-2">
                     <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
                     </svg>
-                    Mini Editor
+                    Studio Editor
                 </h3>
 
                 <div class="space-y-6 flex-1">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Preset</label>
+                            <select id="editorPresetSelect" onchange="applyEditorPreset()"
+                                class="w-full bg-primary/50 border border-white/10 rounded-xl px-3 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                                <option value="feed">Feed 1:1</option>
+                                <option value="portrait">Feed 4:5</option>
+                                <option value="story">Story 9:16</option>
+                                <option value="reel">Reel Cover</option>
+                                <option value="catalog">Catalogo VIP</option>
+                            </select>
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ajuste</label>
+                            <select id="editorFitSelect" onchange="renderEditor()"
+                                class="w-full bg-primary/50 border border-white/10 rounded-xl px-3 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                                <option value="cover">Cover</option>
+                                <option value="contain">Contain</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-3">
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Zoom</label>
+                            <input id="editorScaleInput" type="range" min="0.6" max="1.8" step="0.05" value="1" oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset X</label>
+                            <input id="editorOffsetXInput" type="range" min="-600" max="600" step="5" value="0" oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset Y</label>
+                            <input id="editorOffsetYInput" type="range" min="-900" max="900" step="5" value="0" oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Brilho</label>
+                            <input id="editorBrightnessInput" type="range" min="60" max="140" step="5" value="100" oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Contraste</label>
+                            <input id="editorContrastInput" type="range" min="70" max="150" step="5" value="100" oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                    </div>
+
+                    <div class="flex gap-3">
+                        <button type="button" onclick="toggleEditorSafeArea()"
+                            class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Safe Area
+                        </button>
+                        <button type="button" onclick="resetEditorView()"
+                            class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Resetar
+                        </button>
+                    </div>
                     <!-- Text Controls -->
                     <div class="space-y-3">
                         <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
@@ -883,6 +1074,16 @@
                             class="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
                             Adicionar ao Canvas
                         </button>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" onclick="addEditorText('headline')"
+                                class="bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                                Headline
+                            </button>
+                            <button type="button" onclick="addEditorText('cta')"
+                                class="bg-accent/10 hover:bg-accent/20 border border-accent/20 text-accent rounded-xl py-2.5 text-xs font-bold transition-all">
+                                CTA
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Badge Controls -->
@@ -899,6 +1100,27 @@
                                 Frete Grátis
                             </button>
                         </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="addEditorBadge('lightning')"
+                            class="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-300 rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Relampago
+                        </button>
+                        <button onclick="addEditorBadge('whatsapp')"
+                            class="bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-300 rounded-xl py-2.5 text-xs font-bold transition-all">
+                            WhatsApp
+                        </button>
+                    </div>
+
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Trilha</label>
+                        <input type="text" id="editorMusicInput" placeholder="Ex.: Funk leve / pop clean / lo-fi"
+                            class="w-full bg-primary/50 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                        <label class="inline-flex items-center gap-2 text-xs text-slate-300">
+                            <input type="checkbox" id="editorMusicToggle" class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
+                            Marcar trilha para exportacao futura
+                        </label>
                     </div>
 
                     <div class="pt-4 border-t border-white/10">
@@ -1181,10 +1403,12 @@
                     document.getElementById('instaPreviewImg').classList.add('hidden');
                     const postTypeSel = document.getElementById('postType');
                     if (postTypeSel) { postTypeSel.value = 'reel'; }
+                    document.getElementById('videoToolsPanel').classList.remove('hidden');
                 } else {
                     document.getElementById('instaPreviewImg').src = data.imageUrl || '';
                     document.getElementById('instaPreviewImg').classList.remove('hidden');
                     document.getElementById('instaPreviewVid').classList.add('hidden');
+                    document.getElementById('videoToolsPanel').classList.add('hidden');
                 }
 
                 // Auto generate card and caption
@@ -1200,6 +1424,16 @@
                     description: data.description,
                     imageUrl: data.imageUrl,
                     videoUrl: data.videoUrl,
+                    videoCoverUrl: data.imageUrl || null,
+                    videoCoverAtSeconds: 0,
+                    videoTrimStartSeconds: 0,
+                    videoTrimEndSeconds: null,
+                    videoMusicCue: null,
+                    musicTrackUrl: null,
+                    musicStartSeconds: 0,
+                    musicEndSeconds: null,
+                    musicVolume: 0.7,
+                    originalAudioVolume: 0.25,
                     store: data.store,
                     originalUrl: data.originalUrl,
                     trackedUrl: data.trackedUrl,
@@ -1207,6 +1441,7 @@
                     images: data.images?.length ? data.images : [data.imageUrl]
                 };
                 currentImageIndex = 0;
+                syncVideoTools();
 
                 resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (error) {
@@ -1326,7 +1561,7 @@
                         document.getElementById('captionText').value = data.caption;
                     }
 
-                    document.getElementById('hashtagInput').value = "#oferta #promoção #achadinhos";
+                    document.getElementById('hashtagInput').value = "#achadinhos #ofertas #promoção #dicas #compras";
                     syncPreview();
                     // Auto-switch to caption tab for review after generation
                     setTimeout(() => switchTab('caption'), 800);
@@ -1392,6 +1627,194 @@
             syncPreview();
         }
 
+        function syncVideoTools() {
+            const panel = document.getElementById('videoToolsPanel');
+            const startInput = document.getElementById('videoTrimStartInput');
+            const endInput = document.getElementById('videoTrimEndInput');
+            const status = document.getElementById('videoMetaStatus');
+            const musicStartInput = document.getElementById('musicStartInput');
+            const musicEndInput = document.getElementById('musicEndInput');
+            const musicVolumeInput = document.getElementById('musicVolumeInput');
+            const originalAudioVolumeInput = document.getElementById('originalAudioVolumeInput');
+            const video = document.getElementById('instaPreviewVid');
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!panel || !startInput || !endInput || !status) return;
+
+            const hasVideo = !!currentData?.videoUrl;
+            panel.classList.toggle('hidden', !hasVideo);
+            if (!hasVideo) {
+                status.textContent = 'Nenhum ajuste de video aplicado.';
+                return;
+            }
+
+            startInput.value = String(currentData.videoTrimStartSeconds ?? 0);
+            endInput.value = currentData.videoTrimEndSeconds != null ? String(currentData.videoTrimEndSeconds) : '';
+            if (musicStartInput) musicStartInput.value = String(currentData.musicStartSeconds ?? 0);
+            if (musicEndInput) musicEndInput.value = currentData.musicEndSeconds != null ? String(currentData.musicEndSeconds) : '';
+            if (musicVolumeInput) musicVolumeInput.value = String(currentData.musicVolume ?? 0.7);
+            if (originalAudioVolumeInput) originalAudioVolumeInput.value = String(currentData.originalAudioVolume ?? 0.25);
+
+            const trimBits = [];
+            if ((currentData.videoTrimStartSeconds ?? 0) > 0) trimBits.push(`inicio ${currentData.videoTrimStartSeconds}s`);
+            if (currentData.videoTrimEndSeconds != null) trimBits.push(`fim ${currentData.videoTrimEndSeconds}s`);
+            const coverBit = currentData.videoCoverUrl ? 'capa definida' : 'sem capa capturada';
+            const musicBit = currentData.musicTrackUrl
+                ? `musica ${currentData.musicStartSeconds ?? 0}s-${currentData.musicEndSeconds ?? 'auto'}s`
+                : (currentData.videoMusicCue ? `trilha: ${currentData.videoMusicCue}` : 'sem trilha');
+            status.textContent = `${coverBit} | ${trimBits.length ? trimBits.join(' | ') : 'sem trim'} | ${musicBit}`;
+
+            updateTimelineRanges(video, audio);
+            syncPreviewAudioState();
+        }
+
+        function updateVideoTrimState() {
+            if (!currentData) return;
+            const start = parseFloat(document.getElementById('videoTrimStartInput').value || '0');
+            const endRaw = document.getElementById('videoTrimEndInput').value;
+            const end = endRaw ? parseFloat(endRaw) : null;
+            currentData.videoTrimStartSeconds = Number.isFinite(start) ? Math.max(0, start) : 0;
+            currentData.videoTrimEndSeconds = Number.isFinite(end) ? Math.max(0, end) : null;
+            syncVideoTools();
+        }
+
+        function updateMusicState() {
+            if (!currentData) return;
+            const musicStart = parseFloat(document.getElementById('musicStartInput').value || '0');
+            const musicEndRaw = document.getElementById('musicEndInput').value;
+            const musicEnd = musicEndRaw ? parseFloat(musicEndRaw) : null;
+            const musicVolume = parseFloat(document.getElementById('musicVolumeInput').value || '0.7');
+            const originalVolume = parseFloat(document.getElementById('originalAudioVolumeInput').value || '0.25');
+            currentData.musicStartSeconds = Number.isFinite(musicStart) ? Math.max(0, musicStart) : 0;
+            currentData.musicEndSeconds = Number.isFinite(musicEnd) ? Math.max(0, musicEnd) : null;
+            currentData.musicVolume = Number.isFinite(musicVolume) ? musicVolume : 0.7;
+            currentData.originalAudioVolume = Number.isFinite(originalVolume) ? originalVolume : 0.25;
+            syncVideoTools();
+        }
+
+        function seekVideoTrim(target) {
+            const video = document.getElementById('instaPreviewVid');
+            if (!currentData?.videoUrl || !video) return;
+            const current = Number(video.currentTime || 0).toFixed(1);
+            if (target === 'start') {
+                document.getElementById('videoTrimStartInput').value = current;
+            } else {
+                document.getElementById('videoTrimEndInput').value = current;
+            }
+            updateVideoTrimState();
+        }
+
+        function useCurrentTimeAsCover() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!currentData?.videoUrl || !video) return;
+            currentData.videoCoverAtSeconds = Number(Number(video.currentTime || 0).toFixed(1));
+            captureVideoCover();
+        }
+
+        function scrubVideoTimeline() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!video || !currentData?.videoUrl) return;
+            const value = parseFloat(document.getElementById('videoTimelineInput').value || '0');
+            video.currentTime = value;
+            document.getElementById('videoCurrentTimeLabel').textContent = `${value.toFixed(1)}s`;
+        }
+
+        function scrubMusicTimeline() {
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!audio || !currentData?.musicTrackUrl) return;
+            const value = parseFloat(document.getElementById('musicTimelineInput').value || '0');
+            audio.currentTime = value;
+            document.getElementById('musicCurrentTimeLabel').textContent = `${value.toFixed(1)}s`;
+        }
+
+        function seekMusicStartFromVideo() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!video || !currentData) return;
+            document.getElementById('musicStartInput').value = Number(video.currentTime || 0).toFixed(1);
+            updateMusicState();
+        }
+
+        function toggleMusicPreview() {
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!audio || !currentData?.musicTrackUrl) return;
+            if (audio.paused) {
+                audio.play().catch(() => { });
+            } else {
+                audio.pause();
+            }
+        }
+
+        function updateTimelineRanges(video, audio) {
+            const videoTimeline = document.getElementById('videoTimelineInput');
+            const musicTimeline = document.getElementById('musicTimelineInput');
+            if (videoTimeline && video && Number.isFinite(video.duration) && video.duration > 0) {
+                videoTimeline.max = String(video.duration);
+                videoTimeline.value = String(Math.min(video.currentTime || 0, video.duration));
+                document.getElementById('videoCurrentTimeLabel').textContent = `${(video.currentTime || 0).toFixed(1)}s`;
+                document.getElementById('videoStartLabel').textContent = `Inicio ${(currentData?.videoTrimStartSeconds ?? 0).toFixed(1)}s`;
+                document.getElementById('videoCoverLabel').textContent = `Capa ${(parseFloat(currentData?.videoCoverAtSeconds || 0)).toFixed(1)}s`;
+                document.getElementById('videoEndLabel').textContent = currentData?.videoTrimEndSeconds != null
+                    ? `Fim ${Number(currentData.videoTrimEndSeconds).toFixed(1)}s`
+                    : `Fim ${video.duration.toFixed(1)}s`;
+            }
+            if (musicTimeline && audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+                musicTimeline.max = String(audio.duration);
+                musicTimeline.value = String(Math.min(audio.currentTime || 0, audio.duration));
+                document.getElementById('musicCurrentTimeLabel').textContent = `${(audio.currentTime || 0).toFixed(1)}s`;
+            }
+        }
+
+        function syncPreviewAudioState() {
+            const video = document.getElementById('instaPreviewVid');
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!video) return;
+            video.volume = currentData?.originalAudioVolume ?? 0.25;
+            if (!audio || !currentData?.musicTrackUrl) return;
+            audio.volume = currentData?.musicVolume ?? 0.7;
+        }
+
+        async function captureVideoCover() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!currentData?.videoUrl || !video) return;
+            if (video.readyState < 2) {
+                showToast('Aguarde o video carregar para capturar a capa.', true);
+                return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 1080;
+            canvas.height = video.videoHeight || 1920;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+            if (!blob) {
+                showToast('Falha ao capturar capa do video.', true);
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', blob, 'video-cover.jpg');
+            const res = await fetch('/api/admin/upload-media', {
+                method: 'POST',
+                headers: { 'X-Admin-Key': savedAdminKey },
+                body: formData
+            });
+            const data = await res.json();
+            if (!data.success) {
+                showToast('Nao foi possivel salvar a capa do video.', true);
+                return;
+            }
+
+            currentData.videoCoverUrl = data.url;
+            currentData.videoCoverAtSeconds = Number(Number(video.currentTime || 0).toFixed(1));
+            currentData.imageUrl = data.url;
+            currentData.images = [data.url];
+            document.getElementById('productImage').src = data.url;
+            document.getElementById('instaPreviewImg').src = data.url;
+            showToast('Capa do video capturada e salva.');
+            syncVideoTools();
+            syncPreview();
+        }
+
         async function suggestHashtags() {
             if (!currentData) return;
             const btn = document.getElementById('suggestTagsBtn');
@@ -1437,7 +1860,7 @@
 
             // Layout updates
             const linkSticker = document.getElementById('instaLinkSticker');
-            if (type === 'story' || type === 'reel') {
+            if (type === 'story' || type === 'reel' || type === 'reels') {
                 document.getElementById('instaMockContainer').classList.add('stories');
                 linkSticker.classList.toggle('hidden', type !== 'story');
             } else {
@@ -1445,7 +1868,24 @@
                 linkSticker.classList.add('hidden');
             }
 
+            const previewImg = document.getElementById('instaPreviewImg');
+            const previewVid = document.getElementById('instaPreviewVid');
+            const previewAudio = document.getElementById('instaPreviewAudio');
+            if (currentData?.videoUrl && (type === 'story' || type === 'reel' || type === 'reels')) {
+                previewVid.src = currentData.videoUrl;
+                previewVid.classList.remove('hidden');
+                previewImg.classList.add('hidden');
+            } else {
+                previewVid.classList.add('hidden');
+                previewImg.classList.remove('hidden');
+                previewImg.src = currentData?.videoCoverUrl || currentData?.imageUrl || previewImg.src;
+            }
+            if (currentData?.musicTrackUrl) {
+                previewAudio.src = currentData.musicTrackUrl;
+            }
+
             updateCarouselView();
+            syncVideoTools();
         }
 
         function updateCarouselView() {
@@ -1490,6 +1930,32 @@
         document.getElementById('hashtagInput').addEventListener('input', syncPreview);
         document.getElementById('ctaInput').addEventListener('input', syncPreview);
         document.getElementById('postType').addEventListener('change', syncPreview); // Listen to post type changes
+        document.getElementById('instaPreviewVid').addEventListener('timeupdate', () => {
+            const video = document.getElementById('instaPreviewVid');
+            const audio = document.getElementById('instaPreviewAudio');
+            updateTimelineRanges(video, audio);
+            if (currentData?.musicTrackUrl && !audio.paused && Number.isFinite(video.currentTime)) {
+                const musicOffset = currentData.musicStartSeconds ?? 0;
+                const desiredAudioTime = Math.max(0, video.currentTime - musicOffset);
+                if (Math.abs((audio.currentTime || 0) - desiredAudioTime) > 0.35) {
+                    audio.currentTime = desiredAudioTime;
+                }
+            }
+        });
+        document.getElementById('instaPreviewVid').addEventListener('play', () => {
+            const audio = document.getElementById('instaPreviewAudio');
+            if (currentData?.musicTrackUrl) {
+                syncPreviewAudioState();
+                audio.currentTime = Math.max(0, (document.getElementById('instaPreviewVid').currentTime || 0) - (currentData.musicStartSeconds ?? 0));
+                audio.play().catch(() => { });
+            }
+        });
+        document.getElementById('instaPreviewVid').addEventListener('pause', () => {
+            document.getElementById('instaPreviewAudio').pause();
+        });
+        document.getElementById('instaPreviewAudio').addEventListener('loadedmetadata', () => {
+            updateTimelineRanges(document.getElementById('instaPreviewVid'), document.getElementById('instaPreviewAudio'));
+        });
 
         async function uploadMedia(input, type) {
             const file = input.files[0];
@@ -1513,18 +1979,32 @@
                     status.textContent = `✅ ${type.toUpperCase()} carregado!`;
                     if (type === 'photo') {
                         currentData.imageUrl = data.url;
+                        currentData.videoCoverUrl = data.url;
                         document.getElementById('instaPreviewImg').src = data.url;
                         document.getElementById('instaPreviewVid').classList.add('hidden');
                         document.getElementById('instaPreviewImg').classList.remove('hidden');
                         generateCard();
-                    } else {
+                    } else if (type === 'video') {
                         currentData.videoUrl = data.url;
+                        currentData.videoTrimStartSeconds = 0;
+                        currentData.videoTrimEndSeconds = null;
                         const v = document.getElementById('instaPreviewVid');
                         v.src = data.url;
                         v.classList.remove('hidden');
                         document.getElementById('instaPreviewImg').classList.add('hidden');
+                        document.getElementById('videoToolsPanel').classList.remove('hidden');
+                        v.onloadedmetadata = () => syncVideoTools();
                         v.play();
+                    } else if (type === 'music') {
+                        currentData.musicTrackUrl = data.url;
+                        currentData.videoMusicCue = file.name;
+                        currentData.musicStartSeconds = 0;
+                        currentData.musicEndSeconds = null;
+                        const audio = document.getElementById('instaPreviewAudio');
+                        audio.src = data.url;
+                        audio.onloadedmetadata = () => syncVideoTools();
                     }
+                    syncVideoTools();
                 } else {
                     status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro no upload.`;
                 }
@@ -1625,6 +2105,16 @@
                         caption: cap,
                         imageUrls: [currentData.imageUrl],
                         videoUrl: currentData.videoUrl || null,
+                        videoCoverUrl: currentData.videoCoverUrl || currentData.imageUrl || null,
+                        videoCoverAtSeconds: currentData.videoCoverAtSeconds ?? 0,
+                        videoMusicCue: currentData.videoMusicCue || null,
+                        videoTrimStartSeconds: currentData.videoTrimStartSeconds ?? 0,
+                        videoTrimEndSeconds: currentData.videoTrimEndSeconds ?? null,
+                        musicTrackUrl: currentData.musicTrackUrl || null,
+                        musicStartSeconds: currentData.musicStartSeconds ?? 0,
+                        musicEndSeconds: currentData.musicEndSeconds ?? null,
+                        musicVolume: currentData.musicVolume ?? 0.7,
+                        originalAudioVolume: currentData.originalAudioVolume ?? 0.25,
                         autoReplyEnabled: autoReply,
                         autoReplyKeyword: autoReplyKeyword,
                         autoReplyMessage: autoReplyMessage,
@@ -1790,6 +2280,18 @@
                     currentData = {
                         title: draft.productName || 'Carregado',
                         imageUrl: draft.imageUrls?.[0] || '',
+                        videoUrl: draft.videoUrl || null,
+                        videoCoverUrl: draft.videoCoverUrl || draft.imageUrls?.[0] || '',
+                        videoCoverAtSeconds: draft.videoCoverAtSeconds ?? 0,
+                        videoTrimStartSeconds: draft.videoTrimStartSeconds ?? 0,
+                        videoTrimEndSeconds: draft.videoTrimEndSeconds ?? null,
+                        videoMusicCue: draft.videoMusicCue || null,
+                        musicTrackUrl: draft.musicTrackUrl || null,
+                        musicStartSeconds: draft.musicStartSeconds ?? 0,
+                        musicEndSeconds: draft.musicEndSeconds ?? null,
+                        musicVolume: draft.musicVolume ?? 0.7,
+                        originalAudioVolume: draft.originalAudioVolume ?? 0.25,
+                        images: draft.imageUrls?.length ? draft.imageUrls : [draft.imageUrls?.[0] || ''],
                         price: 'R$ 0,00'
                     };
 
@@ -1821,6 +2323,7 @@
                     document.getElementById('productImage').src = currentData.imageUrl;
                     document.getElementById('productTitle').textContent = currentData.title;
                     document.getElementById('instaPreviewImg').src = currentData.imageUrl;
+                    syncVideoTools();
 
                     setFormat(draft.postType || 'feed');
                     syncPreview();
@@ -2059,6 +2562,349 @@
                 showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Arte aplicada visualmente, erro de rede.', true);
             }
         }
+
+        const studioEditorPresets = {
+            feed: { width: 1080, height: 1080 },
+            portrait: { width: 1080, height: 1350 },
+            story: { width: 1080, height: 1920 },
+            reel: { width: 1080, height: 1350 },
+            catalog: { width: 1080, height: 1440 }
+        };
+        let studioEditorShowSafeArea = true;
+        let studioEditorState = {
+            preset: 'feed',
+            fit: 'cover',
+            scale: 1,
+            offsetX: 0,
+            offsetY: 0,
+            brightness: 100,
+            contrast: 100,
+            musicCue: '',
+            musicEnabled: false
+        };
+
+        function getStudioEditorElement(id) {
+            return document.querySelector(`#editorModal #${id}`) || document.getElementById(id);
+        }
+
+        function removeDuplicateEditorModals() {
+            document.querySelectorAll('#editorModal').forEach((modal, index) => {
+                if (index > 0) modal.remove();
+            });
+        }
+
+        function syncStudioEditorControls() {
+            const map = {
+                editorPresetSelect: studioEditorState.preset,
+                editorFitSelect: studioEditorState.fit,
+                editorScaleInput: studioEditorState.scale,
+                editorOffsetXInput: studioEditorState.offsetX,
+                editorOffsetYInput: studioEditorState.offsetY,
+                editorBrightnessInput: studioEditorState.brightness,
+                editorContrastInput: studioEditorState.contrast,
+                editorMusicInput: studioEditorState.musicCue
+            };
+            Object.entries(map).forEach(([id, value]) => {
+                const el = getStudioEditorElement(id);
+                if (el) el.value = String(value);
+            });
+            const musicToggle = getStudioEditorElement('editorMusicToggle');
+            if (musicToggle) musicToggle.checked = !!studioEditorState.musicEnabled;
+        }
+
+        function readStudioEditorControls() {
+            studioEditorState.preset = getStudioEditorElement('editorPresetSelect')?.value || studioEditorState.preset;
+            studioEditorState.fit = getStudioEditorElement('editorFitSelect')?.value || studioEditorState.fit;
+            studioEditorState.scale = parseFloat(getStudioEditorElement('editorScaleInput')?.value || studioEditorState.scale);
+            studioEditorState.offsetX = parseFloat(getStudioEditorElement('editorOffsetXInput')?.value || studioEditorState.offsetX);
+            studioEditorState.offsetY = parseFloat(getStudioEditorElement('editorOffsetYInput')?.value || studioEditorState.offsetY);
+            studioEditorState.brightness = parseFloat(getStudioEditorElement('editorBrightnessInput')?.value || studioEditorState.brightness);
+            studioEditorState.contrast = parseFloat(getStudioEditorElement('editorContrastInput')?.value || studioEditorState.contrast);
+            studioEditorState.musicCue = getStudioEditorElement('editorMusicInput')?.value?.trim() || '';
+            studioEditorState.musicEnabled = !!getStudioEditorElement('editorMusicToggle')?.checked;
+        }
+
+        function applyEditorPreset() {
+            studioEditorState.preset = getStudioEditorElement('editorPresetSelect')?.value || 'feed';
+            const preset = studioEditorPresets[studioEditorState.preset] || studioEditorPresets.feed;
+            if (editorCanvas) {
+                editorCanvas.width = preset.width;
+                editorCanvas.height = preset.height;
+            }
+            studioEditorState.offsetX = 0;
+            studioEditorState.offsetY = 0;
+            studioEditorState.scale = studioEditorState.preset === 'catalog' ? 0.96 : (studioEditorState.preset === 'story' ? 1.08 : 1);
+            studioEditorState.fit = studioEditorState.preset === 'catalog' ? 'contain' : 'cover';
+            syncStudioEditorControls();
+            renderEditor();
+        }
+
+        function resetEditorView() {
+            studioEditorState.fit = 'cover';
+            studioEditorState.scale = 1;
+            studioEditorState.offsetX = 0;
+            studioEditorState.offsetY = 0;
+            studioEditorState.brightness = 100;
+            studioEditorState.contrast = 100;
+            syncStudioEditorControls();
+            renderEditor();
+        }
+
+        function toggleEditorSafeArea() {
+            studioEditorShowSafeArea = !studioEditorShowSafeArea;
+            renderEditor();
+        }
+
+        function studioEditorImageRect() {
+            readStudioEditorControls();
+            const fit = studioEditorState.fit;
+            const imageRatio = editorImg.width / editorImg.height;
+            const canvasRatio = editorCanvas.width / editorCanvas.height;
+            let width;
+            let height;
+            if ((fit === 'cover' && imageRatio > canvasRatio) || (fit === 'contain' && imageRatio < canvasRatio)) {
+                height = editorCanvas.height;
+                width = height * imageRatio;
+            } else {
+                width = editorCanvas.width;
+                height = width / imageRatio;
+            }
+            width *= studioEditorState.scale;
+            height *= studioEditorState.scale;
+            return {
+                x: (editorCanvas.width - width) / 2 + studioEditorState.offsetX,
+                y: (editorCanvas.height - height) / 2 + studioEditorState.offsetY,
+                width,
+                height
+            };
+        }
+
+        initEditor = function () {
+            removeDuplicateEditorModals();
+            editorCanvas = getStudioEditorElement('imageEditorCanvas');
+            if (!editorCanvas) return;
+            editorCtx = editorCanvas.getContext('2d');
+            editorCanvas.onmousedown = handleEditorMouseDown;
+            editorCanvas.onmousemove = handleEditorMouseMove;
+            window.onmouseup = handleEditorMouseUp;
+            editorCanvas.ontouchstart = (e) => handleEditorMouseDown(e.touches[0]);
+            editorCanvas.ontouchmove = (e) => {
+                e.preventDefault();
+                handleEditorMouseMove(e.touches[0]);
+            };
+            window.ontouchend = handleEditorMouseUp;
+            syncStudioEditorControls();
+        };
+
+        openEditorModal = function () {
+            if (!currentData || !currentData.imageUrl) {
+                showToast('Precisa de uma imagem base para editar.', true);
+                return;
+            }
+            if (!editorCanvas) initEditor();
+            document.getElementById('editorModal').classList.remove('hidden');
+            editorElements = [];
+            syncStudioEditorControls();
+            applyEditorPreset();
+            editorImg.crossOrigin = 'anonymous';
+            editorImg.onload = () => renderEditor();
+            editorImg.src = document.getElementById('instaPreviewImg').src || currentData.imageUrl;
+        };
+
+        renderEditor = function () {
+            if (!editorCtx || !editorImg.width || !editorCanvas) return;
+            readStudioEditorControls();
+            editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
+            editorCtx.fillStyle = '#0f172a';
+            editorCtx.fillRect(0, 0, editorCanvas.width, editorCanvas.height);
+
+            const rect = studioEditorImageRect();
+            editorCtx.save();
+            editorCtx.filter = `brightness(${studioEditorState.brightness}%) contrast(${studioEditorState.contrast}%)`;
+            editorCtx.drawImage(editorImg, rect.x, rect.y, rect.width, rect.height);
+            editorCtx.restore();
+
+            if (studioEditorShowSafeArea) {
+                const marginX = editorCanvas.width * 0.08;
+                const marginY = editorCanvas.height * 0.08;
+                editorCtx.save();
+                editorCtx.strokeStyle = 'rgba(255,255,255,0.55)';
+                editorCtx.lineWidth = 3;
+                editorCtx.setLineDash([18, 14]);
+                editorCtx.strokeRect(marginX, marginY, editorCanvas.width - marginX * 2, editorCanvas.height - marginY * 2);
+                editorCtx.restore();
+            }
+
+            for (const el of editorElements) {
+                if (el.type === 'text') {
+                    const paddingX = el.size * 0.42;
+                    const paddingY = el.size * 0.3;
+                    const textWidth = editorCtx.measureText(el.text).width;
+                    const boxWidth = textWidth + paddingX * 2;
+                    const boxHeight = el.size + paddingY * 1.6;
+                    const x = el.x - paddingX;
+                    const y = el.y - el.size;
+                    editorCtx.font = `700 ${el.size}px sans-serif`;
+                    if (el.style === 'cta') {
+                        editorCtx.fillStyle = '#f97316';
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(x, y, boxWidth, boxHeight, 24);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#0f1115';
+                    } else {
+                        editorCtx.fillStyle = 'rgba(15,23,42,0.72)';
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(x, y, boxWidth, boxHeight, 26);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#ffffff';
+                    }
+                    editorCtx.fillText(el.text, el.x, el.y);
+                    el.width = boxWidth;
+                    el.height = boxHeight;
+                    el.boundsX = x;
+                    el.boundsY = y;
+                } else if (el.type === 'badge') {
+                    const size = Math.max(editorCanvas.width * 0.12, 110);
+                    if (el.style === 'discount') {
+                        editorCtx.fillStyle = '#ef4444';
+                        editorCtx.beginPath();
+                        editorCtx.arc(el.x + size / 2, el.y + size / 2, size / 2, 0, Math.PI * 2);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${size * 0.28}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        const pct = currentData?.discountPercent ? `${currentData.discountPercent}%` : 'OFERTA';
+                        editorCtx.fillText(pct, el.x + size / 2, el.y + size * 0.46);
+                        editorCtx.fillText('OFF', el.x + size / 2, el.y + size * 0.74);
+                        el.width = size;
+                        el.height = size;
+                    } else {
+                        const labels = {
+                            frete: { text: 'FRETE GRATIS', bg: '#22c55e' },
+                            lightning: { text: 'OFERTA RELAMPAGO', bg: '#f59e0b' },
+                            whatsapp: { text: 'CHAMA NO WHATS', bg: '#10b981' }
+                        };
+                        const def = labels[el.style] || labels.frete;
+                        const width = size * 1.8;
+                        const height = size * 0.42;
+                        editorCtx.fillStyle = def.bg;
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(el.x, el.y, width, height, 24);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${Math.max(22, height * 0.38)}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        editorCtx.fillText(def.text, el.x + width / 2, el.y + height * 0.63);
+                        el.width = width;
+                        el.height = height;
+                    }
+                    editorCtx.textAlign = 'left';
+                    el.boundsX = el.x;
+                    el.boundsY = el.y;
+                }
+            }
+        };
+
+        addEditorText = function (style = 'headline') {
+            const input = getStudioEditorElement('editorTextInput');
+            const txt = input?.value?.trim();
+            if (!txt || !editorCanvas) return;
+            editorElements.push({
+                type: 'text',
+                style,
+                text: txt,
+                x: editorCanvas.width * 0.12,
+                y: editorCanvas.height * (style === 'cta' ? 0.86 : 0.18),
+                size: editorCanvas.width * (style === 'cta' ? 0.04 : 0.052)
+            });
+            input.value = '';
+            renderEditor();
+        };
+
+        addEditorBadge = function (style) {
+            if (!editorCanvas) return;
+            editorElements.push({
+                type: 'badge',
+                style,
+                x: editorCanvas.width * 0.08,
+                y: editorCanvas.height * 0.08
+            });
+            renderEditor();
+        };
+
+        handleEditorMouseDown = function (e) {
+            if (!editorCanvas) return;
+            const rect = editorCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (editorCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (editorCanvas.height / rect.height);
+            for (let i = editorElements.length - 1; i >= 0; i--) {
+                const el = editorElements[i];
+                if (x >= el.boundsX && x <= el.boundsX + el.width && y >= el.boundsY && y <= el.boundsY + el.height) {
+                    editorDraggingIndex = i;
+                    editorDragOffsetX = x - el.boundsX;
+                    editorDragOffsetY = y - el.boundsY;
+                    return;
+                }
+            }
+        };
+
+        handleEditorMouseMove = function (e) {
+            if (editorDraggingIndex < 0 || !editorCanvas) return;
+            const rect = editorCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (editorCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (editorCanvas.height / rect.height);
+            const el = editorElements[editorDraggingIndex];
+            if (el.type === 'text') {
+                el.x = x - editorDragOffsetX + el.size * 0.42;
+                el.y = y - editorDragOffsetY + el.size;
+            } else {
+                el.x = x - editorDragOffsetX;
+                el.y = y - editorDragOffsetY;
+            }
+            renderEditor();
+        };
+
+        handleEditorMouseUp = function () {
+            editorDraggingIndex = -1;
+        };
+
+        applyEditorChanges = async function () {
+            if (!editorCanvas) return;
+            readStudioEditorControls();
+            const dataUrl = editorCanvas.toDataURL('image/jpeg', 0.92);
+            document.getElementById('instaPreviewImg').src = dataUrl;
+            document.getElementById('productImage').src = dataUrl;
+            closeEditorModal();
+            showToast('Salvando edicao do studio...', false);
+            try {
+                const res = await fetch(dataUrl);
+                const blob = await res.blob();
+                const formData = new FormData();
+                formData.append('file', blob, 'edited_banner.jpg');
+                const uploadRes = await fetch('/api/admin/upload-media', {
+                    method: 'POST',
+                    headers: { 'X-Admin-Key': savedAdminKey },
+                    body: formData
+                });
+                const uploadData = await uploadRes.json();
+                if (uploadData.success) {
+                    currentData.imageUrl = uploadData.url;
+                    if (currentData.images?.length) {
+                        currentData.images[0] = uploadData.url;
+                    }
+                    if (studioEditorState.musicEnabled && studioEditorState.musicCue) {
+                        currentData.videoMusicCue = studioEditorState.musicCue;
+                    }
+                    showToast('Arte atualizada e salva!');
+                    syncVideoTools();
+                    syncPreview();
+                } else {
+                    showToast('Arte aplicada visualmente, mas falhou ao salvar no servidor.', true);
+                }
+            } catch {
+                showToast('Arte aplicada visualmente, mas houve erro de rede ao salvar.', true);
+            }
+        };
 
         function showToast(message) {
             const toast = document.getElementById('toast');
