@@ -53,10 +53,10 @@ public sealed class Phase7AnalyticsAndCommandsTests
                 new InstagramPublishLogEntry { Timestamp = now.AddMinutes(-14), Action = "publish", Success = true },
                 new InstagramPublishLogEntry { Timestamp = now.AddMinutes(-13), Action = "catalog_sync_after_publish", Success = true }),
             new StubInstagramPublishStore(
-                new InstagramPublishDraft { Id = "draft-1", CreatedAt = now.AddMinutes(-16), Status = "published", SendToCatalog = true },
+                new InstagramPublishDraft { Id = "draft-1", CreatedAt = now.AddMinutes(-16), Status = "published", SendToCatalog = true, CatalogTarget = CatalogTargets.Prod },
                 new InstagramPublishDraft { Id = "draft-2", CreatedAt = now.AddMinutes(-12), Status = "scheduled" }),
             new StubCatalogOfferStore(
-                new CatalogOfferItem { DraftId = "draft-1", ItemNumber = 1, Keyword = "ITEM1", ProductName = "Produto", Active = true }));
+                new CatalogOfferItem { DraftId = "draft-1", ItemNumber = 1, Keyword = "ITEM1", ProductName = "Produto", Active = true, CatalogTarget = CatalogTargets.Prod }));
 
         var summary = await service.GetSummaryAsync(24, CancellationToken.None);
 
@@ -122,13 +122,13 @@ public sealed class Phase7AnalyticsAndCommandsTests
         public Task<CatalogSyncResult> SyncFromPublishedDraftsAsync(IReadOnlyList<InstagramPublishDraft> drafts, CancellationToken cancellationToken)
             => Task.FromResult(new CatalogSyncResult());
 
-        public Task<IReadOnlyList<CatalogOfferItem>> ListAsync(string? search, int limit, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<CatalogOfferItem>> ListAsync(string? search, int limit, CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult(_items);
 
-        public Task<CatalogOfferItem?> FindByCodeAsync(string query, CancellationToken cancellationToken)
+        public Task<CatalogOfferItem?> FindByCodeAsync(string query, CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult(_items.FirstOrDefault());
 
-        public Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken)
+        public Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult<IReadOnlyDictionary<string, CatalogOfferItem>>(_items.ToDictionary(x => x.DraftId, x => x));
     }
 }

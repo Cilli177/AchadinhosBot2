@@ -47,11 +47,21 @@ using Microsoft.AspNetCore.Mvc;
 using MassTransit;
 using AchadinhosBot.Next.Application.Consumers;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 
 LoadDotEnvIfPresent();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 256L * 1024L * 1024L;
+});
+
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 256L * 1024L * 1024L;
+});
 
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
@@ -230,6 +240,7 @@ builder.Services.AddSingleton<EvolutionWhatsAppGateway>();
 builder.Services.AddSingleton<IWhatsAppTransport>(provider => provider.GetRequiredService<EvolutionWhatsAppGateway>());
 builder.Services.AddSingleton<IWhatsAppGateway, QueuedWhatsAppGateway>();
 builder.Services.AddSingleton<IMediaStore, FileMediaStore>();
+builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
 builder.Services.AddSingleton<IPromotionalCardGenerator, PromotionalCardGenerator>();
 builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
@@ -246,7 +257,9 @@ builder.Services.AddSingleton<ITelegramOutboundPublisher, RabbitMqTelegramOutbou
 builder.Services.AddSingleton<ITelegramOutboundOutboxStore, FileTelegramOutboundOutboxStore>();
 builder.Services.AddSingleton<IInstagramOutboundPublisher, RabbitMqInstagramOutboundPublisher>();
 builder.Services.AddSingleton<IInstagramOutboundOutboxStore, FileInstagramOutboundOutboxStore>();
+builder.Services.AddSingleton<IIdempotencyStore, FileIdempotencyStore>();
 builder.Services.AddSingleton<TelegramAlertSender>();
+
 if (startTelegramBotWorker)
 {
     builder.Services.AddHostedService<TelegramBotPollingService>();
@@ -258,7 +271,12 @@ if (startTelegramUserbotWorker)
     builder.Services.AddHostedService(provider => (TelegramUserbotService)provider.GetRequiredService<ITelegramUserbotService>());
 }
 
+builder.Services.AddHostedService<InstagramOutboundReplayService>();
+
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
+builder.Services.AddSingleton<DeliverySafetyPolicy>();
+builder.Services.AddSingleton<LoginAttemptStore>();
+
 
 builder.Services.AddMassTransit(x =>
 {
@@ -460,11 +478,104 @@ app.MapPost("/api/conversor", async (
             var conversion = await affiliateLinkService.ConvertAsync(normalizedInputUrl, ct, requestedSource);
             if (!conversion.Success || string.IsNullOrWhiteSpace(conversion.ConvertedUrl))
             {
-                viewModel.Error = string.IsNullOrWhiteSpace(conversion.Error)
-                    ? "Nao foi possivel converter esse link agora."
-                    : conversion.Error;
-                viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) ? "Loja" : conversion.Store;
+                viewModel.Store = string.IsNullOrWhiteSpace(conversion.Store) || string.Equals(conversion.Store, "Unknown", StringComparison.OrdinalIgnoreCase)
+                    ? ResolveStoreNameFromUrl(normalizedInputUrl)
+                    : conversion.Store;
                 viewModel.IsAffiliated = conversion.IsAffiliated;
+                viewModel.ValidationError = conversion.ValidationError;
+                viewModel.CorrectionNote = conversion.CorrectionNote;
+
+                LinkMetaResult fallbackOriginalMeta;
+                try
+                {
+                    fallbackOriginalMeta = await instagramMeta.GetMetaAsync(normalizedInputUrl, ct);
+                }
+                catch
+                {
+                    fallbackOriginalMeta = new LinkMetaResult();
+                }
+
+                string? fallbackResolvedUrl = null;
+                try
+                {
+                    fallbackResolvedUrl = await TryResolveFinalUrlForMetaAsync(normalizedInputUrl, httpClientFactory, ct);
+                }
+                catch
+                {
+                    fallbackResolvedUrl = null;
+                }
+
+                LinkMetaResult fallbackResolvedMeta = new();
+                if (!string.IsNullOrWhiteSpace(fallbackResolvedUrl) &&
+                    !string.Equals(fallbackResolvedUrl, normalizedInputUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        fallbackResolvedMeta = await instagramMeta.GetMetaAsync(fallbackResolvedUrl, ct);
+                    }
+                    catch
+                    {
+                        fallbackResolvedMeta = new LinkMetaResult();
+                    }
+                }
+
+                OfficialProductDataResult? fallbackOfficial = null;
+                try
+                {
+                    fallbackOfficial = await officialProductDataService.TryGetBestAsync(normalizedInputUrl, fallbackResolvedUrl, ct);
+                }
+                catch
+                {
+                    fallbackOfficial = null;
+                }
+
+                var mergedFallbackMeta = MergeConverterMeta(fallbackOriginalMeta, fallbackResolvedMeta);
+                var hasFallbackData = fallbackOfficial is not null
+                    || !string.IsNullOrWhiteSpace(mergedFallbackMeta.Title)
+                    || !string.IsNullOrWhiteSpace(mergedFallbackMeta.PriceText)
+                    || !string.IsNullOrWhiteSpace(mergedFallbackMeta.Description)
+                    || (mergedFallbackMeta.Images?.Count ?? 0) > 0
+                    || (mergedFallbackMeta.Videos?.Count ?? 0) > 0;
+
+                if (hasFallbackData)
+                {
+                    var fallbackDescription = mergedFallbackMeta.Description?.Trim() ?? string.Empty;
+                    var fallbackImages = (fallbackOfficial?.Images ?? new List<string>())
+                        .Concat(mergedFallbackMeta.Images ?? new List<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    viewModel.Success = true;
+                    viewModel.Error = null;
+                    viewModel.Title = FirstNonEmpty(fallbackOfficial?.Title ?? string.Empty, mergedFallbackMeta.Title, $"Oferta {viewModel.Store}") ?? $"Oferta {viewModel.Store}";
+                    viewModel.Description = fallbackDescription;
+                    viewModel.Price = FirstNonEmpty(
+                        fallbackOfficial?.CurrentPrice ?? string.Empty,
+                        mergedFallbackMeta.PriceText ?? string.Empty,
+                        ExtractPriceFromText(fallbackDescription),
+                        "Preco sob consulta") ?? "Preco sob consulta";
+                    viewModel.ImageUrl = SelectBestConverterImage(fallbackImages, viewModel.Title, viewModel.Description);
+                    viewModel.VideoUrl = FirstNonEmpty(mergedFallbackMeta.Videos?.FirstOrDefault(), string.Empty) ?? string.Empty;
+                    viewModel.PreviousPrice = FirstNonEmpty(
+                        fallbackOfficial?.PreviousPrice ?? string.Empty,
+                        mergedFallbackMeta.PreviousPriceText ?? string.Empty) ?? string.Empty;
+                    viewModel.DiscountPercent = fallbackOfficial?.DiscountPercent
+                        ?? mergedFallbackMeta.DiscountPercentFromHtml
+                        ?? TryComputeDiscountFromDisplayPrices(viewModel.PreviousPrice, viewModel.Price);
+                    viewModel.EstimatedDelivery = fallbackOfficial?.EstimatedDelivery ?? string.Empty;
+                    viewModel.DataSource = !string.IsNullOrWhiteSpace(fallbackOfficial?.DataSource) ? fallbackOfficial!.DataSource : "meta-fallback";
+                    viewModel.ConvertedUrl = FirstNonEmpty(fallbackResolvedUrl, normalizedInputUrl) ?? normalizedInputUrl;
+                    viewModel.TrackedUrl = viewModel.ConvertedUrl;
+                    viewModel.ConversionHost = ExtractHostForDisplay(viewModel.ConvertedUrl);
+                    viewModel.DomainHost = ExtractHostForDisplay(viewModel.TrackedUrl);
+                }
+                else
+                {
+                    viewModel.Error = string.IsNullOrWhiteSpace(conversion.Error)
+                        ? "Nao foi possivel converter esse link agora."
+                        : conversion.Error;
+                }
             }
             else
             {
@@ -655,6 +766,11 @@ app.MapPost("/api/conversor", async (
                 viewModel.Description = mergedDescription?.Trim() ?? string.Empty;
                 viewModel.Price = FirstNonEmpty(mergedPrice, "Preco sob consulta") ?? "Preco sob consulta";
                 viewModel.ImageUrl = SelectBestConverterImage(mergedImages, viewModel.Title, viewModel.Description);
+                viewModel.VideoUrl = FirstNonEmpty(
+                    productPageMeta.Videos?.FirstOrDefault(),
+                    originalMeta.Videos?.FirstOrDefault(),
+                    convertedMeta.Videos?.FirstOrDefault(),
+                    string.Empty) ?? string.Empty;
 
                 // Previous price: cascade from official data → HTML scraping of each meta source
                 viewModel.PreviousPrice = FirstNonEmpty(
@@ -762,10 +878,11 @@ app.MapGet("/bio", async (
         null);
     var medium = NormalizeTrackingToken(request.Query["medium"].ToString(), "instagram") ?? "instagram";
     var maxItems = Math.Clamp(bioSettings.MaxItems, 5, 80);
+    var catalogTarget = ResolveCatalogTargetForRequest(request);
 
     var drafts = await publishStore.ListAsync(ct);
     await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
-    var catalogByDraftId = await catalogOfferStore.GetByDraftIdAsync(ct);
+    var catalogByDraftId = await catalogOfferStore.GetByDraftIdAsync(ct, catalogTarget);
 
     var baseItems = drafts
         .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
@@ -822,10 +939,11 @@ app.MapGet("/catalogo", async (
     CancellationToken ct) =>
 {
     var q = context.Request.Query["q"].ToString();
+    var catalogTarget = ResolveCatalogTargetForRequest(context.Request);
     var drafts = await publishStore.ListAsync(ct);
     await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
 
-    var items = await catalogOfferStore.ListAsync(q, 120, ct);
+    var items = await catalogOfferStore.ListAsync(q, 120, ct, catalogTarget);
     var request = context.Request;
     var currentUrl = $"{request.Scheme}://{request.Host}/catalogo";
     if (!string.IsNullOrWhiteSpace(q))
@@ -844,9 +962,10 @@ app.MapGet("/item/{query}", async (
     ICatalogOfferStore catalogOfferStore,
     CancellationToken ct) =>
 {
+    var catalogTarget = ResolveCatalogTargetForRequest(context.Request);
     var drafts = await publishStore.ListAsync(ct);
     await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
-    var item = await catalogOfferStore.FindByCodeAsync(query, ct);
+    var item = await catalogOfferStore.FindByCodeAsync(query, ct, catalogTarget);
     if (item is null)
     {
         return Results.NotFound($"Item '{query}' nao encontrado.");
@@ -2107,19 +2226,29 @@ api.MapPost("/catalog/sync", async (
 api.MapGet("/catalog/items", async (
     [FromQuery] string? q,
     [FromQuery] int? limit,
+    [FromQuery] string? target,
+    HttpContext context,
     ICatalogOfferStore catalogOfferStore,
     CancellationToken ct) =>
 {
-    var items = await catalogOfferStore.ListAsync(q, limit ?? 200, ct);
+    var catalogTarget = string.IsNullOrWhiteSpace(target)
+        ? ResolveCatalogTargetForRequest(context.Request)
+        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
+    var items = await catalogOfferStore.ListAsync(q, limit ?? 200, ct, catalogTarget);
     return Results.Ok(new { items });
 });
 
 api.MapGet("/catalog/items/{query}", async (
     string query,
+    [FromQuery] string? target,
+    HttpContext context,
     ICatalogOfferStore catalogOfferStore,
     CancellationToken ct) =>
 {
-    var item = await catalogOfferStore.FindByCodeAsync(query, ct);
+    var catalogTarget = string.IsNullOrWhiteSpace(target)
+        ? ResolveCatalogTargetForRequest(context.Request)
+        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
+    var item = await catalogOfferStore.FindByCodeAsync(query, ct, catalogTarget);
     return item is null ? Results.NotFound() : Results.Ok(item);
 });
 
@@ -7279,6 +7408,14 @@ static string TruncateForLog(string? value, int maxLength)
     return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
 }
 
+static string ResolveCatalogTargetForRequest(HttpRequest request)
+{
+    var host = request.Host.Host ?? string.Empty;
+    return host.Contains("-dev.", StringComparison.OrdinalIgnoreCase) || host.StartsWith("achadinhos-dev", StringComparison.OrdinalIgnoreCase)
+        ? CatalogTargets.Dev
+        : CatalogTargets.Prod;
+}
+
 static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string? query, string currentUrl)
 {
     var q = query?.Trim() ?? string.Empty;
@@ -11458,6 +11595,7 @@ internal sealed record PublicLinkConverterViewModel
     public string CouponCode { get; set; } = string.Empty;
     public string CouponDescription { get; set; } = string.Empty;
     public string ImageUrl { get; set; } = string.Empty;
+    public string VideoUrl { get; set; } = string.Empty;
     public bool IsAffiliated { get; set; }
     public string? ValidationError { get; set; }
     public string? CorrectionNote { get; set; }

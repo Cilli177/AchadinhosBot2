@@ -437,17 +437,19 @@ internal static class InstagramWorkflowSupport
         return new InstagramCtaResolution(defaultReply, false, null, null);
     }
 
-    public static string BuildCommentDmMessage(InstagramPublishSettings settings, InstagramCommentPending comment, InstagramCtaResolution cta)
-        => BuildDmMessageTemplate(settings, cta.Link, cta.Keyword, comment.From, comment.Text);
+    public static string BuildCommentDmMessage(InstagramPublishDraft? draft, InstagramPublishSettings settings, InstagramCommentPending comment, InstagramCtaResolution cta)
+        => BuildDmMessageTemplate(draft?.AutoReplyMessage, settings, cta.Link, cta.Keyword, comment.From, comment.Text);
 
     public static string BuildInboundDmMessage(InstagramPublishSettings settings, InstagramCtaResolution cta, string inboundText)
         => cta.HasKeywordMatch
-            ? BuildDmMessageTemplate(settings, cta.Link, cta.Keyword, string.Empty, inboundText)
+            ? BuildDmMessageTemplate(null, settings, cta.Link, cta.Keyword, string.Empty, inboundText)
             : cta.Reply;
 
-    private static string BuildDmMessageTemplate(InstagramPublishSettings settings, string? link, string? keyword, string? name, string? commentText)
+    private static string BuildDmMessageTemplate(string? preferredTemplate, InstagramPublishSettings settings, string? link, string? keyword, string? name, string? commentText)
     {
-        var template = string.IsNullOrWhiteSpace(settings.DmTemplate)
+        var template = !string.IsNullOrWhiteSpace(preferredTemplate)
+            ? preferredTemplate
+            : string.IsNullOrWhiteSpace(settings.DmTemplate)
             ? "Oi {name}! Aqui esta seu link: {link}"
             : settings.DmTemplate;
 
@@ -459,11 +461,101 @@ internal static class InstagramWorkflowSupport
 
     private static List<InstagramCtaOption> BuildEffectiveDraftCtas(InstagramPublishDraft draft)
     {
-        return (draft.Ctas ?? new List<InstagramCtaOption>())
-            .Where(c => !string.IsNullOrWhiteSpace(c.Keyword) && !string.IsNullOrWhiteSpace(c.Link))
-            .Select(c => new InstagramCtaOption { Keyword = c.Keyword?.Trim() ?? string.Empty, Link = c.Link?.Trim() ?? string.Empty })
+        var captions = new List<string>();
+        if (!string.IsNullOrWhiteSpace(draft.Caption))
+        {
+            captions.Add(draft.Caption);
+        }
+
+        captions.AddRange((draft.CaptionOptions ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)));
+        var fallbackLink = FirstNonEmpty(
+            draft.AutoReplyLink,
+            draft.Ctas?.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Link))?.Link,
+            ExtractFirstUrl(draft.Caption),
+            ExtractFirstUrl(string.Join(" ", captions)));
+
+        var map = new Dictionary<string, InstagramCtaOption>(StringComparer.OrdinalIgnoreCase);
+        foreach (var cta in draft.Ctas ?? new List<InstagramCtaOption>())
+        {
+            foreach (var keyword in NormalizeKeywords(new[] { cta.Keyword }))
+            {
+                map[keyword] = new InstagramCtaOption
+                {
+                    Keyword = keyword,
+                    Link = string.IsNullOrWhiteSpace(cta.Link) ? (fallbackLink ?? string.Empty) : cta.Link.Trim()
+                };
+            }
+        }
+
+        if (draft.AutoReplyEnabled)
+        {
+            foreach (var keyword in NormalizeKeywords(Regex.Split(draft.AutoReplyKeyword ?? string.Empty, @"[\s,;|/]+", RegexOptions.CultureInvariant)))
+            {
+                map[keyword] = new InstagramCtaOption
+                {
+                    Keyword = keyword,
+                    Link = fallbackLink ?? string.Empty
+                };
+            }
+        }
+
+        foreach (var keyword in ExtractCaptionKeywords(captions))
+        {
+            if (!map.ContainsKey(keyword))
+            {
+                map[keyword] = new InstagramCtaOption
+                {
+                    Keyword = keyword,
+                    Link = fallbackLink ?? string.Empty
+                };
+            }
+        }
+
+        return map.Values
+            .Where(x => !string.IsNullOrWhiteSpace(x.Keyword) && !string.IsNullOrWhiteSpace(x.Link))
             .ToList();
     }
+
+    private static IEnumerable<string> NormalizeKeywords(IEnumerable<string?> rawKeywords)
+    {
+        return (rawKeywords ?? Array.Empty<string?>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => Regex.Replace(x!.Trim().ToUpperInvariant(), @"[^A-Z0-9À-ÖØ-Þ]+", string.Empty, RegexOptions.CultureInvariant))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(10);
+    }
+
+    private static IEnumerable<string> ExtractCaptionKeywords(IEnumerable<string> captions)
+    {
+        var matches = new List<string>();
+        foreach (var caption in captions)
+        {
+            foreach (Match match in Regex.Matches(
+                         caption ?? string.Empty,
+                         @"(?:comente|comenta|digite|digita|escreva)\s+[""']?(?<keyword>[A-Za-z0-9À-ÖØ-öø-ÿ_ -]{2,32})[""']?",
+                         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                matches.Add(match.Groups["keyword"].Value);
+            }
+        }
+
+        return NormalizeKeywords(matches);
+    }
+
+    private static string? ExtractFirstUrl(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(text, @"https?://\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? match.Value.Trim() : null;
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
 
     private static string EnsureCaptionContainsCta(string caption, IReadOnlyCollection<InstagramCtaOption> ctas)
     {

@@ -211,7 +211,8 @@ public sealed class InstagramPhase2Tests
             Caption = "Confira https://oferta.example.com",
             ImageUrls = new List<string> { "https://cdn.example.com/a.jpg" },
             Ctas = new List<InstagramCtaOption> { new() { Keyword = "LINK", Link = "https://oferta.example.com" } },
-            SendToCatalog = true
+            SendToCatalog = true,
+            CatalogTarget = CatalogTargets.Prod
         });
 
         var service = new InstagramPublishService(
@@ -407,13 +408,13 @@ public sealed class InstagramPhase2Tests
             return Task.FromResult(new CatalogSyncResult { Created = drafts.Count, TotalActive = drafts.Count, HighestItemNumber = drafts.Count });
         }
 
-        public Task<IReadOnlyList<CatalogOfferItem>> ListAsync(string? search, int limit, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<CatalogOfferItem>> ListAsync(string? search, int limit, CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult<IReadOnlyList<CatalogOfferItem>>(Array.Empty<CatalogOfferItem>());
 
-        public Task<CatalogOfferItem?> FindByCodeAsync(string query, CancellationToken cancellationToken)
+        public Task<CatalogOfferItem?> FindByCodeAsync(string query, CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult<CatalogOfferItem?>(null);
 
-        public Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken)
+        public Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult<IReadOnlyDictionary<string, CatalogOfferItem>>(new Dictionary<string, CatalogOfferItem>());
     }
 }

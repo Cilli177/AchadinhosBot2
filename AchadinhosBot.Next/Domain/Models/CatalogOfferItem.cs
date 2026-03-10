@@ -12,6 +12,7 @@ public sealed class CatalogOfferItem
     public string? ImageUrl { get; set; }
     public string? PriceText { get; set; }
     public string PostType { get; set; } = "feed";
+    public string CatalogTarget { get; set; } = CatalogTargets.Prod;
     public bool Active { get; set; } = true;
     public DateTimeOffset PublishedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;

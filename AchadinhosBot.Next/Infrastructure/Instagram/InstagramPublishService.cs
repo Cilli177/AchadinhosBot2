@@ -4,6 +4,7 @@ using AchadinhosBot.Next.Application.Consumers;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.Resilience;
@@ -151,6 +152,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         }
 
         var caption = InstagramWorkflowSupport.BuildCaption(effectiveCaption, draft.Hashtags, draft.Ctas);
+        var effectiveCatalogTarget = CatalogTargets.ResolveEffectiveTarget(draft, publishSettings);
         var publishResult = await _metaGraphClient.PublishAsync(publishSettings, draft.PostType, publishImageUrls, caption, cancellationToken);
         if (!publishResult.Success &&
             normalized.Count > 0 &&
@@ -162,6 +164,12 @@ public sealed class InstagramPublishService : IInstagramPublishService
             {
                 publishResult = await _metaGraphClient.PublishAsync(publishSettings, draft.PostType, fallbackOriginals, caption, cancellationToken);
             }
+        }
+
+        if (CatalogTargets.IsEnabled(effectiveCatalogTarget))
+        {
+            draft.CatalogTarget = effectiveCatalogTarget;
+            draft.SendToCatalog = true;
         }
 
         draft.Status = publishResult.Success ? "published" : "failed";
@@ -177,7 +185,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
             publishResult.Success ? $"Publicado com sucesso (AutoReply={draft.AutoReplyEnabled})" : "Falha ao publicar",
             cancellationToken);
 
-        if (publishResult.Success && (draft.SendToCatalog || publishSettings.SendToCatalog))
+        if (publishResult.Success && CatalogTargets.IsEnabled(effectiveCatalogTarget))
         {
             await TrySyncCatalogAsync(draft, cancellationToken);
         }

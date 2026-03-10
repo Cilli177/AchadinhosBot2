@@ -1,8 +1,10 @@
+using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Consumers;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Infrastructure.Security;
 using AchadinhosBot.Next.Domain.Instagram;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Settings;
 using Microsoft.Extensions.Options;
 
@@ -104,7 +106,20 @@ public static class AdminEndpoints
             if (!context.Request.HasFormContentType)
                 return Results.BadRequest("Form content expected.");
 
-            var form = await context.Request.ReadFormAsync(ct);
+            IFormCollection form;
+            try
+            {
+                form = await context.Request.ReadFormAsync(ct);
+            }
+            catch (BadHttpRequestException ex) when (ex.Message.Contains("Request body too large", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Json(new
+                {
+                    success = false,
+                    error = "Arquivo acima do limite de upload. O ambiente agora aceita ate 256 MB; tente reenviar o video."
+                }, statusCode: StatusCodes.Status413PayloadTooLarge);
+            }
+
             var file = form.Files.GetFile("file");
             if (file == null) return Results.BadRequest("No file uploaded.");
 
@@ -141,14 +156,15 @@ public static class AdminEndpoints
                 VideoUrl = req.VideoUrl,
                 Caption = req.Caption,
                 ImageUrls = req.ImageUrls ?? new(),
+                Ctas = BuildDraftCtas(req.Caption, req.AutoReplyKeyword, req.AutoReplyLink),
                 AutoReplyEnabled = req.AutoReplyEnabled,
                 AutoReplyKeyword = req.AutoReplyKeyword,
                 AutoReplyMessage = req.AutoReplyMessage,
                 AutoReplyLink = req.AutoReplyLink,
                 ScheduledFor = req.ScheduledFor,
-                SendToCatalog = req.SendToCatalog,
                 Status = req.ScheduledFor.HasValue ? "scheduled" : "draft"
             };
+            ApplyCatalogIntent(draft, req.SendToCatalog, req.CatalogTarget);
 
             await store.SaveAsync(draft, ct);
             return Results.Ok(new { success = true, draftId = draft.Id });
@@ -170,10 +186,16 @@ public static class AdminEndpoints
             if (draft is null)
                 return Results.NotFound(new { success = false, error = "Draft not found." });
 
-            if (req.SendToCatalog && !draft.SendToCatalog)
+            if (req.SendToCatalog || !string.IsNullOrWhiteSpace(req.CatalogTarget))
             {
-                draft.SendToCatalog = true;
-                await draftStore.UpdateAsync(draft, ct);
+                var previousCatalogTarget = draft.CatalogTarget;
+                var previousSendToCatalog = draft.SendToCatalog;
+                ApplyCatalogIntent(draft, req.SendToCatalog, req.CatalogTarget);
+                if (!string.Equals(previousCatalogTarget, draft.CatalogTarget, StringComparison.OrdinalIgnoreCase) ||
+                    previousSendToCatalog != draft.SendToCatalog)
+                {
+                    await draftStore.UpdateAsync(draft, ct);
+                }
             }
 
             var result = await publishService.QueuePublishAsync(req.DraftId, "admin_panel", ct);
@@ -254,9 +276,9 @@ public static class AdminEndpoints
             if (draft == null && req.PublishInstagram)
                 return Results.NotFound(new { success = false, error = "Draft not found." });
 
-            if (draft is not null && req.PublishCatalog && !draft.SendToCatalog)
+            if (draft is not null && (req.PublishCatalog || !string.IsNullOrWhiteSpace(req.CatalogTarget)))
             {
-                draft.SendToCatalog = true;
+                ApplyCatalogIntent(draft, req.PublishCatalog, req.CatalogTarget);
                 await draftStore.UpdateAsync(draft, ct);
             }
 
@@ -336,11 +358,22 @@ public static class AdminEndpoints
                     if (draft != null && string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase))
                     {
                         var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
-                        results["catalog"] = new { success = true, itemsUpdated = syncResult.Updated + syncResult.Created };
+                        results["catalog"] = new
+                        {
+                            success = true,
+                            itemsUpdated = syncResult.Updated + syncResult.Created,
+                            target = CatalogTargets.ResolveDraftTarget(draft)
+                        };
                     }
                     else if (draft != null)
                     {
-                        results["catalog"] = new { success = true, scheduled = true, message = "Catalogo sera sincronizado apos a publicacao do draft." };
+                        results["catalog"] = new
+                        {
+                            success = true,
+                            scheduled = true,
+                            target = CatalogTargets.ResolveDraftTarget(draft),
+                            message = "Catalogo sera sincronizado apos a publicacao do draft."
+                        };
                     }
                     else
                     {
@@ -373,19 +406,33 @@ public static class AdminEndpoints
             var draft = await draftStore.GetAsync(req.DraftId, ct);
             if (draft == null) return Results.NotFound("Draft not found.");
 
-            if (!draft.SendToCatalog)
+            var previousCatalogTarget = draft.CatalogTarget;
+            var previousSendToCatalog = draft.SendToCatalog;
+            ApplyCatalogIntent(draft, true, req.CatalogTarget);
+            if (!string.Equals(previousCatalogTarget, draft.CatalogTarget, StringComparison.OrdinalIgnoreCase) ||
+                previousSendToCatalog != draft.SendToCatalog)
             {
-                draft.SendToCatalog = true;
                 await draftStore.UpdateAsync(draft, ct);
             }
 
             if (!string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase))
             {
-                return Results.Ok(new { success = true, scheduled = true, message = "Draft marcado para sincronizar no catalogo apos a publicacao." });
+                return Results.Ok(new
+                {
+                    success = true,
+                    scheduled = true,
+                    target = CatalogTargets.ResolveDraftTarget(draft),
+                    message = "Draft marcado para sincronizar no catalogo apos a publicacao."
+                });
             }
 
             var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
-            return Results.Ok(new { success = true, itemsUpdated = syncResult.Created + syncResult.Updated });
+            return Results.Ok(new
+            {
+                success = true,
+                target = CatalogTargets.ResolveDraftTarget(draft),
+                itemsUpdated = syncResult.Created + syncResult.Updated
+            });
         });
 
         app.MapGet("/api/admin/analytics/summary", async (
@@ -421,6 +468,7 @@ public static class AdminEndpoints
                 postType = d.PostType,
                 status = d.Status,
                 mediaId = d.MediaId,
+                catalogTarget = CatalogTargets.ResolveDraftTarget(d),
                 createdAt = d.CreatedAt,
                 imageUrl = d.ImageUrls.FirstOrDefault()
             });
@@ -452,14 +500,54 @@ public static class AdminEndpoints
             return SecretComparer.EqualsConstantTime(apiKey, provided.ToString());
         return false;
     }
+
+    private static void ApplyCatalogIntent(InstagramPublishDraft draft, bool sendToCatalog, string? catalogTarget)
+    {
+        var resolved = CatalogTargets.ResolveConfiguredTarget(
+            catalogTarget,
+            sendToCatalog,
+            CatalogTargets.Prod);
+
+        draft.CatalogTarget = resolved;
+        draft.SendToCatalog = CatalogTargets.IsEnabled(resolved);
+    }
+
+    private static List<InstagramCtaOption> BuildDraftCtas(string? caption, string? rawKeywords, string? preferredLink)
+    {
+        var keywords = Regex.Split(rawKeywords ?? string.Empty, @"[\s,;|/]+", RegexOptions.CultureInvariant)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => Regex.Replace(x.ToUpperInvariant(), @"[^A-Z0-9À-ÖØ-Þ]+", string.Empty, RegexOptions.CultureInvariant))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        var link = !string.IsNullOrWhiteSpace(preferredLink)
+            ? preferredLink.Trim()
+            : Regex.Match(caption ?? string.Empty, @"https?://\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Value.Trim();
+
+        if (keywords.Count == 0 || string.IsNullOrWhiteSpace(link))
+        {
+            return new List<InstagramCtaOption>();
+        }
+
+        return keywords
+            .Select(keyword => new InstagramCtaOption
+            {
+                Keyword = keyword,
+                Link = link
+            })
+            .ToList();
+    }
 }
 
 // --- Request DTOs ---
 
 public sealed record AdminGenerateCardRequest(string Title, string? Price, string? PreviousPrice, int? DiscountPercent, string ImageUrl);
 public sealed record AdminGenerateCaptionRequest(string ProductName, string? OfferContext);
-public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false);
-public sealed record AdminPublishRequest(string DraftId, bool SendToCatalog = false);
+public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false, string? CatalogTarget = null);
+public sealed record AdminPublishRequest(string DraftId, bool SendToCatalog = false, string? CatalogTarget = null);
 public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl);
-public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl);
-public sealed record AdminAddToCatalogRequest(string DraftId);
+public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl, string? CatalogTarget = null);
+public sealed record AdminAddToCatalogRequest(string DraftId, string? CatalogTarget = null);

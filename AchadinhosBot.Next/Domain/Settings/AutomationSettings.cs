@@ -1,3 +1,5 @@
+using AchadinhosBot.Next.Domain.Models;
+
 namespace AchadinhosBot.Next.Domain.Settings;
 
 public sealed class AutomationSettings
@@ -291,9 +293,9 @@ public sealed class InstagramPublishSettings
     public long StoryAutoPilotApprovalTelegramChatId { get; set; }
     public string? StoryAutoPilotApprovalWhatsAppGroupId { get; set; }
     public string? StoryAutoPilotApprovalWhatsAppInstanceName { get; set; }
-        // New toggle to optionally send a published post to the product catalog
-        public bool SendToCatalog { get; set; } = false;
-    }
+    public bool SendToCatalog { get; set; } = false;
+    public string CatalogTarget { get; set; } = CatalogTargets.Prod;
+}
 
 public enum InstagramOfferContextMode
 {

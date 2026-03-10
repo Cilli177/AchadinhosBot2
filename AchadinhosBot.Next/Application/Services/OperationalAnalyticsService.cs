@@ -1,6 +1,7 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Instagram;
+using AchadinhosBot.Next.Domain.Models;
 
 namespace AchadinhosBot.Next.Application.Services;
 
@@ -40,7 +41,7 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
         var aiLogs = await _instagramAiLogStore.ListAsync(2000, cancellationToken);
         var publishLogs = await _instagramPublishLogStore.ListAsync(2000, cancellationToken);
         var drafts = await _instagramPublishStore.ListAsync(cancellationToken);
-        var activeCatalogItems = await _catalogOfferStore.ListAsync(null, 500, cancellationToken);
+        var activeCatalogItems = await _catalogOfferStore.ListAsync(null, 500, cancellationToken, CatalogTargets.Both);
 
         var conversionWindow = conversions.Where(x => x.Timestamp >= start && x.Timestamp <= end).ToList();
         var clickWindow = clicks.Where(x => x.Timestamp >= start && x.Timestamp <= end).ToList();
@@ -113,7 +114,7 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
             {
                 ActiveItems = activeCatalogItems.Count,
                 TotalPublishedDrafts = draftWindow.Count(x => string.Equals(x.Status, "published", StringComparison.OrdinalIgnoreCase)),
-                SyncEligibleDrafts = draftWindow.Count(x => x.SendToCatalog)
+                SyncEligibleDrafts = draftWindow.Count(x => CatalogTargets.IsEnabled(x.CatalogTarget, x.SendToCatalog))
             }
         };
     }

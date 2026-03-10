@@ -115,7 +115,7 @@ public sealed class InstagramWebhookService : IInstagramWebhookService
                         {
                             MessageId = Guid.NewGuid().ToString("N"),
                             RecipientId = comment.FromId!,
-                            MessageText = InstagramWorkflowSupport.BuildCommentDmMessage(publishSettings, storedComment, cta),
+                            MessageText = InstagramWorkflowSupport.BuildCommentDmMessage(draft, publishSettings, storedComment, cta),
                             CommentStoreId = storedComment.Id,
                             MediaId = comment.MediaId,
                             Keyword = cta.Keyword,
