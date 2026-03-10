@@ -1,7 +1,7 @@
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -140,6 +140,7 @@ internal static class InstagramWorkflowSupport
         IHttpClientFactory httpClientFactory,
         IMediaStore mediaStore,
         string? publicBaseUrl,
+        string postType,
         List<string> imageUrls,
         CancellationToken cancellationToken)
     {
@@ -172,7 +173,7 @@ internal static class InstagramWorkflowSupport
                     continue;
                 }
 
-                var normalizedBytes = NormalizeImageBytes(bytes);
+                var normalizedBytes = NormalizeImageBytes(bytes, postType);
                 if (normalizedBytes is null)
                 {
                     continue;
@@ -581,24 +582,13 @@ internal static class InstagramWorkflowSupport
         return request;
     }
 
-    private static byte[]? NormalizeImageBytes(byte[] input)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return input;
-        }
-
-        return NormalizeImageBytesWindows(input);
-    }
-
-    [SupportedOSPlatform("windows")]
-#pragma warning disable CA1416
-    private static byte[]? NormalizeImageBytesWindows(byte[] input)
+    private static byte[]? NormalizeImageBytes(byte[] input, string postType)
     {
         try
         {
             using var ms = new MemoryStream(input);
-            using var image = Image.FromStream(ms);
+            using var image = Image.Load(ms);
+
             var width = image.Width;
             var height = image.Height;
             if (width == 0 || height == 0)
@@ -606,45 +596,28 @@ internal static class InstagramWorkflowSupport
                 return null;
             }
 
-            var ratio = width / (double)height;
-            const double minRatio = 0.8;
-            Rectangle cropRect = new(0, 0, width, height);
-            if (ratio < minRatio || ratio > 1.91)
+            int targetWidth = 1080;
+            int targetHeight = 1080;
+            
+            var normalizedType = NormalizePostType(postType);
+            if (normalizedType == "story" || normalizedType == "reel")
             {
-                if (ratio > minRatio)
-                {
-                    var newWidth = (int)Math.Round(height * minRatio);
-                    var x = Math.Max(0, (width - newWidth) / 2);
-                    cropRect = new Rectangle(x, 0, Math.Min(newWidth, width), height);
-                }
-                else
-                {
-                    var newHeight = (int)Math.Round(width / minRatio);
-                    var y = Math.Max(0, (height - newHeight) / 2);
-                    cropRect = new Rectangle(0, y, width, Math.Min(newHeight, height));
-                }
+                targetHeight = 1920;
             }
 
-            using var cropped = new Bitmap(cropRect.Width, cropRect.Height);
-            using (var g = Graphics.FromImage(cropped))
+            // Desired aspect ratio vs current aspect ratio
+            var targetRatio = targetWidth / (double)targetHeight;
+            var currentRatio = width / (double)height;
+            
+            // se for diferente do desejado, vamos ajustar usando ImageSharp (Crop resizes e corta bordas)
+            image.Mutate(x => x.Resize(new ResizeOptions
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                g.DrawImage(image, new Rectangle(0, 0, cropped.Width, cropped.Height), cropRect, GraphicsUnit.Pixel);
-            }
+                Size = new Size(targetWidth, targetHeight),
+                Mode = ResizeMode.Crop
+            }));
 
             using var outStream = new MemoryStream();
-            var encoder = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.MimeType == "image/jpeg");
-            if (encoder is null)
-            {
-                cropped.Save(outStream, ImageFormat.Jpeg);
-            }
-            else
-            {
-                using var parameters = new EncoderParameters(1);
-                parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, new[] { 90L });
-                cropped.Save(outStream, encoder, parameters);
-            }
-
+            image.SaveAsJpeg(outStream);
             return outStream.ToArray();
         }
         catch
@@ -652,7 +625,6 @@ internal static class InstagramWorkflowSupport
             return null;
         }
     }
-#pragma warning restore CA1416
 
     private static string BuildPublicMediaUrl(string publicBaseUrl, string mediaId)
     {

@@ -128,6 +128,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
             _httpClientFactory,
             _mediaStore,
             _publicBaseUrl,
+            draft.PostType,
             selectedImageUrls,
             cancellationToken);
         if (normalized.Count > 0)

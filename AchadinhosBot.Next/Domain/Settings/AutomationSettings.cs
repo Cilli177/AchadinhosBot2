@@ -217,7 +217,7 @@ public sealed class InstagramPostSettings
     public List<long> TelegramChatIds { get; set; } = new();
     public InstagramOfferContextMode OfferContextMode { get; set; } = InstagramOfferContextMode.Off;
     public bool UseOfferContext { get; set; }
-    public bool UseAi { get; set; }
+    public bool UseAi { get; set; } = true;
     public int VariationsCount { get; set; } = 2;
     public string AiProvider { get; set; } = "openai";
     public bool UseUltraPrompt { get; set; }
@@ -291,7 +291,9 @@ public sealed class InstagramPublishSettings
     public long StoryAutoPilotApprovalTelegramChatId { get; set; }
     public string? StoryAutoPilotApprovalWhatsAppGroupId { get; set; }
     public string? StoryAutoPilotApprovalWhatsAppInstanceName { get; set; }
-}
+        // New toggle to optionally send a published post to the product catalog
+        public bool SendToCatalog { get; set; } = false;
+    }
 
 public enum InstagramOfferContextMode
 {

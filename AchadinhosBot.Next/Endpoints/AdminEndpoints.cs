@@ -234,6 +234,7 @@ public static class AdminEndpoints
             IWhatsAppGateway whatsapp,
             ITelegramOutboundPublisher telegram,
             IInstagramPublishStore draftStore,
+            ICatalogOfferStore catalogStore,
             IOptions<WebhookOptions> opts,
             CancellationToken ct) =>
         {
@@ -300,6 +301,26 @@ public static class AdminEndpoints
                 catch (Exception ex)
                 {
                     results["instagram"] = new { success = false, error = ex.Message };
+                }
+            }
+
+            if (req.PublishCatalog)
+            {
+                try
+                {
+                    if (draft != null)
+                    {
+                        var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
+                        results["catalog"] = new { success = true, itemsUpdated = syncResult.Updated + syncResult.Created };
+                    }
+                    else
+                    {
+                        results["catalog"] = new { success = false, error = "Draft object required for catalog." };
+                    }
+                }
+                catch (Exception ex)
+                {
+                    results["catalog"] = new { success = false, error = ex.Message };
                 }
             }
 
@@ -383,5 +404,5 @@ public sealed record AdminGenerateCaptionRequest(string ProductName, string? Off
 public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor);
 public sealed record AdminPublishRequest(string DraftId);
 public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl);
-public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl);
+public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl);
 public sealed record AdminAddToCatalogRequest(string DraftId);

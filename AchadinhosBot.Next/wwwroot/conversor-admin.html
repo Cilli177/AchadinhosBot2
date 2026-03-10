@@ -643,6 +643,13 @@
                                                     WhatsApp</span>
                                                 <input id="pubWaTarget" value="120363363065662706@g.us" class="hidden">
                                             </label>
+                                            <label
+                                                class="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishCatalog" checked
+                                                    class="rounded w-4 h-4 text-purple-500 focus:ring-purple-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">🛒 Enviar ao
+                                                    Catálogo</span>
+                                            </label>
                                         </div>
 
                                         <!-- MAIN POST BUTTON -->
@@ -1443,9 +1450,10 @@
             const btnIg = document.getElementById('chkPublishIg').checked;
             const btnWa = document.getElementById('chkPublishWa').checked;
             const btnTg = document.getElementById('chkPublishTg').checked;
+            const btnCat = document.getElementById('chkPublishCatalog').checked;
 
-            if (!btnIg && !btnWa && !btnTg) {
-                showToast('⚠️ Selecione pelo menos um canal de destino.');
+            if (!btnIg && !btnWa && !btnTg && !btnCat) {
+                showToast('⚠️ Selecione pelo menos uma ação.');
                 return;
             }
 
@@ -1512,7 +1520,8 @@
                         telegramChatId: document.getElementById('pubTgTarget').value,
                         whatsAppTargetId: document.getElementById('pubWaTarget').value,
                         content: contentWaTg,
-                        imageUrl: window.location.origin + currentData.imageUrl
+                        imageUrl: window.location.origin + currentData.imageUrl,
+                        publishCatalog: btnCat
                     })
                 });
 
