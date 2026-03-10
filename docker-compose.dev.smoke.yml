@@ -1,4 +1,4 @@
-﻿services:
+services:
   rabbitmq:
     image: rabbitmq:3.13-management
     container_name: achadinhos-rabbitmq-dev
@@ -12,12 +12,17 @@
     volumes:
       - achadinhos_dev_rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 30s
       timeout: 10s
       retries: 5
 
   achadinhos-next:
+    build:
+      context: .
+      dockerfile: AchadinhosBot.Next/Dockerfile
+    container_name: achadinhos-next-dev
+    restart: unless-stopped
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -28,7 +33,6 @@
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       WEBHOOK__PORT: 8081
-      WEBHOOK__APIKEY: "admin-dev-2024"
       KESTREL__ENDPOINTS__HTTP__URL: http://0.0.0.0:8081
       AUTH__USERS__0__USERNAME: admin
       AUTH__USERS__0__PASSWORDHASH: pbkdf2$$100000$$MX+KqWb7deh/zUQIG8Eg7w==$$MXsJq7TvuxuvptJ9bpeejaJ5MVWdJOa12AEj00/ObVQ=
@@ -52,16 +56,17 @@
       RABBITMQ__VIRTUALHOST: /
       RABBITMQ__USERNAME: guest
       RABBITMQ__PASSWORD: guest
-      # Affiliate credentials — inherited from .env (same as production)
-      AFFILIATE__SHOPEEAPPID: "18328430896"
-      AFFILIATE__SHOPEESECRET: "J2K62RUC2ABIXXOFBH4GX62C5AADNHWV"
-      AFFILIATE__AMAZONTAG: "achadinhos-dev-20"
-      AFFILIATE__SHEINID: "achadinhos_shein_dev"
-      AFFILIATE__SHEINCODE: "DEV123"
-      AFFILIATE__MERCADOLIVREMATTWORD: ""
-      AFFILIATE__MERCADOLIVREMATTOOL: ""
       DELIVERYSAFETY__BLOCKOFFICIALWHATSAPPALWAYS: "true"
       DELIVERYSAFETY__OFFICIALWHATSAPPGROUPIDS__0: 120363405661434395@g.us
+    volumes:
+      - achadinhos_dev_data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
 volumes:
+  achadinhos_dev_data:
   achadinhos_dev_rabbitmq_data:

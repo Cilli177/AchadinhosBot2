@@ -1,0 +1,143 @@
+Compilando...
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1903: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma alta vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-2cmq-823j-5qj8
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1902: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma moderado vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-rxmq-m78w-7wmc
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1903: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma alta vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-2cmq-823j-5qj8
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1902: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma moderado vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-rxmq-m78w-7wmc
+[22:55:54 INF] [] Configured endpoint bot-conversor-webhook, Consumer: AchadinhosBot.Next.Application.Consumers.BotConversorWebhookConsumer
+[22:55:54 INF] [] Configured endpoint whatsapp-outbound, Consumer: AchadinhosBot.Next.Application.Consumers.WhatsAppOutboundConsumer
+[22:55:54 INF] [] Configured endpoint telegram-outbound, Consumer: AchadinhosBot.Next.Application.Consumers.TelegramOutboundConsumer
+[22:55:55 INF] [] TelegramBotPollingService iniciado.
+[22:55:55 INF] [] Heartbeat monitor desativado.
+Loaded previous session
+WTelegramClient 4.4.1+c60c9cb7af7c4696dd13c0c01845c57c186eb8e3 running under .NET 8.0.24
+Connecting to 149.154.175.52:443...
+[22:55:55 WRN] [] Overriding address(es) 'http://0.0.0.0:5005'. Binding to endpoints defined via IConfiguration and/or UseKestrel() instead.
+[22:55:55 INF] [] Bus started: rabbitmq://localhost/
+1>Sending   InvokeWithLayer`1                        #C413
+[22:55:55 INF] [] Instagram autopilot feed run: success=True selected=0 drafts=0 approvalSent=False message=Autopilot feed execucao concluido: candidatos=0, selecionados=0, drafts=0, aprovacao pendente.
+1>Receiving MsgContainer                             2026-03-09 01:55:55Z (svc)
+             → NewSessionCreated                      2026-03-09 01:55:55Z  
+             → MsgsAck                                2026-03-09 01:55:55Z (svc) 
+1>Receiving RpcResult                                2026-03-09 01:55:55Z
+             → Config                                #C413
+[22:55:55 INF] [] Instagram autopilot story run: success=True selected=0 drafts=0 approvalSent=False message=Autopilot story execucao concluido: candidatos=0, selecionados=0, drafts=0, aprovacao pendente.
+Connected to DC 1... default_p2p_contacts, revoke_pm_inbox
+1>Sending   MsgContainer                             2026-03-09 01:55:55Z (svc)
+             → MsgsAck                               
+             → Users_GetUsers                         #C417
+1>Receiving RpcResult                                2026-03-09 01:55:55Z
+             → UserBase[]                            #C417
+[22:55:55 INF] [] TelegramUserbot conectado. UserId=845414942. Session=C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\WTelegram.session
+1>Sending   MsgContainer                             2026-03-09 01:55:55Z (svc)
+             → MsgsAck                               
+             → Messages_GetDialogs                    #C463
+1>Receiving RpcResult                                2026-03-09 01:55:55Z
+             → Messages_Dialogs                      #C463
+[22:55:55 INF] [] TelegramUserbot: 21 chats carregados.
+[22:55:55 INF] [] Bot identificado: 8657128143 @PostagemStory_bot
+1>Sending   MsgContainer                             2026-03-09 01:55:55Z (svc)
+             → MsgsAck                               
+             → Updates_GetState                       #B3B3
+1>Receiving RpcResult                                2026-03-09 01:55:56Z
+             → Updates_State                         #B3B3
+Got Updates_State 0->48973, date=31/12/9999 23:59:59->09/03/2026 01:55:56, seq=0->1691
+[22:55:59 WRN] [] getUpdates falhou: Conflict
+[22:56:02 WRN] [] getUpdates falhou: Conflict
+[22:56:06 WRN] [] getUpdates falhou: Conflict
+[22:56:09 WRN] [] getUpdates falhou: Conflict
+[22:56:13 WRN] [] getUpdates falhou: Conflict
+[22:56:16 WRN] [] getUpdates falhou: Conflict
+[22:56:19 WRN] [] getUpdates falhou: Conflict
+[22:56:23 WRN] [] getUpdates falhou: Conflict
+[22:56:26 WRN] [] getUpdates falhou: Conflict
+[22:56:30 WRN] [] getUpdates falhou: Conflict
+[22:56:33 WRN] [] getUpdates falhou: Conflict
+[22:56:36 WRN] [] getUpdates falhou: Conflict
+[22:56:40 WRN] [] getUpdates falhou: Conflict
+[22:56:43 WRN] [] getUpdates falhou: Conflict
+[22:56:47 WRN] [] getUpdates falhou: Conflict
+[22:56:50 WRN] [] getUpdates falhou: Conflict
+[22:56:54 WRN] [] getUpdates falhou: Conflict
+1>Sending   MsgContainer                             2026-03-09 01:56:54Z (svc)
+             → MsgsAck                               
+             → PingDelayDisconnect                    #564E
+1>Receiving MsgContainer                             2026-03-09 01:56:55Z (svc)
+             → Pong                                   2026-03-09 01:56:55Z (svc) 
+             → Updates                                2026-03-09 01:56:55Z  
+(1186600146,      0+1->109950) TL.UpdateEditChannelMessage    pending | msgID=39401
+Trying to recover gaps for 1 pending updates
+(1186600146,  new  +1->109950) TL.UpdateEditChannelMessage    First appearance of MBox | msgID=39401
+Trying to apply 1 pending updates after filled gaps
+(1186600146, 109949+1->109950) TL.UpdateEditChannelMessage    applied now | msgID=39401
+[22:56:58 WRN] [] getUpdates falhou: Conflict
+[22:57:01 WRN] [] getUpdates falhou: Conflict
+[22:57:04 WRN] [] getUpdates falhou: Conflict
+[22:57:08 WRN] [] getUpdates falhou: Conflict
+[22:57:11 WRN] [] getUpdates falhou: Conflict
+[22:57:15 WRN] [] getUpdates falhou: Conflict
+[22:57:18 WRN] [] getUpdates falhou: Conflict
+[22:57:21 WRN] [] getUpdates falhou: Conflict
+[22:57:25 WRN] [] getUpdates falhou: Conflict
+[22:57:28 WRN] [] getUpdates falhou: Conflict
+[22:57:32 WRN] [] getUpdates falhou: Conflict
+[22:57:35 WRN] [] getUpdates falhou: Conflict
+[22:57:38 WRN] [] getUpdates falhou: Conflict
+[22:57:42 WRN] [] getUpdates falhou: Conflict
+[22:57:45 WRN] [] getUpdates falhou: Conflict
+[22:57:49 WRN] [] getUpdates falhou: Conflict
+[22:57:52 WRN] [] getUpdates falhou: Conflict
+1>Sending   MsgContainer                             2026-03-09 01:57:55Z (svc)
+             → MsgsAck                               
+             → PingDelayDisconnect                    #B1C7
+1>Receiving Pong                                     2026-03-09 01:57:55Z (svc) 
+[22:57:56 WRN] [] getUpdates falhou: Conflict
+[22:57:59 WRN] [] getUpdates falhou: Conflict
+[22:58:03 INF] [0HNJTFT029FFD:00000001] Mercado Livre: Validacao de API desativada. Aplicando fallback manual local. Original=https://produto.mercadolivre.com.br/MLB-12345 Resolved=https://produto.mercadolivre.com.br/MLB-12345 Id=MLB12345
+[22:58:03 WRN] [] getUpdates falhou: Conflict
+[22:58:03 WRN] [0HNJTFT029FFD:00000001] Mercado Livre retornou refresh_token novo. Atualize o .env.
+[22:58:03 INF] [0HNJTFT029FFD:00000001] Mercado Livre convertido: https://produto.mercadolivre.com.br/MLB-12345 => https://www.mercadolivre.com.br/p/MLB12345?matt_tool=98187057&matt_word=land177
+[22:58:03 INF] [0HNJTFT029FFD:00000001] Processamento concluído. Source=WhatsAppResponder ConvertedLinks=1
+[22:58:06 WRN] [] getUpdates falhou: Conflict
+[22:58:08 INF] [0HNJTFT029FFD:00000001] HTTP POST /internal/webhook/bot-conversor responded 200 in 26404.6359 ms
+[22:58:08 INF] [0HNJTFT029FFD:00000002] HTTP POST /internal/webhook/bot-conversor responded 200 in 1.6301 ms
+[22:58:09 INF] [0HNJTFT029FFD:00000003] HTTP POST /internal/webhook/bot-conversor responded 200 in 1.8217 ms
+[22:58:09 WRN] [] Falha ao enviar mensagem Evolution: BadRequest {"status":400,"error":"Bad Request","response":{"message":[{"jid":"5296643037@s.whatsapp.net","exists":false,"number":"-5296643037"}]}}
+[22:58:09 WRN] [] R-RETRY rabbitmq://localhost/whatsapp-outbound 72202433-9208-4ec6-8a10-1b1f46068441 MassTransit.RetryPolicies.RetryConsumeContext<AchadinhosBot.Next.Application.Consumers.SendWhatsAppMessageCommand>
+System.InvalidOperationException: Falha ao enviar mensagem
+   at AchadinhosBot.Next.Application.Consumers.WhatsAppOutboundConsumer.Consume(ConsumeContext`1 context) in C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Application\Consumers\WhatsAppOutboundConsumer.cs:line 84
+   at MassTransit.DependencyInjection.ScopeConsumerFactory`1.Send[TMessage](ConsumeContext`1 context, IPipe`1 next) in /_/src/MassTransit/DependencyInjection/DependencyInjection/ScopeConsumerFactory.cs:line 22
+   at MassTransit.DependencyInjection.ScopeConsumerFactory`1.Send[TMessage](ConsumeContext`1 context, IPipe`1 next) in /_/src/MassTransit/DependencyInjection/DependencyInjection/ScopeConsumerFactory.cs:line 22
+   at MassTransit.Middleware.ConsumerMessageFilter`2.MassTransit.IFilter<MassTransit.ConsumeContext<TMessage>>.Send(ConsumeContext`1 context, IPipe`1 next) in /_/src/MassTransit/Middleware/ConsumerMessageFilter.cs:line 48
+   at MassTransit.Middleware.ConsumerMessageFilter`2.MassTransit.IFilter<MassTransit.ConsumeContext<TMessage>>.Send(ConsumeContext`1 context, IPipe`1 next) in /_/src/MassTransit/Middleware/ConsumerMessageFilter.cs:line 73
+   at MassTransit.Middleware.ConsumeConcurrencyLimitFilter`1.Send(ConsumeContext`1 context, IPipe`1 next) in /_/src/MassTransit/Middleware/ConsumeConcurrencyLimitFilter.cs:line 28
+   at MassTransit.Middleware.RetryFilter`1.MassTransit.IFilter<TContext>.Send(TContext context, IPipe`1 next) in /_/src/MassTransit/Middleware/RetryFilter.cs:line 47
+[22:58:10 WRN] [] getUpdates falhou: Conflict
+[22:58:13 WRN] [] getUpdates falhou: Conflict
+[22:58:16 WRN] [] getUpdates falhou: Conflict
+[22:58:20 WRN] [] getUpdates falhou: Conflict
+[22:58:23 WRN] [] getUpdates falhou: Conflict
+[22:58:24 INF] [] Mensagem outbound WhatsApp duplicada ignorada. Dedupe=77de0018ca35c61a5b5643abf5d4696e5b69f250651fd8d4fa1c3d146cb282ec
+[22:58:27 WRN] [] getUpdates falhou: Conflict
+[22:58:30 WRN] [] getUpdates falhou: Conflict
+[22:58:34 WRN] [] getUpdates falhou: Conflict
+[22:58:37 WRN] [] getUpdates falhou: Conflict
+[22:58:40 WRN] [] getUpdates falhou: Conflict
+[22:58:44 WRN] [] getUpdates falhou: Conflict
+[22:58:47 WRN] [] getUpdates falhou: Conflict
+[22:58:51 WRN] [] getUpdates falhou: Conflict
+[22:58:54 WRN] [] getUpdates falhou: Conflict
+1>Sending   PingDelayDisconnect                      #F45B
+1>Receiving Pong                                     2026-03-09 01:58:55Z (svc) 
+[22:58:58 WRN] [] getUpdates falhou: Conflict
+[22:59:01 WRN] [] getUpdates falhou: Conflict
+[22:59:05 WRN] [] getUpdates falhou: Conflict
+[22:59:08 WRN] [] getUpdates falhou: Conflict
+[22:59:12 WRN] [] getUpdates falhou: Conflict
+[22:59:15 WRN] [] getUpdates falhou: Conflict
+[22:59:18 WRN] [] getUpdates falhou: Conflict
+[22:59:22 WRN] [] getUpdates falhou: Conflict
+[22:59:25 WRN] [] getUpdates falhou: Conflict
+[22:59:29 WRN] [] getUpdates falhou: Conflict
+[22:59:32 WRN] [] getUpdates falhou: Conflict
+[22:59:36 WRN] [] getUpdates falhou: Conflict
+[22:59:39 WRN] [] getUpdates falhou: Conflict

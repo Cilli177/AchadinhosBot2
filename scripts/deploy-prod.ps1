@@ -13,6 +13,7 @@ $envFile = Join-Path $repoRoot ".env.prod"
 $composeProject = "achadinhos-prod"
 $dataVolume = "achadinhos-prod_achadinhos_data"
 $logsVolume = "achadinhos-prod_achadinhos_logs"
+$rabbitMqVolume = "achadinhos-prod_achadinhos_rabbitmq_data"
 
 function Assert-CommandExists {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -54,6 +55,7 @@ Assert-PathExists -PathValue $composeFile
 Assert-PathExists -PathValue $envFile
 
 Assert-VolumeExists -VolumeName $dataVolume
+Assert-VolumeExists -VolumeName $rabbitMqVolume
 if ($BackupLogs) {
     Assert-VolumeExists -VolumeName $logsVolume
 }
@@ -61,9 +63,11 @@ if ($BackupLogs) {
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $dataBackup = "${dataVolume}_backup_${timestamp}"
 $logsBackup = "${logsVolume}_backup_${timestamp}"
+$rabbitMqBackup = "${rabbitMqVolume}_backup_${timestamp}"
 
 if (-not $SkipBackup) {
     Backup-Volume -SourceVolume $dataVolume -BackupName $dataBackup
+    Backup-Volume -SourceVolume $rabbitMqVolume -BackupName $rabbitMqBackup
     if ($BackupLogs) {
         Backup-Volume -SourceVolume $logsVolume -BackupName $logsBackup
     }
@@ -91,6 +95,7 @@ Write-Host ""
 Write-Host "Deploy finalizado."
 if (-not $SkipBackup) {
     Write-Host "Backup de dados: $dataBackup"
+    Write-Host "Backup de RabbitMQ: $rabbitMqBackup"
     if ($BackupLogs) {
         Write-Host "Backup de logs: $logsBackup"
     }

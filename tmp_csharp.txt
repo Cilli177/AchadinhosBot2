@@ -1,0 +1,250 @@
+static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
+{
+    var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
+    var store = System.Net.WebUtility.HtmlEncode(item.Store);
+    var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
+    var fullPrice = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+    var price_val = fullPrice.Replace("R$ ", "").Replace("R$", "").Trim();
+    var offerUrl = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
+    var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? "https://via.placeholder.com/800");
+    var catalog = System.Net.WebUtility.HtmlEncode(catalogUrl);
+    var previous_price = "---";
+    var savings_text = "Desconto aplicado";
+    
+    // As we lack specific coupon parsing right now in CatalogOfferItem, we leave it empty.
+    var coupon = ""; 
+    var couponBlock1 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
+<div class="mt-8 p-6 bg-slate-50 rounded-2xl border-l-4 border-accent">
+    <p class="text-sm font-bold text-slate-500 uppercase mb-2">Instrução de Compra:</p>
+    <p class="text-primary font-semibold">Aplique o cupom <span class="bg-accent/20 text-accent px-2 py-0.5 rounded">{{coupon}}</span> no checkout para garantir este valor exclusivo.</p>
+</div>
+""";
+
+    var couponBlock2 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
+<div class="mt-8 pt-8 border-t border-white/10">
+    <div class="bg-white/5 rounded-xl p-4 text-center">
+        <p class="text-white/60 text-xs uppercase tracking-widest mb-1">CUPOM ATIVO</p>
+        <p class="text-accent font-mono font-bold text-xl tracking-wider">{{coupon}}</p>
+    </div>
+</div>
+""";
+
+    return $$"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oferta VIP Exclusiva - {{title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;800&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0f172a',
+                        accent: '#c4a468',
+                        accentHover: '#b39359',
+                        vipRed: '#e11d48',
+                        surface: '#f8fafc',
+                    },
+                    fontFamily: {
+                        display: ['Montserrat', 'sans-serif'],
+                        body: ['Inter', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-10px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glass-effect {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .hero-gradient {
+            background: radial-gradient(circle at top right, #1e293b, #0f172a);
+        }
+        .price-tag {
+            text-shadow: 0 0 20px rgba(196, 164, 104, 0.3);
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+        }
+        h1, h2, h3 {
+            font-family: 'Montserrat', sans-serif;
+        }
+    </style>
+</head>
+<body class="text-slate-900 overflow-x-hidden">
+
+    <!-- Fixed Header -->
+    <header class="fixed top-0 w-full z-50 glass-effect shadow-sm">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-accent rounded-full flex items-center justify-center">
+                    <span class="text-primary font-bold text-xs">VIP</span>
+                </div>
+                <h1 class="text-lg font-extrabold uppercase tracking-widest text-primary">Oferta VIP Exclusiva</h1>
+            </div>
+            <div class="hidden md:block">
+                <span class="text-xs font-semibold text-slate-500 uppercase tracking-tighter">Acesso prioritário liberado</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="pt-24 pb-12">
+        <!-- Hero Section -->
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-12">
+            <div class="hero-gradient rounded-3xl overflow-hidden shadow-2xl flex flex-col lg:flex-row items-center p-8 lg:p-16 gap-12">
+                
+                <!-- Product Image Area -->
+                <div class="w-full lg:w-1/2 flex justify-center items-center animate-float">
+                    <div class="relative group">
+                        <div class="absolute -inset-4 bg-accent/20 rounded-full blur-3xl group-hover:bg-accent/30 transition duration-500"></div>
+                        <div class="relative">
+                            <img src="{{image}}" alt="{{title}}" class="w-full h-auto max-w-md object-contain drop-shadow-[0_20px_50px_rgba(0,0,0,0.5)] transform transition-transform duration-500 hover:scale-105" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hero Content -->
+                <div class="w-full lg:w-1/2 text-center lg:text-left space-y-8">
+                    <div class="inline-block px-4 py-1.5 rounded-full bg-accent/10 border border-accent/30 text-accent font-bold text-sm tracking-wider uppercase mb-4">
+                        Desconto Imperdível
+                    </div>
+                    <h2 class="text-4xl lg:text-6xl font-extrabold text-white leading-tight">
+                        Eleve seu estilo a um <span class="text-accent">novo patamar</span>
+                    </h2>
+                    <p class="text-slate-300 text-lg lg:text-xl font-light leading-relaxed max-w-xl">
+                        🚨 OFERTA EXCLUSIVA VIP! Conheça <strong>{{title}}</strong>. Performance e design premium para cada passo do seu dia.
+                    </p>
+                    
+                    <div class="pt-4 flex flex-col sm:flex-row items-center gap-6 justify-center lg:justify-start">
+                        <a href="{{offerUrl}}" target="_blank" class="group relative inline-flex items-center justify-center px-10 py-5 font-bold text-primary transition-all duration-200 bg-accent rounded-xl hover:bg-accentHover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent w-full sm:w-auto shadow-lg shadow-accent/20">
+                            Comprar Agora
+                            <svg class="w-5 h-5 ml-2 transition-transform duration-200 group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                            </svg>
+                        </a>
+                        <div class="text-white/60 text-sm font-medium italic">
+                            *Estoque limitado
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bento Grid Details -->
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            <!-- Description Card -->
+            <div class="md:col-span-2 bg-white rounded-3xl p-8 lg:p-10 shadow-sm border border-slate-100">
+                <h3 class="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span class="w-2 h-8 bg-accent rounded-full"></span>
+                    Detalhes do Produto
+                </h3>
+                <div class="space-y-4 text-slate-600 leading-relaxed text-lg">
+                    <p class="font-bold text-primary uppercase tracking-wide">DETALHES DO PRODUTO</p>
+                    <p>O {{title}} é projetado para oferecer versatilidade e estilo inigualável. Ideal para quem busca estar sempre no mais alto padrão de qualidade e conforto.</p>
+                    <p>Aproveite esta oferta exclusiva do catálogo!</p>
+                    {{couponBlock1}}
+                </div>
+            </div>
+
+            <!-- Pricing Card -->
+            <div class="bg-primary rounded-3xl p-8 flex flex-col justify-between shadow-2xl relative overflow-hidden group">
+                <!-- Background decoration -->
+                <div class="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 bg-accent/10 rounded-full blur-3xl"></div>
+                
+                <div>
+                    <span class="text-accent font-bold uppercase tracking-widest text-xs">Condição Especial</span>
+                    <h3 class="text-white text-3xl font-bold mt-2 mb-8">Preço VIP</h3>
+                    
+                    <div class="space-y-2">
+                        <p class="text-slate-400 line-through text-lg">Preço Original: {{previous_price}}</p>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-white text-2xl font-light">R$</span>
+                            <span class="text-accent text-6xl font-extrabold tracking-tighter price-tag">{{price_val}}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-12 space-y-4">
+                    <div class="flex items-center gap-3 text-white/80 text-sm">
+                        <svg class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        {{savings_text}}
+                    </div>
+                    <div class="flex items-center gap-3 text-white/80 text-sm">
+                        <svg class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        Frete e condições oficiais
+                    </div>
+                </div>
+
+                {{couponBlock2}}
+            </div>
+
+        </section>
+
+        <!-- Trust Badges -->
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-center gap-6 shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center text-accent">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h4 class="font-bold text-primary">Oferta Exclusiva VIP</h4>
+                    <p class="text-slate-500 text-sm">Preço reservado apenas para membros selecionados.</p>
+                </div>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-center gap-6 shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-16 h-16 bg-vipRed/10 rounded-full flex items-center justify-center text-vipRed">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h4 class="font-bold text-primary">Tempo Limitado</h4>
+                    <p class="text-slate-500 text-sm">Esta condição pode expirar a qualquer momento.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-white border-t border-slate-200 mt-12">
+        <div class="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                <span class="text-slate-500 text-sm font-medium">Registro no Catálogo Confirmado: <a href="{{catalog}}" class="hover:text-accent">Verificação Ativa</a></span>
+            </div>
+            <div class="text-slate-400 text-xs">
+                © Vi no: @ReiDasOfertasVIP
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>
+""";
+}
