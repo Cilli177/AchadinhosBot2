@@ -157,6 +157,8 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("ReadAccess", p => p.RequireRole("admin", "operator"));
 });
 
+builder.Services.AddMemoryCache();
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
