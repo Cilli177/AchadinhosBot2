@@ -12,15 +12,18 @@ public sealed class InstagramLinkMetaService
     private static readonly Dictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AmazonPaApiClient _amazonPaApiClient;
+    private readonly AmazonHtmlScraperService _amazonHtmlScraper;
     private readonly ILogger<InstagramLinkMetaService> _logger;
 
     public InstagramLinkMetaService(
         IHttpClientFactory httpClientFactory,
         AmazonPaApiClient amazonPaApiClient,
+        AmazonHtmlScraperService amazonHtmlScraper,
         ILogger<InstagramLinkMetaService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _amazonPaApiClient = amazonPaApiClient;
+        _amazonHtmlScraper = amazonHtmlScraper;
         _logger = logger;
     }
 
@@ -31,29 +34,55 @@ public sealed class InstagramLinkMetaService
 
         try
         {
-            // ── Amazon fast-path ──────────────────────────────────────────
+            // ── Amazon fast-path via PA-API ──────────────────────────────────────
             LinkMetaResult? amazonMeta = null;
             if (Uri.TryCreate(link, UriKind.Absolute, out var uri) &&
-                IsAmazonHost(uri.Host) &&
-                _amazonPaApiClient.IsConfigured)
+                IsAmazonHost(uri.Host))
             {
                 var asin = ExtractAmazonAsin(uri);
                 if (!string.IsNullOrWhiteSpace(asin))
                 {
-                    var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
-                    if (item is not null)
+                    // 1st: try PA-API (fastest, most complete)
+                    if (_amazonPaApiClient.IsConfigured)
                     {
-                        amazonMeta = new LinkMetaResult
+                        var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
+                        if (item is not null)
                         {
-                            Title = item.Title,
-                            PriceText = item.PriceDisplay,
-                            Images = item.Images ?? new List<string>()
-                        };
+                            amazonMeta = new LinkMetaResult
+                            {
+                                Title = item.Title,
+                                PriceText = item.PriceDisplay,
+                                Images = item.Images ?? new List<string>()
+                            };
 
-                        if (!string.IsNullOrWhiteSpace(amazonMeta.Title) || amazonMeta.Images.Count > 0)
+                            if (!string.IsNullOrWhiteSpace(amazonMeta.Title) || amazonMeta.Images.Count > 0)
+                            {
+                                SetCache(link, amazonMeta);
+                                return amazonMeta;
+                            }
+                        }
+                    }
+
+                    // 2nd: try HTML scraper (works without API keys)
+                    if (amazonMeta is null)
+                    {
+                        var scraped = await _amazonHtmlScraper.ScrapeAsync(asin, ct);
+                        if (scraped is not null)
                         {
-                            SetCache(link, amazonMeta);
-                            return amazonMeta;
+                            amazonMeta = new LinkMetaResult
+                            {
+                                Title = scraped.Title,
+                                PriceText = scraped.Price,
+                                PreviousPriceText = scraped.OldPrice,
+                                DiscountPercentFromHtml = scraped.DiscountPercent,
+                                Images = scraped.Images
+                            };
+
+                            if (!string.IsNullOrWhiteSpace(amazonMeta.Title) || amazonMeta.Images.Count > 0)
+                            {
+                                SetCache(link, amazonMeta);
+                                return amazonMeta;
+                            }
                         }
                     }
                 }
@@ -61,10 +90,47 @@ public sealed class InstagramLinkMetaService
 
             var client = _httpClientFactory.CreateClient("default");
             using var response = await client.GetAsync(link, ct);
-            if (!response.IsSuccessStatusCode) return new LinkMetaResult();
-            var html = await response.Content.ReadAsStringAsync(ct);
-            if (string.IsNullOrWhiteSpace(html)) return new LinkMetaResult();
             var resolvedUri = response.RequestMessage?.RequestUri;
+            
+            // Allow Amazon PA-API fallback even if HTTP returned 503 Anti-Bot
+            if (amazonMeta is null &&
+                resolvedUri is not null &&
+                IsAmazonHost(resolvedUri.Host) &&
+                _amazonPaApiClient.IsConfigured)
+            {
+                var asin = ExtractAmazonAsin(resolvedUri);
+                if (!string.IsNullOrWhiteSpace(asin))
+                {
+                    try
+                    {
+                        var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
+                        if (item is not null)
+                        {
+                            amazonMeta = new LinkMetaResult
+                            {
+                                Title = item.Title,
+                                PriceText = item.PriceDisplay,
+                                Images = item.Images ?? new List<string>()
+                            };
+                            
+                            // If PA-API gives us data but the HTTP request failed, return PA-API data
+                            if (!response.IsSuccessStatusCode && (!string.IsNullOrWhiteSpace(item.Title) || item.Images?.Count > 0))
+                            {
+                                SetCache(link, amazonMeta);
+                                return amazonMeta;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Falha ao complementar meta da Amazon via URL resolvida.");
+                    }
+                }
+            }
+
+            if (!response.IsSuccessStatusCode) return amazonMeta ?? new LinkMetaResult();
+            var html = await response.Content.ReadAsStringAsync(ct);
+            if (string.IsNullOrWhiteSpace(html)) return amazonMeta ?? new LinkMetaResult();
 
             // ── Shopee: extract from embedded __NEXT_DATA__ JSON ──────────
             if (resolvedUri is not null && IsShopeeHost(resolvedUri.Host))
@@ -96,34 +162,6 @@ public sealed class InstagramLinkMetaService
                 ExtractMetaContent(html, "property", "og:description"),
                 ExtractMetaContent(html, "name", "description"),
                 ExtractMetaContent(html, "name", "twitter:description"));
-
-            if (amazonMeta is null &&
-                resolvedUri is not null &&
-                IsAmazonHost(resolvedUri.Host) &&
-                _amazonPaApiClient.IsConfigured)
-            {
-                var asin = ExtractAmazonAsin(resolvedUri);
-                if (!string.IsNullOrWhiteSpace(asin))
-                {
-                    try
-                    {
-                        var item = await _amazonPaApiClient.GetItemAsync(asin, ct);
-                        if (item is not null)
-                        {
-                            amazonMeta = new LinkMetaResult
-                            {
-                                Title = item.Title,
-                                PriceText = item.PriceDisplay,
-                                Images = item.Images ?? new List<string>()
-                            };
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Falha ao complementar meta da Amazon via URL resolvida.");
-                    }
-                }
-            }
 
             var images = new List<string>();
             if (amazonMeta?.Images is { Count: > 0 })

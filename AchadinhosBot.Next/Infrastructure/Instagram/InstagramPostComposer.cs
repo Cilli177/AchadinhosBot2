@@ -278,6 +278,28 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         return sb.ToString().Trim();
     }
 
+    public async Task<string> SuggestHashtagsAsync(string productName, InstagramPostSettings settings, CancellationToken cancellationToken)
+    {
+        var input = productName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return "#ofertas #promocao";
+        }
+
+        var allSettings = await _settingsStore.GetAsync(cancellationToken);
+        if (settings.UseAi)
+        {
+            var openAi = allSettings.OpenAI ?? new OpenAISettings();
+            var aiResult = await _openAiGenerator.GenerateHashtagsAsync(input, openAi, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(aiResult))
+            {
+                return aiResult;
+            }
+        }
+
+        return BuildHashtags(input);
+    }
+
     private static string StripTriggerPrefix(string text, List<string> triggers)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;

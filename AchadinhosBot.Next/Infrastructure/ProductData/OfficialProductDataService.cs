@@ -16,6 +16,7 @@ public sealed class OfficialProductDataService
 {
     private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly AmazonCreatorApiClient _amazonCreatorApiClient;
+    private readonly AmazonHtmlScraperService _amazonHtmlScraper;
     private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
     private readonly AffiliateOptions _affiliateOptions;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -24,6 +25,7 @@ public sealed class OfficialProductDataService
     public OfficialProductDataService(
         AmazonPaApiClient amazonPaApiClient,
         AmazonCreatorApiClient amazonCreatorApiClient,
+        AmazonHtmlScraperService amazonHtmlScraper,
         IMercadoLivreOAuthService mercadoLivreOAuthService,
         IOptions<AffiliateOptions> affiliateOptions,
         IHttpClientFactory httpClientFactory,
@@ -31,6 +33,7 @@ public sealed class OfficialProductDataService
     {
         _amazonPaApiClient = amazonPaApiClient;
         _amazonCreatorApiClient = amazonCreatorApiClient;
+        _amazonHtmlScraper = amazonHtmlScraper;
         _mercadoLivreOAuthService = mercadoLivreOAuthService;
         _affiliateOptions = affiliateOptions.Value;
         _httpClientFactory = httpClientFactory;
@@ -126,7 +129,9 @@ public sealed class OfficialProductDataService
                     Images: item.Images ?? new List<string>(),
                     IsOfficial: true,
                     DataSource: "amazon_paapi",
-                    SourceUrl: uri.ToString());
+                    SourceUrl: uri.ToString(),
+                    EstimatedDelivery: null,
+                    VideoUrl: null);
             }
         }
 
@@ -150,7 +155,29 @@ public sealed class OfficialProductDataService
                     Images: creatorItem.Images ?? new List<string>(),
                     IsOfficial: true,
                     DataSource: "amazon_creator_api",
-                    SourceUrl: uri.ToString());
+                    SourceUrl: uri.ToString(),
+                    EstimatedDelivery: null,
+                    VideoUrl: null);
+            }
+        }
+
+        // Fallback: HTML scraper (works without any API keys)
+        {
+            var scraped = await _amazonHtmlScraper.ScrapeAsync(asin, ct);
+            if (scraped is not null && (!string.IsNullOrWhiteSpace(scraped.Title) || scraped.Images.Count > 0))
+            {
+                return new OfficialProductDataResult(
+                    Store: "Amazon",
+                    Title: scraped.Title,
+                    CurrentPrice: scraped.Price,
+                    PreviousPrice: scraped.OldPrice,
+                    DiscountPercent: scraped.DiscountPercent,
+                    Images: scraped.Images,
+                    IsOfficial: false,
+                    DataSource: "amazon_html_scraper",
+                    SourceUrl: uri.ToString(),
+                    EstimatedDelivery: null,
+                    VideoUrl: null);
             }
         }
 
@@ -312,7 +339,8 @@ public sealed class OfficialProductDataService
             IsOfficial: true,
             DataSource: "mercadolivre_items_api",
             SourceUrl: uri.ToString(),
-            EstimatedDelivery: estimatedDelivery);
+            EstimatedDelivery: estimatedDelivery,
+            VideoUrl: null); // ML usually uses a separate video_id which is harder to fetch directly, keeping null for now
     }
 
     private async Task<OfficialProductDataResult?> TryGetShopeeDataAsync(Uri uri, CancellationToken ct)
@@ -378,7 +406,7 @@ public sealed class OfficialProductDataService
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        var payload = $$"""{"query":"query {\n  productOfferV2(\n    itemId: {{itemId}}\n    page: 1\n    limit: 1\n    listType: 0\n  ) {\n    nodes {\n      itemId\n      productName\n      price\n      priceDiscountRate\n      imageUrl\n    }\n  }\n}"}""";
+        var payload = $$"""{"query":"query {\n  productOfferV2(\n    itemId: {{itemId}}\n    page: 1\n    limit: 1\n    listType: 0\n  ) {\n    nodes {\n      itemId\n      productName\n      price\n      priceDiscountRate\n      imageUrl\n      videoList {\n        videoUrl\n      }\n    }\n  }\n}"}""";
 
         var baseString = appId + timestamp + payload + secret;
         var sign = string.Empty;
@@ -436,9 +464,19 @@ public sealed class OfficialProductDataService
                 images.Add(imageUrl.Trim());
             }
 
+            var videoUrl = (string?)null;
+            if (first.TryGetProperty("videoList", out var videoListNode) && videoListNode.ValueKind == JsonValueKind.Array)
+            {
+                var firstVideo = videoListNode.EnumerateArray().FirstOrDefault();
+                if (firstVideo.ValueKind == JsonValueKind.Object)
+                {
+                    videoUrl = TryGetString(firstVideo, "videoUrl");
+                }
+            }
+
             var current = FormatCurrency(normalizedPrice, "BRL");
             var previous = FormatCurrency(normalizedPrevious, "BRL");
-            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(current) && images.Count == 0)
+            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(current) && images.Count == 0 && string.IsNullOrWhiteSpace(videoUrl))
             {
                 return null;
             }
@@ -452,7 +490,9 @@ public sealed class OfficialProductDataService
                 Images: images.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 IsOfficial: true,
                 DataSource: "shopee_affiliate_graphql",
-                SourceUrl: targetUrl);
+                SourceUrl: targetUrl,
+                EstimatedDelivery: null,
+                VideoUrl: videoUrl);
         }
         catch (Exception ex)
         {
@@ -795,5 +835,6 @@ public sealed record OfficialProductDataResult(
     bool IsOfficial,
     string DataSource,
     string SourceUrl,
-    string? EstimatedDelivery = null);
+    string? EstimatedDelivery = null,
+    string? VideoUrl = null);
 

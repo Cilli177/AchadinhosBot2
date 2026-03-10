@@ -723,7 +723,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
         return builder.Uri.ToString().TrimEnd('/');
     }
-    public async Task<(string EnrichedText, string? ProductImageUrl)> EnrichTextWithProductDataAsync(
+    public async Task<(string EnrichedText, string? ProductImageUrl, string? ProductVideoUrl)> EnrichTextWithProductDataAsync(
         string convertedText,
         string originalText,
         CancellationToken cancellationToken)
@@ -737,13 +737,13 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
             if (!isAmazon && !isShopee && !isML)
             {
-                return (convertedText, null);
+                return (convertedText, null, null);
             }
 
             var urlMatch = Regex.Match(originalText, @"https?://[^\s]+", RegexOptions.IgnoreCase);
             if (!urlMatch.Success)
             {
-                return (convertedText, null);
+                return (convertedText, null, null);
             }
 
             var originalUrl = urlMatch.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}');
@@ -766,7 +766,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
             }
             if (productData is null)
             {
-                return (convertedText, null);
+                return (convertedText, null, null);
             }
 
             var enrichParts = new List<string>();
@@ -801,12 +801,12 @@ public sealed partial class MessageProcessor : IMessageProcessor
                 productData.DiscountPercent?.ToString() ?? "n/a",
                 !string.IsNullOrWhiteSpace(bestImage));
 
-            return (enrichedText, bestImage);
+            return (enrichedText, bestImage, productData.VideoUrl);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Falha ao enriquecer texto com metadados de produto. Retornando texto original.");
-            return (convertedText, null);
+            return (convertedText, null, null);
         }
     }
 }

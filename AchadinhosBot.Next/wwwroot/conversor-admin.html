@@ -478,11 +478,42 @@
                                         <img id="instaPreviewImg" src="" alt="Post Preview">
                                         <video id="instaPreviewVid" class="hidden" controls loop></video>
 
+                                        <!-- Carousel Navigation (Feed) -->
+                                        <button id="carouselPrevBtn" onclick="navigateCarousel(-1)"
+                                            class="hidden absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center text-white shadow-md hover:bg-black/60 transition-all z-20"><svg
+                                                class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                                    d="M15 19l-7-7 7-7" />
+                                            </svg></button>
+                                        <button id="carouselNextBtn" onclick="navigateCarousel(1)"
+                                            class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center text-white shadow-md hover:bg-black/60 transition-all z-20"><svg
+                                                class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                                    d="M9 5l7 7-7 7" />
+                                            </svg></button>
+
                                         <!-- Carousel Indicator (if multi) -->
                                         <div id="carouselDots"
-                                            class="hidden absolute bottom-4 left-0 right-0 flex justify-center gap-1.5">
-                                            <div class="w-1.5 h-1.5 rounded-full bg-white"></div>
-                                            <div class="w-1.5 h-1.5 rounded-full bg-white/40"></div>
+                                            class="hidden absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20">
+                                            <!-- Dots injected via JS -->
+                                        </div>
+
+                                        <!-- Link Sticker Mockup (Stories) -->
+                                        <div id="instaLinkSticker"
+                                            class="hidden absolute bottom-24 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-xl shadow-[0_5px_15px_rgba(0,0,0,0.2)] flex items-center gap-2.5 max-w-[80%] z-30 transition-transform active:scale-95 cursor-pointer"
+                                            style="border: 1px solid rgba(0,0,0,0.05);">
+                                            <div
+                                                class="bg-[#0088cc] w-7 h-7 rounded-full flex items-center justify-center shrink-0 shadow-inner">
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2.5"
+                                                        d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                                </svg>
+                                            </div>
+                                            <span
+                                                class="text-xs font-bold text-slate-800 truncate tracking-tight uppercase"
+                                                id="instaLinkText">Ver Oferta</span>
                                         </div>
                                     </div>
                                     <div class="insta-actions">
@@ -514,7 +545,7 @@
                                         <label
                                             class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Gerenciamento
                                             de Mídia</label>
-                                        <div class="grid grid-cols-2 gap-3">
+                                        <div class="grid grid-cols-3 gap-3">
                                             <button onclick="document.getElementById('photoInput').click()"
                                                 class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
                                                 <div class="text-accent mb-1 flex justify-center"><svg class="w-5 h-5"
@@ -534,6 +565,18 @@
                                                     </svg></div>
                                                 <span class="text-[9px] font-bold uppercase tracking-tight">Add
                                                     Vídeo</span>
+                                            </button>
+                                            <button onclick="openEditorModal()"
+                                                class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
+                                                <div class="text-purple-400 mb-1 flex justify-center"><svg
+                                                        class="w-5 h-5" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
+                                                    </svg></div>
+                                                <span
+                                                    class="text-[9px] font-bold uppercase tracking-tight">Editar</span>
                                             </button>
                                         </div>
                                         <input type="file" id="photoInput" class="hidden" accept="image/*"
@@ -567,31 +610,49 @@
                                             <option value="reels">Reels (Vídeo)</option>
                                         </select>
 
+                                        <label
+                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 mt-2">Agendar
+                                            Postagem (Opcional)</label>
+                                        <input type="datetime-local" id="scheduledForInput"
+                                            class="w-full bg-surface border border-white/5 rounded-xl px-4 py-3 text-xs text-white focus:outline-none mb-4"
+                                            onchange="updatePublishBtnText(this.value)">
+
+                                        <!-- OMNICHANNEL MASTER PUBLISH -->
+                                        <div
+                                            class="bg-primary/50 shadow-inner rounded-xl p-3 border border-white/5 mb-4">
+                                            <label
+                                                class="flex items-center gap-3 mb-2.5 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishIg" checked
+                                                    class="rounded w-4 h-4 text-pink-500 focus:ring-pink-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">📸 Publicar no
+                                                    Instagram</span>
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-3 mb-2.5 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishTg" checked
+                                                    class="rounded w-4 h-4 text-blue-500 focus:ring-blue-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">✈️ Enviar ao
+                                                    Telegram</span>
+                                                <input id="pubTgTarget" value="-100123456789" class="hidden">
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishWa" checked
+                                                    class="rounded w-4 h-4 text-green-500 focus:ring-green-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">💬 Enviar ao
+                                                    WhatsApp</span>
+                                                <input id="pubWaTarget" value="120363363065662706@g.us" class="hidden">
+                                            </label>
+                                        </div>
+
                                         <!-- MAIN POST BUTTON -->
-                                        <button onclick="publishInstagram()" id="pubInstaBtn"
-                                            class="w-full py-4 rounded-xl font-black text-sm transition-all btn-status-idle flex items-center justify-center gap-2 shadow-xl shadow-pink-600/10">
-                                            📸 PUBLICAR NO INSTAGRAM
+                                        <button onclick="publishMaster()" id="pubMasterBtn"
+                                            class="w-full py-4 rounded-xl font-black text-sm transition-all btn-status-idle flex items-center justify-center gap-2 shadow-xl shadow-accent/20">
+                                            🚀 LANÇAR CAMPANHA (OMNICHANNEL)
                                         </button>
 
-                                        <div class="flex items-center gap-2 mt-4 opacity-50">
-                                            <hr class="flex-1 border-white/5">
-                                            <span class="text-[8px] font-bold uppercase text-slate-500">Outros
-                                                Canais</span>
-                                            <hr class="flex-1 border-white/5">
-                                        </div>
-
-                                        <div class="grid grid-cols-2 gap-2 mt-3">
-                                            <button onclick="publishWhatsApp()" id="pubWaBtn"
-                                                class="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-600/30 py-2.5 rounded-lg text-[9px] font-bold uppercase transition-all">WhatsApp</button>
-                                            <input id="pubWaTarget" value="120363363065662706@g.us" class="hidden">
-
-                                            <button onclick="publishTelegram()" id="pubTgBtn"
-                                                class="bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 py-2.5 rounded-lg text-[9px] font-bold uppercase transition-all">Telegram</button>
-                                            <input id="pubTgTarget" value="-100123456789" class="hidden">
-                                        </div>
-
                                         <button onclick="syncCatalog()" id="pubCatalogBtn"
-                                            class="w-full mt-2 bg-yellow-600/10 hover:bg-yellow-600/20 text-yellow-500 border border-yellow-600/20 py-2 rounded-lg text-[9px] font-bold uppercase transition-all">
+                                            class="w-full mt-3 bg-yellow-600/10 hover:bg-yellow-600/20 text-yellow-500 border border-yellow-600/20 py-2 rounded-lg text-[9px] font-bold uppercase transition-all">
                                             Add ao Catálogo Web
                                         </button>
                                     </div>
@@ -611,88 +672,141 @@
                                     REGERAR COM IA
                                 </button>
                             </div>
-                            <textarea id="captionText" rows="12"
-                                class="w-full bg-primary/40 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600 leading-relaxed"
-                                placeholder="Editando legenda..."></textarea>
-
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
-                                    <label
-                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Hashtags
-                                        do Post</label>
-                                    <input id="hashtagInput"
-                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
-                                        placeholder="#oferta #achadinhos #promoção">
-                                </div>
-                                <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
-                                    <label
-                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Call
-                                        to Action (WhatsApp/Telegram)</label>
-                                    <input id="ctaInput"
-                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
-                                        placeholder="Comente EU QUERO / Link na Bio">
-                                </div>
+                        </div>
+                        <!-- Caption Splitter Container (Hidden by default) -->
+                        <div id="captionOptionsContainer" class="hidden mb-4">
+                            <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">✨
+                                Opções Sugeridas pela IA (Escolha uma)</label>
+                            <div id="captionCardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <!-- Cards will be injected here -->
                             </div>
+                        </div>
+                        <textarea id="captionText" rows="12"
+                            class="w-full bg-primary/40 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600 leading-relaxed"
+                            placeholder="Sua legenda aparecerá aqui. Você pode editar livremente..."></textarea>
 
-                            <!-- Auto Reply Toggle -->
-                            <div
-                                class="bg-primary/30 p-4 rounded-xl border border-white/5 flex items-center justify-between mt-4">
-                                <div>
-                                    <h4 class="text-[10px] font-bold text-white uppercase tracking-widest">Auto-Resposta
-                                        "Eu Quero"</h4>
-                                    <p class="text-[8px] text-slate-500 mt-0.5">Envia o link no Direct automaticamente
-                                        para quem comentar.</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-primary/20 p-4 rounded-xl border border-white/5 relative">
+                                <div class="flex justify-between items-center mb-2">
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Hashtags
+                                        do Post</label>
+                                    <button onclick="suggestHashtags()" id="suggestTagsBtn"
+                                        class="text-[9px] text-accent font-bold uppercase transition-all flex items-center gap-1 hover:text-white">
+                                        ✨ Sugerir
+                                    </button>
                                 </div>
-                                <label class="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" id="autoReplyCheck" class="sr-only peer">
-                                    <div
-                                        class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent">
-                                    </div>
-                                </label>
+                                <input id="hashtagInput"
+                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                    placeholder="#oferta #achadinhos #promoção">
+                            </div>
+                            <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
+                                <label
+                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Call
+                                    to Action (WhatsApp/Telegram)</label>
+                                <input id="ctaInput"
+                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                    placeholder="Comente EU QUERO / Link na Bio">
                             </div>
                         </div>
 
-                        <!-- TAB 3: PUBLISH (LOGS & STATUS) -->
-                        <div id="tab-publish" class="tab-content space-y-4">
-                            <div class="bg-primary/30 rounded-2xl border border-white/5 p-6 text-center">
-                                <div class="text-slate-400 text-sm mb-6">
-                                    <svg class="w-12 h-12 mx-auto text-slate-600 mb-4" fill="none" stroke="currentColor"
-                                        viewBox="0 0 24 24">
-                                        <path
-                                            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                                    </svg>
-                                    <p>As ações de publicação foram movidas para a aba <b>Visual</b> para facilitar o
-                                        fluxo de trabalho.</p>
-                                    <p class="mt-2">Esta área será usada para exibir o histórico de publicações recentes
-                                        em breve.</p>
+                        <!-- Auto Reply Toggle -->
+                        <div
+                            class="bg-primary/30 p-4 rounded-xl border border-white/5 flex items-center justify-between mt-4">
+                            <div>
+                                <h4 class="text-[10px] font-bold text-white uppercase tracking-widest">Auto-Resposta
+                                    "Eu Quero"</h4>
+                                <p class="text-[8px] text-slate-500 mt-0.5">Envia o link no Direct automaticamente
+                                    para quem comentar.</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="autoReplyCheck" class="sr-only peer"
+                                    onchange="document.getElementById('autoReplySettings').classList.toggle('hidden', !this.checked)">
+                                <div
+                                    class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent">
                                 </div>
-                                <button onclick="switchTab('visual')"
-                                    class="bg-accent text-primary px-6 py-3 rounded-xl font-bold transition-all shadow-lg hover:shadow-accent/40">
-                                    Voltar para Estúdio Visual
-                                </button>
+                            </label>
+                        </div>
+
+                        <div id="autoReplySettings"
+                            class="hidden space-y-4 bg-primary/20 p-4 rounded-xl border border-white/5 mt-2">
+                            <div>
+                                <label
+                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Palavras-chave
+                                    (gatilhos)</label>
+                                <input id="autoReplyKeyword"
+                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                    placeholder="eu quero, manda, link" value="eu quero">
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Mensagem
+                                    do Direct (DM)</label>
+                                <textarea id="autoReplyMessage" rows="2"
+                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600"
+                                    placeholder="Aqui está o link do produto que você pediu:"></textarea>
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Link
+                                    Personalizado (Opcional)</label>
+                                <input id="autoReplyLink"
+                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent placeholder-slate-600"
+                                    placeholder="Deixe em branco para usar o link gerado do produto">
                             </div>
                         </div>
                     </div>
 
-                    <!-- Convert Another / Footer -->
-                    <div class="px-6 pb-6 pt-2 flex justify-between items-center bg-surface/20">
-                        <button onclick="logout()"
-                            class="text-[10px] text-red-400 opacity-60 hover:opacity-100 flex items-center gap-1 transition-all uppercase tracking-widest font-bold">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path
-                                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                            </svg>
-                            Logout
-                        </button>
-                        <button onclick="convertAnother()"
-                            class="text-[10px] text-accent font-bold uppercase tracking-widest hover:text-white transition-all">
-                            Converter Outro ↺
-                        </button>
+                    <!-- TAB 3: PUBLISH (LOGS & STATUS) -->
+                    <div id="tab-publish" class="tab-content space-y-4">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-sm font-bold text-slate-300">Histórico de Publicações</h3>
+                            <button onclick="loadDraftsHistory()"
+                                class="bg-white/5 hover:bg-white/10 text-white/70 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                ATUALIZAR
+                            </button>
+                        </div>
+
+                        <div id="draftsLoading" class="text-center py-8 hidden">
+                            <div
+                                class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3">
+                            </div>
+                            <p class="text-xs text-slate-500">Carregando histórico...</p>
+                        </div>
+
+                        <div id="draftsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <!-- Draft cards will be injected here -->
+                            <div
+                                class="col-span-full bg-primary/30 rounded-2xl border border-white/5 p-6 text-center text-slate-400 text-sm">
+                                Nenhuma publicação encontrada.
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Old action buttons row (removed/replaced) -->
+                <!-- Convert Another / Footer -->
+                <div class="px-6 pb-6 pt-2 flex justify-between items-center bg-surface/20">
+                    <button onclick="logout()"
+                        class="text-[10px] text-red-400 opacity-60 hover:opacity-100 flex items-center gap-1 transition-all uppercase tracking-widest font-bold">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path
+                                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Logout
+                    </button>
+                    <button onclick="convertAnother()"
+                        class="text-[10px] text-accent font-bold uppercase tracking-widest hover:text-white transition-all">
+                        Converter Outro ↺
+                    </button>
+                </div>
             </div>
+
+            <!-- Old action buttons row (removed/replaced) -->
+        </div>
         </div>
     </main>
 
@@ -704,6 +818,146 @@
             <div id="qrCanvas" class="bg-white p-3 rounded-2xl"></div>
             <button onclick="closeQr()"
                 class="text-slate-500 hover:text-white text-sm transition-colors">Fechar</button>
+        </div>
+    </div>
+
+    <!-- Mini Visual Editor Modal -->
+    <div id="editorModal"
+        class="hidden fixed inset-0 z-50 bg-[#0f1115]/90 backdrop-blur-sm flex items-center justify-center pt-16">
+        <div
+            class="bg-surface border border-white/10 rounded-[24px] overflow-hidden shadow-2xl w-full max-w-4xl flex h-[80vh]">
+            <!-- Canvas Area -->
+            <div class="flex-1 bg-black/50 flex items-center justify-center p-8 relative overflow-hidden">
+                <canvas id="imageEditorCanvas"
+                    class="max-w-full max-h-full rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"></canvas>
+            </div>
+            <!-- Tools Sidebar -->
+            <div class="w-80 bg-surface border-l border-white/10 p-6 flex flex-col h-full overflow-y-auto">
+                <h3 class="text-white font-bold text-lg mb-6 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
+                    </svg>
+                    Mini Editor
+                </h3>
+
+                <div class="space-y-6 flex-1">
+                    <!-- Text Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Texto</label>
+                        <input type="text" id="editorTextInput" placeholder="Texto de destaque..."
+                            class="w-full bg-primary/50 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                        <button onclick="addEditorText()"
+                            class="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Adicionar ao Canvas
+                        </button>
+                    </div>
+
+                    <!-- Badge Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Selo (Badge)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="addEditorBadge('discount')"
+                                class="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                % Off
+                            </button>
+                            <button onclick="addEditorBadge('frete')"
+                                class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                Frete Grátis
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-white/10">
+                        <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
+                            para reposicioná-los.</p>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
+                    <button onclick="applyEditorChanges()"
+                        class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
+                        Aplicar Alterações
+                    </button>
+                    <button onclick="closeEditorModal()"
+                        class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mini Visual Editor Modal -->
+    <div id="editorModal"
+        class="hidden fixed inset-0 z-50 bg-[#0f1115]/90 backdrop-blur-sm flex items-center justify-center pt-16">
+        <div
+            class="bg-surface border border-white/10 rounded-[24px] overflow-hidden shadow-2xl w-full max-w-4xl flex h-[80vh]">
+            <!-- Canvas Area -->
+            <div class="flex-1 bg-black/50 flex items-center justify-center p-8 relative overflow-hidden">
+                <canvas id="imageEditorCanvas"
+                    class="max-w-full max-h-full rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"></canvas>
+            </div>
+            <!-- Tools Sidebar -->
+            <div class="w-80 bg-surface border-l border-white/10 p-6 flex flex-col h-full overflow-y-auto">
+                <h3 class="text-white font-bold text-lg mb-6 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
+                    </svg>
+                    Mini Editor
+                </h3>
+
+                <div class="space-y-6 flex-1">
+                    <!-- Text Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Texto</label>
+                        <input type="text" id="editorTextInput" placeholder="Texto de destaque..."
+                            class="w-full bg-primary/50 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                        <button onclick="addEditorText()"
+                            class="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Adicionar ao Canvas
+                        </button>
+                    </div>
+
+                    <!-- Badge Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Selo (Badge)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="addEditorBadge('discount')"
+                                class="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                % Off
+                            </button>
+                            <button onclick="addEditorBadge('frete')"
+                                class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                Frete Grátis
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-white/10">
+                        <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
+                            para reposicioná-los.</p>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
+                    <button onclick="applyEditorChanges()"
+                        class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
+                        Aplicar Alterações
+                    </button>
+                    <button onclick="closeEditorModal()"
+                        class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -766,7 +1020,7 @@
         let currentConvertedUrl = '';
         let currentShareText = '';
         let currentData = null;
-        let currentDraftId = null;
+        let currentImageIndex = 0;
 
         // === Convert ===
         async function handleConvert() {
@@ -829,11 +1083,36 @@
                 document.getElementById('studioPanel').classList.remove('hidden');
 
                 // Initial preview sync
-                document.getElementById('instaPreviewImg').src = data.imageUrl || '';
+                if (data.videoUrl) {
+                    const vid = document.getElementById('instaPreviewVid');
+                    vid.src = data.videoUrl;
+                    vid.classList.remove('hidden');
+                    document.getElementById('instaPreviewImg').classList.add('hidden');
+                    const postTypeSel = document.getElementById('postType');
+                    if (postTypeSel) { postTypeSel.value = 'reel'; }
+                } else {
+                    document.getElementById('instaPreviewImg').src = data.imageUrl || '';
+                    document.getElementById('instaPreviewImg').classList.remove('hidden');
+                    document.getElementById('instaPreviewVid').classList.add('hidden');
+                }
 
                 // Auto generate card and caption
                 generateCard();
                 generateCaption();
+
+                currentData = {
+                    title: data.title,
+                    price: data.price,
+                    previousPrice: data.previousPrice,
+                    discountPercent: data.discountPercent,
+                    imageUrl: data.imageUrl,
+                    videoUrl: data.videoUrl,
+                    store: data.store,
+                    trackedUrl: data.trackedUrl,
+                    convertedUrl: data.convertedUrl,
+                    images: data.images?.length ? data.images : [data.imageUrl]
+                };
+                currentImageIndex = 0;
 
                 resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (error) {
@@ -852,6 +1131,10 @@
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById(`tab-${tab}-btn`).classList.add('active');
             document.getElementById(`tab-${tab}`).classList.add('active');
+
+            if (tab === 'publish') {
+                loadDraftsHistory();
+            }
         }
 
         function setFormat(format) {
@@ -868,6 +1151,16 @@
             } else {
                 container.classList.remove('stories');
                 document.getElementById('postType').value = 'feed';
+            }
+            syncPreview(); // Call syncPreview to update carousel/sticker visibility
+        }
+
+        function updatePublishBtnText(dateVal) {
+            const btn = document.getElementById('pubInstaBtn');
+            if (dateVal) {
+                btn.innerHTML = '🕒 AGENDAR NO INSTAGRAM';
+            } else {
+                btn.innerHTML = '📸 PUBLICAR NO INSTAGRAM';
             }
         }
 
@@ -919,7 +1212,19 @@
                 });
                 const data = await res.json();
                 if (data.success) {
-                    document.getElementById('captionText').value = data.caption;
+                    const parsedCaptions = parseAiCaptionOutput(data.caption);
+
+                    if (parsedCaptions.length > 1) {
+                        // We have multiple options, display the selector UI
+                        displayCaptionOptions(parsedCaptions);
+                        // Pick the first one by default just in case
+                        selectCaptionOption(parsedCaptions[0], 0);
+                    } else {
+                        // Standard fallback, dump everything into the textbox
+                        document.getElementById('captionOptionsContainer').classList.add('hidden');
+                        document.getElementById('captionText').value = data.caption;
+                    }
+
                     document.getElementById('hashtagInput').value = "#oferta #promoção #achadinhos";
                     syncPreview();
                     // Auto-switch to caption tab for review after generation
@@ -930,22 +1235,160 @@
             }
         }
 
+        function parseAiCaptionOutput(rawText) {
+            if (!rawText) return [];
+
+            // Try to split by "Legenda X" markers
+            const regex = /Legenda \d+.*?:\s*([\s\S]*?)(?=Legenda \d+.*?:|Hashtags sugeridas:|Melhor variação|$)/gi;
+            const matches = [...rawText.matchAll(regex)];
+
+            if (matches && matches.length > 0) {
+                return matches.map(m => m[1].trim()).filter(text => text.length > 10);
+            }
+
+            // Fallback: If no strict markers, try splitting by double breaks if it looks like discrete blocks
+            const blocks = rawText.split(/\n\s*\n/).filter(b => b.trim().length > 30 && !b.toLowerCase().includes('formato obrigatório'));
+            if (blocks.length > 1) return blocks;
+
+            return [rawText.trim()];
+        }
+
+        function displayCaptionOptions(captions) {
+            const container = document.getElementById('captionOptionsContainer');
+            const grid = document.getElementById('captionCardsGrid');
+
+            grid.innerHTML = '';
+            captions.forEach((cap, index) => {
+                // Peek first 100 chars for preview
+                const preview = cap.substring(0, 100).replace(/\n/g, ' ') + '...';
+
+                grid.innerHTML += `
+                    <div id="capCard_${index}" onclick="selectCaptionOption(\`${cap.replace(/`/g, '\\`')}\`, ${index})" class="caption-card bg-surface border border-white/10 p-4 rounded-xl cursor-pointer hover:border-accent/50 hover:bg-surface/80 transition-all text-left group">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest group-[.selected]:text-accent group-hover:text-accent">Opção ${index + 1}</span>
+                            <div class="w-4 h-4 rounded-full border border-white/20 flex items-center justify-center group-[.selected]:bg-accent group-[.selected]:border-accent transition-colors">
+                                <svg class="w-2.5 h-2.5 text-primary opacity-0 group-[.selected]:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-300 leading-relaxed line-clamp-3">${preview}</p>
+                    </div>
+                `;
+            });
+
+            container.classList.remove('hidden');
+        }
+
+        function selectCaptionOption(fullText, index) {
+            // Update UI selection state
+            document.querySelectorAll('.caption-card').forEach(c => c.classList.remove('selected', 'border-accent'));
+            const selectedCard = document.getElementById(`capCard_${index}`);
+            if (selectedCard) {
+                selectedCard.classList.add('selected', 'border-accent');
+            }
+
+            // Set textarea and update preview
+            document.getElementById('captionText').value = fullText;
+            syncPreview();
+        }
+
+        async function suggestHashtags() {
+            if (!currentData) return;
+            const btn = document.getElementById('suggestTagsBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/admin/generate-hashtags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({
+                        productName: currentData.title
+                    })
+                });
+                const data = await res.json();
+                if (data.success && data.hashtags) {
+                    document.getElementById('hashtagInput').value = data.hashtags;
+                    syncPreview();
+                    showToast('✨ Hashtags Sugeridas!');
+                } else {
+                    showToast('❌ Falha ao sugerir hashtags.', true);
+                }
+            } catch {
+                showToast('❌ Erro de rede.', true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
         function syncPreview() {
             const cap = document.getElementById('captionText').value;
             const tags = document.getElementById('hashtagInput').value;
             const cta = document.getElementById('ctaInput').value;
+            const type = document.getElementById('postType').value;
 
             let fullText = cap;
             if (cta) fullText += "\n\n" + cta;
 
             document.getElementById('instaPreviewCaption').textContent = fullText;
             document.getElementById('instaPreviewHashtags').textContent = tags;
+
+            // Layout updates
+            const linkSticker = document.getElementById('instaLinkSticker');
+            if (type === 'story' || type === 'reel') {
+                document.getElementById('instaMockContainer').classList.add('stories');
+                linkSticker.classList.toggle('hidden', type !== 'story');
+            } else {
+                document.getElementById('instaMockContainer').classList.remove('stories');
+                linkSticker.classList.add('hidden');
+            }
+
+            updateCarouselView();
+        }
+
+        function updateCarouselView() {
+            const type = document.getElementById('postType').value;
+            const prev = document.getElementById('carouselPrevBtn');
+            const next = document.getElementById('carouselNextBtn');
+            const dots = document.getElementById('carouselDots');
+
+            if (!currentData || !currentData.images || currentData.images.length <= 1 || type !== 'feed') {
+                prev.classList.add('hidden');
+                next.classList.add('hidden');
+                dots.classList.add('hidden');
+                if (currentData) {
+                    document.getElementById('instaPreviewImg').src = currentData.images?.[0] || currentData.imageUrl;
+                }
+                return;
+            }
+
+            // Show arrows & dots for multiple images in Feed mode
+            prev.classList.toggle('hidden', currentImageIndex === 0);
+            next.classList.toggle('hidden', currentImageIndex === currentData.images.length - 1);
+
+            document.getElementById('instaPreviewImg').src = currentData.images[currentImageIndex];
+
+            dots.classList.remove('hidden');
+            dots.innerHTML = '';
+            for (let i = 0; i < currentData.images.length; i++) {
+                dots.innerHTML += `<div class="w-1.5 h-1.5 rounded-full ${i === currentImageIndex ? 'bg-white' : 'bg-white/40'}"></div>`;
+            }
+        }
+
+        function navigateCarousel(delta) {
+            if (!currentData || !currentData.images) return;
+            currentImageIndex += delta;
+            if (currentImageIndex < 0) currentImageIndex = 0;
+            if (currentImageIndex >= currentData.images.length) currentImageIndex = currentData.images.length - 1;
+            updateCarouselView();
         }
 
         // Add event listeners for real-time sync
         document.getElementById('captionText').addEventListener('input', syncPreview);
         document.getElementById('hashtagInput').addEventListener('input', syncPreview);
         document.getElementById('ctaInput').addEventListener('input', syncPreview);
+        document.getElementById('postType').addEventListener('change', syncPreview); // Listen to post type changes
 
         async function uploadMedia(input, type) {
             const file = input.files[0];
@@ -995,14 +1438,33 @@
             btn.textContent = text;
         }
 
-        async function publishInstagram() {
+        async function publishMaster() {
             if (!currentData) return;
-            updateStatus('pubInstaBtn', 'loading', '⏳ Criando Draft...');
+            const btnIg = document.getElementById('chkPublishIg').checked;
+            const btnWa = document.getElementById('chkPublishWa').checked;
+            const btnTg = document.getElementById('chkPublishTg').checked;
+
+            if (!btnIg && !btnWa && !btnTg) {
+                showToast('⚠️ Selecione pelo menos um canal de destino.');
+                return;
+            }
+
+            updateStatus('pubMasterBtn', 'loading', '⏳ Lançando Campanha...');
 
             try {
                 const cap = document.getElementById('captionText').value + "\n\n" + document.getElementById('hashtagInput').value;
                 const autoReply = document.getElementById('autoReplyCheck').checked;
+                const autoReplyKeyword = document.getElementById('autoReplyKeyword').value;
+                const autoReplyMessage = document.getElementById('autoReplyMessage').value;
+                const autoReplyLink = document.getElementById('autoReplyLink').value;
 
+                const scheduledEl = document.getElementById('scheduledForInput');
+                let scheduledFor = null;
+                if (scheduledEl && scheduledEl.value) {
+                    scheduledFor = new Date(scheduledEl.value).toISOString();
+                }
+
+                // 1. Sempre criamos o Draft primeiro (Registro de Histórico Central)
                 const draftRes = await fetch('/api/admin/create-draft', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
@@ -1011,68 +1473,62 @@
                         postType: document.getElementById('postType').value,
                         caption: cap,
                         imageUrls: [currentData.imageUrl],
-                        autoReplyEnabled: autoReply
+                        videoUrl: currentData.videoUrl || null,
+                        autoReplyEnabled: autoReply,
+                        autoReplyKeyword: autoReplyKeyword,
+                        autoReplyMessage: autoReplyMessage,
+                        autoReplyLink: autoReplyLink,
+                        scheduledFor: scheduledFor
                     })
                 });
+
                 const draftData = await draftRes.json();
-                if (!draftData.success) { updateStatus('pubInstaBtn', 'error', '❌ Erro no Draft'); return; }
+                if (!draftData.success) {
+                    updateStatus('pubMasterBtn', 'error', '❌ Erro no Rascunho');
+                    return;
+                }
 
                 currentDraftId = draftData.draftId;
-                updateStatus('pubInstaBtn', 'loading', '🚀 Postando no Meta...');
 
-                const pubRes = await fetch('/api/admin/publish-instagram', {
+                // 2. Se for agendado, parar por aqui, pois o worker de back-end cuidará do disparo.
+                if (scheduledFor) {
+                    updateStatus('pubMasterBtn', 'success', '⏳ Campanha Agendada!');
+                    showToast('✅ Publicação Agendada com Sucesso!');
+                    return;
+                }
+
+                updateStatus('pubMasterBtn', 'loading', '🚀 Distribuindo Redes...');
+
+                // 3. Disparar Omnichannel API
+                const contentWaTg = document.getElementById('captionText').value + "\n\n🛒 Compre aqui: " + currentConvertedUrl;
+                const pubRes = await fetch('/api/admin/publish-master', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
-                    body: JSON.stringify({ draftId: currentDraftId })
+                    body: JSON.stringify({
+                        draftId: currentDraftId,
+                        publishInstagram: btnIg,
+                        publishTelegram: btnTg,
+                        publishWhatsApp: btnWa,
+                        telegramChatId: document.getElementById('pubTgTarget').value,
+                        whatsAppTargetId: document.getElementById('pubWaTarget').value,
+                        content: contentWaTg,
+                        imageUrl: window.location.origin + currentData.imageUrl
+                    })
                 });
+
                 const pubData = await pubRes.json();
                 if (pubData.success) {
-                    updateStatus('pubInstaBtn', 'success', '✅ Postado com Sucesso!');
-                    showToast('✅ Instagram Postado!');
+                    updateStatus('pubMasterBtn', 'success', '🚀 Campanha no Ar!');
+                    showToast('✅ Distribuição Concluída!');
                 } else {
-                    updateStatus('pubInstaBtn', 'error', '❌ ' + (pubData.error || 'Erro Meta'));
+                    updateStatus('pubMasterBtn', 'error', '⚠️ Parcial/Erro');
+                    console.error("Master Publish Errors: ", pubData.channels);
+                    showToast('❌ Erro em alguns canais (veja o console).', true);
                 }
-            } catch {
-                updateStatus('pubInstaBtn', 'error', '❌ Falha de Rede');
+            } catch (err) {
+                updateStatus('pubMasterBtn', 'error', '❌ Falha de Rede');
+                console.error(err);
             }
-        }
-
-        async function publishWhatsApp() {
-            const target = document.getElementById('pubWaTarget').value;
-            updateStatus('pubWaBtn', 'loading', '⏳ Enviando...');
-            try {
-                const res = await fetch('/api/admin/publish-whatsapp', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
-                    body: JSON.stringify({
-                        targetId: target,
-                        content: document.getElementById('captionText').value + "\n\n🛒 Compre aqui: " + currentConvertedUrl,
-                        imageUrl: window.location.origin + currentData.imageUrl
-                    })
-                });
-                const data = await res.json();
-                if (data.success) updateStatus('pubWaBtn', 'success', '✅ Enviado!');
-                else updateStatus('pubWaBtn', 'error', '❌ Erro');
-            } catch { updateStatus('pubWaBtn', 'error', '❌ Falha'); }
-        }
-
-        async function publishTelegram() {
-            const target = document.getElementById('pubTgTarget').value;
-            updateStatus('pubTgBtn', 'loading', '⏳ Enviando...');
-            try {
-                const res = await fetch('/api/admin/publish-telegram', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
-                    body: JSON.stringify({
-                        targetId: target,
-                        content: document.getElementById('captionText').value + "\n\n🛒 Compre aqui: " + currentConvertedUrl,
-                        imageUrl: window.location.origin + currentData.imageUrl
-                    })
-                });
-                const data = await res.json();
-                if (data.success) updateStatus('pubTgBtn', 'success', '✅ Enviado!');
-                else updateStatus('pubTgBtn', 'error', '❌ Erro');
-            } catch { updateStatus('pubTgBtn', 'error', '❌ Falha'); }
         }
 
         async function syncCatalog() {
@@ -1101,7 +1557,343 @@
 
         function copyCaption() {
             const txt = document.getElementById('captionText').value;
-            navigator.clipboard.writeText(txt).then(() => showToast('📋 Legenda copiada!'));
+            navigator.clipboard.writeText(txt);
+            showToast('📋 Legenda copiada!');
+        }
+
+        async function loadDraftsHistory() {
+            const grid = document.getElementById('draftsGrid');
+            const loader = document.getElementById('draftsLoading');
+
+            grid.innerHTML = '';
+            loader.classList.remove('hidden');
+
+            try {
+                const res = await fetch('/api/admin/drafts', {
+                    headers: { 'X-Admin-Key': savedAdminKey }
+                });
+                const data = await res.json();
+
+                loader.classList.add('hidden');
+
+                if (data.success && data.drafts && data.drafts.length > 0) {
+                    data.drafts.forEach(draft => {
+                        const date = new Date(draft.createdAt).toLocaleString('pt-BR');
+                        let statusColor = 'bg-slate-500';
+                        let statusText = 'Rascunho';
+
+                        if (draft.status === 'published') { statusColor = 'bg-green-500'; statusText = 'Publicado'; }
+                        else if (draft.status === 'scheduled') { statusColor = 'bg-blue-500'; statusText = 'Agendado'; }
+                        else if (draft.status.includes('failed')) { statusColor = 'bg-red-500'; statusText = 'Erro'; }
+
+                        grid.innerHTML += `
+                            <div class="bg-primary/20 hover:bg-primary/40 p-4 rounded-xl border border-white/5 transition-all cursor-pointer group" onclick="loadDraftIntoEditor('${draft.id}')">
+                                <div class="flex items-start gap-3">
+                                    <div class="w-16 h-16 rounded-lg bg-surface overflow-hidden shrink-0 flex items-center justify-center">
+                                        ${draft.imageUrl ? `<img src="${draft.imageUrl}" class="w-full h-full object-cover">` : '<span class="text-xs text-slate-500">Sem Foto</span>'}
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <h4 class="text-white font-bold text-xs truncate mb-1">${draft.productName || 'Sem nome'}</h4>
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <span class="px-2 py-0.5 rounded-full ${statusColor}/20 text-${statusColor.split('-')[1]}-400 text-[9px] font-bold uppercase">${statusText}</span>
+                                            <span class="text-[9px] text-slate-500 uppercase">${draft.postType}</span>
+                                        </div>
+                                        <p class="text-[9px] text-slate-600">${date}</p>
+                                    </div>
+                                </div>
+                                <div class="mt-3 pt-3 border-t border-white/5">
+                                    <button class="w-full text-[10px] font-bold text-accent uppercase tracking-widest group-hover:bg-accent/10 py-1.5 rounded-lg transition-all">
+                                        Carregar no Estúdio ↺
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    grid.innerHTML = '<div class="col-span-full text-center py-6 text-slate-500 text-xs">Nenhum histórico encontrado.</div>';
+                }
+            } catch (err) {
+                loader.classList.add('hidden');
+                grid.innerHTML = '<div class="col-span-full text-center py-6 text-red-400 text-xs">Erro ao carregar histórico.</div>';
+            }
+        }
+
+        async function loadDraftIntoEditor(draftId) {
+            showToast('⏳ Carregando Rascunho...');
+            try {
+                const res = await fetch(`/api/admin/draft/${draftId}`, {
+                    headers: { 'X-Admin-Key': savedAdminKey }
+                });
+                const data = await res.json();
+                if (data.success && data.draft) {
+                    const draft = data.draft;
+
+                    // Fill mock data so the editor "thinks" a product is loaded
+                    currentData = {
+                        title: draft.productName || 'Carregado',
+                        imageUrl: draft.imageUrls?.[0] || '',
+                        price: 'R$ 0,00'
+                    };
+
+                    document.getElementById('captionText').value = draft.caption || '';
+                    document.getElementById('postType').value = draft.postType || 'feed';
+                    document.getElementById('autoReplyCheck').checked = draft.autoReplyEnabled;
+                    document.getElementById('autoReplySettings').classList.toggle('hidden', !draft.autoReplyEnabled);
+                    document.getElementById('autoReplyKeyword').value = draft.autoReplyKeyword || 'eu quero';
+                    document.getElementById('autoReplyMessage').value = draft.autoReplyMessage || 'Aqui está o link:';
+                    document.getElementById('autoReplyLink').value = draft.autoReplyLink || '';
+
+                    if (draft.scheduledFor) {
+                        const d = new Date(draft.scheduledFor);
+                        // format for datetime-local
+                        document.getElementById('scheduledForInput').value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+                        updatePublishBtnText(true);
+                    } else {
+                        document.getElementById('scheduledForInput').value = '';
+                        updatePublishBtnText(false);
+                    }
+
+                    // Update UI State
+                    document.getElementById('productImage').src = currentData.imageUrl;
+                    document.getElementById('productTitle').textContent = currentData.title;
+                    document.getElementById('instaPreviewImg').src = currentData.imageUrl;
+
+                    setFormat(draft.postType || 'feed');
+                    syncPreview();
+
+                    // Switch to Visual tab to start working on it
+                    switchTab('visual');
+                    showToast('✅ Rascunho Carregado!');
+                }
+            } catch {
+                showToast('❌ Erro ao ler rascunho', true);
+            }
+        }
+
+        // === Mini Canvas Editor ===
+        let editorCanvas;
+        let editorCtx;
+        let editorImg = new Image();
+        let editorElements = [];
+        let editorDraggingIndex = -1;
+        let editorDragOffsetX = 0;
+        let editorDragOffsetY = 0;
+
+        function initEditor() {
+            editorCanvas = document.getElementById('imageEditorCanvas');
+            editorCtx = editorCanvas.getContext('2d');
+
+            editorCanvas.addEventListener('mousedown', handleEditorMouseDown);
+            editorCanvas.addEventListener('mousemove', handleEditorMouseMove);
+            window.addEventListener('mouseup', handleEditorMouseUp);
+            // Touch support
+            editorCanvas.addEventListener('touchstart', (e) => handleEditorMouseDown(e.touches[0]), { passive: false });
+            editorCanvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleEditorMouseMove(e.touches[0]); }, { passive: false });
+            window.addEventListener('touchend', handleEditorMouseUp);
+        }
+
+        function openEditorModal() {
+            if (!currentData || !currentData.imageUrl) {
+                showToast('⚠️ Precisa de uma imagem base para editar.', true);
+                return;
+            }
+            if (!editorCanvas) initEditor();
+
+            document.getElementById('editorModal').classList.remove('hidden');
+            editorElements = []; // Reset elements
+
+            editorImg.crossOrigin = "anonymous";
+            editorImg.onload = () => {
+                editorCanvas.width = editorImg.width;
+                editorCanvas.height = editorImg.height;
+                renderEditor();
+            };
+            editorImg.src = document.getElementById('instaPreviewImg').src || currentData.imageUrl; // Use current preview
+        }
+
+        function closeEditorModal() {
+            document.getElementById('editorModal').classList.add('hidden');
+        }
+
+        function renderEditor() {
+            if (!editorCtx || !editorImg.width) return;
+
+            // Draw base image
+            editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
+            editorCtx.drawImage(editorImg, 0, 0, editorCanvas.width, editorCanvas.height);
+
+            // Draw elements (from bottom to top)
+            for (const el of editorElements) {
+                if (el.type === 'text') {
+                    editorCtx.font = `bold ${el.size}px sans-serif`;
+                    // Text background
+                    editorCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    const textWidth = editorCtx.measureText(el.text).width;
+                    const padding = el.size * 0.4;
+
+                    // Simple rounded rect for bg
+                    editorCtx.beginPath();
+                    editorCtx.roundRect(el.x - padding, el.y - el.size, textWidth + (padding * 2), el.size + (padding), el.size * 0.2);
+                    editorCtx.fill();
+
+                    // Text
+                    editorCtx.fillStyle = '#ffffff';
+                    editorCtx.fillText(el.text, el.x, el.y);
+
+                    // Update bounding box for interaction
+                    el.width = textWidth + (padding * 2);
+                    el.height = el.size + padding;
+                    el.boundsX = el.x - padding;
+                    el.boundsY = el.y - el.size;
+
+                } else if (el.type === 'badge') {
+                    const tagSize = editorCanvas.width * 0.15; // responsive size
+
+                    if (el.style === 'discount') {
+                        editorCtx.fillStyle = '#ef4444'; // red-500
+                        editorCtx.beginPath();
+                        editorCtx.arc(el.x + tagSize / 2, el.y + tagSize / 2, tagSize / 2, 0, Math.PI * 2);
+                        editorCtx.fill();
+
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${tagSize * 0.3}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        editorCtx.fillText(currentData?.discountPercent ? `${currentData.discountPercent}%` : 'OFF', el.x + tagSize / 2, el.y + tagSize / 2);
+                        editorCtx.fillText('OFF', el.x + tagSize / 2, el.y + tagSize / 2 + tagSize * 0.3);
+                        editorCtx.textAlign = 'left'; // reset
+                    } else if (el.style === 'frete') {
+                        const rw = tagSize * 1.5;
+                        const rh = tagSize * 0.5;
+                        editorCtx.fillStyle = '#22c55e'; // green-500
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(el.x, el.y, rw, rh, rh / 2);
+                        editorCtx.fill();
+
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${rh * 0.5}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        editorCtx.fillText('FRETE GRÁTIS', el.x + rw / 2, el.y + rh * 0.7);
+                        editorCtx.textAlign = 'left'; // reset
+                    }
+
+                    el.width = (el.style === 'frete') ? tagSize * 1.5 : tagSize;
+                    el.height = (el.style === 'frete') ? tagSize * 0.5 : tagSize;
+                    el.boundsX = el.x;
+                    el.boundsY = el.y;
+                }
+            }
+        }
+
+        function addEditorText() {
+            const input = document.getElementById('editorTextInput');
+            const txt = input.value.trim();
+            if (!txt) return;
+
+            editorElements.push({
+                type: 'text',
+                text: txt,
+                x: editorCanvas.width / 2, // initially center, bounds updated on render
+                y: editorCanvas.height / 2,
+                size: editorCanvas.width * 0.05
+            });
+            input.value = '';
+            renderEditor();
+        }
+
+        function addEditorBadge(style) {
+            editorElements.push({
+                type: 'badge',
+                style: style,
+                x: editorCanvas.width / 2,
+                y: editorCanvas.height / 4
+            });
+            renderEditor();
+        }
+
+        function handleEditorMouseDown(e) {
+            const rect = editorCanvas.getBoundingClientRect();
+            const scaleX = editorCanvas.width / rect.width;
+            const scaleY = editorCanvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+
+            for (let i = editorElements.length - 1; i >= 0; i--) {
+                const el = editorElements[i];
+                if (mouseX >= el.boundsX && mouseX <= el.boundsX + el.width &&
+                    mouseY >= el.boundsY && mouseY <= el.boundsY + el.height) {
+
+                    editorDraggingIndex = i;
+                    editorDragOffsetX = mouseX - el.boundsX;
+                    editorDragOffsetY = mouseY - el.boundsY;
+                    return;
+                }
+            }
+        }
+
+        function handleEditorMouseMove(e) {
+            if (editorDraggingIndex < 0) return;
+
+            const rect = editorCanvas.getBoundingClientRect();
+            const scaleX = editorCanvas.width / rect.width;
+            const scaleY = editorCanvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+
+            const el = editorElements[editorDraggingIndex];
+
+            if (el.type === 'text') {
+                const padding = el.size * 0.4;
+                el.x = (mouseX - editorDragOffsetX) + padding;
+                el.y = (mouseY - editorDragOffsetY) + el.size;
+            } else {
+                el.x = mouseX - editorDragOffsetX;
+                el.y = mouseY - editorDragOffsetY;
+            }
+            renderEditor();
+        }
+
+        function handleEditorMouseUp() {
+            editorDraggingIndex = -1;
+        }
+
+        async function applyEditorChanges() {
+            const dataUrl = editorCanvas.toDataURL('image/jpeg', 0.9);
+
+            document.getElementById('instaPreviewImg').src = dataUrl;
+            document.getElementById('productImage').src = dataUrl;
+
+            closeEditorModal();
+            showToast('⏳ Salvando edição...', false);
+
+            try {
+                const res = await fetch(dataUrl);
+                const blob = await res.blob();
+
+                const formData = new FormData();
+                formData.append('file', blob, 'edited_banner.jpg');
+
+                const uploadRes = await fetch('/api/admin/upload-media', {
+                    method: 'POST',
+                    headers: { 'X-Admin-Key': savedAdminKey },
+                    body: formData
+                });
+
+                const uploadData = await uploadRes.json();
+                if (uploadData.success) {
+                    currentData.imageUrl = uploadData.url;
+                    if (currentData.images && currentData.images.length > 0) {
+                        currentData.images[0] = uploadData.url;
+                    }
+                    showToast('✅ Arte atualizada e salva!');
+                    syncPreview();
+                } else {
+                    showToast('⚠️ Arte aplicada visualmente, mas falhou salvar no servidor.', true);
+                }
+            } catch {
+                showToast('⚠️ Arte aplicada visualmente, erro de rede.', true);
+            }
         }
 
         function showToast(message) {

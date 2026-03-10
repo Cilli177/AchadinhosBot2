@@ -117,6 +117,54 @@ public sealed class OpenAiInstagramPostGenerator
         }
     }
 
+    public async Task<string?> GenerateHashtagsAsync(string productInput, OpenAISettings aiSettings, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey) || aiSettings.ApiKey == "********")
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(aiSettings.Model) ? "gpt-4o-mini" : aiSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(aiSettings.BaseUrl) ? "https://api.openai.com/v1" : aiSettings.BaseUrl.Trim();
+
+        var payload = new
+        {
+            model,
+            messages = new[]
+            {
+                new { role = "system", content = "Você é um especialista em redes sociais. Responda apenas com uma lista de 10 a 15 hashtags altamente virais e relevantes para o produto informado, separadas por espaço." },
+                new { role = "user", content = $"Produto: {productInput}\n\nGere as hashtags:" }
+            },
+            temperature = 0.7,
+            max_tokens = 100
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("openai");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", aiSettings.ApiKey);
+            using var response = await client.PostAsync(
+                $"{baseUrl.TrimEnd('/')}/chat/completions",
+                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                cancellationToken);
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+            {
+                var content = choices[0].GetProperty("message").GetProperty("content").GetString();
+                return content?.Trim();
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     internal static string BuildPrompt(string productInput, string? offerContext, string? affiliateLink, List<string> images, string? title, string? description, InstagramPostSettings instaSettings)
     {
         if (instaSettings.UseShortProductName)

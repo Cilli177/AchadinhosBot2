@@ -74,6 +74,24 @@ public static class AdminEndpoints
             return Results.Ok(new { success = true, caption });
         });
 
+        // --- Generate AI Hashtags ---
+        app.MapPost("/api/admin/generate-hashtags", async (
+            AdminGenerateCaptionRequest req,
+            HttpContext context,
+            IInstagramPostComposer composer,
+            ISettingsStore settingsStore,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var settings = await settingsStore.GetAsync(ct);
+            var hashtags = await composer.SuggestHashtagsAsync(req.ProductName, settings.InstagramPosts, ct);
+
+            return Results.Ok(new { success = true, hashtags });
+        });
+
         // --- Upload Media ---
         app.MapPost("/api/admin/upload-media", async (
             HttpContext context,
@@ -120,10 +138,15 @@ public static class AdminEndpoints
             {
                 ProductName = req.ProductName,
                 PostType = req.PostType ?? "feed",
+                VideoUrl = req.VideoUrl,
                 Caption = req.Caption,
                 ImageUrls = req.ImageUrls ?? new(),
                 AutoReplyEnabled = req.AutoReplyEnabled,
-                Status = "draft"
+                AutoReplyKeyword = req.AutoReplyKeyword,
+                AutoReplyMessage = req.AutoReplyMessage,
+                AutoReplyLink = req.AutoReplyLink,
+                ScheduledFor = req.ScheduledFor,
+                Status = req.ScheduledFor.HasValue ? "scheduled" : "draft"
             };
 
             await store.SaveAsync(draft, ct);
@@ -203,6 +226,86 @@ public static class AdminEndpoints
             }
         });
 
+        // --- Master Publish (Omnichannel) ---
+        app.MapPost("/api/admin/publish-master", async (
+            AdminMasterPublishRequest req,
+            HttpContext context,
+            IInstagramPublishService publishService,
+            IWhatsAppGateway whatsapp,
+            ITelegramOutboundPublisher telegram,
+            IInstagramPublishStore draftStore,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var draft = await draftStore.GetAsync(req.DraftId, ct);
+            if (draft == null && req.PublishInstagram)
+                return Results.NotFound(new { success = false, error = "Draft not found." });
+
+            var content = req.Content ?? draft?.Caption ?? string.Empty;
+            var imageUrl = req.ImageUrl ?? draft?.ImageUrls.FirstOrDefault();
+
+            var results = new Dictionary<string, object>();
+
+            if (req.PublishTelegram && !string.IsNullOrWhiteSpace(req.TelegramChatId))
+            {
+                try
+                {
+                    var chatId = long.Parse(req.TelegramChatId);
+                    var cmd = new SendTelegramMessageCommand
+                    {
+                        ChatId = chatId,
+                        Text = content,
+                        ImageUrl = imageUrl
+                    };
+                    await telegram.PublishAsync(cmd, ct);
+                    results["telegram"] = new { success = true };
+                }
+                catch (Exception ex)
+                {
+                    results["telegram"] = new { success = false, error = ex.Message };
+                }
+            }
+
+            if (req.PublishWhatsApp && !string.IsNullOrWhiteSpace(req.WhatsAppTargetId))
+            {
+                try
+                {
+                    WhatsAppSendResult waResult;
+                    if (!string.IsNullOrWhiteSpace(imageUrl))
+                    {
+                        waResult = await whatsapp.SendImageUrlAsync(null, req.WhatsAppTargetId, imageUrl, content, null, "card.jpg", ct);
+                    }
+                    else
+                    {
+                        waResult = await whatsapp.SendTextAsync(null, req.WhatsAppTargetId, content, ct);
+                    }
+                    results["whatsapp"] = new { success = waResult.Success, error = waResult.Message };
+                }
+                catch (Exception ex)
+                {
+                    results["whatsapp"] = new { success = false, error = ex.Message };
+                }
+            }
+
+            if (req.PublishInstagram)
+            {
+                try
+                {
+                    var igResult = await publishService.ExecutePublishAsync(req.DraftId, ct);
+                    results["instagram"] = new { success = igResult.Success, mediaId = igResult.MediaId, error = igResult.Error };
+                }
+                catch (Exception ex)
+                {
+                    results["instagram"] = new { success = false, error = ex.Message };
+                }
+            }
+
+            return Results.Ok(new { success = true, channels = results });
+        });
+
         // --- Add to Catalog ---
         app.MapPost("/api/admin/add-to-catalog", async (
             AdminAddToCatalogRequest req,
@@ -221,6 +324,48 @@ public static class AdminEndpoints
             await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
             return Results.Ok(new { success = true });
         });
+
+        // --- List Drafts ---
+        app.MapGet("/api/admin/drafts", async (
+            HttpContext context,
+            IInstagramPublishStore store,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var drafts = await store.ListAsync(ct);
+            var result = drafts.OrderByDescending(d => d.CreatedAt).Take(50).Select(d => new
+            {
+                id = d.Id,
+                productName = d.ProductName,
+                postType = d.PostType,
+                status = d.Status,
+                mediaId = d.MediaId,
+                createdAt = d.CreatedAt,
+                imageUrl = d.ImageUrls.FirstOrDefault()
+            });
+
+            return Results.Ok(new { success = true, drafts = result });
+        });
+
+        // --- Get Specific Draft ---
+        app.MapGet("/api/admin/draft/{draftId}", async (
+            string draftId,
+            HttpContext context,
+            IInstagramPublishStore store,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var draft = await store.GetAsync(draftId, ct);
+            if (draft == null) return Results.NotFound("Draft not found.");
+
+            return Results.Ok(new { success = true, draft });
+        });
     }
 
     private static bool IsAdminAuthorized(HttpContext ctx, string apiKey)
@@ -235,7 +380,8 @@ public static class AdminEndpoints
 
 public sealed record AdminGenerateCardRequest(string Title, string? Price, string? PreviousPrice, int? DiscountPercent, string ImageUrl);
 public sealed record AdminGenerateCaptionRequest(string ProductName, string? OfferContext);
-public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, bool AutoReplyEnabled);
+public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor);
 public sealed record AdminPublishRequest(string DraftId);
 public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl);
+public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl);
 public sealed record AdminAddToCatalogRequest(string DraftId);

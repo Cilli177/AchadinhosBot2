@@ -92,6 +92,12 @@ builder.Services
     .Bind(builder.Configuration.GetSection("Telegram"))
     .ValidateDataAnnotations();
 
+builder.Services
+    .AddOptions<MessagingOptions>()
+    .Bind(builder.Configuration.GetSection("Messaging"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 var telegramStartupOptions = builder.Configuration.GetSection("Telegram").Get<TelegramOptions>() ?? new TelegramOptions();
 var persistedTelegramBotTokenPath =
     Environment.GetEnvironmentVariable("TELEGRAM__BOTTOKEN_FILE")?.Trim()
@@ -188,6 +194,7 @@ builder.Services.AddHttpClient("deepseek", c => c.Timeout = TimeSpan.FromSeconds
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
 builder.Services.AddSingleton<AmazonCreatorApiClient>();
 builder.Services.AddSingleton<AmazonPaApiClient>();
+builder.Services.AddSingleton<AmazonHtmlScraperService>();
 builder.Services.AddSingleton<IAffiliateCouponSyncService, AffiliateCouponSyncService>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, AmazonOfficialCouponProvider>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, ShopeeOfficialCouponProvider>();
@@ -205,6 +212,9 @@ builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStor
 builder.Services.AddSingleton<InstagramLinkMetaService>();
 builder.Services.AddSingleton<OfficialProductDataService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
+builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
+builder.Services.AddSingleton<IMetaGraphClient, MetaGraphClient>();
+builder.Services.AddSingleton<IInstagramPublishService, InstagramPublishService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
 builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
@@ -216,13 +226,26 @@ builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
 builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalStore>();
 builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
-builder.Services.AddSingleton<IWhatsAppGateway, EvolutionWhatsAppGateway>();
+builder.Services.AddSingleton<EvolutionWhatsAppGateway>();
+builder.Services.AddSingleton<IWhatsAppTransport>(provider => provider.GetRequiredService<EvolutionWhatsAppGateway>());
+builder.Services.AddSingleton<IWhatsAppGateway, QueuedWhatsAppGateway>();
 builder.Services.AddSingleton<IMediaStore, FileMediaStore>();
 builder.Services.AddSingleton<IPromotionalCardGenerator, PromotionalCardGenerator>();
 builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
 builder.Services.AddSingleton<WhatsAppHelpMenuStore>();
-builder.Services.AddSingleton<ITelegramGateway, TelegramBotApiGateway>();
+builder.Services.AddSingleton<TelegramBotApiGateway>();
+builder.Services.AddSingleton<ITelegramTransport>(provider => provider.GetRequiredService<TelegramBotApiGateway>());
+builder.Services.AddSingleton<ITelegramGateway, QueuedTelegramGateway>();
+builder.Services.AddSingleton<IBotConversorQueuePublisher, RabbitMqBotConversorQueuePublisher>();
+builder.Services.AddSingleton<IBotConversorOutboxStore, FileBotConversorOutboxStore>();
+builder.Services.AddSingleton<IMessageOrchestrator, BotConversorMessageOrchestrator>();
+builder.Services.AddSingleton<IWhatsAppOutboundPublisher, RabbitMqWhatsAppOutboundPublisher>();
+builder.Services.AddSingleton<IWhatsAppOutboundOutboxStore, FileWhatsAppOutboundOutboxStore>();
+builder.Services.AddSingleton<ITelegramOutboundPublisher, RabbitMqTelegramOutboundPublisher>();
+builder.Services.AddSingleton<ITelegramOutboundOutboxStore, FileTelegramOutboundOutboxStore>();
+builder.Services.AddSingleton<IInstagramOutboundPublisher, RabbitMqInstagramOutboundPublisher>();
+builder.Services.AddSingleton<IInstagramOutboundOutboxStore, FileInstagramOutboundOutboxStore>();
 builder.Services.AddSingleton<TelegramAlertSender>();
 if (startTelegramBotWorker)
 {
@@ -236,17 +259,28 @@ if (startTelegramUserbotWorker)
 }
 
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
-builder.Services.AddSingleton<IIdempotencyStore, MemoryIdempotencyStore>();
+builder.Services.AddSingleton<IIdempotencyStore, FileIdempotencyStore>();
 builder.Services.AddSingleton<LoginAttemptStore>();
 builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
 builder.Services.AddSingleton<DeliverySafetyPolicy>();
 builder.Services.AddHostedService<UptimeHeartbeatService>();
 builder.Services.AddHostedService<InstagramAutoPilotWorker>();
 builder.Services.AddHostedService<ContentCalendarWorker>();
+builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
+builder.Services.AddHostedService<BotConversorOutboxReplayWorker>();
+builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
+builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
+builder.Services.AddHostedService<InstagramOutboundReplayWorker>();
 
 builder.Services.AddMassTransit(x =>
 {
+    x.AddConsumer<BotConversorWebhookConsumer>();
     x.AddConsumer<EvolutionWebhookConsumer>();
+    x.AddConsumer<WhatsAppOutboundConsumer>();
+    x.AddConsumer<TelegramOutboundConsumer>();
+    x.AddConsumer<InstagramPublishConsumer>();
+    x.AddConsumer<InstagramCommentReplyConsumer>();
+    x.AddConsumer<InstagramDirectMessageConsumer>();
     x.UsingRabbitMq((context, cfg) =>
     {
         var rabbitHost = builder.Configuration["RabbitMq:Host"] ?? "localhost";
@@ -371,6 +405,7 @@ app.MapGet("/auth/me", (HttpContext context) =>
 });
 
 app.MapConverterEndpoint();
+app.MapAdminEndpoints();
 app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 
 app.MapGet("/conversor", (IWebHostEnvironment env) =>
@@ -410,6 +445,22 @@ app.MapPost("/api/conversor", async (
     if (!string.IsNullOrWhiteSpace(viewModel.Input))
     {
         var normalizedInputUrl = NormalizeConverterInputToUrl(viewModel.Input);
+
+        // Strip third-party Amazon affiliate tags before enrichment so our pipeline
+        // always works with a clean canonical product URL.
+        if (!string.IsNullOrWhiteSpace(normalizedInputUrl) &&
+            Uri.TryCreate(normalizedInputUrl, UriKind.Absolute, out var inputUri) &&
+            (inputUri.Host.EndsWith("amazon.com.br", StringComparison.OrdinalIgnoreCase) ||
+             inputUri.Host.EndsWith("amazon.com", StringComparison.OrdinalIgnoreCase)))
+        {
+            var q = System.Web.HttpUtility.ParseQueryString(inputUri.Query);
+            q.Remove("tag");   // remove any existing affiliate tag
+            q.Remove("linkCode");
+            q.Remove("linkId");
+            var builder = new UriBuilder(inputUri) { Query = q.Count > 0 ? q.ToString() : string.Empty };
+            normalizedInputUrl = builder.Uri.ToString().TrimEnd('?');
+        }
+
         if (string.IsNullOrWhiteSpace(normalizedInputUrl))
         {
             viewModel.Error = "Cole um link valido para converter.";
@@ -869,7 +920,7 @@ app.MapPost("/webhooks/evolution", async (
 
 app.MapPost("/webhook/bot-conversor", async (
     HttpRequest request,
-    IHttpClientFactory httpClientFactory,
+    IMessageOrchestrator orchestrator,
     ILogger<Program> logger,
     IOptions<EvolutionOptions> evolutionOptions,
     IOptions<WebhookOptions> webhookOptions,
@@ -889,30 +940,30 @@ app.MapPost("/webhook/bot-conversor", async (
         return Results.Ok(new { success = true, ignored = true });
     }
 
-    var client = httpClientFactory.CreateClient("evolution-webhook-internal");
-    using var req = new HttpRequestMessage(HttpMethod.Post, "/internal/webhook/bot-conversor")
-    {
-        Content = new StringContent(body, Encoding.UTF8, "application/json")
-    };
+    var headers = request.Headers.ToDictionary(
+        header => header.Key,
+        header => header.Value.ToString(),
+        StringComparer.OrdinalIgnoreCase);
 
-    if (!string.IsNullOrWhiteSpace(webhookOptions.Value.ApiKey))
-    {
-        req.Headers.TryAddWithoutValidation("x-api-key", webhookOptions.Value.ApiKey);
-    }
-
-    using var res = await client.SendAsync(req, ct);
-    var resBody = await res.Content.ReadAsStringAsync(ct);
-    if (!res.IsSuccessStatusCode)
+    var result = await orchestrator.EnqueueBotConversorAsync(body, headers, ct);
+    if (!result.Accepted)
     {
         logger.LogWarning(
-            "Webhook bot-conversor direto falhou. Status={Status} Body={Body}",
-            res.StatusCode,
-            string.IsNullOrWhiteSpace(resBody) ? "(vazio)" : resBody[..Math.Min(400, resBody.Length)]);
+            "Webhook bot-conversor falhou ao enfileirar. MessageId={MessageId} Mode={Mode} Error={Error}",
+            result.MessageId,
+            result.Mode,
+            result.Error);
 
         return Results.StatusCode(StatusCodes.Status502BadGateway);
     }
 
-    return Results.Ok(new { success = true, mode = "direct-internal" });
+    return Results.Ok(new
+    {
+        success = true,
+        messageId = result.MessageId,
+        mode = result.Mode,
+        persistedLocally = result.PersistedLocally
+    });
 });
 
 app.MapPost("/internal/webhook/bot-conversor", async (
@@ -1294,7 +1345,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 var replyText = BuildResponderMessage(responder, strictResponderText);
 
                 // Enriquecer com metadados de produto (Amazon/Shopee/ML)
-                var (enrichedReply, responderProductImageUrl) = await processor.EnrichTextWithProductDataAsync(
+                var (enrichedReply, responderProductImageUrl, _) = await processor.EnrichTextWithProductDataAsync(
                     replyText, normalizedText, ct);
                 replyText = enrichedReply;
 
@@ -1487,7 +1538,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             }
 
             // Enriquecer com metadados de produto (Amazon/Shopee/ML)
-            var (enrichedFinal, forwardProductImageUrl) = await processor.EnrichTextWithProductDataAsync(
+            var (enrichedFinal, forwardProductImageUrl, _) = await processor.EnrichTextWithProductDataAsync(
                 finalText, normalizedText, ct);
             finalText = enrichedFinal;
 
@@ -2974,7 +3025,7 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
     if (sendNow)
     {
         var settings = await settingsStore.GetAsync(ct);
-        var (enrichedText, productImageUrl) = await processor.EnrichTextWithProductDataAsync(convertedText, item.OriginalText, ct);
+        var (enrichedText, productImageUrl, _) = await processor.EnrichTextWithProductDataAsync(convertedText, item.OriginalText, ct);
         if (!string.IsNullOrWhiteSpace(enrichedText))
         {
             outboundText = enrichedText;
@@ -7273,82 +7324,149 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
     var qEncoded = System.Net.WebUtility.HtmlEncode(q);
     var currentUrlEncoded = System.Net.WebUtility.HtmlEncode(currentUrl);
     var sb = new StringBuilder();
-    sb.AppendLine("<!doctype html>");
-    sb.AppendLine("<html lang=\"pt-BR\">");
-    sb.AppendLine("<head>");
-    sb.AppendLine("  <meta charset=\"utf-8\" />");
-    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
-    sb.AppendLine("  <title>Catalogo de Ofertas</title>");
-    sb.AppendLine("  <style>");
-    sb.AppendLine("    :root{--bg:#f6f8ff;--text:#1d2842;--sub:#61718f;--line:#d7deef;--card:#ffffff;--btn:#2f73ef;--btnText:#fff;}");
-    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(175deg,#fbfcff 0%,var(--bg) 100%);color:var(--text)}");
-    sb.AppendLine("    .wrap{max-width:980px;margin:0 auto;padding:22px 14px 32px}");
-    sb.AppendLine("    .head{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}");
-    sb.AppendLine("    h1{margin:0 0 6px;font-size:1.4rem} p{margin:0;color:var(--sub)}");
-    sb.AppendLine("    form{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}");
-    sb.AppendLine("    input{flex:1;min-width:220px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}");
-    sb.AppendLine("    button{padding:10px 14px;border:0;border-radius:10px;background:var(--btn);color:var(--btnText);font-weight:700;cursor:pointer}");
-    sb.AppendLine("    .list{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}");
-    sb.AppendLine("    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}");
-    sb.AppendLine("    .code{font-size:.82rem;color:var(--sub);font-weight:700}");
-    sb.AppendLine("    .title{margin-top:6px;font-weight:700;line-height:1.35}");
-    sb.AppendLine("    .meta{margin-top:6px;color:var(--sub);font-size:.86rem}");
-    sb.AppendLine("    .price{margin-top:8px;font-size:1rem;font-weight:700}");
-    sb.AppendLine("    .thumb{margin-top:8px;width:100%;height:170px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}");
-    sb.AppendLine("    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}");
-    sb.AppendLine("    .link{display:inline-block;text-decoration:none;background:var(--btn);color:#fff;padding:8px 10px;border-radius:8px;font-weight:700}");
-    sb.AppendLine("    .ghost{display:inline-block;text-decoration:none;background:#eef3ff;color:#1f3e80;padding:8px 10px;border-radius:8px;font-weight:700}");
-    sb.AppendLine("    .foot{margin-top:14px;color:var(--sub);font-size:.82rem}");
-    sb.AppendLine("  </style>");
-    sb.AppendLine("</head>");
-    sb.AppendLine("<body><main class=\"wrap\">");
-    sb.AppendLine("  <section class=\"head\">");
-    sb.AppendLine("    <h1>Catalogo de ofertas</h1>");
-    sb.AppendLine("    <p>Busque pelo numero (ex: 42) ou palavra-chave do item.</p>");
-    sb.AppendLine("    <form method=\"get\" action=\"/catalogo\">");
-    sb.AppendLine($"      <input name=\"q\" value=\"{qEncoded}\" placeholder=\"Ex: 42, ITEM42, FONE\" />");
-    sb.AppendLine("      <button type=\"submit\">Buscar</button>");
-    sb.AppendLine("    </form>");
-    sb.AppendLine("  </section>");
+
+    var headerHtml = $$$"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catálogo VIP de Ofertas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;800&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0f172a',
+                        accent: '#c4a468',
+                        accentHover: '#b39359',
+                        vipRed: '#e11d48',
+                        surface: '#1e293b'
+                    },
+                    fontFamily: {
+                        display: ['Montserrat', 'sans-serif'],
+                        body: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        h1, h2, h3 { font-family: 'Montserrat', sans-serif; }
+        .glass-header { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(196, 164, 104, 0.2); }
+        .vip-card { background: linear-gradient(145deg, #1e293b, #0f172a); border: 1px solid rgba(196, 164, 104, 0.15); transition: transform 0.3s ease, box-shadow 0.3s ease; }
+        .vip-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(196, 164, 104, 0.15); border-color: rgba(196, 164, 104, 0.4); }
+        .image-wrapper { background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; height: 240px; border-bottom: 1px solid rgba(196, 164, 104, 0.1); }
+    </style>
+</head>
+<body class="min-h-screen pb-12">
+    <!-- Header -->
+    <header class="sticky top-0 z-50 glass-header">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col md:flex-row gap-4 justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-accent rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(196,164,104,0.4)]">
+                    <span class="text-primary font-black text-sm tracking-tighter">VIP</span>
+                </div>
+                <h1 class="text-xl md:text-2xl font-extrabold uppercase tracking-widest text-white">Catálogo <span class="text-accent">Exclusivo</span></h1>
+            </div>
+            
+            <form method="get" action="/catalogo" class="w-full md:w-auto flex flex-1 max-w-md">
+                <input type="text" name="q" value="{{{qEncoded}}}" placeholder="Buscar produto ou marca..." class="w-full bg-surface/50 border border-accent/30 rounded-l-xl px-4 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors">
+                <button type="submit" class="bg-accent hover:bg-accentHover text-primary font-bold px-6 py-2 rounded-r-xl transition-colors">
+                    Buscar
+                </button>
+            </form>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+""";
+
+    sb.AppendLine(headerHtml);
 
     if (items.Count == 0)
     {
-        sb.AppendLine("  <div class=\"head\" style=\"margin-top:12px;\">Nenhum item encontrado.</div>");
+        sb.AppendLine($$"""
+        <div class="mt-12 text-center p-12 vip-card rounded-2xl max-w-2xl mx-auto">
+            <div class="text-accent mb-4"><svg class="w-16 h-16 mx-auto opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg></div>
+            <h2 class="text-2xl font-bold text-white mb-2">Nenhum achadinho encontrado.</h2>
+            <p class="text-slate-400">Tente buscar por outro termo ou volte mais tarde para novas ofertas.</p>
+        </div>
+""");
     }
     else
     {
-        sb.AppendLine("  <section class=\"list\">");
+        sb.AppendLine("        <div class=\"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6\">");
+        
         foreach (var item in items)
         {
             var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
+            var titleShort = title.Length > 60 ? title.Substring(0, 57) + "..." : title;
             var store = System.Net.WebUtility.HtmlEncode(item.Store);
-            var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
-            var link = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
-            var detail = $"/item/{item.ItemNumber}";
-            var detailLink = System.Net.WebUtility.HtmlEncode(detail);
-            var price = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+            var detailLink = $"/item/{item.ItemNumber}";
+            var image = string.IsNullOrWhiteSpace(item.ImageUrl) ? "https://via.placeholder.com/400" : System.Net.WebUtility.HtmlEncode(item.ImageUrl);
+            
+            var fullPrice = item.PriceText ?? "Indisponível";
+            var price_val = fullPrice.Replace("R$ ", "").Replace("R$", "").Trim();
+            
+            var published = item.PublishedAt.ToString("dd/MM/yyyy");
 
-            sb.AppendLine("    <article class=\"card\">");
-            sb.AppendLine($"      <div class=\"code\">ITEM {item.ItemNumber} | Palavra: {keyword}</div>");
-            sb.AppendLine($"      <div class=\"title\">{title}</div>");
-            sb.AppendLine($"      <div class=\"meta\">Loja: {store}</div>");
-            sb.AppendLine($"      <div class=\"price\">{price}</div>");
-            if (!string.IsNullOrWhiteSpace(item.ImageUrl))
-            {
-                var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl);
-                sb.AppendLine($"      <img class=\"thumb\" src=\"{image}\" alt=\"Item {item.ItemNumber}\" loading=\"lazy\" />");
-            }
-            sb.AppendLine("      <div class=\"actions\">");
-            sb.AppendLine($"        <a class=\"link\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
-            sb.AppendLine($"        <a class=\"ghost\" href=\"{detailLink}\">Ver detalhes</a>");
-            sb.AppendLine("      </div>");
-            sb.AppendLine("    </article>");
+            var cardHtml = $$$"""
+            <article class="vip-card rounded-2xl overflow-hidden flex flex-col h-full group">
+                <a href="{{{detailLink}}}" class="block relative image-wrapper">
+                    <!-- Date badge inside image -->
+                    <div class="absolute top-3 left-3 bg-primary/90 text-accent text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm border border-accent/20 z-10">
+                        {{{published}}}
+                    </div>
+                    <!-- View overlay -->
+                    <div class="absolute inset-0 bg-primary/40 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center justify-center backdrop-blur-[2px]">
+                        <span class="bg-accent text-primary font-bold px-4 py-2 rounded-full transform translate-y-4 group-hover:translate-y-0 transition-transform">Ver Detalhes</span>
+                    </div>
+                    <img src="{{{image}}}" alt="{{{title}}}" loading="lazy" class="w-full h-full object-contain p-4 mix-blend-multiply group-hover:scale-110 transition-transform duration-500" />
+                </a>
+                
+                <div class="p-5 flex flex-col flex-1">
+                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 flex items-center justify-between">
+                        <span>{{{store}}}</span>
+                        <span class="text-accent">#{{{item.ItemNumber}}}</span>
+                    </div>
+                    
+                    <h3 class="text-white font-semibold flex-1 leading-snug mb-4">
+                        <a href="{{{detailLink}}}" class="hover:text-accent transition-colors" title="{{{title}}}">{{{titleShort}}}</a>
+                    </h3>
+                    
+                    <div class="mt-auto pt-4 border-t border-white/5 flex items-center justify-between">
+                        <div class="flex flex-col">
+                            <span class="text-xs text-slate-500">Preço VIP</span>
+                            <div class="flex items-baseline gap-1">
+                                <span class="text-white text-sm">R$</span>
+                                <span class="text-accent text-2xl font-bold tracking-tight">{{{price_val}}}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </article>
+""";
+            sb.AppendLine(cardHtml);
         }
-        sb.AppendLine("  </section>");
+        
+        sb.AppendLine("        </div>"); // End grid
     }
 
-    sb.AppendLine($"  <div class=\"foot\">Link desta pagina: {currentUrlEncoded}</div>");
-    sb.AppendLine("</main></body></html>");
+    sb.AppendLine($$"""
+    </main>
+    <footer class="mt-12 py-8 border-t border-white/10 text-center">
+        <p class="text-slate-500 text-sm">Design VIP Exclusivo • Seu link: <span class="text-slate-400">{{{currentUrlEncoded}}}</span></p>
+    </footer>
+</body>
+</html>
+""");
+
     return sb.ToString();
 }
 
@@ -7357,43 +7475,258 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
     var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
     var store = System.Net.WebUtility.HtmlEncode(item.Store);
     var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
-    var price = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+    var fullPrice = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
+    var price_val = fullPrice.Replace("R$ ", "").Replace("R$", "").Trim();
     var offerUrl = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
-    var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
+    var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? "https://via.placeholder.com/800");
     var catalog = System.Net.WebUtility.HtmlEncode(catalogUrl);
-    var sb = new StringBuilder();
-    sb.AppendLine("<!doctype html>");
-    sb.AppendLine("<html lang=\"pt-BR\">");
-    sb.AppendLine("<head>");
-    sb.AppendLine("  <meta charset=\"utf-8\" />");
-    sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
-    sb.AppendLine($"  <title>Item {item.ItemNumber} - Catalogo</title>");
-    sb.AppendLine("  <style>");
-    sb.AppendLine("    :root{--bg:#f6f8ff;--text:#1d2842;--sub:#61718f;--line:#d7deef;--card:#fff;--btn:#2f73ef;--btnText:#fff}");
-    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;background:linear-gradient(175deg,#fbfcff 0%,var(--bg) 100%);color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif}");
-    sb.AppendLine("    .wrap{max-width:720px;margin:0 auto;padding:24px 14px 28px}");
-    sb.AppendLine("    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}");
-    sb.AppendLine("    h1{margin:0 0 8px;font-size:1.35rem}.meta{color:var(--sub);margin-top:5px}");
-    sb.AppendLine("    .price{margin-top:10px;font-size:1.1rem;font-weight:700}.thumb{margin-top:12px;width:100%;height:290px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}");
-    sb.AppendLine("    .actions{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}.btn{display:inline-block;text-decoration:none;padding:10px 12px;border-radius:10px;font-weight:700}");
-    sb.AppendLine("    .btn.primary{background:var(--btn);color:var(--btnText)}.btn.ghost{background:#eef3ff;color:#1f3e80}");
-    sb.AppendLine("  </style>");
-    sb.AppendLine("</head>");
-    sb.AppendLine("<body><main class=\"wrap\"><article class=\"card\">");
-    sb.AppendLine($"  <h1>Item {item.ItemNumber} - {title}</h1>");
-    sb.AppendLine($"  <div class=\"meta\">Loja: {store}</div>");
-    sb.AppendLine($"  <div class=\"meta\">Palavra-chave: <strong>{keyword}</strong></div>");
-    sb.AppendLine($"  <div class=\"price\">{price}</div>");
-    if (!string.IsNullOrWhiteSpace(item.ImageUrl))
-    {
-        sb.AppendLine($"  <img class=\"thumb\" src=\"{image}\" alt=\"Item {item.ItemNumber}\" />");
-    }
-    sb.AppendLine("  <div class=\"actions\">");
-    sb.AppendLine($"    <a class=\"btn primary\" href=\"{offerUrl}\" target=\"_blank\" rel=\"noopener noreferrer\">Abrir oferta</a>");
-    sb.AppendLine($"    <a class=\"btn ghost\" href=\"{catalog}\">Voltar ao catalogo</a>");
-    sb.AppendLine("  </div>");
-    sb.AppendLine("</article></main></body></html>");
-    return sb.ToString();
+    var previous_price = "---";
+    var savings_text = "Desconto aplicado";
+    var publish_date = item.PublishedAt.ToString("dd/MM/yyyy HH:mm");
+    
+    // As we lack specific coupon parsing right now in CatalogOfferItem, we leave it empty.
+    var coupon = ""; 
+    var couponBlock1 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
+<div class="mt-8 p-6 bg-slate-50 rounded-2xl border-l-4 border-accent">
+    <p class="text-sm font-bold text-slate-500 uppercase mb-2">Instrução de Compra:</p>
+    <p class="text-primary font-semibold">Aplique o cupom <span class="bg-accent/20 text-accent px-2 py-0.5 rounded">{{coupon}}</span> no checkout para garantir este valor exclusivo.</p>
+</div>
+""";
+
+    var couponBlock2 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
+<div class="mt-8 pt-8 border-t border-white/10">
+    <div class="bg-white/5 rounded-xl p-4 text-center">
+        <p class="text-white/60 text-xs uppercase tracking-widest mb-1">CUPOM ATIVO</p>
+        <p class="text-accent font-mono font-bold text-xl tracking-wider">{{coupon}}</p>
+    </div>
+</div>
+""";
+
+    return $$"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oferta VIP Exclusiva - {{title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;800&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0f172a',
+                        accent: '#c4a468',
+                        accentHover: '#b39359',
+                        vipRed: '#e11d48',
+                        surface: '#f8fafc',
+                    },
+                    fontFamily: {
+                        display: ['Montserrat', 'sans-serif'],
+                        body: ['Inter', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-10px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glass-effect {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .hero-gradient {
+            background: radial-gradient(circle at top right, #1e293b, #0f172a);
+        }
+        .price-tag {
+            text-shadow: 0 0 20px rgba(196, 164, 104, 0.3);
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+        }
+        h1, h2, h3 {
+            font-family: 'Montserrat', sans-serif;
+        }
+    </style>
+</head>
+<body class="text-slate-900 overflow-x-hidden">
+
+    <!-- Fixed Header -->
+    <header class="fixed top-0 w-full z-50 glass-effect shadow-sm">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-accent rounded-full flex items-center justify-center">
+                    <span class="text-primary font-bold text-xs">VIP</span>
+                </div>
+                <h1 class="text-lg font-extrabold uppercase tracking-widest text-primary">Oferta VIP Exclusiva</h1>
+            </div>
+            <div class="hidden md:block">
+                <span class="text-xs font-semibold text-slate-500 uppercase tracking-tighter">Acesso prioritário liberado</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="pt-24 pb-12">
+        <!-- Hero Section -->
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-12">
+            <div class="hero-gradient rounded-3xl overflow-hidden shadow-2xl flex flex-col lg:flex-row items-center p-8 lg:p-16 gap-12">
+                
+                <!-- Product Image Area -->
+                <div class="w-full lg:w-1/2 flex justify-center items-center animate-float">
+                    <div class="relative group">
+                        <div class="absolute -inset-4 bg-accent/20 rounded-full blur-3xl group-hover:bg-accent/30 transition duration-500"></div>
+                        <div class="relative">
+                            <a href="{{offerUrl}}" target="_blank" rel="noopener noreferrer">
+                                <img src="{{image}}" alt="{{title}}" class="w-full h-auto max-w-md object-contain drop-shadow-[0_20px_50px_rgba(0,0,0,0.5)] transform transition-transform duration-500 hover:scale-105" />
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hero Content -->
+                <div class="w-full lg:w-1/2 text-center lg:text-left space-y-8">
+                    <div class="flex items-center justify-center lg:justify-start gap-3 mb-4">
+                        <div class="inline-block px-4 py-1.5 rounded-full bg-accent/10 border border-accent/30 text-accent font-bold text-sm tracking-wider uppercase">
+                            Desconto Imperdível
+                        </div>
+                        <div class="inline-block px-4 py-1.5 rounded-full bg-slate-800 text-slate-300 font-medium text-xs tracking-wide">
+                            Postado em {{publish_date}}
+                        </div>
+                    </div>
+                    <h2 class="text-4xl lg:text-6xl font-extrabold text-white leading-tight">
+                        Eleve seu estilo a um <span class="text-accent">novo patamar</span>
+                    </h2>
+                    <p class="text-slate-300 text-lg lg:text-xl font-light leading-relaxed max-w-xl">
+                        🚨 OFERTA EXCLUSIVA VIP! Conheça <strong>{{title}}</strong>. Performance e design premium para cada passo do seu dia.
+                    </p>
+                    
+                    <div class="pt-4 flex flex-col sm:flex-row items-center gap-6 justify-center lg:justify-start">
+                        <a href="{{offerUrl}}" target="_blank" class="group relative inline-flex items-center justify-center px-10 py-5 font-bold text-primary transition-all duration-200 bg-accent rounded-xl hover:bg-accentHover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent w-full sm:w-auto shadow-lg shadow-accent/20">
+                            Comprar Agora
+                            <svg class="w-5 h-5 ml-2 transition-transform duration-200 group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                            </svg>
+                        </a>
+                        <div class="text-white/60 text-sm font-medium italic">
+                            *Estoque limitado
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bento Grid Details -->
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            <!-- Description Card -->
+            <div class="md:col-span-2 bg-white rounded-3xl p-8 lg:p-10 shadow-sm border border-slate-100">
+                <h3 class="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span class="w-2 h-8 bg-accent rounded-full"></span>
+                    Detalhes do Produto
+                </h3>
+                <div class="space-y-4 text-slate-600 leading-relaxed text-lg">
+                    <p class="font-bold text-primary uppercase tracking-wide">DETALHES DO PRODUTO</p>
+                    <p>O {{title}} é projetado para oferecer versatilidade e estilo inigualável. Ideal para quem busca estar sempre no mais alto padrão de qualidade e conforto.</p>
+                    <p>Aproveite esta oferta exclusiva do catálogo!</p>
+                    {{couponBlock1}}
+                </div>
+            </div>
+
+            <!-- Pricing Card -->
+            <div class="bg-primary rounded-3xl p-8 flex flex-col justify-between shadow-2xl relative overflow-hidden group">
+                <!-- Background decoration -->
+                <div class="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 bg-accent/10 rounded-full blur-3xl"></div>
+                
+                <div>
+                    <span class="text-accent font-bold uppercase tracking-widest text-xs">Condição Especial</span>
+                    <h3 class="text-white text-3xl font-bold mt-2 mb-8">Preço VIP</h3>
+                    
+                    <div class="space-y-2">
+                        <p class="text-slate-400 line-through text-lg">Preço Original: {{previous_price}}</p>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-white text-2xl font-light">R$</span>
+                            <span class="text-accent text-6xl font-extrabold tracking-tighter price-tag">{{price_val}}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-12 space-y-4">
+                    <div class="flex items-center gap-3 text-white/80 text-sm">
+                        <svg class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        {{savings_text}}
+                    </div>
+                    <div class="flex items-center gap-3 text-white/80 text-sm">
+                        <svg class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        Frete e condições oficiais
+                    </div>
+                </div>
+
+                {{couponBlock2}}
+            </div>
+
+        </section>
+
+        <!-- Trust Badges -->
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-center gap-6 shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center text-accent">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h4 class="font-bold text-primary">Oferta Exclusiva VIP</h4>
+                    <p class="text-slate-500 text-sm">Preço reservado apenas para membros selecionados.</p>
+                </div>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-center gap-6 shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-16 h-16 bg-vipRed/10 rounded-full flex items-center justify-center text-vipRed">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h4 class="font-bold text-primary">Tempo Limitado</h4>
+                    <p class="text-slate-500 text-sm">Esta condição pode expirar a qualquer momento.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-white border-t border-slate-200 mt-12">
+        <div class="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                <span class="text-slate-500 text-sm font-medium">Registro no Catálogo Confirmado: <a href="{{catalog}}" class="hover:text-accent">Verificação Ativa</a></span>
+            </div>
+            <div class="text-slate-400 text-xs">
+                © Vi no: @ReiDasOfertasVIP
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>
+""";
 }
 
 static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)

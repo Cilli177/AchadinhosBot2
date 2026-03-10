@@ -29,7 +29,9 @@ public static class CoreEndpoints
                 // Shein
                 "shein.com", "www.shein.com", "shein.com.br", "www.shein.com.br",
                 // Mercado Livre
-                "mercadolivre.com.br", "www.mercadolivre.com.br", "mlb.cl", "mercadolivre.com"
+                "mercadolivre.com.br", "www.mercadolivre.com.br", "mlb.cl", "mercadolivre.com",
+                // URL Shorteners (will be expanded and re-validated internally)
+                "tinyurl.com", "bit.ly", "cutt.ly", "shorturl.at", "ow.ly", "t.co", "rb.gy", "is.gd", "tiny.cc"
             };
 
             return allowed.Any(a => host.Equals(a, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + a, StringComparison.OrdinalIgnoreCase));

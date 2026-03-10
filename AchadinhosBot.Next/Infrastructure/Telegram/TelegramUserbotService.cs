@@ -727,8 +727,8 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                     continue;
                 }
 
-                var enrichment = await _messageProcessor.EnrichTextWithProductDataAsync(replayText, text, cancellationToken);
-                replayText = enrichment.EnrichedText;
+                var (enrichedReply, _, _) = await _messageProcessor.EnrichTextWithProductDataAsync(replayText, text, cancellationToken);
+                replayText = enrichedReply;
                 var (imageBytes, imageMime) = await TryExtractImageForWhatsAppAsync(msg);
                 var replayHasImageCandidate = imageBytes is { Length: > 0 };
                 var replayQualityGate = OfferQualityGate.ValidateForAutoForward(replayText, replayHasImageCandidate);
@@ -1149,9 +1149,8 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
             }
         }
 
-        var enrichment = await _messageProcessor.EnrichTextWithProductDataAsync(finalText, text, CancellationToken.None);
-        finalText = enrichment.EnrichedText;
-        var productImageUrl = enrichment.ProductImageUrl;
+        var (enrichedFinal, productImageUrl, _) = await _messageProcessor.EnrichTextWithProductDataAsync(finalText, text, CancellationToken.None);
+        finalText = enrichedFinal;
 
         var destinationId = tgForwarding.DestinationChatId;
         var destinationPeer = destinationId != 0 ? ResolvePeer(destinationId) : null;

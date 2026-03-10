@@ -13,7 +13,7 @@ public interface IMessageProcessor
         string? originChatRef = null,
         string? destinationChatRef = null,
         string? sourceImageUrl = null);
-    Task<(string EnrichedText, string? ProductImageUrl)> EnrichTextWithProductDataAsync(
+    Task<(string EnrichedText, string? ProductImageUrl, string? ProductVideoUrl)> EnrichTextWithProductDataAsync(
         string convertedText,
         string originalText,
         CancellationToken cancellationToken);
