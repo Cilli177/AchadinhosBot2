@@ -9,7 +9,7 @@ namespace AchadinhosBot.Next.Tests;
 
 public class VipCatalogIndexValidation
 {
-    [Fact]
+    [Fact(Skip = "Manual artifact generation test.")]
     public async Task ProduceVipCatalogIndexSample()
     {
         var assembly = typeof(AchadinhosBot.Next.Configuration.AffiliateOptions).Assembly;

@@ -11,7 +11,7 @@ namespace AchadinhosBot.Next.Tests;
 
 public class VipDesignValidation
 {
-    [Fact]
+    [Fact(Skip = "Manual artifact generation test.")]
     public async Task ProduceVipCardSample()
     {
         var services = new ServiceCollection();

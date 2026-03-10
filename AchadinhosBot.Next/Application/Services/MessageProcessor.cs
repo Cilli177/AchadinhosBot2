@@ -157,12 +157,13 @@ public sealed partial class MessageProcessor : IMessageProcessor
             }
 
             var result = tasks[i].Result;
+            var convertedUrl = result.ConvertedUrl ?? string.Empty;
             var detectedStore = string.IsNullOrWhiteSpace(result.Store)
-                ? DetectStore(result.ConvertedUrl, item.CleanedUrl)
+                ? DetectStore(convertedUrl, item.CleanedUrl)
                 : result.Store;
             var detectedAsMercadoLivre =
                 IsMercadoLivreUrl(item.CleanedUrl)
-                || IsMercadoLivreUrl(result.ConvertedUrl)
+                || IsMercadoLivreUrl(convertedUrl)
                 || string.Equals(detectedStore, "Mercado Livre", StringComparison.OrdinalIgnoreCase);
             if (!detectedAsMercadoLivre)
             {

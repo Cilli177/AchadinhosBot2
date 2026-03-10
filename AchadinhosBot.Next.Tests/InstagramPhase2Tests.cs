@@ -6,6 +6,7 @@ using AchadinhosBot.Next.Application.Consumers;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Media;
@@ -180,6 +181,7 @@ public sealed class InstagramPhase2Tests
                 new StubMetaGraphClient(),
                 new ThrowingInstagramPublisher(),
                 outbox,
+                new StubCatalogOfferStore(),
                 Options.Create(new WebhookOptions { PublicBaseUrl = "https://bot.example.com" }),
                 NullLogger<InstagramPublishService>.Instance);
 
@@ -196,6 +198,48 @@ public sealed class InstagramPhase2Tests
         {
             Directory.Delete(dir, true);
         }
+    }
+
+    [Fact]
+    public async Task InstagramPublishService_ExecutePublishAsync_SyncsCatalog_WhenDraftRequestsIt()
+    {
+        var catalogStore = new StubCatalogOfferStore();
+        var publishStore = new StubPublishStore(new InstagramPublishDraft
+        {
+            Id = "draft-2",
+            ProductName = "Produto Catalogo",
+            Caption = "Confira https://oferta.example.com",
+            ImageUrls = new List<string> { "https://cdn.example.com/a.jpg" },
+            Ctas = new List<InstagramCtaOption> { new() { Keyword = "LINK", Link = "https://oferta.example.com" } },
+            SendToCatalog = true
+        });
+
+        var service = new InstagramPublishService(
+            new StubSettingsStore(new AutomationSettings
+            {
+                InstagramPublish = new InstagramPublishSettings
+                {
+                    Enabled = true,
+                    AccessToken = "token-123",
+                    InstagramUserId = "ig-user"
+                }
+            }),
+            publishStore,
+            new StubPublishLogStore(),
+            new FakeHttpClientFactory(new RecordingHandler()),
+            new InMemoryMediaStore(),
+            new StubMetaGraphClient(),
+            new RecordingInstagramPublisher(),
+            new InMemoryInstagramOutboxStore(),
+            catalogStore,
+            Options.Create(new WebhookOptions { PublicBaseUrl = "https://bot.example.com" }),
+            NullLogger<InstagramPublishService>.Instance);
+
+        var result = await service.ExecutePublishAsync("draft-2", CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Single(catalogStore.SyncedDraftIds);
+        Assert.Equal("draft-2", catalogStore.SyncedDraftIds[0]);
     }
 
     private static HttpResponseMessage Json(string body)
@@ -351,5 +395,25 @@ public sealed class InstagramPhase2Tests
 
         public Task<MetaGraphOperationResult> SendDirectMessageAsync(InstagramPublishSettings settings, string recipientId, string message, CancellationToken cancellationToken)
             => Task.FromResult(new MetaGraphOperationResult(true));
+    }
+
+    private sealed class StubCatalogOfferStore : ICatalogOfferStore
+    {
+        public List<string> SyncedDraftIds { get; } = new();
+
+        public Task<CatalogSyncResult> SyncFromPublishedDraftsAsync(IReadOnlyList<InstagramPublishDraft> drafts, CancellationToken cancellationToken)
+        {
+            SyncedDraftIds.AddRange(drafts.Select(x => x.Id));
+            return Task.FromResult(new CatalogSyncResult { Created = drafts.Count, TotalActive = drafts.Count, HighestItemNumber = drafts.Count });
+        }
+
+        public Task<IReadOnlyList<CatalogOfferItem>> ListAsync(string? search, int limit, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<CatalogOfferItem>>(Array.Empty<CatalogOfferItem>());
+
+        public Task<CatalogOfferItem?> FindByCodeAsync(string query, CancellationToken cancellationToken)
+            => Task.FromResult<CatalogOfferItem?>(null);
+
+        public Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyDictionary<string, CatalogOfferItem>>(new Dictionary<string, CatalogOfferItem>());
     }
 }

@@ -31,7 +31,7 @@ public sealed class TelegramAlertSender
         _logger = logger;
     }
 
-    public async Task<bool> SendAsync(long chatId, string text, CancellationToken ct)
+    public async Task<bool> SendAsync(long chatId, string text, object? replyMarkup = null, CancellationToken ct = default)
     {
         if (chatId == 0)
         {
@@ -59,8 +59,9 @@ public sealed class TelegramAlertSender
             var payload = JsonSerializer.Serialize(new
             {
                 chat_id = chatId,
-                text
-            });
+                text,
+                reply_markup = replyMarkup
+            }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
             request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
             using var response = await client.SendAsync(request, ct);

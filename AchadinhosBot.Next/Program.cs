@@ -6,8 +6,6 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using System.Runtime.Versioning;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Net;
 using System.Net.Http.Headers;
 using System.IO;
@@ -214,10 +212,10 @@ builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStor
 builder.Services.AddSingleton<InstagramLinkMetaService>();
 builder.Services.AddSingleton<OfficialProductDataService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
-builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
 builder.Services.AddSingleton<IMetaGraphClient, MetaGraphClient>();
 builder.Services.AddSingleton<IInstagramPublishService, InstagramPublishService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
+builder.Services.AddSingleton<IOperationalAnalyticsService, OperationalAnalyticsService>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
 builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
 builder.Services.AddSingleton<DeepSeekInstagramPostGenerator>();
@@ -261,18 +259,6 @@ if (startTelegramUserbotWorker)
 }
 
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
-builder.Services.AddSingleton<IIdempotencyStore, FileIdempotencyStore>();
-builder.Services.AddSingleton<LoginAttemptStore>();
-builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
-builder.Services.AddSingleton<DeliverySafetyPolicy>();
-builder.Services.AddHostedService<UptimeHeartbeatService>();
-builder.Services.AddHostedService<InstagramAutoPilotWorker>();
-builder.Services.AddHostedService<ContentCalendarWorker>();
-builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
-builder.Services.AddHostedService<BotConversorOutboxReplayWorker>();
-builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
-builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
-builder.Services.AddHostedService<InstagramOutboundReplayWorker>();
 
 builder.Services.AddMassTransit(x =>
 {
@@ -675,7 +661,7 @@ app.MapPost("/api/conversor", async (
                     officialData?.PreviousPrice ?? string.Empty,
                     productPageMeta.PreviousPriceText ?? string.Empty,
                     convertedMeta.PreviousPriceText ?? string.Empty,
-                    originalMeta.PreviousPriceText ?? string.Empty);
+                    originalMeta.PreviousPriceText ?? string.Empty) ?? string.Empty;
 
                 // Validate previous price: must be greater than current price, otherwise discard
                 if (!string.IsNullOrWhiteSpace(viewModel.PreviousPrice) && !string.IsNullOrWhiteSpace(viewModel.Price))
@@ -3027,7 +3013,7 @@ api.MapPost("/mercadolivre/pending/{id}/approve", async (
     if (sendNow)
     {
         var settings = await settingsStore.GetAsync(ct);
-        var (enrichedText, productImageUrl, _) = await processor.EnrichTextWithProductDataAsync(convertedText, item.OriginalText, ct);
+        var (enrichedText, productImageUrl, _) = await processor.EnrichTextWithProductDataAsync(convertedText, item.OriginalText ?? string.Empty, ct);
         if (!string.IsNullOrWhiteSpace(enrichedText))
         {
             outboundText = enrichedText;
@@ -3755,20 +3741,6 @@ static string ComputeStableHash(string? input)
     return Convert.ToHexString(bytes).ToLowerInvariant();
 }
 
-static string[] ParseChatRefs(string? input)
-{
-    if (string.IsNullOrWhiteSpace(input))
-    {
-        return Array.Empty<string>();
-    }
-
-    return input
-        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Select(x => x.Trim())
-        .ToArray();
-}
-
 static IEnumerable<string> ExtractUrlsFromText(string text)
 {
     if (string.IsNullOrWhiteSpace(text))
@@ -3989,6 +3961,7 @@ static long ResolveMercadoLivreApprovalTelegramBridgeChatId()
     return 5169049471;
 }
 
+#pragma warning disable CS8321
 static async Task<WhatsAppSendResult> SendWhatsAppManualApprovalWithFallbackAsync(
     IWhatsAppGateway gateway,
     IHttpClientFactory httpClientFactory,
@@ -4043,6 +4016,7 @@ static async Task<WhatsAppSendResult> SendWhatsAppManualApprovalWithFallbackAsyn
 
     return new WhatsAppSendResult(false, $"Falha imagem={byUrl.Message}; falha texto={textFallback.Message}");
 }
+#pragma warning restore CS8321
 
 static IReadOnlyList<WhatsAppForwardingRouteSettings> ResolveWhatsAppForwardingRoutes(AutomationSettings settings)
 {
@@ -4603,32 +4577,15 @@ static bool IsLikelyBinaryMediaPayload(byte[] payload, string contentType)
 
 static byte[]? TryTranscodeImageToPng(byte[] payload, ILogger logger)
 {
-    if (!(OperatingSystem.IsWindows() && OperatingSystem.IsWindowsVersionAtLeast(6, 1)))
-    {
-        return null;
-    }
-
     try
     {
-        return TryTranscodeImageToPngWindows(payload);
+        return ImageNormalizationSupport.TranscodeToPng(payload);
     }
     catch (Exception ex)
     {
         logger.LogDebug(ex, "Nao foi possivel transcodificar imagem para PNG.");
         return null;
     }
-}
-
-[SupportedOSPlatform("windows6.1")]
-static byte[] TryTranscodeImageToPngWindows(byte[] payload)
-{
-#pragma warning disable CA1416
-    using var input = new MemoryStream(payload);
-    using var image = Image.FromStream(input, useEmbeddedColorManagement: false, validateImageData: true);
-    using var output = new MemoryStream();
-    image.Save(output, ImageFormat.Png);
-    return output.ToArray();
-#pragma warning restore CA1416
 }
 
 static string? DetectMimeTypeFromBytes(byte[] payload)
@@ -6408,6 +6365,7 @@ static string BuildInstagramMenuMessage()
     });
 }
 
+#pragma warning disable CS8321
 static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel model, string currentUrl)
 {
     var input = System.Net.WebUtility.HtmlEncode(model.Input ?? string.Empty);
@@ -6679,6 +6637,7 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
     sb.AppendLine("</main></body></html>");
     return sb.ToString();
 }
+#pragma warning restore CS8321
 
 static string? NormalizeConverterInputToUrl(string? input)
 {
@@ -8955,90 +8914,7 @@ static HttpRequestMessage BuildImageFetchRequest(Uri uri)
 }
 
 static byte[]? NormalizeImageBytes(byte[] input)
-{
-    if (!OperatingSystem.IsWindows())
-    {
-        // Keep original bytes on non-Windows hosts to avoid dropping media.
-        return input;
-    }
-
-    return NormalizeImageBytesWindows(input);
-}
-
-[SupportedOSPlatform("windows")]
-#pragma warning disable CA1416
-static byte[]? NormalizeImageBytesWindows(byte[] input)
-{
-    try
-    {
-        using var ms = new MemoryStream(input);
-        using var image = Image.FromStream(ms);
-        var width = image.Width;
-        var height = image.Height;
-        if (width == 0 || height == 0) return null;
-
-        var ratio = width / (double)height;
-        const double minRatio = 0.8;
-        const double maxRatio = 1.91;
-
-        Rectangle cropRect = new Rectangle(0, 0, width, height);
-        if (ratio < minRatio || ratio > maxRatio)
-        {
-            // normalize to 4:5 ratio (0.8)
-            var targetRatio = minRatio;
-            if (ratio > targetRatio)
-            {
-                var newWidth = (int)Math.Round(height * targetRatio);
-                var x = Math.Max(0, (width - newWidth) / 2);
-                cropRect = new Rectangle(x, 0, Math.Min(newWidth, width), height);
-            }
-            else
-            {
-                var newHeight = (int)Math.Round(width / targetRatio);
-                var y = Math.Max(0, (height - newHeight) / 2);
-                cropRect = new Rectangle(0, y, width, Math.Min(newHeight, height));
-            }
-        }
-
-        using var cropped = new Bitmap(cropRect.Width, cropRect.Height);
-        using (var g = Graphics.FromImage(cropped))
-        {
-            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-            g.DrawImage(image, new Rectangle(0, 0, cropped.Width, cropped.Height), cropRect, GraphicsUnit.Pixel);
-        }
-
-        // Resize to Instagram-friendly size (max 1350 height)
-        int targetWidth = cropped.Width;
-        int targetHeight = cropped.Height;
-        const int maxHeight = 1350;
-        if (targetHeight > maxHeight)
-        {
-            var scale = maxHeight / (double)targetHeight;
-            targetWidth = (int)Math.Round(targetWidth * scale);
-            targetHeight = maxHeight;
-        }
-
-        using var resized = new Bitmap(cropped, new Size(targetWidth, targetHeight));
-        using var outStream = new MemoryStream();
-        var encoder = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.MimeType == "image/jpeg");
-        if (encoder is null)
-        {
-            resized.Save(outStream, ImageFormat.Jpeg);
-        }
-        else
-        {
-            using var encParams = new EncoderParameters(1);
-            encParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 90L);
-            resized.Save(outStream, encoder, encParams);
-        }
-        return outStream.ToArray();
-    }
-    catch
-    {
-        return null;
-    }
-}
-#pragma warning restore CA1416
+    => ImageNormalizationSupport.NormalizeForInstagramPublication(input, "feed");
 
 static string BuildPublicMediaUrl(string publicBaseUrl, string id)
 {

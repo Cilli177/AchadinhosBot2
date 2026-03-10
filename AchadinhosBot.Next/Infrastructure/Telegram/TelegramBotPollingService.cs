@@ -14,6 +14,9 @@ using AchadinhosBot.Next.Infrastructure.Safety;
 using Microsoft.Extensions.Options;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json.Serialization;
+using System.IO;
+
 
 namespace AchadinhosBot.Next.Infrastructure.Telegram;
 
@@ -118,7 +121,14 @@ public sealed class TelegramBotPollingService : BackgroundService
                 foreach (var update in updates)
                 {
                     _offset = Math.Max(_offset, update.UpdateId + 1);
-                    await HandleUpdateAsync(update, stoppingToken);
+                    if (update.Message is not null)
+                    {
+                        await HandleUpdateAsync(update, stoppingToken);
+                    }
+                    else if (update.CallbackQuery is not null)
+                    {
+                        await HandleCallbackQueryAsync(update.CallbackQuery, stoppingToken);
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -239,28 +249,36 @@ public sealed class TelegramBotPollingService : BackgroundService
         var updates = new List<TelegramUpdate>();
         foreach (var updateNode in result.EnumerateArray())
         {
-            if (TryExtractMessage(updateNode, out var update))
+            if (updateNode.TryGetProperty("update_id", out var updateIdNode))
             {
-                updates.Add(update);
+                var update = new TelegramUpdate { UpdateId = updateIdNode.GetInt64() };
+                if (updateNode.TryGetProperty("message", out var messageNode))
+                {
+                    if (TryExtractMessage(messageNode, out var msg))
+                    {
+                        update.Message = msg;
+                    }
+                }
+                else if (updateNode.TryGetProperty("callback_query", out var callbackNode))
+                {
+                    update.CallbackQuery = ExtractCallbackQuery(callbackNode);
+                }
+
+                if (update.Message is not null || update.CallbackQuery is not null)
+                {
+                    updates.Add(update);
+                }
             }
         }
+
 
         return updates;
     }
 
-    private bool TryExtractMessage(JsonElement updateNode, out TelegramUpdate update)
+    private bool TryExtractMessage(JsonElement messageNode, out TelegramMessage msg)
     {
-        update = new TelegramUpdate();
-        if (!updateNode.TryGetProperty("update_id", out var updateId))
-        {
-            return false;
-        }
+        msg = new TelegramMessage();
 
-        update.UpdateId = updateId.GetInt64();
-        if (!updateNode.TryGetProperty("message", out var messageNode))
-        {
-            return false;
-        }
 
         if (!messageNode.TryGetProperty("text", out var textNode) || textNode.ValueKind != JsonValueKind.String)
         {
@@ -277,7 +295,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             return false;
         }
 
-        var msg = new TelegramMessage
+        msg = new TelegramMessage
         {
             ChatId = chatIdNode.GetInt64(),
             ChatType = GetString(chatNode, "type") ?? string.Empty,
@@ -294,9 +312,146 @@ public sealed class TelegramBotPollingService : BackgroundService
             }
         }
 
-        update.Message = msg;
         return true;
     }
+
+    private TelegramCallbackQuery? ExtractCallbackQuery(JsonElement node)
+    {
+        if (!node.TryGetProperty("id", out var idNode)) return null;
+        var query = new TelegramCallbackQuery
+        {
+            Id = idNode.GetString() ?? string.Empty,
+            Data = GetString(node, "data") ?? string.Empty
+        };
+
+        if (node.TryGetProperty("from", out var fromNode))
+        {
+            query.FromId = fromNode.TryGetProperty("id", out var fId) ? fId.GetInt64() : 0;
+        }
+
+        if (node.TryGetProperty("message", out var messageNode))
+        {
+            if (TryExtractMessage(messageNode, out var msg))
+            {
+                query.Message = msg;
+            }
+        }
+
+        return query;
+    }
+
+    private async Task HandleCallbackQueryAsync(TelegramCallbackQuery callback, CancellationToken ct)
+    {
+        if (callback.Message is null || string.IsNullOrWhiteSpace(callback.Data)) return;
+
+        var settings = await _settingsStore.GetAsync(ct);
+        if (!IsBotCommandAuthorized(callback.Message.ChatId, settings))
+        {
+            await AnswerCallbackQueryAsync(callback.Id, "Nao autorizado.", ct);
+            return;
+        }
+
+        // Action formats: "ig:approve:draftId", "ig:ignore:draftId", "ig:review:draftId"
+        var parts = callback.Data.Split(':');
+        if (parts.Length < 3 || parts[0] != "ig")
+        {
+            await AnswerCallbackQueryAsync(callback.Id, "Comando invalido.", ct);
+            return;
+        }
+
+        var action = parts[1];
+        var draftId = parts[2];
+
+        switch (action)
+        {
+            case "approve":
+                await HandleApproveCallbackAsync(callback, draftId, ct);
+                break;
+            case "ignore":
+                await HandleIgnoreCallbackAsync(callback, draftId, ct);
+                break;
+            case "review":
+                var (draft, _) = await ResolveDraftAsync(draftId, ct);
+                if (draft is not null)
+                {
+                    await SendMessageAsync(callback.Message.ChatId, BuildDraftReviewMessage(draft), null, ct);
+                    await AnswerCallbackQueryAsync(callback.Id, "Revisando rascunho...", ct);
+                }
+                else
+                {
+                    await AnswerCallbackQueryAsync(callback.Id, "Rascunho nao encontrado.", ct);
+                }
+                break;
+            default:
+                await AnswerCallbackQueryAsync(callback.Id, "Acao desconhecida.", ct);
+                break;
+        }
+    }
+
+    private async Task HandleApproveCallbackAsync(TelegramCallbackQuery callback, string draftId, CancellationToken ct)
+    {
+        var (draft, error) = await ResolveDraftAsync(draftId, ct);
+        if (draft is null)
+        {
+            await AnswerCallbackQueryAsync(callback.Id, error ?? "Rascunho nao encontrado.", ct);
+            return;
+        }
+
+        draft.Status = "approved";
+        draft.Error = null;
+        await _publishStore.UpdateAsync(draft, ct);
+        await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "tg_btn_approved",
+            Success = true,
+            DraftId = draft.Id,
+            Details = $"Chat={callback.Message?.ChatId}"
+        }, ct);
+
+        await AnswerCallbackQueryAsync(callback.Id, "Rascunho APROVADO! ✅", ct);
+        if (callback.Message is not null)
+        {
+            await SendMessageAsync(callback.Message.ChatId, $"✅ Draft {ShortDraftId(draft.Id)} aprovado por robô.", null, ct);
+        }
+    }
+
+    private async Task HandleIgnoreCallbackAsync(TelegramCallbackQuery callback, string draftId, CancellationToken ct)
+    {
+        var (draft, error) = await ResolveDraftAsync(draftId, ct);
+        if (draft is null)
+        {
+            await AnswerCallbackQueryAsync(callback.Id, error ?? "Rascunho nao encontrado.", ct);
+            return;
+        }
+
+        draft.Status = "ignored";
+        await _publishStore.UpdateAsync(draft, ct);
+        await AnswerCallbackQueryAsync(callback.Id, "Rascunho Ignorado. 🗑️", ct);
+        if (callback.Message is not null)
+        {
+            await SendMessageAsync(callback.Message.ChatId, $"🗑️ Draft {ShortDraftId(draft.Id)} marcado como ignorado.", null, ct);
+        }
+    }
+
+    private async Task AnswerCallbackQueryAsync(string callbackQueryId, string text, CancellationToken ct)
+    {
+        var token = _botToken;
+        if (string.IsNullOrWhiteSpace(token)) return;
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            var url = $"https://api.telegram.org/bot{token}/answerCallbackQuery";
+            var payload = JsonSerializer.Serialize(new { callback_query_id = callbackQueryId, text });
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            await client.PostAsync(url, content, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao responder callback query {Id}", callbackQueryId);
+        }
+    }
+
 
     private async Task HandleUpdateAsync(TelegramUpdate update, CancellationToken ct)
     {
@@ -347,7 +502,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         {
             if (!IsBotCommandAuthorized(update.Message.ChatId, settings))
             {
-                await SendMessageAsync(update.Message.ChatId, "Este chat nao esta autorizado para comandos de automacao.", ct);
+                await SendMessageAsync(update.Message.ChatId, "Este chat nao esta autorizado para comandos de automacao.", null, ct);
                 return;
             }
 
@@ -363,7 +518,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             {
                 foreach (var chunk in SplitLongMessages(aiReply, 3500))
                 {
-                    await SendMessageAsync(update.Message.ChatId, chunk, ct);
+                    await SendMessageAsync(update.Message.ChatId, chunk, null, ct);
                 }
             }
             else
@@ -371,7 +526,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 await SendMessageAsync(
                     update.Message.ChatId,
                     "Recebi sua mensagem, mas nao consegui responder com IA agora.\nUse /help para comandos ou ajuste as chaves OpenAI/Gemini.",
-                    ct);
+                    null, ct);
             }
             return;
         }
@@ -395,7 +550,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var post = await _instagramComposer.BuildAsync(update.Message.Text, convo.Context, instaSettings, ct);
                 foreach (var chunk in SplitInstagramMessages(post))
                 {
-                    await SendMessageAsync(update.Message.ChatId, chunk, ct);
+                    await SendMessageAsync(update.Message.ChatId, chunk, null, ct);
                 }
                 return;
             }
@@ -407,13 +562,13 @@ public sealed class TelegramBotPollingService : BackgroundService
                     var post = await _instagramComposer.BuildAsync(inlineProduct, null, instaSettings, ct);
                     foreach (var chunk in SplitInstagramMessages(post))
                     {
-                        await SendMessageAsync(update.Message.ChatId, chunk, ct);
+                        await SendMessageAsync(update.Message.ChatId, chunk, null, ct);
                     }
                 }
                 else
                 {
                     _instagramStore.SetPending(instaKey, update.Message.Text);
-                    await SendMessageAsync(update.Message.ChatId, "Qual produto? Envie o nome ou o link.", ct);
+                    await SendMessageAsync(update.Message.ChatId, "Qual produto? Envie o nome ou o link.", null, ct);
                 }
                 return;
             }
@@ -424,7 +579,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         if (!string.IsNullOrWhiteSpace(autoReply))
         {
             var trackedReply = await ApplyTrackingAsync(autoReply, settings.LinkResponder?.TrackingEnabled ?? true, ct);
-            await SendMessageAsync(update.Message.ChatId, trackedReply.Text, ct);
+            await SendMessageAsync(update.Message.ChatId, trackedReply.Text, null, ct);
             _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
             {
                 Source = "AutoReply",
@@ -471,7 +626,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 result.Success);
             if (!IsTelegramGroupChat(update.Message.ChatType) && !string.IsNullOrWhiteSpace(responder.ReplyOnFailure))
             {
-                await SendMessageAsync(update.Message.ChatId, responder.ReplyOnFailure, ct);
+                await SendMessageAsync(update.Message.ChatId, responder.ReplyOnFailure, null, ct);
             }
             return;
         }
@@ -492,7 +647,7 @@ public sealed class TelegramBotPollingService : BackgroundService
 
         var trackedResponse = await ApplyTrackingAsync(response, responder.TrackingEnabled, ct);
         response = trackedResponse.Text;
-        await SendMessageAsync(update.Message.ChatId, response, ct);
+        await SendMessageAsync(update.Message.ChatId, response, null, ct);
         _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
         {
             Source = "TelegramResponder",
@@ -682,7 +837,7 @@ public sealed class TelegramBotPollingService : BackgroundService
     {
         if (!IsBotCommandAuthorized(message.ChatId, settings))
         {
-            await SendMessageAsync(message.ChatId, "Este chat nao esta autorizado para comandos de automacao.", ct);
+            await SendMessageAsync(message.ChatId, "Este chat nao esta autorizado para comandos de automacao.", null, ct);
             return;
         }
 
@@ -690,19 +845,19 @@ public sealed class TelegramBotPollingService : BackgroundService
         {
             case "start":
             case "help":
-                await SendMessageAsync(message.ChatId, BuildHelpMessage(message.ChatId), ct);
+                await SendMessageAsync(message.ChatId, BuildHelpMessage(message.ChatId), null, ct);
                 return;
 
             case "chatid":
-                await SendMessageAsync(message.ChatId, $"Chat ID: {message.ChatId}", ct);
+                await SendMessageAsync(message.ChatId, $"Chat ID: {message.ChatId}", null, ct);
                 return;
 
             case "ping":
-                await SendMessageAsync(message.ChatId, "pong", ct);
+                await SendMessageAsync(message.ChatId, "pong", null, ct);
                 return;
 
             case "status":
-                await SendMessageAsync(message.ChatId, BuildStatusMessage(settings), ct);
+                await SendMessageAsync(message.ChatId, BuildStatusMessage(settings), null, ct);
                 return;
 
             case "assist":
@@ -714,20 +869,20 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var prompt = string.Join(' ', command.Arguments).Trim();
                 if (string.IsNullOrWhiteSpace(prompt))
                 {
-                    await SendMessageAsync(message.ChatId, "Uso: /assist <mensagem>\nEx.: /assist remove as imagens 1,3 e 5 do draft 2", ct);
+                    await SendMessageAsync(message.ChatId, "Uso: /assist <mensagem>\nEx.: /assist remove as imagens 1,3 e 5 do draft 2", null, ct);
                     return;
                 }
 
                 var aiReply = await TryGenerateAssistantReplyAsync(message.ChatId, prompt, settings, ct);
                 if (string.IsNullOrWhiteSpace(aiReply))
                 {
-                    await SendMessageAsync(message.ChatId, "Nao consegui responder com IA agora. Verifique chaves OpenAI/Gemini e tente novamente.", ct);
+                    await SendMessageAsync(message.ChatId, "Nao consegui responder com IA agora. Verifique chaves OpenAI/Gemini e tente novamente.", null, ct);
                     return;
                 }
 
                 foreach (var chunk in SplitLongMessages(aiReply, 3500))
                 {
-                    await SendMessageAsync(message.ChatId, chunk, ct);
+                    await SendMessageAsync(message.ChatId, chunk, null, ct);
                 }
                 return;
             }
@@ -738,7 +893,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             case "limparcontexto":
             {
                 _assistantHistory.TryRemove(message.ChatId, out _);
-                await SendMessageAsync(message.ChatId, "Contexto da conversa com IA foi limpo para este chat.", ct);
+                await SendMessageAsync(message.ChatId, "Contexto da conversa com IA foi limpo para este chat.", null, ct);
                 return;
             }
 
@@ -754,7 +909,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                     limit = Math.Clamp(parsedLimit, 1, 20);
                 }
 
-                await SendMessageAsync(message.ChatId, await BuildDraftListMessageAsync(limit, ct), ct);
+                await SendMessageAsync(message.ChatId, await BuildDraftListMessageAsync(limit, ct), null, ct);
                 return;
             }
 
@@ -767,11 +922,11 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(draftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
 
-                await SendMessageAsync(message.ChatId, BuildDraftReviewMessage(draft), ct);
+                await SendMessageAsync(message.ChatId, BuildDraftReviewMessage(draft), null, ct);
                 return;
             }
 
@@ -783,7 +938,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(draftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
 
@@ -802,7 +957,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 await SendMessageAsync(
                     message.ChatId,
                     $"Draft {shortId} aprovado para publicacao.\nStatus: approved\nDica: revise imagem/legenda com /revisar {shortId}.",
-                    ct);
+                    null, ct);
                 return;
             }
 
@@ -813,7 +968,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
 
@@ -830,7 +985,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                     Details = $"Chat={message.ChatId}"
                 }, ct);
 
-                await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} reprovado.\nMotivo: {reason}", ct);
+                await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} reprovado.\nMotivo: {reason}", null, ct);
                 return;
             }
 
@@ -842,12 +997,12 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(draftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
 
                 var replaceResult = await ReplaceDraftImageAsync(draft, message.ChatId, ct);
-                await SendMessageAsync(message.ChatId, replaceResult, ct);
+                await SendMessageAsync(message.ChatId, replaceResult, null, ct);
                 return;
             }
 
@@ -858,27 +1013,27 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
 
                 if (parsed.Indexes.Count == 0)
                 {
-                    await SendMessageAsync(message.ChatId, BuildDraftImageListMessage(draft), ct);
+                    await SendMessageAsync(message.ChatId, BuildDraftImageListMessage(draft), null, ct);
                     return;
                 }
 
                 var max = draft.ImageUrls?.Count ?? 0;
                 if (max == 0)
                 {
-                    await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} sem imagens. Use /trocarimg {ShortDraftId(draft.Id)}.", ct);
+                    await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} sem imagens. Use /trocarimg {ShortDraftId(draft.Id)}.", null, ct);
                     return;
                 }
 
                 var selected = parsed.Indexes.Where(i => i >= 1 && i <= max).Distinct().OrderBy(i => i).ToList();
                 if (selected.Count == 0)
                 {
-                    await SendMessageAsync(message.ChatId, $"Indice invalido. Use valores entre 1 e {max}.", ct);
+                    await SendMessageAsync(message.ChatId, $"Indice invalido. Use valores entre 1 e {max}.", null, ct);
                     return;
                 }
 
@@ -897,7 +1052,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 await SendMessageAsync(
                     message.ChatId,
                     $"Imagem(ns) selecionada(s) no draft {ShortDraftId(draft.Id)}: {string.Join(", ", selected)}.\nUse /revisar {ShortDraftId(draft.Id)} para validar.",
-                    ct);
+                    null, ct);
                 return;
             }
 
@@ -910,27 +1065,27 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
 
                 if (parsed.Indexes.Count == 0)
                 {
-                    await SendMessageAsync(message.ChatId, $"Uso: /removerimg <id|ultimo> 1,3,5", ct);
+                    await SendMessageAsync(message.ChatId, $"Uso: /removerimg <id|ultimo> 1,3,5", null, ct);
                     return;
                 }
 
                 var max = draft.ImageUrls?.Count ?? 0;
                 if (max == 0)
                 {
-                    await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} sem imagens para remover.", ct);
+                    await SendMessageAsync(message.ChatId, $"Draft {ShortDraftId(draft.Id)} sem imagens para remover.", null, ct);
                     return;
                 }
 
                 var toRemove = parsed.Indexes.Where(i => i >= 1 && i <= max).Distinct().OrderBy(i => i).ToList();
                 if (toRemove.Count == 0)
                 {
-                    await SendMessageAsync(message.ChatId, $"Indice invalido. Use valores entre 1 e {max}.", ct);
+                    await SendMessageAsync(message.ChatId, $"Indice invalido. Use valores entre 1 e {max}.", null, ct);
                     return;
                 }
 
@@ -953,7 +1108,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 await SendMessageAsync(
                     message.ChatId,
                     $"Imagens removidas do draft {ShortDraftId(draft.Id)}: {string.Join(", ", toRemove)}.\nRestantes: {draft.ImageUrls.Count}.",
-                    ct);
+                    null, ct);
                 return;
             }
 
@@ -964,12 +1119,12 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
                 if (string.IsNullOrWhiteSpace(parsed.Text))
                 {
-                    await SendMessageAsync(message.ChatId, "Uso: /titulo <draft|ultimo> <novo titulo>", ct);
+                    await SendMessageAsync(message.ChatId, "Uso: /titulo <draft|ultimo> <novo titulo>", null, ct);
                     return;
                 }
 
@@ -985,7 +1140,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                     Details = $"TitleLength={draft.ProductName.Length};Chat={message.ChatId}"
                 }, ct);
 
-                await SendMessageAsync(message.ChatId, $"Titulo atualizado no draft {ShortDraftId(draft.Id)}.", ct);
+                await SendMessageAsync(message.ChatId, $"Titulo atualizado no draft {ShortDraftId(draft.Id)}.", null, ct);
                 return;
             }
 
@@ -996,12 +1151,12 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var (draft, error) = await ResolveDraftAsync(parsed.DraftRef, ct);
                 if (draft is null)
                 {
-                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", ct);
+                    await SendMessageAsync(message.ChatId, error ?? "Rascunho nao encontrado.", null, ct);
                     return;
                 }
                 if (string.IsNullOrWhiteSpace(parsed.Text))
                 {
-                    await SendMessageAsync(message.ChatId, "Uso: /legenda <draft|ultimo> <texto da legenda>", ct);
+                    await SendMessageAsync(message.ChatId, "Uso: /legenda <draft|ultimo> <texto da legenda>", null, ct);
                     return;
                 }
 
@@ -1025,38 +1180,40 @@ public sealed class TelegramBotPollingService : BackgroundService
                     Details = $"CaptionLength={caption.Length};Chat={message.ChatId}"
                 }, ct);
 
-                await SendMessageAsync(message.ChatId, $"Legenda atualizada no draft {ShortDraftId(draft.Id)}.", ct);
+                await SendMessageAsync(message.ChatId, $"Legenda atualizada no draft {ShortDraftId(draft.Id)}.", null, ct);
                 return;
             }
 
             case "story":
             {
                 var args = string.Join(" ", command.Arguments);
-                var manualUrl = UrlRegex.Match(args).Value;
+                var parsed = InstagramAutoPilotCommandParser.ParseManualCommand("story", command.Arguments, message.ChatId);
+                var manualUrl = parsed.Request?.ManualUrl ?? string.Empty;
                 
-                if (string.IsNullOrWhiteSpace(manualUrl))
+                if (parsed.Request is null)
                 {
-                    await SendMessageAsync(message.ChatId, "Para postagem direta no Story, forneça um link. Ex: /story https://...\nPara rodar o ranking automático, use /autostory", ct);
+                    await SendMessageAsync(message.ChatId, "Para postagem direta no Story, forneça um link. Ex: /story https://...\nPara rodar o ranking automático, use /autostory", null, ct);
                     return;
                 }
 
-                await SendMessageAsync(message.ChatId, "Executando criacao de story para o link fornecido...", ct);
+                await SendMessageAsync(message.ChatId, "Executando criacao de story para o link fornecido...", null, ct);
                 var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
                 {
                     PostType = "story",
                     ManualUrl = manualUrl,
-                    SendForApproval = true,
+                    SendForApproval = parsed.Request?.SendForApproval ?? true,
                     ApprovalChannel = "telegram",
-                    ApprovalTelegramChatId = message.ChatId
+                    ApprovalTelegramChatId = message.ChatId,
+                    DryRun = parsed.Request?.DryRun ?? false
                 }, ct);
-                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), null, ct);
                 return;
             }
 
             case "autostory":
             {
                 var options = ParseAutoPilotCommandOptions(command.Arguments);
-                await SendMessageAsync(message.ChatId, "Executando autostory (ranking global)...", ct);
+                await SendMessageAsync(message.ChatId, "Executando autostory (ranking global)...", null, ct);
                 var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
                 {
                     PostType = "story",
@@ -1067,38 +1224,40 @@ public sealed class TelegramBotPollingService : BackgroundService
                     DryRun = options.DryRun,
                     ForceIncludeExisting = options.ForceIncludeExisting
                 }, ct);
-                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), null, ct);
                 return;
             }
 
             case "post":
             {
                 var args = string.Join(" ", command.Arguments);
-                var manualUrl = UrlRegex.Match(args).Value;
+                var parsed = InstagramAutoPilotCommandParser.ParseManualCommand("post", command.Arguments, message.ChatId);
+                var manualUrl = parsed.Request?.ManualUrl ?? string.Empty;
 
                 if (string.IsNullOrWhiteSpace(manualUrl))
                 {
-                    await SendMessageAsync(message.ChatId, "Para postagem direta no Feed, forneça um link. Ex: /post https://...\nPara rodar o ranking automático, use /autopilot", ct);
+                    await SendMessageAsync(message.ChatId, "Para postagem direta no Feed, forneça um link. Ex: /post https://...\nPara rodar o ranking automático, use /autopilot", null, ct);
                     return;
                 }
 
-                await SendMessageAsync(message.ChatId, "Executando criacao de post para o link fornecido...", ct);
+                await SendMessageAsync(message.ChatId, "Executando criacao de post para o link fornecido...", null, ct);
                 var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
                 {
                     PostType = "feed",
                     ManualUrl = manualUrl,
-                    SendForApproval = true,
+                    SendForApproval = parsed.Request?.SendForApproval ?? true,
                     ApprovalChannel = "telegram",
-                    ApprovalTelegramChatId = message.ChatId
+                    ApprovalTelegramChatId = message.ChatId,
+                    DryRun = parsed.Request?.DryRun ?? false
                 }, ct);
-                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), null, ct);
                 return;
             }
 
             case "autopilot":
             {
                 var options = ParseAutoPilotCommandOptions(command.Arguments);
-                await SendMessageAsync(message.ChatId, "Executando autopilot de post (ranking global)...", ct);
+                await SendMessageAsync(message.ChatId, "Executando autopilot de post (ranking global)...", null, ct);
                 var result = await _instagramAutoPilotService.RunNowAsync(new InstagramAutoPilotRunRequest
                 {
                     PostType = "feed",
@@ -1109,12 +1268,12 @@ public sealed class TelegramBotPollingService : BackgroundService
                     DryRun = options.DryRun,
                     ForceIncludeExisting = options.ForceIncludeExisting
                 }, ct);
-                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), ct);
+                await SendMessageAsync(message.ChatId, BuildAutoPilotResultMessage(result), null, ct);
                 return;
             }
 
             default:
-                await SendMessageAsync(message.ChatId, "Comando nao reconhecido. Use /help para ver os comandos de revisao e autopilot.", ct);
+                await SendMessageAsync(message.ChatId, "Comando nao reconhecido. Use /help para ver os comandos de revisao e autopilot.", null, ct);
                 return;
         }
     }
@@ -2784,7 +2943,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         return string.Empty;
     }
 
-    private async Task SendMessageAsync(long chatId, string text, CancellationToken ct)
+    private async Task SendMessageAsync(long chatId, string text, object? replyMarkup = null, CancellationToken ct = default)
     {
         if (!_deliverySafetyPolicy.IsTelegramDestinationAllowed(chatId, out var blockReason))
         {
@@ -2817,8 +2976,9 @@ public sealed class TelegramBotPollingService : BackgroundService
         var payload = JsonSerializer.Serialize(new
         {
             chat_id = chatId,
-            text
-        });
+            text,
+            reply_markup = replyMarkup
+        }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
         req.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
 
         var res = await client.SendAsync(req, ct);
@@ -2888,46 +3048,33 @@ public sealed class TelegramBotPollingService : BackgroundService
         => node.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
-
-    private static HashSet<string> DetectStores(string text)
-    {
-        var stores = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var lower = text.ToLowerInvariant();
-        if (lower.Contains("amazon.") || lower.Contains("amzn.to") || lower.Contains("a.co"))
-        {
-            stores.Add("Amazon");
-        }
-        if (lower.Contains("mercadolivre") || lower.Contains("mercadolibre"))
-        {
-            stores.Add("Mercado Livre");
-        }
-        if (lower.Contains("shopee") || lower.Contains("shope.ee") || lower.Contains("s.shopee"))
-        {
-            stores.Add("Shopee");
-        }
-        if (lower.Contains("shein"))
-        {
-            stores.Add("Shein");
-        }
-
-        return stores;
-    }
-
     private sealed class TelegramUpdate
     {
+        [JsonPropertyName("update_id")]
         public long UpdateId { get; set; }
+
+        [JsonPropertyName("message")]
         public TelegramMessage? Message { get; set; }
+
+        [JsonPropertyName("callback_query")]
+        public TelegramCallbackQuery? CallbackQuery { get; set; }
     }
 
     private sealed class TelegramMessage
     {
-        public long ChatId { get; set; }
-        public long? FromId { get; set; }
+        public long MessageId { get; set; }
+        public long FromId { get; set; }
         public bool FromIsBot { get; set; }
-        public string Text { get; set; } = string.Empty;
+        public long ChatId { get; set; }
         public string ChatType { get; set; } = string.Empty;
+        public string? Text { get; set; }
+    }
+
+    private sealed class TelegramCallbackQuery
+    {
+        public string Id { get; set; } = string.Empty;
+        public long FromId { get; set; }
+        public TelegramMessage? Message { get; set; }
+        public string? Data { get; set; }
     }
 }
-
-
-

@@ -3,9 +3,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Runtime.Versioning;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
@@ -108,10 +105,31 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             var sendForApproval = request.SendForApproval ?? (storyMode ? instaPublishSettings.StoryAutoPilotSendForApproval : instaPublishSettings.AutoPilotSendForApproval);
             var dryRun = request.DryRun;
             var manualUrl = request.ManualUrl?.Trim();
+            var recentDraftKeys = request.ForceIncludeExisting
+                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                : await LoadRecentDraftKeysAsync(DateTimeOffset.UtcNow.AddHours(-repeatWindowHours), cancellationToken);
 
             List<CandidateScore> ranked;
             if (!string.IsNullOrWhiteSpace(manualUrl))
             {
+                var manualKey = NormalizeUrlKey(manualUrl);
+                if (recentDraftKeys.Contains(manualKey))
+                {
+                    await AppendAutoPilotSkipLogAsync(new CandidateScore
+                    {
+                        Url = manualUrl,
+                        Key = manualKey,
+                        Store = "Manual",
+                        FinalScore = 100,
+                        LatestTimestamp = DateTimeOffset.UtcNow,
+                        Note = "Manual duplicate blocked"
+                    }, "manual_duplicate_recent_draft", cancellationToken);
+
+                    result.Success = true;
+                    result.Message = $"URL ja possui draft recente dentro da janela de {repeatWindowHours}h. Use force se quiser repetir.";
+                    return result;
+                }
+
                 _logger.LogInformation("Autopilot running in manual mode for URL: {Url}", manualUrl);
                 ranked = new List<CandidateScore>
                 {
@@ -604,6 +622,37 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
 
         var sent = await _telegramAlertSender.SendAsync(chatId, message, ct);
         return (sent, chatId.ToString());
+    }
+
+    private async Task SendDraftApprovalAsync(InstagramPublishDraft draft, InstagramPublishSettings settings, CancellationToken ct)
+    {
+        var chatId = draft.PostType == "story" 
+            ? settings.StoryAutoPilotApprovalTelegramChatId 
+            : settings.AutoPilotApprovalTelegramChatId;
+
+        if (chatId == 0) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"🚀 **{draft.PostType.ToUpper()} AUTOPILOT**");
+        sb.AppendLine($"Produto: {draft.ProductName}");
+        sb.AppendLine($"Draft ID: `{draft.Id}`");
+        sb.AppendLine();
+        sb.AppendLine("Ações rápidas disponíveis nos botões abaixo:");
+
+        var inlineKeyboard = new
+        {
+            inline_keyboard = new[]
+            {
+                new[]
+                {
+                    new { text = "✅ Confirmar", callback_data = $"ig:approve:{draft.Id}" },
+                    new { text = "📝 Revisar", callback_data = $"ig:review:{draft.Id}" },
+                    new { text = "🗑️ Ignorar", callback_data = $"ig:ignore:{draft.Id}" }
+                }
+            }
+        };
+
+        await _telegramAlertSender.SendAsync(chatId, sb.ToString(), inlineKeyboard, ct);
     }
 
     private async Task AppendAutoPilotSkipLogAsync(CandidateScore candidate, string reason, CancellationToken ct)
@@ -1480,58 +1529,13 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
 
     private static byte[]? NormalizeToJpegBytes(byte[] input, string? contentType)
     {
-        if (OperatingSystem.IsWindows())
+        if (string.Equals(contentType, "image/jpeg", StringComparison.OrdinalIgnoreCase))
         {
-            return NormalizeToJpegBytesWindows(input);
+            return input;
         }
 
-        return string.Equals(contentType, "image/jpeg", StringComparison.OrdinalIgnoreCase)
-            ? input
-            : null;
+        return ImageNormalizationSupport.TranscodeToJpeg(input, quality: 90);
     }
-
-    [SupportedOSPlatform("windows")]
-#pragma warning disable CA1416
-    private static byte[]? NormalizeToJpegBytesWindows(byte[] input)
-    {
-        try
-        {
-            using var ms = new MemoryStream(input);
-            using var image = Image.FromStream(ms);
-            if (image.Width == 0 || image.Height == 0)
-            {
-                return null;
-            }
-
-            using var bitmap = new Bitmap(image.Width, image.Height, PixelFormat.Format24bppRgb);
-            using (var graphics = Graphics.FromImage(bitmap))
-            {
-                graphics.Clear(Color.White);
-                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                graphics.DrawImage(image, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
-            }
-
-            using var outStream = new MemoryStream();
-            var encoder = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.MimeType == "image/jpeg");
-            if (encoder is null)
-            {
-                bitmap.Save(outStream, ImageFormat.Jpeg);
-            }
-            else
-            {
-                using var encParams = new EncoderParameters(1);
-                encParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 90L);
-                bitmap.Save(outStream, encoder, encParams);
-            }
-
-            return outStream.ToArray();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-#pragma warning restore CA1416
 
     private static string BuildPublicJpegUrl(string publicBaseUrl, string id)
     {

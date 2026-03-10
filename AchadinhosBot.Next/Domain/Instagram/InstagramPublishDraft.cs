@@ -19,6 +19,7 @@ public sealed class InstagramPublishDraft
     public string? AutoReplyMessage { get; set; }
     public string? AutoReplyLink { get; set; }
     public DateTimeOffset? ScheduledFor { get; set; }
+    public bool SendToCatalog { get; set; }
     public string Status { get; set; } = "draft";
     public string? MediaId { get; set; }
     public string? Error { get; set; }

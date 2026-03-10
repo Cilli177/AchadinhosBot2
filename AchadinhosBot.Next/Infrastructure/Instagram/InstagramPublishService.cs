@@ -22,6 +22,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
     private readonly IMetaGraphClient _metaGraphClient;
     private readonly IInstagramOutboundPublisher _publisher;
     private readonly IInstagramOutboundOutboxStore _outboxStore;
+    private readonly ICatalogOfferStore _catalogOfferStore;
     private readonly string? _publicBaseUrl;
     private readonly ILogger<InstagramPublishService> _logger;
 
@@ -34,6 +35,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         IMetaGraphClient metaGraphClient,
         IInstagramOutboundPublisher publisher,
         IInstagramOutboundOutboxStore outboxStore,
+        ICatalogOfferStore catalogOfferStore,
         IOptions<WebhookOptions> webhookOptions,
         ILogger<InstagramPublishService> logger)
     {
@@ -45,6 +47,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         _metaGraphClient = metaGraphClient;
         _publisher = publisher;
         _outboxStore = outboxStore;
+        _catalogOfferStore = catalogOfferStore;
         _publicBaseUrl = webhookOptions.Value.PublicBaseUrl;
         _logger = logger;
     }
@@ -174,6 +177,11 @@ public sealed class InstagramPublishService : IInstagramPublishService
             publishResult.Success ? $"Publicado com sucesso (AutoReply={draft.AutoReplyEnabled})" : "Falha ao publicar",
             cancellationToken);
 
+        if (publishResult.Success && (draft.SendToCatalog || publishSettings.SendToCatalog))
+        {
+            await TrySyncCatalogAsync(draft, cancellationToken);
+        }
+
         return new InstagramPublishExecutionOutcome(
             publishResult.Success,
             publishResult.Success ? StatusCodes.Status200OK : StatusCodes.Status502BadGateway,
@@ -251,5 +259,33 @@ public sealed class InstagramPublishService : IInstagramPublishService
         }
 
         return null;
+    }
+
+    private async Task TrySyncCatalogAsync(InstagramPublishDraft draft, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _catalogOfferStore.SyncFromPublishedDraftsAsync(new[] { draft }, cancellationToken);
+            await AppendLogAsync(
+                "catalog_sync_after_publish",
+                true,
+                draft.Id,
+                draft.MediaId,
+                null,
+                $"Created={result.Created};Updated={result.Updated};Deactivated={result.Deactivated}",
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao sincronizar draft {DraftId} no catalogo apos publicacao.", draft.Id);
+            await AppendLogAsync(
+                "catalog_sync_after_publish",
+                false,
+                draft.Id,
+                draft.MediaId,
+                ex.Message,
+                "sync_failed",
+                cancellationToken);
+        }
     }
 }

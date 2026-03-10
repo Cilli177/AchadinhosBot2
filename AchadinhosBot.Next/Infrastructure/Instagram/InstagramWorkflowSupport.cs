@@ -584,46 +584,7 @@ internal static class InstagramWorkflowSupport
 
     private static byte[]? NormalizeImageBytes(byte[] input, string postType)
     {
-        try
-        {
-            using var ms = new MemoryStream(input);
-            using var image = Image.Load(ms);
-
-            var width = image.Width;
-            var height = image.Height;
-            if (width == 0 || height == 0)
-            {
-                return null;
-            }
-
-            int targetWidth = 1080;
-            int targetHeight = 1080;
-            
-            var normalizedType = NormalizePostType(postType);
-            if (normalizedType == "story" || normalizedType == "reel")
-            {
-                targetHeight = 1920;
-            }
-
-            // Desired aspect ratio vs current aspect ratio
-            var targetRatio = targetWidth / (double)targetHeight;
-            var currentRatio = width / (double)height;
-            
-            // se for diferente do desejado, vamos ajustar usando ImageSharp (Crop resizes e corta bordas)
-            image.Mutate(x => x.Resize(new ResizeOptions
-            {
-                Size = new Size(targetWidth, targetHeight),
-                Mode = ResizeMode.Crop
-            }));
-
-            using var outStream = new MemoryStream();
-            image.SaveAsJpeg(outStream);
-            return outStream.ToArray();
-        }
-        catch
-        {
-            return null;
-        }
+        return ImageNormalizationSupport.NormalizeForInstagramPublication(input, NormalizePostType(postType));
     }
 
     private static string BuildPublicMediaUrl(string publicBaseUrl, string mediaId)

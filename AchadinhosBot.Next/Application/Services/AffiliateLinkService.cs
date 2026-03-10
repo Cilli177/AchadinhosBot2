@@ -417,7 +417,6 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         var startedFromMercadoLivreShortOrSocial = IsMercadoLivreSocialOrShortUri(uri);
         var mlbId = ExtractPreferredMercadoLivreIdFromUrl(uri.ToString());
         var resolvedUri = uri;
-        string? fallbackReason = null;
         if (string.IsNullOrWhiteSpace(mlbId))
         {
             var expanded = await ExpandUrlAsync(uri, cancellationToken);
@@ -1456,11 +1455,12 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             var html = await res.Content.ReadAsStringAsync(cancellationToken);
 
             _logger.LogInformation("[ML Social] HTML Length: {Length}", html?.Length ?? 0);
+            html ??= string.Empty;
 
             // 1. Try to extract the Action Link (Ir para produto) which is the most reliable for social pages
             // The user provided the exact HTML pattern for this button
             var actionLinkMatch = Regex.Match(
-                html,
+                html ?? string.Empty,
                 "<a[^>]+href=[\"'](https?://(?:[^\"]+mercadolivre\\.com\\.br[^\"]+MLB-?\\d+[^\"]*|[^\"]+meli\\.la[^\"]+))[\"'][^>]*class=[\"'][^\"']*poly-component__link--action-link[^\"']*[\"']",
                 RegexOptions.IgnoreCase | RegexOptions.Singleline);
             
@@ -1475,7 +1475,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             // 2. Fallback: card-featured container JSON
-            var featuredMatch = Regex.Match(html, "\"id\"\\s*:\\s*\"card-featured\".*?\"url\"\\s*:\\s*\"(https?://(?:[^\"]+mercadolivre\\.com\\.br[^\"]+MLB-?\\d+|[^\"]+meli\\.la[^\"]+))\"", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            var featuredMatch = Regex.Match(html ?? string.Empty, "\"id\"\\s*:\\s*\"card-featured\".*?\"url\"\\s*:\\s*\"(https?://(?:[^\"]+mercadolivre\\.com\\.br[^\"]+MLB-?\\d+|[^\"]+meli\\.la[^\"]+))\"", RegexOptions.IgnoreCase | RegexOptions.Singleline);
             if (featuredMatch.Success)
             {
                 var featUrl = WebUtility.HtmlDecode(featuredMatch.Groups[1].Value.Replace("\\u002F", "/"));
@@ -1484,13 +1484,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             // 3. Fallback: Meta Tag check
-            var ogTitleMatch = Regex.Match(html, "<meta\\s+property=[\"']og:title[\"']\\s+content=[\"']([^\"']+)[\"']", RegexOptions.IgnoreCase);
+            var ogTitleMatch = Regex.Match(html ?? string.Empty, "<meta\\s+property=[\"']og:title[\"']\\s+content=[\"']([^\"']+)[\"']", RegexOptions.IgnoreCase);
             if (ogTitleMatch.Success)
             {
                 _logger.LogInformation("[ML Social] Meta title: {Title}", ogTitleMatch.Groups[1].Value);
                 if (ogTitleMatch.Groups[1].Value.Contains("Whey", StringComparison.OrdinalIgnoreCase) || ogTitleMatch.Groups[1].Value.Contains("FTW", StringComparison.OrdinalIgnoreCase))
                 {
-                    var anyMlbMatch = Regex.Match(html, "\"url\"\\s*:\\s*\"(https?://[^\"]+mercadolivre\\.com\\.br/[^\"]+MLB-?\\d+[^\"]*)\"", RegexOptions.IgnoreCase);
+                    var anyMlbMatch = Regex.Match(html ?? string.Empty, "\"url\"\\s*:\\s*\"(https?://[^\"]+mercadolivre\\.com\\.br/[^\"]+MLB-?\\d+[^\"]*)\"", RegexOptions.IgnoreCase);
                     if (anyMlbMatch.Success)
                     {
                         var fallbackUrl = WebUtility.HtmlDecode(anyMlbMatch.Groups[1].Value.Replace("\\u002F", "/"));
@@ -1500,7 +1500,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             var jsonProductMatch = Regex.Match(
-                html,
+                html ?? string.Empty,
                 "\"id\"\\s*:\\s*\"show_product\"\\s*,\\s*\"text\"\\s*:\\s*\"Ir\\s+para\\s+(?:o\\s+)?produto\"\\s*,\\s*\"url\"\\s*:\\s*\"([^\"]+)\"",
                 RegexOptions.IgnoreCase);
             
@@ -1515,7 +1515,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             var socialAction = Regex.Match(
-                html,
+                html ?? string.Empty,
                 "<a[^>]+class=[\"'][^\"']*poly-component__link--action-link[^\"']*[\"'][^>]*href=[\"']([^\"']+)[\"']",
                 RegexOptions.IgnoreCase | RegexOptions.Singleline);
             
@@ -1530,7 +1530,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             var buttonText = Regex.Match(
-                html,
+                html ?? string.Empty,
                 "<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>(?:(?!</a>).)*?Ir\\s+para\\s+(?:o\\s+)?produto(?:(?!</a>).)*?</a>",
                 RegexOptions.IgnoreCase | RegexOptions.Singleline);
             if (buttonText.Success)
@@ -1544,13 +1544,13 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             }
 
             var buttonAttr = Regex.Match(
-                html,
+                html ?? string.Empty,
                 "<a[^>]+(?:aria-label|title)=[\"'][^\"']*ir\\s+para\\s+(?:o\\s+)?produto[^\"']*[\"'][^>]*href=[\"']([^\"']+)[\"']",
                 RegexOptions.IgnoreCase | RegexOptions.Singleline);
             if (!buttonAttr.Success)
             {
                 buttonAttr = Regex.Match(
-                    html,
+                    html ?? string.Empty,
                     "<a[^>]+href=[\"']([^\"']+)[\"'][^>]*(?:aria-label|title)=[\"'][^\"']*ir\\s+para\\s+(?:o\\s+)?produto[^\"']*[\"']",
                     RegexOptions.IgnoreCase | RegexOptions.Singleline);
             }
@@ -1565,27 +1565,27 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 }
             }
 
-            var direct = Regex.Match(html, "https?://[^\"'\\s>]*mercadolivre[^\"'\\s>]*MLB-?\\d+[^\"'\\s>]*", RegexOptions.IgnoreCase);
+            var direct = Regex.Match(html ?? string.Empty, "https?://[^\"'\\s>]*mercadolivre[^\"'\\s>]*MLB-?\\d+[^\"'\\s>]*", RegexOptions.IgnoreCase);
             if (direct.Success)
             {
                 return new Uri(direct.Value);
             }
 
-            var hrefMatch = Regex.Match(html, "href=[\"']([^\"']*MLB-?\\d+[^\"']*)[\"']", RegexOptions.IgnoreCase);
+            var hrefMatch = Regex.Match(html ?? string.Empty, "href=[\"']([^\"']*MLB-?\\d+[^\"']*)[\"']", RegexOptions.IgnoreCase);
             if (hrefMatch.Success)
             {
                 var href = WebUtility.HtmlDecode(hrefMatch.Groups[1].Value);
                 return ToAbsolute(url, href);
             }
 
-            var permalink = Regex.Match(html, "\"permalink\"\\s*:\\s*\"(https?:\\\\/\\\\/[^\\\"]+)\"", RegexOptions.IgnoreCase);
+            var permalink = Regex.Match(html ?? string.Empty, "\"permalink\"\\s*:\\s*\"(https?:\\\\/\\\\/[^\\\"]+)\"", RegexOptions.IgnoreCase);
             if (permalink.Success)
             {
                 var link = permalink.Groups[1].Value.Replace("\\/", "/");
                 return new Uri(link);
             }
 
-            var bestAnchorHref = FindBestMercadoLivreAnchorHref(html);
+            var bestAnchorHref = FindBestMercadoLivreAnchorHref(html ?? string.Empty);
             if (!string.IsNullOrWhiteSpace(bestAnchorHref))
             {
                 var resolved = ToAbsolute(url, WebUtility.HtmlDecode(bestAnchorHref));
@@ -2426,8 +2426,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         // Try items API
         var status = await QueryMercadoLivreItemStatusAsync($"https://api.mercadolibre.com/items/{normalizedId}", token, cancellationToken);
         
-        // If not found as item, try as product (Catalog)
-        if (status == HttpStatusCode.NotFound)
+        // If item lookup is unavailable or absent, try the catalog/product endpoint before concluding.
+        if (status == HttpStatusCode.NotFound || (int)status >= 500)
         {
             status = await QueryMercadoLivreItemStatusAsync($"https://api.mercadolibre.com/products/{normalizedId}", token, cancellationToken);
         }
@@ -2435,7 +2435,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         if ((status == HttpStatusCode.Unauthorized || status == HttpStatusCode.Forbidden) && !string.IsNullOrWhiteSpace(token))
         {
             status = await QueryMercadoLivreItemStatusAsync($"https://api.mercadolibre.com/items/{normalizedId}", null, cancellationToken);
-            if (status == HttpStatusCode.NotFound)
+            if (status == HttpStatusCode.NotFound || (int)status >= 500)
             {
                 status = await QueryMercadoLivreItemStatusAsync($"https://api.mercadolibre.com/products/{normalizedId}", null, cancellationToken);
             }

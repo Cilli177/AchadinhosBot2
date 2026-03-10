@@ -16,7 +16,7 @@ public sealed class InstagramManualValidation
         _output = output;
     }
 
-    [Fact]
+    [Fact(Skip = "Manual integration test that depends on real Instagram credentials and network access.")]
     public async Task ValidateMediaStatus_RealCall()
     {
         // NOTE: This test uses real credentials and makes a real API call.

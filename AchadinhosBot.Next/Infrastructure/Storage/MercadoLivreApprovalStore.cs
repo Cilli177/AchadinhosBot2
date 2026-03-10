@@ -70,11 +70,14 @@ public sealed class MercadoLivreApprovalStore : IMercadoLivreApprovalStore
 
     public async Task<IReadOnlySet<string>> GetApprovedUrlsAsync(IReadOnlyCollection<string> urls, CancellationToken cancellationToken)
     {
-        var requested = urls?
-            .Select(NormalizeUrl)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var requested = urls is null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : urls
+                .Select(NormalizeUrl)
+                .OfType<string>()
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         if (requested.Count == 0)
         {

@@ -5,6 +5,7 @@ using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Infrastructure.Amazon;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.ProductData;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -27,11 +28,14 @@ public sealed class EnrichmentManualValidation
         // Setup minimal dependencies
         var httpClient = new HttpClient();
         var clientFactory = new SimpleHttpClientFactory(httpClient);
-        var amazonPa = new AmazonPaApiClient(Options.Create(new AffiliateOptions()), clientFactory, NullLogger<AmazonPaApiClient>.Instance);
-        
-        var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, NullLogger<InstagramLinkMetaService>.Instance);
+        var affiliateOptions = Options.Create(new AffiliateOptions());
+        var amazonPa = new AmazonPaApiClient(affiliateOptions, clientFactory, NullLogger<AmazonPaApiClient>.Instance);
+        var amazonCreator = new AmazonCreatorApiClient(affiliateOptions, clientFactory, NullLogger<AmazonCreatorApiClient>.Instance);
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions());
+        var amazonHtmlScraper = new AmazonHtmlScraperService(clientFactory, memoryCache, NullLogger<AmazonHtmlScraperService>.Instance);
+        var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, amazonHtmlScraper, NullLogger<InstagramLinkMetaService>.Instance);
         var m_meliAuth = new FakeMeliAuth();
-        var official = new OfficialProductDataService(amazonPa, null!, m_meliAuth, Options.Create(new AffiliateOptions()), clientFactory, NullLogger<OfficialProductDataService>.Instance);
+        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
         
         var processor = new MessageProcessor(
             null!, null!, null!, null!, null!,
@@ -40,7 +44,7 @@ public sealed class EnrichmentManualValidation
         var originalText = "Oferta incrivel! Apenas R$ 199,90 no link: https://www.amazon.com.br/dp/B08P2CD4BY";
         var convertedText = "Oferta incrivel! Apenas R$ 199,90 no link: https://amzn.to/example";
 
-        var (enriched, imageUrl) = await processor.EnrichTextWithProductDataAsync(convertedText, originalText, CancellationToken.None);
+        var (enriched, imageUrl, _) = await processor.EnrichTextWithProductDataAsync(convertedText, originalText, CancellationToken.None);
 
         _output.WriteLine($"Original: {originalText}");
         _output.WriteLine($"Enriched: {enriched}");
@@ -55,11 +59,14 @@ public sealed class EnrichmentManualValidation
         // This test makes real calls to verify the fallback
         var httpClient = new HttpClient();
         var clientFactory = new SimpleHttpClientFactory(httpClient);
-        var amazonPa = new AmazonPaApiClient(Options.Create(new AffiliateOptions()), clientFactory, NullLogger<AmazonPaApiClient>.Instance);
-        
-        var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, NullLogger<InstagramLinkMetaService>.Instance);
+        var affiliateOptions = Options.Create(new AffiliateOptions());
+        var amazonPa = new AmazonPaApiClient(affiliateOptions, clientFactory, NullLogger<AmazonPaApiClient>.Instance);
+        var amazonCreator = new AmazonCreatorApiClient(affiliateOptions, clientFactory, NullLogger<AmazonCreatorApiClient>.Instance);
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions());
+        var amazonHtmlScraper = new AmazonHtmlScraperService(clientFactory, memoryCache, NullLogger<AmazonHtmlScraperService>.Instance);
+        var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, amazonHtmlScraper, NullLogger<InstagramLinkMetaService>.Instance);
         var m_meliAuth = new FakeMeliAuth();
-        var official = new OfficialProductDataService(amazonPa, null!, m_meliAuth, Options.Create(new AffiliateOptions()), clientFactory, NullLogger<OfficialProductDataService>.Instance);
+        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
         
         var processor = new MessageProcessor(
             null!, null!, null!, null!, null!,
@@ -72,7 +79,7 @@ public sealed class EnrichmentManualValidation
         var convertedText = $"Confira: https://mercadolivre.com/sec/example";
 
         _output.WriteLine($"Testing fallback for: {originalUrl}");
-        var (enriched, imageUrl) = await processor.EnrichTextWithProductDataAsync(convertedText, originalText, CancellationToken.None);
+        var (enriched, imageUrl, _) = await processor.EnrichTextWithProductDataAsync(convertedText, originalText, CancellationToken.None);
 
         _output.WriteLine($"Enriched: {enriched}");
         _output.WriteLine($"Image: {imageUrl}");

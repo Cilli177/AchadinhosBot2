@@ -146,6 +146,7 @@ public static class AdminEndpoints
                 AutoReplyMessage = req.AutoReplyMessage,
                 AutoReplyLink = req.AutoReplyLink,
                 ScheduledFor = req.ScheduledFor,
+                SendToCatalog = req.SendToCatalog,
                 Status = req.ScheduledFor.HasValue ? "scheduled" : "draft"
             };
 
@@ -157,6 +158,7 @@ public static class AdminEndpoints
         app.MapPost("/api/admin/publish-instagram", async (
             AdminPublishRequest req,
             HttpContext context,
+            IInstagramPublishStore draftStore,
             IInstagramPublishService publishService,
             IOptions<WebhookOptions> opts,
             CancellationToken ct) =>
@@ -164,11 +166,22 @@ public static class AdminEndpoints
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
-            var result = await publishService.ExecutePublishAsync(req.DraftId, ct);
+            var draft = await draftStore.GetAsync(req.DraftId, ct);
+            if (draft is null)
+                return Results.NotFound(new { success = false, error = "Draft not found." });
+
+            if (req.SendToCatalog && !draft.SendToCatalog)
+            {
+                draft.SendToCatalog = true;
+                await draftStore.UpdateAsync(draft, ct);
+            }
+
+            var result = await publishService.QueuePublishAsync(req.DraftId, "admin_panel", ct);
             return Results.Ok(new
             {
-                success = result.Success,
-                mediaId = result.MediaId,
+                success = result.Accepted,
+                mode = result.Mode,
+                messageId = result.MessageId,
                 error = result.Error
             });
         });
@@ -201,7 +214,7 @@ public static class AdminEndpoints
         app.MapPost("/api/admin/publish-telegram", async (
             AdminPublishToChannelRequest req,
             HttpContext context,
-            ITelegramOutboundPublisher telegram,
+            ITelegramGateway telegram,
             IOptions<WebhookOptions> opts,
             CancellationToken ct) =>
         {
@@ -211,14 +224,10 @@ public static class AdminEndpoints
             try
             {
                 var chatId = long.Parse(req.TargetId);
-                var cmd = new SendTelegramMessageCommand
-                {
-                    ChatId = chatId,
-                    Text = req.Content,
-                    ImageUrl = req.ImageUrl
-                };
-                await telegram.PublishAsync(cmd, ct);
-                return Results.Ok(new { success = true });
+                var result = !string.IsNullOrWhiteSpace(req.ImageUrl)
+                    ? await telegram.SendPhotoAsync(null, chatId, req.ImageUrl, req.Content, ct)
+                    : await telegram.SendTextAsync(null, chatId, req.Content, ct);
+                return Results.Ok(new { success = result.Success, message = result.Message });
             }
             catch (Exception ex)
             {
@@ -232,7 +241,7 @@ public static class AdminEndpoints
             HttpContext context,
             IInstagramPublishService publishService,
             IWhatsAppGateway whatsapp,
-            ITelegramOutboundPublisher telegram,
+            ITelegramGateway telegram,
             IInstagramPublishStore draftStore,
             ICatalogOfferStore catalogStore,
             IOptions<WebhookOptions> opts,
@@ -245,28 +254,33 @@ public static class AdminEndpoints
             if (draft == null && req.PublishInstagram)
                 return Results.NotFound(new { success = false, error = "Draft not found." });
 
+            if (draft is not null && req.PublishCatalog && !draft.SendToCatalog)
+            {
+                draft.SendToCatalog = true;
+                await draftStore.UpdateAsync(draft, ct);
+            }
+
             var content = req.Content ?? draft?.Caption ?? string.Empty;
             var imageUrl = req.ImageUrl ?? draft?.ImageUrls.FirstOrDefault();
 
             var results = new Dictionary<string, object>();
+            var allSucceeded = true;
 
             if (req.PublishTelegram && !string.IsNullOrWhiteSpace(req.TelegramChatId))
             {
                 try
                 {
                     var chatId = long.Parse(req.TelegramChatId);
-                    var cmd = new SendTelegramMessageCommand
-                    {
-                        ChatId = chatId,
-                        Text = content,
-                        ImageUrl = imageUrl
-                    };
-                    await telegram.PublishAsync(cmd, ct);
-                    results["telegram"] = new { success = true };
+                    var tgResult = !string.IsNullOrWhiteSpace(imageUrl)
+                        ? await telegram.SendPhotoAsync(null, chatId, imageUrl, content, ct)
+                        : await telegram.SendTextAsync(null, chatId, content, ct);
+                    results["telegram"] = new { success = tgResult.Success, message = tgResult.Message };
+                    allSucceeded &= tgResult.Success;
                 }
                 catch (Exception ex)
                 {
                     results["telegram"] = new { success = false, error = ex.Message };
+                    allSucceeded = false;
                 }
             }
 
@@ -284,10 +298,12 @@ public static class AdminEndpoints
                         waResult = await whatsapp.SendTextAsync(null, req.WhatsAppTargetId, content, ct);
                     }
                     results["whatsapp"] = new { success = waResult.Success, error = waResult.Message };
+                    allSucceeded &= waResult.Success;
                 }
                 catch (Exception ex)
                 {
                     results["whatsapp"] = new { success = false, error = ex.Message };
+                    allSucceeded = false;
                 }
             }
 
@@ -295,12 +311,21 @@ public static class AdminEndpoints
             {
                 try
                 {
-                    var igResult = await publishService.ExecutePublishAsync(req.DraftId, ct);
-                    results["instagram"] = new { success = igResult.Success, mediaId = igResult.MediaId, error = igResult.Error };
+                    var igResult = await publishService.QueuePublishAsync(req.DraftId, "admin_master", ct);
+                    results["instagram"] = new
+                    {
+                        success = igResult.Accepted,
+                        mode = igResult.Mode,
+                        messageId = igResult.MessageId,
+                        persistedLocally = igResult.PersistedLocally,
+                        error = igResult.Error
+                    };
+                    allSucceeded &= igResult.Accepted;
                 }
                 catch (Exception ex)
                 {
                     results["instagram"] = new { success = false, error = ex.Message };
+                    allSucceeded = false;
                 }
             }
 
@@ -308,23 +333,29 @@ public static class AdminEndpoints
             {
                 try
                 {
-                    if (draft != null)
+                    if (draft != null && string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase))
                     {
                         var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
                         results["catalog"] = new { success = true, itemsUpdated = syncResult.Updated + syncResult.Created };
                     }
+                    else if (draft != null)
+                    {
+                        results["catalog"] = new { success = true, scheduled = true, message = "Catalogo sera sincronizado apos a publicacao do draft." };
+                    }
                     else
                     {
                         results["catalog"] = new { success = false, error = "Draft object required for catalog." };
+                        allSucceeded = false;
                     }
                 }
                 catch (Exception ex)
                 {
                     results["catalog"] = new { success = false, error = ex.Message };
+                    allSucceeded = false;
                 }
             }
 
-            return Results.Ok(new { success = true, channels = results });
+            return Results.Ok(new { success = allSucceeded, channels = results });
         });
 
         // --- Add to Catalog ---
@@ -342,8 +373,34 @@ public static class AdminEndpoints
             var draft = await draftStore.GetAsync(req.DraftId, ct);
             if (draft == null) return Results.NotFound("Draft not found.");
 
-            await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
-            return Results.Ok(new { success = true });
+            if (!draft.SendToCatalog)
+            {
+                draft.SendToCatalog = true;
+                await draftStore.UpdateAsync(draft, ct);
+            }
+
+            if (!string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Ok(new { success = true, scheduled = true, message = "Draft marcado para sincronizar no catalogo apos a publicacao." });
+            }
+
+            var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
+            return Results.Ok(new { success = true, itemsUpdated = syncResult.Created + syncResult.Updated });
+        });
+
+        app.MapGet("/api/admin/analytics/summary", async (
+            HttpContext context,
+            IOperationalAnalyticsService analyticsService,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var hoursRaw = context.Request.Query["hours"].ToString();
+            var hours = int.TryParse(hoursRaw, out var parsedHours) ? parsedHours : 168;
+            var summary = await analyticsService.GetSummaryAsync(hours, ct);
+            return Results.Ok(new { success = true, summary });
         });
 
         // --- List Drafts ---
@@ -401,8 +458,8 @@ public static class AdminEndpoints
 
 public sealed record AdminGenerateCardRequest(string Title, string? Price, string? PreviousPrice, int? DiscountPercent, string ImageUrl);
 public sealed record AdminGenerateCaptionRequest(string ProductName, string? OfferContext);
-public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor);
-public sealed record AdminPublishRequest(string DraftId);
+public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, List<string>? ImageUrls, string? VideoUrl, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false);
+public sealed record AdminPublishRequest(string DraftId, bool SendToCatalog = false);
 public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl);
 public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl);
 public sealed record AdminAddToCatalogRequest(string DraftId);
