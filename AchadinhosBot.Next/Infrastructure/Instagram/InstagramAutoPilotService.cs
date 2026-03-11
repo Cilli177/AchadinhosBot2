@@ -257,7 +257,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             : await LoadRecentDraftKeysAsync(now.AddHours(-repeatWindowHours), ct);
 
         var conversionLogs = await _conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 500 }, ct);
-        var clickLogs = await _clickLogStore.QueryAsync(null, 500, ct);
+        var clickLogs = await _clickLogStore.QueryAsync(null, null, 500, ct);
 
         var clickMap = clickLogs
             .Where(x => !string.IsNullOrWhiteSpace(x.TargetUrl))

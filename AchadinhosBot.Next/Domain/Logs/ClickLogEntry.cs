@@ -10,5 +10,7 @@ public sealed class ClickLogEntry
     public string? Campaign { get; set; }
     public string? Referrer { get; set; }
     public string? UserAgent { get; set; }
+    public string? IpAddress { get; set; }
     public string? IpHash { get; set; }
+    public string? Location { get; set; }
 }

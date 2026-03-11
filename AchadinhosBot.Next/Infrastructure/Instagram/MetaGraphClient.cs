@@ -118,6 +118,12 @@ public sealed class MetaGraphClient : IMetaGraphClient
                     return new MetaGraphPublishResult(false, Error: $"Falha ao criar reel. {containerError}", IsTransient: IsTransientError(containerError));
                 }
 
+                var (isReady, readyError) = await WaitForMediaContainerReadyAsync(client, baseUrl, settings.InstagramUserId!, settings.AccessToken!, containerId!, requireFinishedStatus: true, cancellationToken);
+                if (!isReady)
+                {
+                    return new MetaGraphPublishResult(false, Error: $"Falha ao preparar reel. {readyError}", IsTransient: IsTransientError(readyError));
+                }
+
                 var (mediaId, publishError) = await PublishMediaAsync(client, baseUrl, settings.InstagramUserId!, settings.AccessToken!, containerId!, cancellationToken);
                 return string.IsNullOrWhiteSpace(mediaId)
                     ? new MetaGraphPublishResult(false, Error: $"Falha ao publicar reel. {publishError}", IsTransient: IsTransientError(publishError))
@@ -359,7 +365,7 @@ public sealed class MetaGraphClient : IMetaGraphClient
         };
 
         string? lastError = null;
-        foreach (var delay in new[] { 0, 4, 8, 12, 16, 22 })
+        foreach (var delay in new[] { 0, 5, 10, 15, 25, 35, 45, 60 })
         {
             if (delay > 0)
             {
@@ -381,6 +387,73 @@ public sealed class MetaGraphClient : IMetaGraphClient
         }
 
         return (null, lastError ?? "Media ainda nao ficou pronta para publicacao.");
+    }
+
+    private static async Task<(bool Ready, string? Error)> WaitForMediaContainerReadyAsync(
+        HttpClient client,
+        string baseUrl,
+        string userId,
+        string token,
+        string creationId,
+        bool requireFinishedStatus,
+        CancellationToken cancellationToken)
+    {
+        string? lastStatus = null;
+        string? lastError = null;
+
+        foreach (var delay in new[] { 0, 3, 6, 10, 15, 20, 30, 45, 60 })
+        {
+            if (delay > 0)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(delay), cancellationToken);
+            }
+
+            using var response = await client.GetAsync(
+                $"{baseUrl}/{creationId}?fields=status_code,status&access_token={Uri.EscapeDataString(token)}",
+                cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                lastError = ExtractGraphError(body) ?? body;
+                if (!IsGraphMediaNotReadyError(body))
+                {
+                    return (false, lastError);
+                }
+
+                continue;
+            }
+
+            var statusCode = GetJsonRootValueAsString(body, "status_code");
+            var status = GetJsonRootValueAsString(body, "status");
+            lastStatus = string.IsNullOrWhiteSpace(statusCode) ? status : $"{statusCode}:{status}";
+
+            if (string.Equals(statusCode, "ERROR", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, "ERROR", StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, $"Container retornou status de erro ({lastStatus}).");
+            }
+
+            if (requireFinishedStatus)
+            {
+                if (string.Equals(statusCode, "FINISHED", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(status, "FINISHED", StringComparison.OrdinalIgnoreCase))
+                {
+                    return (true, null);
+                }
+
+                continue;
+            }
+
+            if (string.Equals(statusCode, "FINISHED", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, "FINISHED", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(statusCode, "IN_PROGRESS", StringComparison.OrdinalIgnoreCase))
+            {
+                return (true, null);
+            }
+        }
+
+        return (false, lastError ?? $"Media ainda nao ficou pronta para publicacao. Ultimo status: {lastStatus ?? "desconhecido"}");
     }
 
     private static string? TryGetIdFromJson(string json)
@@ -416,6 +489,19 @@ public sealed class MetaGraphClient : IMetaGraphClient
         }
 
         return json;
+    }
+
+    private static string? GetJsonRootValueAsString(string json, string propertyName)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return GetJsonValueAsString(doc.RootElement, propertyName);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool IsGraphMediaNotReadyError(string json)

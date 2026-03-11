@@ -184,7 +184,7 @@ public static class AdminEndpoints
                 ScheduledFor = req.ScheduledFor,
                 Status = req.ScheduledFor.HasValue ? "scheduled" : "draft"
             };
-            ApplyCatalogIntent(draft, req.SendToCatalog, req.CatalogTarget);
+            ApplyCatalogIntent(context, draft, req.SendToCatalog, req.CatalogTarget);
 
             await store.SaveAsync(draft, ct);
             await audit.WriteAsync("admin.draft.created", ResolveActor(context), new
@@ -224,7 +224,7 @@ public static class AdminEndpoints
             {
                 var previousCatalogTarget = draft.CatalogTarget;
                 var previousSendToCatalog = draft.SendToCatalog;
-                ApplyCatalogIntent(draft, req.SendToCatalog, req.CatalogTarget);
+                ApplyCatalogIntent(context, draft, req.SendToCatalog, req.CatalogTarget);
                 if (!string.Equals(previousCatalogTarget, draft.CatalogTarget, StringComparison.OrdinalIgnoreCase) ||
                     previousSendToCatalog != draft.SendToCatalog)
                 {
@@ -271,7 +271,7 @@ public static class AdminEndpoints
             {
                 var previousCatalogTarget = draft.CatalogTarget;
                 var previousSendToCatalog = draft.SendToCatalog;
-                ApplyCatalogIntent(draft, req.SendToCatalog, req.CatalogTarget);
+                ApplyCatalogIntent(context, draft, req.SendToCatalog, req.CatalogTarget);
                 if (!string.Equals(previousCatalogTarget, draft.CatalogTarget, StringComparison.OrdinalIgnoreCase) ||
                     previousSendToCatalog != draft.SendToCatalog)
                 {
@@ -385,7 +385,7 @@ public static class AdminEndpoints
 
             if (draft is not null && (req.PublishCatalog || !string.IsNullOrWhiteSpace(req.CatalogTarget)))
             {
-                ApplyCatalogIntent(draft, req.PublishCatalog, req.CatalogTarget);
+                ApplyCatalogIntent(context, draft, req.PublishCatalog, req.CatalogTarget);
                 await draftStore.UpdateAsync(draft, ct);
             }
 
@@ -528,7 +528,7 @@ public static class AdminEndpoints
 
             var previousCatalogTarget = draft.CatalogTarget;
             var previousSendToCatalog = draft.SendToCatalog;
-            ApplyCatalogIntent(draft, true, req.CatalogTarget);
+            ApplyCatalogIntent(context, draft, true, req.CatalogTarget);
             if (!string.Equals(previousCatalogTarget, draft.CatalogTarget, StringComparison.OrdinalIgnoreCase) ||
                 previousSendToCatalog != draft.SendToCatalog)
             {
@@ -594,8 +594,10 @@ public static class AdminEndpoints
                 postType = d.PostType,
                 status = d.Status,
                 mediaId = d.MediaId,
+                error = d.Error,
                 catalogTarget = CatalogTargets.ResolveDraftTarget(d),
                 createdAt = d.CreatedAt,
+                scheduledFor = d.ScheduledFor,
                 imageUrl = d.ImageUrls.FirstOrDefault()
             });
 
@@ -654,16 +656,31 @@ public static class AdminEndpoints
         return "anonymous";
     }
 
-    private static void ApplyCatalogIntent(InstagramPublishDraft draft, bool sendToCatalog, string? catalogTarget)
+    private static void ApplyCatalogIntent(HttpContext context, InstagramPublishDraft draft, bool sendToCatalog, string? catalogTarget)
     {
         var resolved = CatalogTargets.ResolveConfiguredTarget(
             catalogTarget,
             sendToCatalog,
             CatalogTargets.Prod);
 
+        if (IsDevHost(context.Request.Host.Host) &&
+            string.Equals(resolved, CatalogTargets.Prod, StringComparison.OrdinalIgnoreCase))
+        {
+            resolved = CatalogTargets.Dev;
+        }
+
         draft.CatalogTarget = resolved;
         draft.SendToCatalog = CatalogTargets.IsEnabled(resolved);
         draft.CatalogIntentLocked = true;
+    }
+
+    private static bool IsDevHost(string? host)
+    {
+        var value = host ?? string.Empty;
+        return value.Contains("-dev.", StringComparison.OrdinalIgnoreCase) ||
+               value.StartsWith("achadinhos-dev", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
+               value.StartsWith("127.0.0.1", StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<InstagramCtaOption> BuildDraftCtas(string? caption, string? rawKeywords, string? preferredLink)

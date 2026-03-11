@@ -21,7 +21,7 @@
         }
     </script>
     <style>
-        /* Version: 2026-03-10-0015 */
+        /* Version: 2026-03-10-0020 */
         body {
             font-family: 'Inter', sans-serif;
         }
@@ -311,6 +311,69 @@
             background: #c4a468;
             color: #0f172a;
         }
+
+        .mobile-card-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(196, 164, 104, 0.45) transparent;
+        }
+
+        @media (max-width: 767px) {
+            body {
+                padding: 14px;
+            }
+
+            .toast {
+                left: 14px;
+                right: 14px;
+                bottom: 14px;
+                transform: translateY(120px);
+                padding: 0.9rem 1rem;
+                border-radius: 18px;
+                text-align: center;
+            }
+
+            .toast.show {
+                transform: translateY(0);
+            }
+
+            .insta-mock-container {
+                width: min(100%, 340px);
+                border-width: 6px;
+                border-radius: 26px;
+            }
+
+            .insta-mock-container.stories {
+                width: min(100%, 300px);
+            }
+
+            .format-toggle {
+                width: 100%;
+                justify-content: center;
+                overflow-x: auto;
+            }
+
+            .format-btn {
+                flex: 1 0 auto;
+                min-width: 96px;
+                text-align: center;
+            }
+
+            #editorModal {
+                padding-top: 0;
+                align-items: stretch;
+            }
+
+            #editorModal>div {
+                height: 100dvh;
+                max-width: 100%;
+                border-radius: 0;
+                flex-direction: column;
+            }
+
+            #editorModal canvas {
+                max-height: 46dvh;
+            }
+        }
     </style>
 </head>
 
@@ -340,7 +403,8 @@
                 class="w-full bg-primary border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500/50 focus:ring-2 focus:ring-red-500/20 transition-all"
                 onkeydown="if(event.key==='Enter') attemptLogin()">
             <label class="flex items-center self-start gap-2 cursor-pointer mt-1 mb-2">
-                <input type="checkbox" id="rememberMe" checked class="w-4 h-4 rounded bg-primary border-white/10 text-red-500 focus:ring-red-500">
+                <input type="checkbox" id="rememberMe" checked
+                    class="w-4 h-4 rounded bg-primary border-white/10 text-red-500 focus:ring-red-500">
                 <span class="text-xs text-slate-400">Mantenha-me conectado</span>
             </label>
             <button onclick="attemptLogin()"
@@ -355,7 +419,7 @@
         </div>
     </div>
 
-    <main id="mainContent" class="w-full max-w-3xl hidden">
+    <main id="mainContent" class="w-full max-w-6xl hidden">
 
         <!-- Header -->
         <div class="text-center mb-8 mt-4">
@@ -413,11 +477,12 @@
                 <div id="vipResultCard"
                     class="bg-[#151f32] border border-white/10 rounded-[20px] overflow-hidden flex flex-col md:flex-row shadow-xl">
                     <div
-                        class="w-full md:w-2/5 h-48 md:h-auto bg-white relative flex items-center justify-center p-4 border-b md:border-b-0 md:border-r border-white/10">
+                        class="w-full md:w-2/5 h-48 md:h-auto bg-slate-950 relative flex items-center justify-center p-4 border-b md:border-b-0 md:border-r border-white/10">
                         <span id="discountBadge"
                             class="absolute top-3 right-3 bg-red-600 text-white px-2 py-0.5 rounded-full font-bold text-xs"></span>
-                        <img id="productImage" src="" alt="Produto" class="max-w-full max-h-full object-contain"
-                            onerror="this.style.opacity='0.2'">
+                        <img id="productImage" src="" alt="Produto"
+                            class="max-w-full max-h-full object-contain block [filter:none] [mix-blend-mode:normal]"
+                            onload="this.style.opacity='1'" onerror="this.style.opacity='0.2'">
                     </div>
                     <div class="w-full md:w-3/5 p-5 flex flex-col justify-between">
                         <div>
@@ -447,15 +512,15 @@
                 <div id="studioPanel"
                     class="mt-6 border border-red-500/20 rounded-[24px] overflow-hidden bg-surface/30 backdrop-blur-md transition-all hidden">
                     <!-- Tab Header -->
-                    <div class="flex border-b border-white/10 bg-surface/50">
+                    <div class="grid grid-cols-3 border-b border-white/10 bg-surface/50">
                         <button onclick="switchTab('visual')"
-                            class="tab-btn flex-1 py-4 text-sm font-bold uppercase tracking-wider text-slate-400 active"
+                            class="tab-btn min-w-0 py-3 sm:py-4 text-[11px] sm:text-sm font-bold uppercase tracking-wider text-slate-400 active"
                             id="tab-visual-btn">Visual</button>
                         <button onclick="switchTab('caption')"
-                            class="tab-btn flex-1 py-4 text-sm font-bold uppercase tracking-wider text-slate-400"
+                            class="tab-btn min-w-0 py-3 sm:py-4 text-[11px] sm:text-sm font-bold uppercase tracking-wider text-slate-400"
                             id="tab-caption-btn">Legenda IA</button>
                         <button onclick="switchTab('publish')"
-                            class="tab-btn flex-1 py-4 text-sm font-bold uppercase tracking-wider text-slate-400"
+                            class="tab-btn min-w-0 py-3 sm:py-4 text-[11px] sm:text-sm font-bold uppercase tracking-wider text-slate-400"
                             id="tab-publish-btn">Publicar</button>
                     </div>
 
@@ -469,10 +534,12 @@
                                         class="format-btn active">Feed</button>
                                     <button onclick="setFormat('story')" id="fmt-story"
                                         class="format-btn">Stories</button>
+                                    <button onclick="setFormat('reels')" id="fmt-reels" class="format-btn">Reel</button>
                                 </div>
                             </div>
 
-                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+                            <div
+                                class="grid grid-cols-1 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)] gap-6 lg:gap-8 items-start">
 
                                 <!-- MOCK INSTAGRAM -->
                                 <div id="instaMockContainer" class="insta-mock-container mx-auto lg:mx-0">
@@ -485,7 +552,9 @@
                                         <span class="text-xs font-bold text-white">achadinhos.vip</span>
                                     </div>
                                     <div class="insta-media">
-                                        <img id="instaPreviewImg" src="" alt="Post Preview">
+                                        <img id="instaPreviewImg" src="" alt="Post Preview"
+                                            class="[filter:none] [mix-blend-mode:normal]"
+                                            onload="this.style.opacity='1'" onerror="this.style.opacity='0.2'">
                                         <video id="instaPreviewVid" class="hidden" controls loop></video>
                                         <audio id="instaPreviewAudio" class="hidden"></audio>
 
@@ -551,12 +620,12 @@
                                 </div>
 
                                 <!-- CONTROLS SIDE -->
-                                <div class="space-y-6">
+                                <div class="space-y-6 mobile-card-scroll">
                                     <div class="bg-primary/30 p-4 rounded-2xl border border-white/5">
                                         <label
                                             class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Gerenciamento
                                             de Midia</label>
-                                        <div class="grid grid-cols-4 gap-3">
+                                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                             <button onclick="document.getElementById('photoInput').click()"
                                                 class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
                                                 <div class="text-accent mb-1 flex justify-center"><svg class="w-5 h-5"
@@ -591,9 +660,11 @@
                                             </button>
                                             <button onclick="document.getElementById('musicInput').click()"
                                                 class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
-                                                <div class="text-emerald-400 mb-1 flex justify-center"><svg class="w-5 h-5"
-                                                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                <div class="text-emerald-400 mb-1 flex justify-center"><svg
+                                                        class="w-5 h-5" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
                                                             d="M9 19V6l12-2v13M9 19a2 2 0 11-4 0 2 2 0 014 0zm12-2a2 2 0 11-4 0 2 2 0 014 0z" />
                                                     </svg></div>
                                                 <span class="text-[9px] font-bold uppercase tracking-tight">Add
@@ -627,19 +698,21 @@
                                                 </button>
                                             </div>
                                             <div class="bg-surface/60 border border-white/10 rounded-xl p-3 space-y-2">
-                                                <div class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
+                                                <div
+                                                    class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
                                                     <span>Timeline de Video</span>
                                                     <span id="videoCurrentTimeLabel">0.0s</span>
                                                 </div>
-                                                <input id="videoTimelineInput" type="range" min="0" max="100" step="0.1" value="0"
-                                                    class="w-full accent-pink-400" oninput="scrubVideoTimeline()">
+                                                <input id="videoTimelineInput" type="range" min="0" max="100" step="0.1"
+                                                    value="0" class="w-full accent-pink-400"
+                                                    oninput="scrubVideoTimeline()">
                                                 <div class="grid grid-cols-3 gap-2 text-[10px] text-slate-500">
                                                     <span id="videoStartLabel">Inicio 0.0s</span>
                                                     <span class="text-center" id="videoCoverLabel">Capa 0.0s</span>
                                                     <span class="text-right" id="videoEndLabel">Fim auto</span>
                                                 </div>
                                             </div>
-                                            <div class="grid grid-cols-2 gap-3">
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                 <div>
                                                     <label
                                                         class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Inicio
@@ -659,7 +732,7 @@
                                                         oninput="updateVideoTrimState()">
                                                 </div>
                                             </div>
-                                            <div class="flex gap-2">
+                                            <div class="flex flex-col sm:flex-row gap-2">
                                                 <button type="button" onclick="seekVideoTrim('start')"
                                                     class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
                                                     Usar tempo atual no inicio
@@ -669,47 +742,58 @@
                                                     Usar tempo atual no fim
                                                 </button>
                                             </div>
-                                            <div class="flex gap-2">
+                                            <div class="flex flex-col sm:flex-row gap-2">
                                                 <button type="button" onclick="useCurrentTimeAsCover()"
                                                     class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
                                                     Usar tempo atual na capa
                                                 </button>
                                             </div>
                                             <div class="bg-surface/60 border border-white/10 rounded-xl p-3 space-y-3">
-                                                <div class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
+                                                <div
+                                                    class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
                                                     <span>Timeline de Musica</span>
                                                     <span id="musicCurrentTimeLabel">0.0s</span>
                                                 </div>
                                                 <div class="grid grid-cols-2 gap-3">
                                                     <div>
-                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Inicio
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Inicio
                                                             da musica</label>
-                                                        <input id="musicStartInput" type="number" min="0" step="0.1" value="0"
+                                                        <input id="musicStartInput" type="number" min="0" step="0.1"
+                                                            value="0"
                                                             class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
                                                             oninput="updateMusicState()">
                                                     </div>
                                                     <div>
-                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Fim
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Fim
                                                             da musica</label>
-                                                        <input id="musicEndInput" type="number" min="0" step="0.1" placeholder="auto"
+                                                        <input id="musicEndInput" type="number" min="0" step="0.1"
+                                                            placeholder="auto"
                                                             class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
                                                             oninput="updateMusicState()">
                                                     </div>
                                                 </div>
-                                                <input id="musicTimelineInput" type="range" min="0" max="100" step="0.1" value="0"
-                                                    class="w-full accent-emerald-400" oninput="scrubMusicTimeline()">
+                                                <input id="musicTimelineInput" type="range" min="0" max="100" step="0.1"
+                                                    value="0" class="w-full accent-emerald-400"
+                                                    oninput="scrubMusicTimeline()">
                                                 <div class="grid grid-cols-2 gap-3">
                                                     <div>
-                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Volume
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Volume
                                                             da musica</label>
-                                                        <input id="musicVolumeInput" type="range" min="0" max="1" step="0.05" value="0.7"
-                                                            class="w-full accent-emerald-400" oninput="updateMusicState()">
+                                                        <input id="musicVolumeInput" type="range" min="0" max="1"
+                                                            step="0.05" value="0.7" class="w-full accent-emerald-400"
+                                                            oninput="updateMusicState()">
                                                     </div>
                                                     <div>
-                                                        <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Audio
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Audio
                                                             original</label>
-                                                        <input id="originalAudioVolumeInput" type="range" min="0" max="1" step="0.05" value="0.25"
-                                                            class="w-full accent-slate-400" oninput="updateMusicState()">
+                                                        <input id="originalAudioVolumeInput" type="range" min="0"
+                                                            max="1" step="0.05" value="0.25"
+                                                            class="w-full accent-slate-400"
+                                                            oninput="updateMusicState()">
                                                     </div>
                                                 </div>
                                                 <div class="flex gap-2">
@@ -824,151 +908,194 @@
                         <div id="tab-caption" class="tab-content space-y-4">
                             <div class="flex items-center justify-between">
                                 <h3 class="text-sm font-bold text-slate-300">Editor de Legenda</h3>
-                                <button onclick="generateCaption()" id="genCaptionBtn"
-                                    class="bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                    </svg>
-                                    REGERAR COM IA
-                                </button>
-                            </div>
-                        </div>
-                        <!-- Caption Splitter Container (Hidden by default) -->
-                        <div id="captionOptionsContainer" class="hidden mb-4">
-                            <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">✨
-                                Opções Sugeridas pela IA (Escolha uma)</label>
-                            <div id="captionCardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <!-- Cards will be injected here -->
-                            </div>
-                        </div>
-                        <textarea id="captionText" rows="12"
-                            class="w-full bg-primary/40 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600 leading-relaxed"
-                            placeholder="Sua legenda aparecerá aqui. Você pode editar livremente..."></textarea>
-
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div class="bg-primary/20 p-4 rounded-xl border border-white/5 relative">
-                                <div class="flex justify-between items-center mb-2">
-                                    <label
-                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Hashtags
-                                        do Post</label>
-                                    <button onclick="suggestHashtags()" id="suggestTagsBtn"
-                                        class="text-[9px] text-accent font-bold uppercase transition-all flex items-center gap-1 hover:text-white">
-                                        ✨ Sugerir
+                                <div class="flex flex-wrap items-center justify-end gap-2">
+                                    <button type="button" onclick="applyDefaultCaptionTemplate(0)"
+                                        class="bg-white/5 hover:bg-white/10 text-white/80 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all">
+                                        MODELO 1
+                                    </button>
+                                    <button type="button" onclick="applyDefaultCaptionTemplate(1)"
+                                        class="bg-white/5 hover:bg-white/10 text-white/80 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all">
+                                        MODELO 2
+                                    </button>
+                                    <button onclick="generateCaption()" id="genCaptionBtn"
+                                        class="bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                        </svg>
+                                        REGERAR COM IA
                                     </button>
                                 </div>
-                                <input id="hashtagInput"
-                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
-                                    placeholder="#oferta #achadinhos #promoção">
                             </div>
-                            <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
-                                <label
-                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Call
-                                    to Action (WhatsApp/Telegram)</label>
-                                <input id="ctaInput"
-                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
-                                    placeholder="Comente EU QUERO / Link na Bio">
-                            </div>
-                        </div>
-
-                        <!-- Auto Reply Toggle -->
-                        <div
-                            class="bg-primary/30 p-4 rounded-xl border border-white/5 flex items-center justify-between mt-4">
-                            <div>
-                                <h4 class="text-[10px] font-bold text-white uppercase tracking-widest">Auto-Resposta
-                                    "Eu Quero"</h4>
-                                <p class="text-[8px] text-slate-500 mt-0.5">Envia o link no Direct automaticamente
-                                    para quem comentar.</p>
-                            </div>
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" id="autoReplyCheck" checked class="sr-only peer"
-                                    onchange="document.getElementById('autoReplySettings').classList.toggle('hidden', !this.checked)">
-                                <div
-                                    class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent">
+                            <p class="text-[11px] text-slate-500">Use os modelos prontos quando quiser uma copy afiliada
+                                forte sem depender da IA.</p>
+                            <!-- Caption Splitter Container (Hidden by default) -->
+                            <div id="captionOptionsContainer" class="hidden mb-4">
+                                <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">✨
+                                    Opções Sugeridas pela IA (Escolha uma)</label>
+                                <div id="captionCardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <!-- Cards will be injected here -->
                                 </div>
-                            </label>
+                            </div>
+                            <textarea id="captionText" rows="12"
+                                class="w-full bg-primary/40 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600 leading-relaxed"
+                                placeholder="Sua legenda aparecerá aqui. Você pode editar livremente..."></textarea>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                                <div class="bg-primary/20 p-3 rounded-xl border border-white/5">
+                                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                        Caracteres</div>
+                                    <div id="captionMetrics" class="mt-1 text-sm font-semibold text-white">0 caracteres
+                                    </div>
+                                </div>
+                                <button type="button" onclick="copyCaptionText()"
+                                    class="bg-primary/20 hover:bg-primary/30 p-3 rounded-xl border border-white/5 text-left transition-all">
+                                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Acao
+                                        Rapida</div>
+                                    <div class="mt-1 text-sm font-semibold text-white">Copiar legenda</div>
+                                </button>
+                                <div class="bg-primary/20 p-3 rounded-xl border border-white/5">
+                                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                        Checklist</div>
+                                    <div id="captionChecklist" class="mt-1 text-xs text-slate-300 leading-relaxed">
+                                        Legenda, CTA e hashtags ainda pendentes.</div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="bg-primary/20 p-4 rounded-xl border border-white/5 relative">
+                                    <div class="flex justify-between items-center mb-2">
+                                        <label
+                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Hashtags
+                                            do Post</label>
+                                        <button onclick="suggestHashtags()" id="suggestTagsBtn"
+                                            class="text-[9px] text-accent font-bold uppercase transition-all flex items-center gap-1 hover:text-white">
+                                            ✨ Sugerir
+                                        </button>
+                                    </div>
+                                    <input id="hashtagInput"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                        placeholder="#oferta #achadinhos #promoção">
+                                </div>
+                                <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Call
+                                        to Action (WhatsApp/Telegram)</label>
+                                    <input id="ctaInput"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                        placeholder="Comente EU QUERO / Link na Bio">
+                                    <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        <button type="button" onclick="applyCtaPreset('catalog')"
+                                            class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-[10px] font-bold text-white/80 transition-all">CTA
+                                            Catalogo</button>
+                                        <button type="button" onclick="applyCtaPreset('whatsapp')"
+                                            class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-[10px] font-bold text-white/80 transition-all">CTA
+                                            WhatsApp</button>
+                                        <button type="button" onclick="applyCtaPreset('urgency')"
+                                            class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-[10px] font-bold text-white/80 transition-all">CTA
+                                            Urgencia</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Auto Reply Toggle -->
+                            <div
+                                class="bg-primary/30 p-4 rounded-xl border border-white/5 flex items-center justify-between mt-4">
+                                <div>
+                                    <h4 class="text-[10px] font-bold text-white uppercase tracking-widest">Auto-Resposta
+                                        "Eu Quero"</h4>
+                                    <p class="text-[8px] text-slate-500 mt-0.5">Envia o link no Direct automaticamente
+                                        para quem comentar.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="autoReplyCheck" checked class="sr-only peer"
+                                        onchange="document.getElementById('autoReplySettings').classList.toggle('hidden', !this.checked)">
+                                    <div
+                                        class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent">
+                                    </div>
+                                </label>
+                            </div>
+
+                            <div id="autoReplySettings"
+                                class="space-y-4 bg-primary/20 p-4 rounded-xl border border-white/5 mt-2">
+                                <div>
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Palavras-chave
+                                        (gatilhos)</label>
+                                    <input id="autoReplyKeyword" oninput="markAutoReplyManual(this)"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                        placeholder="eu quero, manda, link" value="eu quero, link">
+                                </div>
+                                <div>
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Mensagem
+                                        do Direct (DM)</label>
+                                    <textarea id="autoReplyMessage" rows="2" oninput="markAutoReplyManual(this)"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600"
+                                        placeholder="Aqui está o link do produto que você pediu:"></textarea>
+                                </div>
+                                <div>
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Link
+                                        Personalizado (Opcional)</label>
+                                    <input id="autoReplyLink" oninput="markAutoReplyManual(this)"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent placeholder-slate-600"
+                                        placeholder="Deixe em branco para usar o link gerado do produto">
+                                </div>
+                            </div>
                         </div>
 
-                        <div id="autoReplySettings"
-                            class="space-y-4 bg-primary/20 p-4 rounded-xl border border-white/5 mt-2">
-                            <div>
-                                <label
-                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Palavras-chave
-                                    (gatilhos)</label>
-                                <input id="autoReplyKeyword" oninput="markAutoReplyManual(this)"
-                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
-                                    placeholder="eu quero, manda, link" value="eu quero, link">
+                        <!-- TAB 3: PUBLISH (LOGS & STATUS) -->
+                        <div id="tab-publish" class="tab-content space-y-4">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-sm font-bold text-slate-300">Historico de Publicacoes</h3>
+                                <button onclick="loadDraftsHistory()"
+                                    class="bg-white/5 hover:bg-white/10 text-white/70 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                    ATUALIZAR
+                                </button>
                             </div>
-                            <div>
-                                <label
-                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Mensagem
-                                    do Direct (DM)</label>
-                                <textarea id="autoReplyMessage" rows="2" oninput="markAutoReplyManual(this)"
-                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600"
-                                    placeholder="Aqui está o link do produto que você pediu:"></textarea>
+
+                            <div id="draftsLoading" class="text-center py-8 hidden">
+                                <div
+                                    class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3">
+                                </div>
+                                <p class="text-xs text-slate-500">Carregando historico...</p>
                             </div>
-                            <div>
-                                <label
-                                    class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Link
-                                    Personalizado (Opcional)</label>
-                                <input id="autoReplyLink" oninput="markAutoReplyManual(this)"
-                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent placeholder-slate-600"
-                                    placeholder="Deixe em branco para usar o link gerado do produto">
+
+                            <div id="draftsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <!-- Draft cards will be injected here -->
+                                <div
+                                    class="col-span-full bg-primary/30 rounded-2xl border border-white/5 p-6 text-center text-slate-400 text-sm">
+                                    Nenhuma publicacao encontrada.
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- TAB 3: PUBLISH (LOGS & STATUS) -->
-                    <div id="tab-publish" class="tab-content space-y-4">
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-sm font-bold text-slate-300">Historico de Publicacoes</h3>
-                            <button onclick="loadDraftsHistory()"
-                                class="bg-white/5 hover:bg-white/10 text-white/70 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                </svg>
-                                ATUALIZAR
-                            </button>
-                        </div>
-
-                        <div id="draftsLoading" class="text-center py-8 hidden">
-                            <div
-                                class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3">
-                            </div>
-                            <p class="text-xs text-slate-500">Carregando historico...</p>
-                        </div>
-
-                        <div id="draftsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            <!-- Draft cards will be injected here -->
-                            <div
-                                class="col-span-full bg-primary/30 rounded-2xl border border-white/5 p-6 text-center text-slate-400 text-sm">
-                                Nenhuma publicacao encontrada.
-                            </div>
-                        </div>
+                    <!-- Convert Another / Footer -->
+                    <div class="px-6 pb-6 pt-2 flex justify-between items-center bg-surface/20">
+                        <button onclick="logout()"
+                            class="text-[10px] text-red-400 opacity-60 hover:opacity-100 flex items-center gap-1 transition-all uppercase tracking-widest font-bold">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                            </svg>
+                            Sair
+                        </button>
+                        <span id="sessionInfo" class="text-[10px] text-slate-500 uppercase tracking-widest">Sessao nao
+                            iniciada</span>
+                        <button onclick="convertAnother()"
+                            class="text-[10px] text-accent font-bold uppercase tracking-widest hover:text-white transition-all">
+                            Converter Outro ->
+                        </button>
                     </div>
                 </div>
 
-                <!-- Convert Another / Footer -->
-                <div class="px-6 pb-6 pt-2 flex justify-between items-center bg-surface/20">
-                    <button onclick="logout()"
-                        class="text-[10px] text-red-400 opacity-60 hover:opacity-100 flex items-center gap-1 transition-all uppercase tracking-widest font-bold">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path
-                                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                        Sair
-                    </button>
-                    <span id="sessionInfo" class="text-[10px] text-slate-500 uppercase tracking-widest">Sessao nao
-                        iniciada</span>
-                    <button onclick="convertAnother()"
-                        class="text-[10px] text-accent font-bold uppercase tracking-widest hover:text-white transition-all">
-                        Converter Outro ->
-                    </button>
-                </div>
+                <!-- Old action buttons row (removed/replaced) -->
             </div>
-
-            <!-- Old action buttons row (removed/replaced) -->
-        </div>
         </div>
     </main>
 
@@ -985,30 +1112,40 @@
 
     <!-- Studio Editor Modal -->
     <div id="editorModal"
-        class="hidden fixed inset-0 z-50 bg-[#0f1115]/92 backdrop-blur-sm flex items-center justify-center pt-16">
+        class="hidden fixed inset-0 z-50 bg-[#0f1115]/92 backdrop-blur-sm flex items-end sm:items-center justify-center sm:pt-16">
         <div
-            class="bg-surface border border-white/10 rounded-[24px] overflow-hidden shadow-2xl w-full max-w-7xl flex h-[86vh]">
+            class="bg-surface border border-white/10 rounded-t-[24px] sm:rounded-[24px] overflow-hidden shadow-2xl w-full max-w-7xl flex flex-col lg:flex-row h-[100dvh] sm:h-[92vh] lg:h-[86vh]">
             <!-- Canvas Area -->
-            <div class="flex-1 bg-black/60 flex items-center justify-center p-6 relative overflow-hidden">
+            <div
+                class="flex-1 min-h-[34dvh] sm:min-h-[42dvh] bg-black/60 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
                 <div id="instaStageOverlay"
-                    class="pointer-events-none absolute inset-6 rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_55%)]"></div>
+                    class="pointer-events-none absolute inset-4 sm:inset-6 rounded-[24px] sm:rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_55%)]">
+                </div>
                 <canvas id="imageEditorCanvas"
                     class="max-w-full max-h-full rounded-[22px] shadow-[0_0_40px_rgba(0,0,0,0.55)] bg-[#111827]"></canvas>
             </div>
             <!-- Tools Sidebar -->
-            <div class="w-[390px] bg-surface border-l border-white/10 p-6 flex flex-col h-full overflow-y-auto">
-                <h3 class="text-white font-bold text-lg mb-6 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
-                    </svg>
-                    Studio Editor
-                </h3>
+            <div
+                class="w-full lg:w-[390px] bg-surface border-t lg:border-t-0 lg:border-l border-white/10 p-4 sm:p-6 flex flex-col h-[56dvh] sm:h-auto overflow-y-auto">
+                <div class="flex items-start justify-between gap-3 mb-5 sm:mb-6">
+                    <h3 class="text-white font-bold text-base sm:text-lg flex items-center gap-2">
+                        <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
+                        </svg>
+                        Studio Editor
+                    </h3>
+                    <button type="button" onclick="closeEditorModal()"
+                        class="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-bold text-slate-300 transition-all hover:bg-white/10 hover:text-white">
+                        Fechar
+                    </button>
+                </div>
 
                 <div class="space-y-6 flex-1">
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div class="space-y-2">
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Preset</label>
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Preset</label>
                             <select id="editorPresetSelect" onchange="applyEditorPreset()"
                                 class="w-full bg-primary/50 border border-white/10 rounded-xl px-3 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
                                 <option value="feed">Feed 1:1</option>
@@ -1019,7 +1156,8 @@
                             </select>
                         </div>
                         <div class="space-y-2">
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ajuste</label>
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ajuste</label>
                             <select id="editorFitSelect" onchange="renderEditor()"
                                 class="w-full bg-primary/50 border border-white/10 rounded-xl px-3 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
                                 <option value="cover">Cover</option>
@@ -1028,33 +1166,43 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-3 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div class="space-y-2">
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Zoom</label>
-                            <input id="editorScaleInput" type="range" min="0.6" max="1.8" step="0.05" value="1" oninput="renderEditor()" class="w-full accent-accent">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Zoom</label>
+                            <input id="editorScaleInput" type="range" min="0.6" max="1.8" step="0.05" value="1"
+                                oninput="renderEditor()" class="w-full accent-accent">
                         </div>
                         <div class="space-y-2">
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset X</label>
-                            <input id="editorOffsetXInput" type="range" min="-600" max="600" step="5" value="0" oninput="renderEditor()" class="w-full accent-accent">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset
+                                X</label>
+                            <input id="editorOffsetXInput" type="range" min="-600" max="600" step="5" value="0"
+                                oninput="renderEditor()" class="w-full accent-accent">
                         </div>
                         <div class="space-y-2">
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset Y</label>
-                            <input id="editorOffsetYInput" type="range" min="-900" max="900" step="5" value="0" oninput="renderEditor()" class="w-full accent-accent">
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-3">
-                        <div class="space-y-2">
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Brilho</label>
-                            <input id="editorBrightnessInput" type="range" min="60" max="140" step="5" value="100" oninput="renderEditor()" class="w-full accent-accent">
-                        </div>
-                        <div class="space-y-2">
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Contraste</label>
-                            <input id="editorContrastInput" type="range" min="70" max="150" step="5" value="100" oninput="renderEditor()" class="w-full accent-accent">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset
+                                Y</label>
+                            <input id="editorOffsetYInput" type="range" min="-900" max="900" step="5" value="0"
+                                oninput="renderEditor()" class="w-full accent-accent">
                         </div>
                     </div>
 
-                    <div class="flex gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="space-y-2">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Brilho</label>
+                            <input id="editorBrightnessInput" type="range" min="60" max="140" step="5" value="100"
+                                oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                        <div class="space-y-2">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Contraste</label>
+                            <input id="editorContrastInput" type="range" min="70" max="150" step="5" value="100"
+                                oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <button type="button" onclick="toggleEditorSafeArea()"
                             class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
                             Safe Area
@@ -1074,7 +1222,7 @@
                             class="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
                             Adicionar ao Canvas
                         </button>
-                        <div class="grid grid-cols-2 gap-2">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <button type="button" onclick="addEditorText('headline')"
                                 class="bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
                                 Headline
@@ -1090,7 +1238,7 @@
                     <div class="space-y-3">
                         <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
                             Selo (Badge)</label>
-                        <div class="grid grid-cols-2 gap-2">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <button onclick="addEditorBadge('discount')"
                                 class="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl py-2.5 text-xs font-bold transition-all">
                                 % Off
@@ -1102,7 +1250,7 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <button onclick="addEditorBadge('lightning')"
                             class="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-300 rounded-xl py-2.5 text-xs font-bold transition-all">
                             Relampago
@@ -1114,11 +1262,13 @@
                     </div>
 
                     <div class="space-y-3">
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Trilha</label>
+                        <label
+                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Trilha</label>
                         <input type="text" id="editorMusicInput" placeholder="Ex.: Funk leve / pop clean / lo-fi"
                             class="w-full bg-primary/50 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
                         <label class="inline-flex items-center gap-2 text-xs text-slate-300">
-                            <input type="checkbox" id="editorMusicToggle" class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
+                            <input type="checkbox" id="editorMusicToggle"
+                                class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
                             Marcar trilha para exportacao futura
                         </label>
                     </div>
@@ -1130,7 +1280,7 @@
                 </div>
 
                 <!-- Actions -->
-                <div class="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
+                <div class="mt-6 pt-4 sm:pt-6 border-t border-white/10 flex flex-col gap-3 sticky bottom-0 bg-surface">
                     <button onclick="applyEditorChanges()"
                         class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
                         Aplicar Alterações
@@ -1220,6 +1370,7 @@
         // === Auth ===
         let savedAdminKey = '';
         let currentSession = null;
+        let currentCaptionOptions = [];
         const rawFetch = window.fetch.bind(window);
         window.fetch = function (input, init = {}) {
             const url = typeof input === 'string' ? input : (input?.url || '');
@@ -1335,6 +1486,29 @@
         let currentData = null;
         let currentImageIndex = 0;
 
+        function resetImagePresentation(img) {
+            if (!img) return;
+            img.style.opacity = '1';
+            img.style.filter = 'none';
+            img.style.mixBlendMode = 'normal';
+        }
+
+        async function trackClick(url, source = 'direct') {
+            try {
+                await fetch('/api/analytics/click', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        TargetUrl: url,
+                        Source: source,
+                        Category: 'converter'
+                    })
+                });
+            } catch (e) {
+                console.error('Telemetry error:', e);
+            }
+        }
+
         // === Convert ===
         async function handleConvert() {
             const urlInput = document.getElementById('urlInput').value.trim();
@@ -1362,11 +1536,14 @@
                     body: JSON.stringify({ url: urlInput })
                 });
                 const data = await response.json();
-                if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversão.');
+                if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversÃ£o.');
+
+                trackClick(data.trackedUrl || urlInput, 'admin_convert_success');
 
                 currentData = data;
                 currentConvertedUrl = data.trackedUrl || data.convertedUrl || data.originalUrl || urlInput;
 
+                resetImagePresentation(document.getElementById('productImage'));
                 document.getElementById('productImage').src = data.imageUrl || '';
                 document.getElementById('storeBadge').textContent = data.store || 'Loja';
                 document.getElementById('productTitle').textContent = data.title || 'Oferta';
@@ -1405,6 +1582,7 @@
                     if (postTypeSel) { postTypeSel.value = 'reel'; }
                     document.getElementById('videoToolsPanel').classList.remove('hidden');
                 } else {
+                    resetImagePresentation(document.getElementById('instaPreviewImg'));
                     document.getElementById('instaPreviewImg').src = data.imageUrl || '';
                     document.getElementById('instaPreviewImg').classList.remove('hidden');
                     document.getElementById('instaPreviewVid').classList.add('hidden');
@@ -1469,14 +1647,14 @@
         function setFormat(format) {
             const container = document.getElementById('instaMockContainer');
             const btns = document.querySelectorAll('.format-btn');
+            const normalizedFormat = format === 'reel' ? 'reels' : format;
 
             btns.forEach(b => b.classList.remove('active'));
-            document.getElementById(`fmt-${format}`).classList.add('active');
+            document.getElementById(`fmt-${normalizedFormat}`)?.classList.add('active');
 
-            if (format === 'story') {
+            if (normalizedFormat === 'story' || normalizedFormat === 'reels') {
                 container.classList.add('stories');
-                // Sync postType select for convenience
-                document.getElementById('postType').value = 'story';
+                document.getElementById('postType').value = normalizedFormat;
             } else {
                 container.classList.remove('stories');
                 document.getElementById('postType').value = 'feed';
@@ -1554,7 +1732,7 @@
                         // We have multiple options, display the selector UI
                         displayCaptionOptions(parsedCaptions);
                         // Pick the first one by default just in case
-                        selectCaptionOption(parsedCaptions[0], 0);
+                        selectCaptionOption(0);
                     } else {
                         // Standard fallback, dump everything into the textbox
                         document.getElementById('captionOptionsContainer').classList.add('hidden');
@@ -1589,17 +1767,104 @@
             return [rawText.trim()];
         }
 
+        function normalizeDisplayPrice(price) {
+            if (!price) return 'preco sob consulta';
+            return String(price).trim();
+        }
+
+        function resolveCatalogCtaLink() {
+            const explicit = document.getElementById('autoReplyLink')?.value?.trim();
+            if (explicit) return explicit;
+            const target = document.getElementById('catalogTargetSelect')?.value || (isDevRuntime() ? 'dev' : 'prod');
+            return getCatalogLinkByTarget(target);
+        }
+
+        function buildDefaultCaptionTemplates() {
+            const title = currentData?.title || currentData?.productName || 'Oferta em destaque';
+            const price = normalizeDisplayPrice(currentData?.price);
+            const store = currentData?.store || 'Loja oficial';
+            const link = resolveCatalogCtaLink();
+
+            return [
+                `OFERTA QUE VALE O CLIQUE\n\n${title}\n\n💰 Valor atual: ${price}\n🏬 Loja: ${store}\n✅ Produto com potencial de alta procura\n🚚 Confira disponibilidade e condicoes atualizadas no catalogo\n\nSe voce estava esperando uma boa oportunidade para garantir esse item, esse e o momento de entrar antes que o preco mude.\n\n👉 Acesse o nosso catalogo VIP para abrir a oferta completa:\n${link}\n\nEntre tambem no WhatsApp para receber os melhores achados em primeira mao.\n\n#achadinhos #ofertas #promocao #desconto #catalogovip`,
+                `ACHADINHO DO DIA\n\n${title}\n\n💸 Preco em destaque: ${price}\n🛒 Disponivel em: ${store}\n⭐ Se fizer sentido para voce, vale checar agora porque esse tipo de oferta costuma girar rapido\n\nNo nosso catalogo voce encontra o link atualizado, mais ofertas selecionadas e os achadinhos que estao performando melhor.\n\n🔥 Toque no link do catalogo e veja os detalhes:\n${link}\n\nSalve esta oferta e compartilhe com quem tambem gosta de comprar bem.\n\n#achadinho #ofertadodia #promocoes #comprasinteligentes #reidasofertas`
+            ];
+        }
+
+        function applyDefaultCaptionTemplate(index) {
+            const templates = buildDefaultCaptionTemplates();
+            displayCaptionOptions(templates);
+            selectCaptionOption(index);
+            const defaultHashtags = index === 0
+                ? '#achadinhos #ofertas #promocao #desconto #catalogovip'
+                : '#achadinho #ofertadodia #promocoes #comprasinteligentes #reidasofertas';
+            document.getElementById('hashtagInput').value = defaultHashtags;
+            if (!document.getElementById('ctaInput').value.trim()) {
+                document.getElementById('ctaInput').value = 'Acesse o catalogo VIP e veja a oferta completa';
+            }
+            switchTab('caption');
+            syncPreview();
+        }
+
+        function copyCaptionText() {
+            const text = document.getElementById('captionText').value || '';
+            if (!text.trim()) {
+                showToast('Nenhuma legenda para copiar.', true);
+                return;
+            }
+            trackClick(currentConvertedUrl, 'admin_copy_caption');
+            navigator.clipboard.writeText(text)
+                .then(() => showToast('Legenda copiada.'))
+                .catch(() => showToast('Falha ao copiar legenda.', true));
+        }
+
+        function applyCtaPreset(type) {
+            const catalogLink = resolveCatalogCtaLink();
+            const ctaInput = document.getElementById('ctaInput');
+            if (!ctaInput) return;
+
+            if (type === 'catalog') {
+                ctaInput.value = `Acesse o catalogo VIP e veja a oferta completa: ${catalogLink}`;
+            } else if (type === 'whatsapp') {
+                ctaInput.value = 'Comente EU QUERO ou entre no WhatsApp para receber os melhores achadinhos primeiro.';
+            } else {
+                ctaInput.value = 'Confira agora no catalogo porque esse tipo de oferta pode mudar rapidamente.';
+            }
+
+            syncPreview();
+        }
+
+        function updateCaptionInsights() {
+            const caption = document.getElementById('captionText')?.value || '';
+            const hashtags = document.getElementById('hashtagInput')?.value || '';
+            const cta = document.getElementById('ctaInput')?.value || '';
+            const metrics = document.getElementById('captionMetrics');
+            const checklist = document.getElementById('captionChecklist');
+            if (metrics) {
+                metrics.textContent = `${caption.length} caracteres`;
+            }
+            if (checklist) {
+                const items = [
+                    caption.trim().length > 40 ? 'Legenda ok' : 'Legenda curta',
+                    cta.trim().length > 10 ? 'CTA ok' : 'CTA pendente',
+                    hashtags.trim().length > 0 ? 'Hashtags ok' : 'Hashtags pendentes'
+                ];
+                checklist.textContent = items.join(' • ');
+            }
+        }
+
         function displayCaptionOptions(captions) {
             const container = document.getElementById('captionOptionsContainer');
             const grid = document.getElementById('captionCardsGrid');
 
+            currentCaptionOptions = Array.isArray(captions) ? captions.slice() : [];
             grid.innerHTML = '';
-            captions.forEach((cap, index) => {
+            currentCaptionOptions.forEach((cap, index) => {
                 // Peek first 100 chars for preview
                 const preview = cap.substring(0, 100).replace(/\n/g, ' ') + '...';
 
                 grid.innerHTML += `
-                    <div id="capCard_${index}" onclick="selectCaptionOption(\`${cap.replace(/`/g, '\\`')}\`, ${index})" class="caption-card bg-surface border border-white/10 p-4 rounded-xl cursor-pointer hover:border-accent/50 hover:bg-surface/80 transition-all text-left group">
+                    <button type="button" id="capCard_${index}" data-caption-index="${index}" class="caption-card w-full bg-surface border border-white/10 p-4 rounded-xl cursor-pointer hover:border-accent/50 hover:bg-surface/80 transition-all text-left group">
                         <div class="flex justify-between items-center mb-2">
                             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest group-[.selected]:text-accent group-hover:text-accent">Opção ${index + 1}</span>
                             <div class="w-4 h-4 rounded-full border border-white/20 flex items-center justify-center group-[.selected]:bg-accent group-[.selected]:border-accent transition-colors">
@@ -1607,14 +1872,23 @@
                             </div>
                         </div>
                         <p class="text-xs text-slate-300 leading-relaxed line-clamp-3">${preview}</p>
-                    </div>
+                    </button>
                 `;
+            });
+
+            grid.querySelectorAll('[data-caption-index]').forEach(card => {
+                card.addEventListener('click', () => {
+                    const index = Number(card.getAttribute('data-caption-index'));
+                    selectCaptionOption(index);
+                });
             });
 
             container.classList.remove('hidden');
         }
 
-        function selectCaptionOption(fullText, index) {
+        function selectCaptionOption(index) {
+            const fullText = currentCaptionOptions[index];
+            if (!fullText) return;
             // Update UI selection state
             document.querySelectorAll('.caption-card').forEach(c => c.classList.remove('selected', 'border-accent'));
             const selectedCard = document.getElementById(`capCard_${index}`);
@@ -1851,6 +2125,7 @@
             const tags = document.getElementById('hashtagInput').value;
             const cta = document.getElementById('ctaInput').value;
             const type = document.getElementById('postType').value;
+            updateCaptionInsights();
 
             let fullText = cap;
             if (cta) fullText += "\n\n" + cta;
@@ -1899,6 +2174,7 @@
                 next.classList.add('hidden');
                 dots.classList.add('hidden');
                 if (currentData) {
+                    resetImagePresentation(document.getElementById('instaPreviewImg'));
                     document.getElementById('instaPreviewImg').src = currentData.images?.[0] || currentData.imageUrl;
                 }
                 return;
@@ -1908,6 +2184,7 @@
             prev.classList.toggle('hidden', currentImageIndex === 0);
             next.classList.toggle('hidden', currentImageIndex === currentData.images.length - 1);
 
+            resetImagePresentation(document.getElementById('instaPreviewImg'));
             document.getElementById('instaPreviewImg').src = currentData.images[currentImageIndex];
 
             dots.classList.remove('hidden');
@@ -2013,10 +2290,66 @@
             }
         }
 
+        function normalizeUiText(text) {
+            if (text === null || text === undefined) return '';
+            let normalized = String(text);
+            const knownBrokenMessages = [
+                ['Selecione pelo menos uma ação.', 'Selecione pelo menos uma acao.'],
+                ['Lançando Campanha...', 'Lancando campanha...'],
+                ['Erro no Rascunho', 'Erro no rascunho'],
+                ['Parcial/Erro', 'Parcial ou erro'],
+                ['Falha de Rede', 'Falha de rede'],
+                ['Erro em alguns canais (veja o console).', 'Erro em alguns canais. Veja o console.'],
+                ['Erro ao ler rascunho', 'Erro ao ler rascunho.'],
+                ['Carregando Rascunho...', 'Carregando rascunho...'],
+                ['Falha ao sugerir hashtags.', 'Falha ao sugerir hashtags.'],
+                ['Erro de rede.', 'Erro de rede.'],
+                ['Distribuição Concluída!', 'Distribuicao concluida!'],
+                ['Hashtags Sugeridas!', 'Hashtags sugeridas!'],
+                ['Salvando edição...', 'Salvando edicao...'],
+                ['Arte aplicada visualmente, mas falhou salvar no servidor.', 'Arte aplicada visualmente, mas falhou ao salvar no servidor.'],
+                ['Arte aplicada visualmente, erro de rede.', 'Arte aplicada visualmente, mas houve erro de rede ao salvar.'],
+                ['AGENDAR NO INSTAGRAM', 'AGENDAR NO INSTAGRAM'],
+                ['PUBLICAR NO INSTAGRAM', 'PUBLICAR NO INSTAGRAM'],
+                ['Gerando...', 'Gerando...']
+            ];
+
+            const maybeBroken = /[ÃÂâ€¢žœš€™]/.test(normalized);
+            if (!maybeBroken) {
+                return normalized;
+            }
+
+            for (let i = 0; i < 3; i++) {
+                try {
+                    const repaired = decodeURIComponent(escape(normalized));
+                    if (!repaired || repaired === normalized) {
+                        break;
+                    }
+
+                    normalized = repaired;
+                } catch {
+                    break;
+                }
+            }
+
+            normalized = normalized
+                .replace(/\uFFFD/g, '')
+                .replace(/\s{2,}/g, ' ')
+                .trim();
+
+            for (const [brokenSuffix, cleanText] of knownBrokenMessages) {
+                if (normalized.endsWith(brokenSuffix) || normalized.includes(brokenSuffix)) {
+                    return cleanText;
+                }
+            }
+
+            return normalized;
+        }
+
         async function updateStatus(btnId, state, text) {
             const btn = document.getElementById(btnId);
             btn.className = `w-full py-3 rounded-xl font-bold text-xs transition-all btn-status-${state}`;
-            btn.textContent = text;
+            btn.textContent = normalizeUiText(text);
         }
 
         function toggleCatalogTargetState() {
@@ -2027,10 +2360,17 @@
             applyAutoReplyDefaults();
         }
 
+        function isDevRuntime() {
+            const host = window.location.host || '';
+            return host.includes('-dev.') || host.startsWith('achadinhos-dev') || host.startsWith('localhost') || host.startsWith('127.0.0.1');
+        }
+
         function resolveCatalogTargetSelection(enabled) {
             if (!enabled) return 'none';
-            const value = (document.getElementById('catalogTargetSelect').value || 'prod').toLowerCase();
-            return ['dev', 'prod', 'both'].includes(value) ? value : 'prod';
+            const fallback = isDevRuntime() ? 'dev' : 'prod';
+            const value = (document.getElementById('catalogTargetSelect').value || fallback).toLowerCase();
+            if (isDevRuntime() && value === 'prod') return 'dev';
+            return ['dev', 'prod', 'both'].includes(value) ? value : fallback;
         }
 
         function markAutoReplyManual(element) {
@@ -2135,8 +2475,10 @@
 
                 // 2. Se for agendado, parar por aqui, pois o worker de back-end cuidará do disparo.
                 if (scheduledFor) {
-                    updateStatus('pubMasterBtn', 'success', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Campanha Agendada!');
-                    showToast('✅ Publicação Agendada com Sucesso!');
+                    const scheduledForLabel = new Date(scheduledFor).toLocaleString('pt-BR');
+                    updateStatus('pubMasterBtn', 'success', 'Campanha agendada');
+                    showToast(`Agendado para ${scheduledForLabel}. Draft: ${draftData.draftId}`);
+                    loadDraftsHistory();
                     return;
                 }
 
@@ -2227,12 +2569,21 @@
                 if (data.success && data.drafts && data.drafts.length > 0) {
                     data.drafts.forEach(draft => {
                         const date = new Date(draft.createdAt).toLocaleString('pt-BR');
+                        const scheduledDate = draft.scheduledFor ? new Date(draft.scheduledFor).toLocaleString('pt-BR') : null;
                         let statusColor = 'bg-slate-500';
                         let statusText = 'Rascunho';
 
                         if (draft.status === 'published') { statusColor = 'bg-green-500'; statusText = 'Publicado'; }
                         else if (draft.status === 'scheduled') { statusColor = 'bg-blue-500'; statusText = 'Agendado'; }
-                        else if (draft.status.includes('failed')) { statusColor = 'bg-red-500'; statusText = 'Erro'; }
+                        else if (draft.status === 'publishing') { statusColor = 'bg-amber-500'; statusText = 'Publicando'; }
+                        else if ((draft.status || '').includes('failed')) { statusColor = 'bg-red-500'; statusText = 'Erro'; }
+
+                        const metaBits = [];
+                        if (scheduledDate) metaBits.push(`Agendado: ${scheduledDate}`);
+                        if (draft.mediaId) metaBits.push(`Media ID: ${draft.mediaId}`);
+                        if (draft.catalogTarget && draft.catalogTarget !== 'none') metaBits.push(`Catalogo: ${String(draft.catalogTarget).toUpperCase()}`);
+                        const detailText = metaBits.join(' • ');
+                        const errorText = draft.error ? String(draft.error) : '';
 
                         grid.innerHTML += `
                             <div class="bg-primary/20 hover:bg-primary/40 p-4 rounded-xl border border-white/5 transition-all cursor-pointer group" onclick="loadDraftIntoEditor('${draft.id}')">
@@ -2247,6 +2598,8 @@
                                             <span class="text-[9px] text-slate-500 uppercase">${draft.postType}</span>
                                         </div>
                                         <p class="text-[9px] text-slate-600">${date}</p>
+                                        ${detailText ? `<p class="mt-1 text-[10px] text-slate-400 leading-relaxed">${detailText}</p>` : ''}
+                                        ${errorText ? `<p class="mt-2 text-[10px] text-red-300 leading-relaxed break-words">${errorText}</p>` : ''}
                                     </div>
                                 </div>
                                 <div class="mt-3 pt-3 border-t border-white/5">
@@ -2908,14 +3261,38 @@
 
         function showToast(message) {
             const toast = document.getElementById('toast');
-            toast.textContent = message;
+            toast.textContent = normalizeUiText(message);
             toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 3000);
         }
 
         function showError(msg) {
             const el = document.getElementById('errorAlert');
-            el.textContent = msg; el.style.display = 'block';
+            el.textContent = normalizeUiText(msg); el.style.display = 'block';
+        }
+
+        function attachNormalizedTextObserver(elementId) {
+            const target = document.getElementById(elementId);
+            if (!target || typeof MutationObserver === 'undefined') {
+                return;
+            }
+
+            let syncing = false;
+            const observer = new MutationObserver(() => {
+                if (syncing) {
+                    return;
+                }
+
+                const current = target.textContent || '';
+                const normalized = normalizeUiText(current);
+                if (normalized !== current) {
+                    syncing = true;
+                    target.textContent = normalized;
+                    syncing = false;
+                }
+            });
+
+            observer.observe(target, { childList: true, characterData: true, subtree: true });
         }
 
         let qrInstance = null;
@@ -2928,6 +3305,15 @@
             modal.classList.add('show');
         }
         function closeQr() { document.getElementById('qrModal').classList.remove('show'); }
+        if (isDevRuntime()) {
+            const catalogTargetSelect = document.getElementById('catalogTargetSelect');
+            if (catalogTargetSelect) {
+                catalogTargetSelect.value = 'dev';
+            }
+        }
+        attachNormalizedTextObserver('toast');
+        attachNormalizedTextObserver('errorAlert');
+        attachNormalizedTextObserver('mediaStatus');
         toggleCatalogTargetState();
     </script>
 </body>

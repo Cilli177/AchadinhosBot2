@@ -1,5 +1,6 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Infrastructure.Security;
 using Microsoft.Extensions.Options;
@@ -108,7 +109,56 @@ public static class CoreEndpoints
 
             return Results.Ok(response);
         }).RequireRateLimiting("converter");
+
+        app.MapGet("/api/analytics/hot-deals", async (
+            IOperationalAnalyticsService analytics,
+            CancellationToken ct) =>
+        {
+            var deals = await analytics.GetHotDealsAsync(24, 3, ct);
+            return Results.Ok(new { success = true, deals });
+        });
+
+        app.MapGet("/api/analytics/summary", async (
+            IOperationalAnalyticsService analytics,
+            CancellationToken ct) =>
+        {
+            var summary = await analytics.GetSummaryAsync(24, ct);
+            var categorized = await analytics.GetCategorizedSummaryAsync(24, ct);
+            return Results.Ok(new { success = true, summary, categorized });
+        });
+
+        app.MapPost("/api/analytics/click", async (
+            HttpContext context,
+            IClickLogStore store,
+            CancellationToken ct) =>
+        {
+            using var reader = new StreamReader(context.Request.Body);
+            var body = await reader.ReadToEndAsync(ct);
+            var payload = JsonSerializer.Deserialize<ClickTelemetryRequest>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (payload == null || string.IsNullOrWhiteSpace(payload.TargetUrl))
+            {
+                return Results.BadRequest();
+            }
+
+            var entry = new ClickLogEntry
+            {
+                TargetUrl = payload.TargetUrl,
+                Source = payload.Source ?? "Unknown",
+                TrackingId = payload.TrackingId ?? string.Empty,
+                Campaign = payload.Campaign,
+                Referrer = context.Request.Headers.Referer.ToString(),
+                UserAgent = context.Request.Headers.UserAgent.ToString(),
+                IpAddress = context.Request.Headers["X-Forwarded-For"].FirstOrDefault() ?? context.Connection.RemoteIpAddress?.ToString(),
+                Location = context.Request.Headers["CF-IPCountry"].FirstOrDefault() ?? "Unknown"
+            };
+
+            await store.AppendAsync(entry, payload.Category, ct);
+            return Results.Ok(new { success = true });
+        });
     }
+
+    public sealed record ClickTelemetryRequest(string TargetUrl, string? Source, string? TrackingId, string? Campaign, string? Category);
 
     public static void MapHealthEndpoints(this WebApplication app, bool startTelegramBotWorker, bool startTelegramUserbotWorker)
     {

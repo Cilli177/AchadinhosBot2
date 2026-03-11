@@ -37,7 +37,7 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
         var start = end.AddHours(-windowHours);
 
         var conversions = await _conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 2000 }, cancellationToken);
-        var clicks = await _clickLogStore.QueryAsync(null, 2000, cancellationToken);
+        var clicks = await _clickLogStore.QueryAsync(null, null, 2000, cancellationToken);
         var aiLogs = await _instagramAiLogStore.ListAsync(2000, cancellationToken);
         var publishLogs = await _instagramPublishLogStore.ListAsync(2000, cancellationToken);
         var drafts = await _instagramPublishStore.ListAsync(cancellationToken);
@@ -117,6 +117,99 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
                 SyncEligibleDrafts = draftWindow.Count(x => CatalogTargets.IsEnabled(x.CatalogTarget, x.SendToCatalog))
             }
         };
+    }
+
+    public async Task<IReadOnlyList<HotDealItem>> GetHotDealsAsync(int hours, int limit, CancellationToken cancellationToken)
+    {
+        var windowHours = Math.Clamp(hours, 1, 168); // Max 1 week
+        var start = DateTimeOffset.UtcNow.AddHours(-windowHours);
+
+        var clicks = await _clickLogStore.QueryAsync(null, null, 5000, cancellationToken);
+        var clickWindow = clicks.Where(x => x.Timestamp >= start).ToList();
+
+        // Group by TargetUrl to find most viewed items
+        var topUrls = clickWindow
+            .Where(x => !string.IsNullOrWhiteSpace(x.TargetUrl))
+            .GroupBy(x => x.TargetUrl, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count())
+            .Take(limit * 3)
+            .Select(g => new { Url = g.Key, Count = g.Count() })
+            .ToList();
+
+        var catalogItems = await _catalogOfferStore.ListAsync(null, 500, cancellationToken, CatalogTargets.Both);
+        var activeItems = catalogItems.Where(x => x.Active).ToList();
+
+        var deals = new List<HotDealItem>();
+        foreach (var top in topUrls)
+        {
+            var match = activeItems.FirstOrDefault(x => 
+                string.Equals(x.OfferUrl, top.Url, StringComparison.OrdinalIgnoreCase) ||
+                (top.Url.Contains(x.Id, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(x.Id)));
+
+            if (match != null && deals.All(d => d.ProductId != match.Id))
+            {
+                deals.Add(new HotDealItem
+                {
+                    ProductId = match.Id,
+                    ProductName = match.ProductName,
+                    ImageUrl = match.ImageUrl ?? string.Empty,
+                    Price = match.PriceText,
+                    AffiliateUrl = match.OfferUrl,
+                    ViewCount = top.Count,
+                    Store = match.Store
+                });
+
+                if (deals.Count >= limit) break;
+            }
+        }
+
+        if (deals.Count < limit)
+        {
+            var newest = activeItems
+                .Where(x => deals.All(d => d.ProductId != x.Id))
+                .OrderByDescending(x => x.PublishedAt)
+                .Take(limit - deals.Count);
+
+            foreach (var item in newest)
+            {
+                deals.Add(new HotDealItem
+                {
+                    ProductId = item.Id,
+                    ProductName = item.ProductName,
+                    ImageUrl = item.ImageUrl ?? string.Empty,
+                    Price = item.PriceText,
+                    AffiliateUrl = item.OfferUrl,
+                    ViewCount = 0,
+                    Store = item.Store
+                });
+            }
+        }
+
+        return deals;
+    }
+
+    public async Task<List<ClickAnalyticsSummary>> GetCategorizedSummaryAsync(int hours, CancellationToken cancellationToken)
+    {
+        var windowHours = Math.Clamp(hours, 1, 168);
+        var start = DateTimeOffset.UtcNow.AddHours(-windowHours);
+        var categories = new[] { "bio", "catalog", "converter", null };
+        var result = new List<ClickAnalyticsSummary>();
+
+        foreach (var cat in categories)
+        {
+            var clicks = await _clickLogStore.QueryAsync(cat, null, 2000, cancellationToken);
+            var window = clicks.Where(x => x.Timestamp >= start).ToList();
+            
+            result.Add(new ClickAnalyticsSummary
+            {
+                Total = window.Count,
+                UniqueTrackingIds = window.Select(x => x.TrackingId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                TopSources = BuildBreakdown(window, x => x.Source, 5),
+                TopCampaigns = BuildBreakdown(window, x => x.Campaign, 5)
+            });
+        }
+
+        return result;
     }
 
     private static double CalculateRate(int success, int total)

@@ -3,6 +3,21 @@ namespace AchadinhosBot.Next.Application.Abstractions;
 public interface IOperationalAnalyticsService
 {
     Task<OperationalAnalyticsSummary> GetSummaryAsync(int hours, CancellationToken cancellationToken);
+    Task<List<ClickAnalyticsSummary>> GetCategorizedSummaryAsync(int hours, CancellationToken cancellationToken);
+    Task<IReadOnlyList<HotDealItem>> GetHotDealsAsync(int hours, int limit, CancellationToken cancellationToken);
+}
+
+public sealed class HotDealItem
+{
+    public string ProductId { get; set; } = string.Empty;
+    public string ProductName { get; set; } = string.Empty;
+    public string ImageUrl { get; set; } = string.Empty;
+    public string? Price { get; set; }
+    public string? PreviousPrice { get; set; }
+    public int? DiscountPercent { get; set; }
+    public string AffiliateUrl { get; set; } = string.Empty;
+    public int ViewCount { get; set; }
+    public string Store { get; set; } = string.Empty;
 }
 
 public sealed class OperationalAnalyticsSummary
