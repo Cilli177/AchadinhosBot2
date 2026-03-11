@@ -28,7 +28,7 @@ function showAuthState(authenticated, username = '', role = '') {
 }
 
 function showSection(name) {
-  const sections = ['ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug'];
+  const sections = ['ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'analytics'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -40,6 +40,9 @@ function showSection(name) {
     startLogsAutoRefresh();
   } else {
     stopLogsAutoRefresh();
+  }
+  if (name === 'analytics') {
+    loadAnalyticsSummary();
   }
   if (name === 'linkresponder') {
     loadResponderLogs();
@@ -3077,6 +3080,69 @@ async function clearMediaFailures() {
   await loadMediaFailures();
 }
 
+async function loadAnalyticsSummary() {
+  const container = document.getElementById('analyticsSummaryCards');
+  const recentBody = document.getElementById('analyticsRecentBody');
+  const src = document.getElementById('analyticsSources');
+  const cmp = document.getElementById('analyticsCampaigns');
+
+  if (container) container.innerHTML = '<div class="muted">Carregando...</div>';
+  
+  try {
+    const data = await api('/api/analytics/summary');
+    renderAnalyticsSummary(data);
+  } catch (e) {
+    if (container) container.innerHTML = `<div class="bad">Erro ao carregar analytics: ${e.message || 'Erro deconhecido'}</div>`;
+  }
+}
+
+function renderAnalyticsSummary(data) {
+  const container = document.getElementById('analyticsSummaryCards');
+  const recentBody = document.getElementById('analyticsRecentBody');
+  const src = document.getElementById('analyticsSources');
+  const cmp = document.getElementById('analyticsCampaigns');
+
+  const categories = [
+    { key: 'bio', label: 'Bio Hub', icon: '🔗' },
+    { key: 'catalog', label: 'Catálogo', icon: '📁' },
+    { key: 'converter', label: 'Conversor', icon: '⚡' },
+    { key: 'total', label: 'Total Geral', icon: '📈' }
+  ];
+
+  if (container) {
+    container.innerHTML = categories.map(cat => {
+      const val = (cat.key === 'total') ? data.totalClicks : (data.categorized[cat.key] || 0);
+      return `
+        <div class="card" style="padding:16px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
+          <div style="font-size: 24px; margin-bottom: 8px;">${cat.icon}</div>
+          <div class="muted" style="font-size: 12px; font-weight: 600; text-transform: uppercase;">${cat.label}</div>
+          <div style="font-size: 28px; font-weight: 800; color: var(--accent); margin-top: 4px;">${val}</div>
+          <div class="muted" style="font-size: 11px; margin-top: 4px;">cliques nas últimas 24h</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  if (src) src.textContent = JSON.stringify(data.topSources || {}, null, 2);
+  if (cmp) cmp.textContent = JSON.stringify(data.topCampaigns || {}, null, 2);
+
+  if (recentBody) {
+    const items = data.recentItems || [];
+    if (items.length === 0) {
+      recentBody.innerHTML = '<tr><td colspan="4" class="muted">Nenhum clique recente.</td></tr>';
+    } else {
+      recentBody.innerHTML = items.map(i => `
+        <tr>
+          <td>${formatTs(i.timestamp)}</td>
+          <td><span class="badge muted">${escapeHtml(i.category || 'default')}</span></td>
+          <td>${escapeHtml(i.source || '-')}</td>
+          <td title="${escapeHtml(i.targetUrl)}">${escapeHtml(i.targetUrl.substring(0, 60))}${i.targetUrl.length > 60 ? '...' : ''}</td>
+        </tr>
+      `).join('');
+    }
+  }
+}
+
 loadTheme();
 setEnvironmentBadge(null);
 checkSession();
@@ -3151,6 +3217,13 @@ const sectionGuides = {
     <h3>Debug JSON</h3>
     <ul>
       <li>A visÃ£o raio-X de todas as variÃ¡veis ativas no sistema neste exato milissegundo.</li>
+    </ul>`,
+  'analytics': `
+    <h3>Analytics Dashboard</h3>
+    <ul>
+      <li><strong>Visão Geral:</strong> Veja o total de cliques capturados nas últimas 24h em cada parte do sistema (Bio, Catálogo, Conversor).</li>
+      <li><strong>Origens e Campanhas:</strong> Identifique de onde vem seus cliques mais quentes para otimizar suas ofertas.</li>
+      <li><strong>Logs em Tempo Real:</strong> Monitore cada clique individualmente para garantir que o rastreamento está funcionando perfeitamente.</li>
     </ul>`
 };
 

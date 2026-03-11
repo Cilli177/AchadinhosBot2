@@ -209,19 +209,11 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         sb.AppendLine();
 
         var variations = Math.Clamp(settings.VariationsCount, 1, 5);
-        var tones = new[]
-        {
-            "Qualidade e custo-benef\u00edcio",
-            "Promo\u00e7\u00e3o imperd\u00edvel",
-            "Oferta especial",
-            "Escolha inteligente",
-            "Destaque do dia"
-        };
         var captionCandidates = new List<(int Index, string Caption, int Score)>();
+        
         for (var i = 0; i < variations; i++)
         {
-            var tone = tones[i % tones.Length];
-            var caption = BuildCaption(productName, link, tone, couponLine);
+            var caption = BuildCaptionVariation(productName, link, i, couponLine, officialData);
             var score = ScoreCaption(caption);
             captionCandidates.Add((i + 1, caption, score));
 
@@ -278,6 +270,28 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         return sb.ToString().Trim();
     }
 
+    public async Task<string> SuggestHashtagsAsync(string productName, InstagramPostSettings settings, CancellationToken cancellationToken)
+    {
+        var input = productName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return "#achadinhos #ofertas #promo\u00e7\u00e3o #dicas #compras";
+        }
+
+        var allSettings = await _settingsStore.GetAsync(cancellationToken);
+        if (settings.UseAi)
+        {
+            var openAi = allSettings.OpenAI ?? new OpenAISettings();
+            var aiResult = await _openAiGenerator.GenerateHashtagsAsync(input, openAi, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(aiResult))
+            {
+                return aiResult;
+            }
+        }
+
+        return BuildHashtags(input);
+    }
+
     private static string StripTriggerPrefix(string text, List<string> triggers)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
@@ -298,22 +312,62 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         return trimmed;
     }
 
-    private static string BuildCaption(string productName, string? link, string tone, string? couponLine)
+    private static string BuildCaptionVariation(string productName, string? link, int index, string? couponLine, OfficialProductDataResult? data)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"\u2728 {tone} para voc\u00ea!");
-        sb.AppendLine($"\u2705 {productName}");
-        sb.AppendLine("\U0001F69A Envio r\u00e1pido e \u00f3tima avalia\u00e7\u00e3o");
-        sb.AppendLine("\U0001F4B3 Parcelamento facilitado");
-        if (!string.IsNullOrWhiteSpace(couponLine))
+        var priceLine = "";
+        
+        if (data != null)
         {
-            sb.AppendLine($"\U0001F3F7\uFE0F Cupom: {couponLine}");
+            if (!string.IsNullOrWhiteSpace(data.CurrentPrice))
+            {
+                if (!string.IsNullOrWhiteSpace(data.PreviousPrice) && data.DiscountPercent > 0)
+                {
+                    priceLine = $"\U0001F525 DE R$ {data.PreviousPrice} POR APENAS {data.CurrentPrice} (-{data.DiscountPercent}%)";
+                }
+                else
+                {
+                    priceLine = $"\U0001F4B0 Pre\u00e7o: {data.CurrentPrice}";
+                }
+            }
         }
-        sb.AppendLine("\U0001F3AF Garanta o seu agora");
-        if (!string.IsNullOrWhiteSpace(link))
+
+        switch (index % 3)
         {
-            sb.AppendLine($"\U0001F449 {link}");
+            case 0: // Professional / Clean
+                sb.AppendLine("\u2705 OPORTUNIDADE: " + productName.ToUpperInvariant());
+                if (!string.IsNullOrWhiteSpace(priceLine)) sb.AppendLine(priceLine);
+                if (!string.IsNullOrWhiteSpace(data?.EstimatedDelivery)) sb.AppendLine($"\U0001F69A {data.EstimatedDelivery}");
+                if (!string.IsNullOrWhiteSpace(couponLine)) sb.AppendLine($"\U0001F3F7\uFE0F Cupom: {couponLine}");
+                sb.AppendLine();
+                sb.AppendLine("\u26A0\uFE0F Estoque limitado! Garanta o seu agora.");
+                sb.AppendLine();
+                sb.AppendLine("\U0001F4AC Comente EU QUERO para receber o link!");
+                if (!string.IsNullOrWhiteSpace(link)) sb.AppendLine($"\U0001F449 LINK: {link}");
+                break;
+
+            case 1: // Urgent / Promotional
+                sb.AppendLine("\u26A1\uFE0F OFERTA REL\u00c2MPAGO: " + productName);
+                if (!string.IsNullOrWhiteSpace(priceLine)) sb.AppendLine(priceLine);
+                sb.AppendLine("\U0001F440 Menor pre\u00e7o dos \u00faltimos dias!");
+                if (!string.IsNullOrWhiteSpace(couponLine)) sb.AppendLine($"\U0001F3F7\uFE0F Use o cupom: {couponLine}");
+                sb.AppendLine();
+                sb.AppendLine("\U0001F449 LINK NO PERFIL OU COMENTE \"EU QUERO\"");
+                if (!string.IsNullOrWhiteSpace(link)) sb.AppendLine($"\U0001F517 LINK: {link}");
+                break;
+
+            case 2: // Social Proof / Quality
+                sb.AppendLine("\u2B50\uFE0F QUERIDINHO DO MOMENTO: " + productName);
+                if (!string.IsNullOrWhiteSpace(priceLine)) sb.AppendLine(priceLine);
+                sb.AppendLine("\u2728 Alta qualidade e \u00f3timas avalia\u00e7\u00f5es!");
+                if (!string.IsNullOrWhiteSpace(data?.EstimatedDelivery)) sb.AppendLine($"\U0001F4E6 {data.EstimatedDelivery}");
+                sb.AppendLine();
+                sb.AppendLine("\U0001F4CC Salve para n\u00e3o esquecer!");
+                sb.AppendLine("\U0001F449 Envio o LINK no Direct, \u00e9 s\u00f3 comentar: EU QUERO");
+                if (!string.IsNullOrWhiteSpace(link)) sb.AppendLine($"\U0001F517 LINK: {link}");
+                break;
         }
+
         return sb.ToString().Trim();
     }
 
@@ -345,15 +399,25 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
 
     private static string BuildHashtags(string productName)
     {
-        var baseTags = new[]
+        // 5 standard high-level tags for top-tier affiliates
+        var highLevelTags = new[]
         {
-            "#ofertas", "#promo", "#achadinhos", "#comprasonline", "#descontos", "#economia"
+            "#achadinhos", "#ofertas", "#promo\u00e7\u00e3o", "#dicas", "#compras"
         };
+        
+        // Growth and views tags (Explorar/Viral)
+        var growthTags = new[]
+        {
+            "#viral", "#explorar", "#utilidades", "#reelsbrasil", "#comprasonline", "#achadosdasemana", "#casa"
+        };
+        
         var words = productName
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Take(3)
-            .Select(w => $"#{Regex.Replace(w, @"[^\w]", string.Empty).ToLowerInvariant()}");
-        return string.Join(' ', baseTags.Concat(words).Distinct());
+            .Take(4)
+            .Select(w => $"#{Regex.Replace(w, @"[^\w]", string.Empty).ToLowerInvariant()}")
+            .Where(w => w.Length > 2);
+
+        return string.Join(' ', highLevelTags.Concat(growthTags).Concat(words).Distinct());
     }
 
     private static string BuildImageIdeas(string productName)
@@ -411,14 +475,16 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         var normalized = caption.ToLowerInvariant();
 
         if (normalized.Contains("cupom", StringComparison.OrdinalIgnoreCase)) score += 20;
+        if (normalized.Contains("eu quero", StringComparison.OrdinalIgnoreCase)) score += 25; // High priority for CTA
         if (normalized.Contains("agora", StringComparison.OrdinalIgnoreCase)) score += 12;
         if (normalized.Contains("oferta", StringComparison.OrdinalIgnoreCase)) score += 10;
         if (normalized.Contains("garanta", StringComparison.OrdinalIgnoreCase)) score += 8;
-        if (normalized.Contains("link", StringComparison.OrdinalIgnoreCase)) score += 8;
+        if (normalized.Contains("link", StringComparison.OrdinalIgnoreCase)) score += 15; // Increased priority
+        if (normalized.Contains("apenas", StringComparison.OrdinalIgnoreCase)) score += 10; // Price focus
 
         var length = caption.Length;
-        if (length is >= 180 and <= 380) score += 15;
-        if (length > 550) score -= 10;
+        if (length is >= 180 and <= 450) score += 15;
+        if (length > 650) score -= 15;
 
         return score;
     }

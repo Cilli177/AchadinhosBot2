@@ -2,7 +2,11 @@ param(
     [string]$TunnelName = "achadinhos-fixed",
     [string]$Hostname = "achadinhos.reidasofertas.ia.br",
     [string]$AppUrl = "http://127.0.0.1:5000",
-    [switch]$NoConfigUpdate
+    [switch]$NoConfigUpdate,
+    [string]$ConfigFileName,
+    [string]$LogPrefix,
+    [ValidateSet("Production", "Development", "Both")]
+    [string]$ConfigUpdateScope = "Production"
 )
 
 Set-StrictMode -Version Latest
@@ -102,12 +106,11 @@ function Write-TunnelConfig {
     param(
         [string]$TunnelId,
         [string]$HostnameValue,
-        [string]$OriginUrl
+        [string]$OriginUrl,
+        [string]$ConfigPath
     )
 
-    $cfgDir = Join-Path $env:USERPROFILE ".cloudflared"
-    $cfgPath = Join-Path $cfgDir "config.yml"
-    $credPath = Join-Path $cfgDir "$TunnelId.json"
+    $credPath = Join-Path (Join-Path $env:USERPROFILE ".cloudflared") "$TunnelId.json"
     if (-not (Test-Path $credPath)) {
         throw "Arquivo de credenciais nao encontrado: $credPath"
     }
@@ -122,8 +125,8 @@ ingress:
 "@
 
     $encoding = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($cfgPath, $yaml, $encoding)
-    return $cfgPath
+    [System.IO.File]::WriteAllText($ConfigPath, $yaml, $encoding)
+    return $ConfigPath
 }
 
 function Update-PublicBaseUrl {
@@ -150,8 +153,56 @@ function Update-PublicBaseUrl {
     }
 }
 
+function Get-TargetConfigFiles {
+    param(
+        [string]$RootPath,
+        [string]$Scope
+    )
+
+    $configDir = Join-Path $RootPath "AchadinhosBot.Next"
+    switch ($Scope) {
+        "Production" { return @(Join-Path $configDir "appsettings.json") }
+        "Development" { return @(Join-Path $configDir "appsettings.Development.json") }
+        "Both" { return @(Join-Path $configDir "appsettings.json"), (Join-Path $configDir "appsettings.Development.json") }
+        default { return @() }
+    }
+}
+
+function Stop-TunnelProcesses {
+    param(
+        [string]$TunnelNameValue,
+        [string]$ConfigPath
+    )
+
+    $tunnelPattern = [regex]::Escape("run $TunnelNameValue")
+    $configPattern = [regex]::Escape($ConfigPath)
+
+    $targets = Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and (
+                $_.CommandLine -match $tunnelPattern -or
+                $_.CommandLine -match $configPattern
+            )
+        }
+
+    foreach ($target in $targets) {
+        Stop-Process -Id $target.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $publicBaseUrl = "https://$Hostname"
+$cfgDir = Join-Path $env:USERPROFILE ".cloudflared"
+
+if ([string]::IsNullOrWhiteSpace($ConfigFileName)) {
+    $ConfigFileName = "config.$TunnelName.yml"
+}
+
+if ([string]::IsNullOrWhiteSpace($LogPrefix)) {
+    $LogPrefix = $TunnelName
+}
+
+$configPath = Join-Path $cfgDir $ConfigFileName
 
 # Evita resolver localhost para IPv6 (::1), que pode falhar no origin
 if ($AppUrl -match "localhost") {
@@ -163,16 +214,17 @@ Ensure-CertFile | Out-Null
 
 $tunnelId = Resolve-TunnelId -CloudflaredPath $cloudflaredPath -Name $TunnelName
 Ensure-DnsRoute -CloudflaredPath $cloudflaredPath -Name $TunnelName -HostnameValue $Hostname
-$configPath = Write-TunnelConfig -TunnelId $tunnelId -HostnameValue $Hostname -OriginUrl $AppUrl
+$configPath = Write-TunnelConfig -TunnelId $tunnelId -HostnameValue $Hostname -OriginUrl $AppUrl -ConfigPath $configPath
 
 if (-not $NoConfigUpdate) {
-    Update-PublicBaseUrl -FilePath (Join-Path $repoRoot "AchadinhosBot.Next\appsettings.json") -NewUrl $publicBaseUrl
-    Update-PublicBaseUrl -FilePath (Join-Path $repoRoot "AchadinhosBot.Next\appsettings.Development.json") -NewUrl $publicBaseUrl
+    foreach ($filePath in Get-TargetConfigFiles -RootPath $repoRoot -Scope $ConfigUpdateScope) {
+        Update-PublicBaseUrl -FilePath $filePath -NewUrl $publicBaseUrl
+    }
 }
 
-$outLog = Join-Path $repoRoot "cloudflared.named.out.log"
-$errLog = Join-Path $repoRoot "cloudflared.named.err.log"
-Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
+$outLog = Join-Path $repoRoot "cloudflared.$LogPrefix.out.log"
+$errLog = Join-Path $repoRoot "cloudflared.$LogPrefix.err.log"
+Stop-TunnelProcesses -TunnelNameValue $TunnelName -ConfigPath $configPath
 foreach ($log in @($outLog, $errLog)) {
     if (Test-Path $log) {
         Remove-Item $log -Force -ErrorAction SilentlyContinue

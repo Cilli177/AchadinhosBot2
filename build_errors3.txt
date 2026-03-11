@@ -1,0 +1,27 @@
+﻿C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1903: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma alta vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-2cmq-823j-5qj8
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1902: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma moderado vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-rxmq-m78w-7wmc
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1903: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma alta vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-2cmq-823j-5qj8
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1902: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma moderado vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-rxmq-m78w-7wmc
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,44): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,49): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,61): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,76): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,91): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,96): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+
+FALHA da compila├º├úo.
+
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1903: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma alta vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-2cmq-823j-5qj8
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1902: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma moderado vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-rxmq-m78w-7wmc
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1903: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma alta vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-2cmq-823j-5qj8
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj : warning NU1902: O pacote 'SixLabors.ImageSharp' 3.1.5 tem uma moderado vulnerabilidade de gravidade conhecida, https://github.com/advisories/GHSA-rxmq-m78w-7wmc
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,44): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,49): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,61): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,76): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,91): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\Program.cs(7376,96): error CS1003: Erro de sintaxe, "," esperado [C:\AchadinhoBot2\AchadinhosBot2\AchadinhosBot.Next\AchadinhosBot.Next.csproj]
+    4 Aviso(s)
+    6 Erro(s)
+
+Tempo Decorrido 00:00:01.56

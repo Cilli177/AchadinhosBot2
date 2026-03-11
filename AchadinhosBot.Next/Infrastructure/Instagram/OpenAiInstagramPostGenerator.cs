@@ -47,8 +47,12 @@ public sealed class OpenAiInstagramPostGenerator
         var officialData = await _officialService.TryGetBestAsync(productInput, affiliateLink, cancellationToken);
         var meta = await _metaService.GetMetaAsync(affiliateLink ?? productInput, cancellationToken);
         
-        var images = officialData?.Images?.Count > 0 ? officialData.Images : meta.Images;
-        if (instaSettings.UseImageDownload && images?.Count > 0)
+        List<string> images = meta.Images ?? new List<string>();
+        if ((officialData?.Images?.Count ?? 0) > 0)
+        {
+            images = officialData!.Images;
+        }
+        if (instaSettings.UseImageDownload && images.Count > 0)
         {
             var downloaded = await _imageDownloadService.DownloadAsync(images, cancellationToken);
             if (downloaded.Count > 0)
@@ -72,7 +76,7 @@ public sealed class OpenAiInstagramPostGenerator
         var title = officialData?.Title ?? meta.Title;
         var description = string.IsNullOrWhiteSpace(officialContext) ? meta.Description : officialContext;
 
-        var prompt = BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images ?? new List<string>(), title, description, instaSettings);
+        var prompt = BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images, title, description, instaSettings);
 
         var payload = new
         {
@@ -113,6 +117,54 @@ public sealed class OpenAiInstagramPostGenerator
         {
             _logger.LogWarning(ex, "Falha ao gerar post via OpenAI");
             await _logStore.AppendAsync(BuildLogEntry(instaSettings, aiSettings.Model, "openai", productInput, affiliateLink, 0, Array.Empty<string>(), null, ex.Message, started, 0, "Erro na geracao"), cancellationToken);
+            return null;
+        }
+    }
+
+    public async Task<string?> GenerateHashtagsAsync(string productInput, OpenAISettings aiSettings, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey) || aiSettings.ApiKey == "********")
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(aiSettings.Model) ? "gpt-4o-mini" : aiSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(aiSettings.BaseUrl) ? "https://api.openai.com/v1" : aiSettings.BaseUrl.Trim();
+
+        var payload = new
+        {
+            model,
+            messages = new[]
+            {
+                new { role = "system", content = "Voc\u00ea \u00e9 um especialista em growth e copywriter premium de afiliados. Gere uma lista de 15 a 20 hashtags de alto n\u00edvel, misturando as mais virais do momento com hashtags espec\u00edficas para atrair compradores reais e visualiza\u00e7\u00f5es no Explorar. Responda apenas as hashtags separadas por espa\u00e7o." },
+                new { role = "user", content = $"Produto: {productInput}\n\nGere as hashtags de alto n\u00edvel para este produto:" }
+            },
+            temperature = 0.8,
+            max_tokens = 150
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("openai");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", aiSettings.ApiKey);
+            using var response = await client.PostAsync(
+                $"{baseUrl.TrimEnd('/')}/chat/completions",
+                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                cancellationToken);
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+            {
+                var content = choices[0].GetProperty("message").GetProperty("content").GetString();
+                return content?.Trim();
+            }
+            return null;
+        }
+        catch
+        {
             return null;
         }
     }
@@ -194,11 +246,12 @@ public sealed class OpenAiInstagramPostGenerator
 
         if (instaSettings.UseUltraPrompt)
         {
-            prompt = "Voce e um copywriter premium de afiliados no Brasil, especializado em high ticket.\n" +
-                     "Crie um post extremamente profissional, convincente e elegante.\n" +
-                     "Evite genericidade, repeticions e frases vazias. Use linguagem humana.\n" +
+            prompt = "Voc\u00ea \u00e9 um expert em growth e copywriter premium de afiliados no Brasil, n\u00edvel autoridade.\n" +
+                     "Crie um post de alt\u00edssima qualidade, elegante e altamente persuasivo para atrair novos usu\u00e1rios e gerar visualiza\u00e7\u00f5es.\n" +
+                     "Nas hashtags, inclua obrigatoriamente padr\u00f5es de alto n\u00edvel como #achadinhos #ofertas #promo\u00e7\u00e3o #compras #dicas e varia\u00e7\u00f5es virais.\n" +
+                     "Evite genericidade e use um tom que gere desejo imediato. Linguagem humana e engajadora.\n" +
                      "Crie legendas CLARAMENTE diferentes entre si.\n" +
-                     "Nao invente preco, garantia ou beneficios nao informados.\n\n" +
+                     "N\u00e3o invente dados que n\u00e3o foram fornecidos.\n\n" +
                      prompt;
         }
 

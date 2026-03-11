@@ -45,8 +45,12 @@ public sealed class DeepSeekInstagramPostGenerator
         var officialData = await _officialService.TryGetBestAsync(productInput, affiliateLink, cancellationToken);
         var meta = await _metaService.GetMetaAsync(affiliateLink ?? productInput, cancellationToken);
         
-        var images = officialData?.Images?.Count > 0 ? officialData.Images : meta.Images;
-        if (instaSettings.UseImageDownload && images?.Count > 0)
+        List<string> images = meta.Images ?? new List<string>();
+        if ((officialData?.Images?.Count ?? 0) > 0)
+        {
+            images = officialData!.Images;
+        }
+        if (instaSettings.UseImageDownload && images.Count > 0)
         {
             var downloaded = await _imageDownloadService.DownloadAsync(images, cancellationToken);
             if (downloaded.Count > 0)
@@ -70,7 +74,7 @@ public sealed class DeepSeekInstagramPostGenerator
         var title = officialData?.Title ?? meta.Title;
         var description = string.IsNullOrWhiteSpace(officialContext) ? meta.Description : officialContext;
 
-        var prompt = OpenAiInstagramPostGenerator.BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images ?? new List<string>(), title, description, instaSettings);
+        var prompt = OpenAiInstagramPostGenerator.BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images, title, description, instaSettings);
 
         // Standard OpenAI Chat Completion payload
         var payload = new

@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Infrastructure.WhatsApp;
 
-public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway
+public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransport
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly EvolutionOptions _options;

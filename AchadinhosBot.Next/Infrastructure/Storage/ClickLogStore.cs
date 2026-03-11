@@ -6,45 +6,59 @@ namespace AchadinhosBot.Next.Infrastructure.Storage;
 
 public sealed class ClickLogStore : IClickLogStore
 {
-    private readonly string _path;
-    private readonly SemaphoreSlim _mutex = new(1, 1);
+    private readonly string _basePath;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _mutexes = new();
 
     public ClickLogStore()
     {
-        _path = Path.Combine(AppContext.BaseDirectory, "data", "click-logs.jsonl");
+        _basePath = Path.Combine(AppContext.BaseDirectory, "data");
     }
 
-    public async Task AppendAsync(ClickLogEntry entry, CancellationToken cancellationToken)
+    private string GetPath(string? category)
     {
-        await _mutex.WaitAsync(cancellationToken);
+        var suffix = string.IsNullOrWhiteSpace(category) ? "" : "-" + category.Trim().ToLowerInvariant();
+        return Path.Combine(_basePath, $"click-logs{suffix}.jsonl");
+    }
+
+    private SemaphoreSlim GetMutex(string path) => _mutexes.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+
+    public async Task AppendAsync(ClickLogEntry entry, string? category, CancellationToken cancellationToken)
+    {
+        var path = GetPath(category);
+        var mutex = GetMutex(path);
+
+        await mutex.WaitAsync(cancellationToken);
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            await using var stream = new FileStream(_path, FileMode.Append, FileAccess.Write, FileShare.Read);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
             await using var writer = new StreamWriter(stream);
             var json = JsonSerializer.Serialize(entry);
             await writer.WriteLineAsync(json);
             await writer.FlushAsync();
-            await JsonlLogRetention.TrimIfNeededAsync(_path, 15000, 8 * 1024 * 1024, cancellationToken);
+            await JsonlLogRetention.TrimIfNeededAsync(path, 15000, 8 * 1024 * 1024, cancellationToken);
         }
         finally
         {
-            _mutex.Release();
+            mutex.Release();
         }
     }
 
-    public async Task<IReadOnlyList<ClickLogEntry>> QueryAsync(string? search, int limit, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ClickLogEntry>> QueryAsync(string? category, string? search, int limit, CancellationToken cancellationToken)
     {
         var entries = new List<ClickLogEntry>();
-        if (!File.Exists(_path))
+        var path = GetPath(category);
+
+        if (!File.Exists(path))
         {
             return entries;
         }
 
-        await _mutex.WaitAsync(cancellationToken);
+        var mutex = GetMutex(path);
+        await mutex.WaitAsync(cancellationToken);
         try
         {
-            await using var stream = File.OpenRead(_path);
+            await using var stream = File.OpenRead(path);
             using var reader = new StreamReader(stream);
             while (!reader.EndOfStream)
             {
@@ -78,7 +92,7 @@ public sealed class ClickLogStore : IClickLogStore
         }
         finally
         {
-            _mutex.Release();
+            mutex.Release();
         }
 
         return entries
@@ -87,19 +101,22 @@ public sealed class ClickLogStore : IClickLogStore
             .ToArray();
     }
 
-    public async Task ClearAsync(CancellationToken cancellationToken)
+    public async Task ClearAsync(string? category, CancellationToken cancellationToken)
     {
-        await _mutex.WaitAsync(cancellationToken);
+        var path = GetPath(category);
+        var mutex = GetMutex(path);
+
+        await mutex.WaitAsync(cancellationToken);
         try
         {
-            if (File.Exists(_path))
+            if (File.Exists(path))
             {
-                File.WriteAllText(_path, string.Empty);
+                File.WriteAllText(path, string.Empty);
             }
         }
         finally
         {
-            _mutex.Release();
+            mutex.Release();
         }
     }
 }

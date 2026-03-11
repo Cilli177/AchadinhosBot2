@@ -8,12 +8,14 @@ namespace AchadinhosBot.Next.Infrastructure.Storage;
 
 public sealed class CatalogOfferStore : ICatalogOfferStore
 {
-    private readonly string _path;
+    private readonly string _dataDirectory;
+    private readonly ICatalogOfferEnrichmentService? _enrichmentService;
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
-    public CatalogOfferStore()
+    public CatalogOfferStore(ICatalogOfferEnrichmentService? enrichmentService = null)
     {
-        _path = Path.Combine(AppContext.BaseDirectory, "data", "catalog-offers.json");
+        _dataDirectory = Path.Combine(AppContext.BaseDirectory, "data");
+        _enrichmentService = enrichmentService;
     }
 
     public async Task<CatalogSyncResult> SyncFromPublishedDraftsAsync(IReadOnlyList<InstagramPublishDraft> drafts, CancellationToken cancellationToken)
@@ -21,87 +23,37 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         await _mutex.WaitAsync(cancellationToken);
         try
         {
-            var db = await ReadAsync(cancellationToken);
             var now = DateTimeOffset.UtcNow;
-            var created = 0;
-            var updated = 0;
-            var activeDraftIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            var published = (drafts ?? Array.Empty<InstagramPublishDraft>())
+            var aggregate = new CatalogSyncResult { SyncedAt = now };
+            var providedDrafts = (drafts ?? Array.Empty<InstagramPublishDraft>()).ToList();
+            var published = providedDrafts
                 .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(d => d.CreatedAt)
                 .ToList();
+            var processedDraftIds = new HashSet<string>(
+                providedDrafts
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Id))
+                    .Select(x => x.Id),
+                StringComparer.OrdinalIgnoreCase);
 
-            foreach (var draft in published)
+            foreach (var target in new[] { CatalogTargets.Dev, CatalogTargets.Prod })
             {
-                var offerUrl = ResolveOfferUrl(draft);
-                if (string.IsNullOrWhiteSpace(offerUrl))
-                {
-                    continue;
-                }
+                var db = await ReadAsync(target, cancellationToken);
+                var targetDrafts = published
+                    .Where(d => CatalogTargets.Expand(d.CatalogTarget, d.SendToCatalog).Contains(target, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                var result = await SyncTargetDatabaseAsync(db, targetDrafts, processedDraftIds, target, now, cancellationToken);
 
-                activeDraftIds.Add(draft.Id);
-                var existing = db.Items.FirstOrDefault(x => x.DraftId.Equals(draft.Id, StringComparison.OrdinalIgnoreCase));
-                if (existing is null)
-                {
-                    var number = db.NextItemNumber <= 0 ? 1 : db.NextItemNumber;
-                    db.NextItemNumber = number + 1;
-                    existing = new CatalogOfferItem
-                    {
-                        ItemNumber = number,
-                        DraftId = draft.Id,
-                        Keyword = BuildKeyword(draft, number)
-                    };
-                    db.Items.Add(existing);
-                    created++;
-                }
-                else
-                {
-                    updated++;
-                }
+                await WriteAsync(target, db, cancellationToken);
 
-                existing.ProductName = string.IsNullOrWhiteSpace(draft.ProductName) ? $"Item {existing.ItemNumber}" : draft.ProductName.Trim();
-                existing.Store = ResolveStore(draft, offerUrl);
-                existing.OfferUrl = offerUrl.Trim();
-                existing.ImageUrl = ResolveImageUrl(draft);
-                existing.PriceText = ExtractPriceText(draft.Caption);
-                existing.PostType = NormalizePostType(draft.PostType);
-                existing.Active = true;
-                existing.PublishedAt = draft.CreatedAt;
-                existing.UpdatedAt = now;
-                if (string.IsNullOrWhiteSpace(existing.Keyword))
-                {
-                    existing.Keyword = BuildKeyword(draft, existing.ItemNumber);
-                }
+                aggregate.Created += result.Created;
+                aggregate.Updated += result.Updated;
+                aggregate.Deactivated += result.Deactivated;
+                aggregate.TotalActive += result.TotalActive;
+                aggregate.HighestItemNumber = Math.Max(aggregate.HighestItemNumber, result.HighestItemNumber);
             }
 
-            var deactivated = 0;
-            foreach (var item in db.Items)
-            {
-                if (!activeDraftIds.Contains(item.DraftId) && item.Active)
-                {
-                    item.Active = false;
-                    item.UpdatedAt = now;
-                    deactivated++;
-                }
-            }
-
-            var maxNumber = db.Items.Count == 0 ? 0 : db.Items.Max(x => x.ItemNumber);
-            if (db.NextItemNumber <= maxNumber)
-            {
-                db.NextItemNumber = maxNumber + 1;
-            }
-
-            await WriteAsync(db, cancellationToken);
-            return new CatalogSyncResult
-            {
-                Created = created,
-                Updated = updated,
-                Deactivated = deactivated,
-                TotalActive = db.Items.Count(x => x.Active),
-                HighestItemNumber = maxNumber,
-                SyncedAt = now
-            };
+            return aggregate;
         }
         finally
         {
@@ -109,31 +61,32 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
     }
 
-    public async Task<IReadOnlyList<CatalogOfferItem>> ListAsync(string? search, int limit, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<CatalogOfferItem>> ListAsync(string? search, int limit, CancellationToken cancellationToken, string? catalogTarget = null)
     {
         await _mutex.WaitAsync(cancellationToken);
         try
         {
-            var db = await ReadAsync(cancellationToken);
+            var items = await ReadItemsAsync(catalogTarget, cancellationToken);
             var query = (search ?? string.Empty).Trim();
-            var items = db.Items.Where(x => x.Active);
+            var filtered = items.Where(x => x.Active);
             if (!string.IsNullOrWhiteSpace(query))
             {
                 if (int.TryParse(query, out var number))
                 {
-                    items = items.Where(x => x.ItemNumber == number || x.Keyword.Contains(query, StringComparison.OrdinalIgnoreCase));
+                    filtered = filtered.Where(x => x.ItemNumber == number || x.Keyword.Contains(query, StringComparison.OrdinalIgnoreCase));
                 }
                 else
                 {
-                    items = items.Where(x =>
+                    filtered = filtered.Where(x =>
                         x.Keyword.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                         x.ProductName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                         x.Store.Contains(query, StringComparison.OrdinalIgnoreCase));
                 }
             }
 
-            return items
+            return filtered
                 .OrderByDescending(x => x.ItemNumber)
+                .ThenBy(x => x.CatalogTarget)
                 .Take(Math.Clamp(limit, 1, 500))
                 .ToArray();
         }
@@ -143,12 +96,12 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
     }
 
-    public async Task<CatalogOfferItem?> FindByCodeAsync(string query, CancellationToken cancellationToken)
+    public async Task<CatalogOfferItem?> FindByCodeAsync(string query, CancellationToken cancellationToken, string? catalogTarget = null)
     {
         await _mutex.WaitAsync(cancellationToken);
         try
         {
-            var db = await ReadAsync(cancellationToken);
+            var items = await ReadItemsAsync(catalogTarget, cancellationToken);
             var value = (query ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -157,13 +110,13 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
 
             if (int.TryParse(value, out var number))
             {
-                return db.Items
+                return items
                     .Where(x => x.Active && x.ItemNumber == number)
                     .OrderByDescending(x => x.UpdatedAt)
                     .FirstOrDefault();
             }
 
-            return db.Items
+            return items
                 .Where(x => x.Active)
                 .OrderByDescending(x => x.UpdatedAt)
                 .FirstOrDefault(x =>
@@ -176,15 +129,19 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
     }
 
-    public async Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken, string? catalogTarget = null)
     {
         await _mutex.WaitAsync(cancellationToken);
         try
         {
-            var db = await ReadAsync(cancellationToken);
-            return db.Items
+            var items = await ReadItemsAsync(catalogTarget, cancellationToken);
+            return items
                 .Where(x => x.Active && !string.IsNullOrWhiteSpace(x.DraftId))
-                .ToDictionary(x => x.DraftId, x => x, StringComparer.OrdinalIgnoreCase);
+                .GroupBy(x => x.DraftId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderByDescending(x => x.UpdatedAt).First(),
+                    StringComparer.OrdinalIgnoreCase);
         }
         finally
         {
@@ -192,23 +149,178 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
     }
 
-    private async Task<CatalogDatabase> ReadAsync(CancellationToken cancellationToken)
+    private async Task<CatalogSyncResult> SyncTargetDatabaseAsync(
+        CatalogDatabase db,
+        IReadOnlyList<InstagramPublishDraft> drafts,
+        HashSet<string> processedDraftIds,
+        string target,
+        DateTimeOffset now,
+        CancellationToken ct)
     {
-        if (!File.Exists(_path))
+        var created = 0;
+        var updated = 0;
+        var activeDraftIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var draft in drafts)
         {
-            return new CatalogDatabase();
+            var offerUrl = ResolveOfferUrl(draft);
+            if (string.IsNullOrWhiteSpace(offerUrl))
+            {
+                continue;
+            }
+
+            activeDraftIds.Add(draft.Id);
+            var existing = db.Items.FirstOrDefault(x => x.DraftId.Equals(draft.Id, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
+            {
+                var number = db.NextItemNumber <= 0 ? 1 : db.NextItemNumber;
+                db.NextItemNumber = number + 1;
+                existing = new CatalogOfferItem
+                {
+                    ItemNumber = number,
+                    DraftId = draft.Id,
+                    Keyword = BuildKeyword(draft, number),
+                    CatalogTarget = target
+                };
+                db.Items.Add(existing);
+                created++;
+            }
+            else
+            {
+                updated++;
+            }
+
+            existing.ProductName = string.IsNullOrWhiteSpace(draft.ProductName) ? $"Item {existing.ItemNumber}" : draft.ProductName.Trim();
+            existing.Store = ResolveStore(draft, offerUrl);
+            existing.OfferUrl = offerUrl.Trim();
+            existing.ImageUrl = ResolveImageUrl(draft);
+            existing.PriceText = ExtractPriceText(draft.Caption);
+            existing.PostType = NormalizePostType(draft.PostType);
+            existing.CatalogTarget = target;
+            existing.Active = true;
+            existing.PublishedAt = draft.CreatedAt;
+            existing.UpdatedAt = now;
+
+            // Enrichment
+            if (_enrichmentService != null)
+            {
+                var enrichment = await _enrichmentService.TryEnrichAsync(existing.OfferUrl, ct);
+                if (enrichment != null)
+                {
+                    existing.IsLightningDeal = enrichment.IsLightningDeal;
+                    existing.LightningDealExpiry = enrichment.LightningDealExpiry;
+                    existing.CouponCode = enrichment.CouponCode;
+                    existing.CouponDescription = enrichment.CouponDescription;
+                    
+                    if (!string.IsNullOrWhiteSpace(enrichment.CurrentPrice))
+                    {
+                        existing.PriceText = enrichment.CurrentPrice;
+                    }
+                }
+            }
+            if (string.IsNullOrWhiteSpace(existing.Keyword))
+            {
+                existing.Keyword = BuildKeyword(draft, existing.ItemNumber);
+            }
         }
 
-        await using var stream = File.OpenRead(_path);
-        var db = await JsonSerializer.DeserializeAsync<CatalogDatabase>(stream, cancellationToken: cancellationToken);
-        return db ?? new CatalogDatabase();
+        var deactivated = 0;
+        foreach (var item in db.Items)
+        {
+            if (item.Active &&
+                processedDraftIds.Contains(item.DraftId) &&
+                !activeDraftIds.Contains(item.DraftId))
+            {
+                item.Active = false;
+                item.UpdatedAt = now;
+                deactivated++;
+            }
+        }
+
+        var maxNumber = db.Items.Count == 0 ? 0 : db.Items.Max(x => x.ItemNumber);
+        if (db.NextItemNumber <= maxNumber)
+        {
+            db.NextItemNumber = maxNumber + 1;
+        }
+
+        return new CatalogSyncResult
+        {
+            Created = created,
+            Updated = updated,
+            Deactivated = deactivated,
+            TotalActive = db.Items.Count(x => x.Active),
+            HighestItemNumber = maxNumber,
+            SyncedAt = now
+        };
     }
 
-    private async Task WriteAsync(CatalogDatabase db, CancellationToken cancellationToken)
+    private async Task<List<CatalogOfferItem>> ReadItemsAsync(string? catalogTarget, CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        await using var stream = File.Create(_path);
+        var targets = ResolveReadableTargets(catalogTarget);
+        var items = new List<CatalogOfferItem>();
+        foreach (var target in targets)
+        {
+            var db = await ReadAsync(target, cancellationToken);
+            items.AddRange(db.Items.Select(item =>
+            {
+                item.CatalogTarget = CatalogTargets.Normalize(item.CatalogTarget, target);
+                return item;
+            }));
+        }
+
+        return items;
+    }
+
+    private async Task<CatalogDatabase> ReadAsync(string target, CancellationToken cancellationToken)
+    {
+        var path = ResolvePath(target);
+        if (!File.Exists(path))
+        {
+            var legacyPath = ResolveLegacyPath();
+            if (string.Equals(target, CatalogTargets.Prod, StringComparison.OrdinalIgnoreCase) && File.Exists(legacyPath))
+            {
+                path = legacyPath;
+            }
+            else
+            {
+                return new CatalogDatabase();
+            }
+        }
+
+        await using var stream = File.OpenRead(path);
+        var db = await JsonSerializer.DeserializeAsync<CatalogDatabase>(stream, cancellationToken: cancellationToken);
+        db ??= new CatalogDatabase();
+        foreach (var item in db.Items)
+        {
+            item.CatalogTarget = CatalogTargets.Normalize(item.CatalogTarget, target);
+        }
+
+        return db;
+    }
+
+    private async Task WriteAsync(string target, CatalogDatabase db, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(_dataDirectory);
+        var path = ResolvePath(target);
+        await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, db, new JsonSerializerOptions { WriteIndented = true }, cancellationToken);
+    }
+
+    private string ResolvePath(string target)
+        => Path.Combine(_dataDirectory, $"catalog-offers.{CatalogTargets.Normalize(target, CatalogTargets.Prod)}.json");
+
+    private string ResolveLegacyPath()
+        => Path.Combine(_dataDirectory, "catalog-offers.json");
+
+    private static IReadOnlyList<string> ResolveReadableTargets(string? catalogTarget)
+    {
+        var normalized = CatalogTargets.Normalize(catalogTarget, CatalogTargets.Prod);
+        return normalized switch
+        {
+            CatalogTargets.Dev => [CatalogTargets.Dev],
+            CatalogTargets.Both => [CatalogTargets.Prod, CatalogTargets.Dev],
+            _ => [CatalogTargets.Prod]
+        };
     }
 
     private static string ResolveOfferUrl(InstagramPublishDraft draft)
@@ -253,6 +365,8 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         {
             "story" => "story",
             "stories" => "story",
+            "reel" => "reel",
+            "reels" => "reel",
             _ => "feed"
         };
     }

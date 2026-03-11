@@ -1,0 +1,3321 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin VIP - Publicar Oferta</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;800&family=Inter:wght@300;400;600&display=swap"
+        rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { primary: '#0f172a', accent: '#c4a468', accentHover: '#b39359', surface: '#1e293b' },
+                    fontFamily: { display: ['Montserrat', 'sans-serif'], body: ['Inter', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Version: 2026-03-10-0020 */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        h1,
+        h2,
+        h3 {
+            font-family: 'Montserrat', sans-serif;
+        }
+
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .result-container {
+            display: none;
+            animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #f8fafc;
+            color: #0f172a;
+            padding: 1rem 2rem;
+            border-radius: 999px;
+            font-weight: 600;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        #errorAlert {
+            display: none;
+        }
+
+        #discountBadge {
+            display: none;
+        }
+
+        #deliveryInfo {
+            display: none;
+        }
+
+        /* Password Gate */
+        #passwordGate {
+            display: flex;
+            position: fixed;
+            inset: 0;
+            background: rgba(10, 15, 30, 0.98);
+            z-index: 900;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #passwordGate.hidden {
+            display: none;
+        }
+
+        /* Tabs */
+        .tab-btn {
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .tab-btn.active {
+            border-bottom-color: #c4a468;
+            color: #c4a468;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .btn-status-idle {
+            background-color: #1e293b;
+            color: white;
+        }
+
+        .btn-status-idle:hover {
+            background-color: #334155;
+        }
+
+        .btn-status-loading {
+            background-color: #1e293b;
+            color: #94a3b8;
+            cursor: wait;
+        }
+
+        .btn-status-success {
+            background-color: #16a34a;
+            color: white;
+        }
+
+        .btn-status-error {
+            background-color: #dc2626;
+            color: white;
+        }
+
+        .tilt-card {
+            transition: transform 0.1s ease;
+            transform-style: preserve-3d;
+        }
+
+        #qrModal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(6px);
+            z-index: 500;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #qrModal.show {
+            display: flex;
+        }
+
+        /* Instagram Mock Container - Feed (default) */
+        .insta-mock-container {
+            width: 320px;
+            background: #000;
+            border-radius: 32px;
+            overflow: hidden;
+            border: 8px solid #1e293b;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+        }
+
+        .insta-mock-container.stories {
+            width: 280px;
+            aspect-ratio: 9/16;
+        }
+
+        .insta-header {
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stories .insta-header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 20;
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+            border: none;
+        }
+
+        .insta-avatar {
+            width: 32px;
+            height: 32px;
+            padding: 2px;
+            background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+            border-radius: 50%;
+        }
+
+        .insta-media {
+            width: 100%;
+            aspect-ratio: 1/1;
+            background: #111;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+            transition: all 0.5s ease;
+        }
+
+        .stories .insta-media {
+            aspect-ratio: 9/16;
+            height: 100%;
+        }
+
+        .insta-media img,
+        .insta-media video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .insta-actions {
+            padding: 12px;
+            display: flex;
+            gap: 16px;
+            color: white;
+        }
+
+        .stories .insta-actions {
+            display: none;
+        }
+
+        .insta-actions svg {
+            width: 22px;
+            height: 22px;
+        }
+
+        .insta-caption-area {
+            padding: 0 12px 16px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .stories .insta-caption-area {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 20px 12px 40px;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
+            z-index: 20;
+        }
+
+        .insta-username {
+            font-weight: 700;
+            color: white;
+            margin-right: 6px;
+        }
+
+        .insta-hashtags {
+            color: #3b82f6;
+            display: block;
+            margin-top: 4px;
+        }
+
+        /* Format Toggle */
+        .format-toggle {
+            display: flex;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 4px;
+            gap: 4px;
+            margin-bottom: 20px;
+            width: fit-content;
+        }
+
+        .format-btn {
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+            color: #64748b;
+        }
+
+        .format-btn.active {
+            background: #c4a468;
+            color: #0f172a;
+        }
+
+        .mobile-card-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(196, 164, 104, 0.45) transparent;
+        }
+
+        @media (max-width: 767px) {
+            body {
+                padding: 14px;
+            }
+
+            .toast {
+                left: 14px;
+                right: 14px;
+                bottom: 14px;
+                transform: translateY(120px);
+                padding: 0.9rem 1rem;
+                border-radius: 18px;
+                text-align: center;
+            }
+
+            .toast.show {
+                transform: translateY(0);
+            }
+
+            .insta-mock-container {
+                width: min(100%, 340px);
+                border-width: 6px;
+                border-radius: 26px;
+            }
+
+            .insta-mock-container.stories {
+                width: min(100%, 300px);
+            }
+
+            .format-toggle {
+                width: 100%;
+                justify-content: center;
+                overflow-x: auto;
+            }
+
+            .format-btn {
+                flex: 1 0 auto;
+                min-width: 96px;
+                text-align: center;
+            }
+
+            #editorModal {
+                padding-top: 0;
+                align-items: stretch;
+            }
+
+            #editorModal>div {
+                height: 100dvh;
+                max-width: 100%;
+                border-radius: 0;
+                flex-direction: column;
+            }
+
+            #editorModal canvas {
+                max-height: 46dvh;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-primary text-slate-100 min-h-screen flex flex-col items-center p-4 md:p-8 relative overflow-x-hidden">
+
+    <!-- Orbs -->
+    <div class="absolute w-[400px] h-[400px] bg-red-500/10 rounded-full blur-[80px] -top-24 -left-24 -z-10"></div>
+    <div class="absolute w-[500px] h-[500px] bg-accent/10 rounded-full blur-[80px] -bottom-48 -right-24 -z-10"></div>
+
+    <!-- Password Gate Modal -->
+    <div id="passwordGate">
+        <div
+            class="bg-surface border border-red-500/20 rounded-[24px] p-8 flex flex-col items-center gap-5 shadow-2xl max-w-sm w-full mx-4">
+            <div
+                class="w-14 h-14 bg-red-600 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(239,68,68,0.4)]">
+                <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+            </div>
+            <h2 class="text-white font-display font-bold text-2xl">Area Restrita</h2>
+            <p class="text-slate-400 text-sm text-center">Entre com usuario e senha para abrir o painel e registrar as
+                acoes no log.</p>
+            <input type="text" id="adminUsernameInput" placeholder="Usuario"
+                class="w-full bg-primary border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500/50 focus:ring-2 focus:ring-red-500/20 transition-all"
+                onkeydown="if(event.key==='Enter') attemptLogin()">
+            <input type="password" id="adminPasswordInput" placeholder="Senha"
+                class="w-full bg-primary border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500/50 focus:ring-2 focus:ring-red-500/20 transition-all"
+                onkeydown="if(event.key==='Enter') attemptLogin()">
+            <label class="flex items-center self-start gap-2 cursor-pointer mt-1 mb-2">
+                <input type="checkbox" id="rememberMe" checked
+                    class="w-4 h-4 rounded bg-primary border-white/10 text-red-500 focus:ring-red-500">
+                <span class="text-xs text-slate-400">Mantenha-me conectado</span>
+            </label>
+            <button onclick="attemptLogin()"
+                class="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-red-600/20">
+                Entrar
+            </button>
+            <p id="loginHint" class="text-slate-500 text-xs text-center">Use um usuario de Auth.Users, como admin ou
+                operator.</p>
+            <p id="loginError" class="text-red-400 text-sm hidden">Credenciais invalidas. Tente novamente.</p>
+            <a href="/conversor" class="text-slate-500 hover:text-white text-xs transition-colors">&larr; Voltar ao
+                Conversor Publico</a>
+        </div>
+    </div>
+
+    <main id="mainContent" class="w-full max-w-6xl hidden">
+
+        <!-- Header -->
+        <div class="text-center mb-8 mt-4">
+            <div
+                class="inline-flex items-center gap-2 bg-red-600/20 border border-red-500/30 rounded-full px-4 py-1.5 mb-4">
+                <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    stroke-width="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+                <span class="text-red-400 text-xs font-bold uppercase tracking-wider">Painel Admin</span>
+            </div>
+            <div class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 md:p-10 shadow-2xl">
+                <div
+                    class="w-12 h-12 bg-accent rounded-full flex items-center justify-center mx-auto shadow-[0_0_15px_rgba(196,164,104,0.4)] mb-4">
+                    <span class="text-primary font-black text-sm tracking-tighter">VIP</span>
+                </div>
+                <h1
+                    class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-accent to-yellow-300 mb-2">
+                    Publicar Oferta VIP</h1>
+                <p class="text-slate-400">Converta, gere o card e publique no Instagram ou envie no WhatsApp.</p>
+            </div>
+        </div>
+
+        <div class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 md:p-10 shadow-2xl">
+
+            <!-- Form -->
+            <form id="convertForm" class="flex flex-col gap-4" onsubmit="return false;">
+                <input type="text" id="urlInput"
+                    class="w-full bg-primary/60 border border-white/10 rounded-2xl px-6 py-4 text-white text-lg placeholder-slate-500 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                    placeholder="Cole o link do produto..." autocomplete="off">
+                <button type="button" id="submitBtn" onclick="handleConvert()"
+                    class="w-full bg-accent hover:bg-accentHover text-primary font-bold text-lg px-6 py-4 rounded-2xl transition-all shadow-lg hover:shadow-accent/20 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                    <span class="btn-text">Converter Link</span>
+                    <div class="spinner" id="spinner"></div>
+                </button>
+            </form>
+
+            <div id="errorAlert"
+                class="mt-6 bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl font-medium"></div>
+
+            <!-- Skeleton -->
+            <div id="skeletonLoader" class="hidden mt-8">
+                <div class="bg-[#151f32] border border-white/5 rounded-xl overflow-hidden flex gap-4 p-4 animate-pulse">
+                    <div class="w-24 h-24 bg-white/10 rounded-lg flex-shrink-0"></div>
+                    <div class="flex-1 space-y-3 py-1">
+                        <div class="h-4 bg-white/10 rounded w-2/4"></div>
+                        <div class="h-4 bg-white/10 rounded w-3/4"></div>
+                        <div class="h-6 bg-white/10 rounded w-1/4"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Converted Card -->
+            <div id="resultArea" class="result-container mt-8">
+                <div id="vipResultCard"
+                    class="bg-[#151f32] border border-white/10 rounded-[20px] overflow-hidden flex flex-col md:flex-row shadow-xl">
+                    <div
+                        class="w-full md:w-2/5 h-48 md:h-auto bg-slate-950 relative flex items-center justify-center p-4 border-b md:border-b-0 md:border-r border-white/10">
+                        <span id="discountBadge"
+                            class="absolute top-3 right-3 bg-red-600 text-white px-2 py-0.5 rounded-full font-bold text-xs"></span>
+                        <img id="productImage" src="" alt="Produto"
+                            class="max-w-full max-h-full object-contain block [filter:none] [mix-blend-mode:normal]"
+                            onload="this.style.opacity='1'" onerror="this.style.opacity='0.2'">
+                    </div>
+                    <div class="w-full md:w-3/5 p-5 flex flex-col justify-between">
+                        <div>
+                            <span id="storeBadge"
+                                class="inline-block px-2 py-0.5 bg-surface border border-white/10 rounded text-xs font-bold uppercase tracking-widest text-slate-300 mb-2">Loja</span>
+                            <h2 id="productTitle" class="text-lg font-semibold text-white leading-snug">-</h2>
+                        </div>
+                        <div class="mt-3 space-y-2">
+                            <div class="flex items-baseline gap-2 flex-wrap">
+                                <span id="productPrice" class="text-2xl font-extrabold text-accent">---</span>
+                                <span id="productOldPrice" class="text-sm text-slate-500 line-through"
+                                    style="display:none;"></span>
+                            </div>
+                            <div id="deliveryInfo"
+                                class="inline-flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-400/10 border border-green-400/20 px-2 py-1 rounded-lg">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                                </svg>
+                                <span id="deliveryText"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- === STUDIO PANEL === -->
+                <div id="studioPanel"
+                    class="mt-6 border border-red-500/20 rounded-[24px] overflow-hidden bg-surface/30 backdrop-blur-md transition-all hidden">
+                    <!-- Tab Header -->
+                    <div class="grid grid-cols-3 border-b border-white/10 bg-surface/50">
+                        <button onclick="switchTab('visual')"
+                            class="tab-btn min-w-0 py-3 sm:py-4 text-[11px] sm:text-sm font-bold uppercase tracking-wider text-slate-400 active"
+                            id="tab-visual-btn">Visual</button>
+                        <button onclick="switchTab('caption')"
+                            class="tab-btn min-w-0 py-3 sm:py-4 text-[11px] sm:text-sm font-bold uppercase tracking-wider text-slate-400"
+                            id="tab-caption-btn">Legenda IA</button>
+                        <button onclick="switchTab('publish')"
+                            class="tab-btn min-w-0 py-3 sm:py-4 text-[11px] sm:text-sm font-bold uppercase tracking-wider text-slate-400"
+                            id="tab-publish-btn">Publicar</button>
+                    </div>
+
+                    <div class="p-4 md:p-6">
+                        <!-- TAB 1: VISUAL (PREVIEW INSTAGRAM) -->
+                        <div id="tab-visual" class="tab-content active">
+                            <!-- Layout Toggle -->
+                            <div class="flex justify-center mb-6">
+                                <div class="format-toggle">
+                                    <button onclick="setFormat('feed')" id="fmt-feed"
+                                        class="format-btn active">Feed</button>
+                                    <button onclick="setFormat('story')" id="fmt-story"
+                                        class="format-btn">Stories</button>
+                                    <button onclick="setFormat('reels')" id="fmt-reels" class="format-btn">Reel</button>
+                                </div>
+                            </div>
+
+                            <div
+                                class="grid grid-cols-1 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)] gap-6 lg:gap-8 items-start">
+
+                                <!-- MOCK INSTAGRAM -->
+                                <div id="instaMockContainer" class="insta-mock-container mx-auto lg:mx-0">
+                                    <div class="insta-header border-b border-white/5">
+                                        <div class="insta-avatar">
+                                            <div
+                                                class="w-full h-full rounded-full bg-slate-800 flex items-center justify-center text-[10px] font-bold">
+                                                VIP</div>
+                                        </div>
+                                        <span class="text-xs font-bold text-white">achadinhos.vip</span>
+                                    </div>
+                                    <div class="insta-media">
+                                        <img id="instaPreviewImg" src="" alt="Post Preview"
+                                            class="[filter:none] [mix-blend-mode:normal]"
+                                            onload="this.style.opacity='1'" onerror="this.style.opacity='0.2'">
+                                        <video id="instaPreviewVid" class="hidden" controls loop></video>
+                                        <audio id="instaPreviewAudio" class="hidden"></audio>
+
+                                        <!-- Carousel Navigation (Feed) -->
+                                        <button id="carouselPrevBtn" onclick="navigateCarousel(-1)"
+                                            class="hidden absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center text-white shadow-md hover:bg-black/60 transition-all z-20"><svg
+                                                class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                                    d="M15 19l-7-7 7-7" />
+                                            </svg></button>
+                                        <button id="carouselNextBtn" onclick="navigateCarousel(1)"
+                                            class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center text-white shadow-md hover:bg-black/60 transition-all z-20"><svg
+                                                class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                                    d="M9 5l7 7-7 7" />
+                                            </svg></button>
+
+                                        <!-- Carousel Indicator (if multi) -->
+                                        <div id="carouselDots"
+                                            class="hidden absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20">
+                                            <!-- Dots injected via JS -->
+                                        </div>
+
+                                        <!-- Link Sticker Mockup (Stories) -->
+                                        <div id="instaLinkSticker"
+                                            class="hidden absolute bottom-24 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-xl shadow-[0_5px_15px_rgba(0,0,0,0.2)] flex items-center gap-2.5 max-w-[80%] z-30 transition-transform active:scale-95 cursor-pointer"
+                                            style="border: 1px solid rgba(0,0,0,0.05);">
+                                            <div
+                                                class="bg-[#0088cc] w-7 h-7 rounded-full flex items-center justify-center shrink-0 shadow-inner">
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2.5"
+                                                        d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                                </svg>
+                                            </div>
+                                            <span
+                                                class="text-xs font-bold text-slate-800 truncate tracking-tight uppercase"
+                                                id="instaLinkText">Ver Oferta</span>
+                                        </div>
+                                    </div>
+                                    <div class="insta-actions">
+                                        <svg fill="currentColor" viewBox="0 0 24 24">
+                                            <path
+                                                d="M16.792 3.904A4.989 4.989 0 0 1 21.5 9.122c0 3.072-2.652 4.959-5.197 7.222-2.512 2.243-3.865 3.469-4.303 3.752-.477-.309-2.143-1.823-4.303-3.752C5.141 14.072 2.5 12.185 2.5 9.122a4.989 4.989 0 0 1 4.708-5.218 4.21 4.21 0 0 1 3.675 1.941c.03.044.06.091.092.14.032-.049.061-.096.091-.141a4.21 4.21 0 0 1 3.726-1.94zm0-2c-1.535 0-3.033.435-4.292 1.258A7.94 7.94 0 0 0 12 4.168a7.94 7.94 0 0 0-4.5-1.006A6.99 6.99 0 0 0 .5 9.122c0 4.237 3.518 6.551 6.302 9.043 2.512 2.242 3.865 3.469 4.303 3.752a1.867 1.867 0 0 0 1.79 0c.438-.283 1.791-1.51 4.303-3.752 2.784-2.492 6.302-4.806 6.302-9.043a6.99 6.99 0 0 0-6.908-6.218z" />
+                                        </svg>
+                                        <svg fill="currentColor" viewBox="0 0 24 24">
+                                            <path
+                                                d="M20.656 17.008a9.993 9.993 0 1 0-3.59 3.615L22 22zM12.001 2.001a10 10 0 0 1 10 10.001 9.921 9.921 0 0 1-2.492 6.554l-.194.223 1.266 1.24a.5.5 0 0 1-.225.836l-3.235.636a9.921 9.921 0 0 1-5.12.511 10.002 10.002 0 0 1-10.001-10.001 10.002 10.002 0 0 1 10.001-10.001zm0 2a8 8 0 1 0 8 8 8 8 0 0 0-8-8z" />
+                                        </svg>
+                                        <svg fill="currentColor" viewBox="0 0 24 24">
+                                            <path
+                                                d="m15.82 5.1-4.14 1.5c-3 .5-3 1.4-3 1.4L4.82 10l-.4.1a.5.5 0 0 0-.25.8l4 2.8c.2.2.4.5.4.8l2.8 4a.5.5 0 0 0 .8-.25l.1-.4 1.4-3.8s.9 0 1.4-3l1.5-4.14a.5.5 0 0 0-.8-.8z" />
+                                        </svg>
+                                    </div>
+                                    <div class="insta-caption-area">
+                                        <span class="insta-username">achadinhos.vip</span>
+                                        <span id="instaPreviewCaption"
+                                            class="whitespace-pre-line text-slate-200">Convertendo dados do
+                                            produto...</span>
+                                        <span id="instaPreviewHashtags" class="insta-hashtags"></span>
+                                    </div>
+                                </div>
+
+                                <!-- CONTROLS SIDE -->
+                                <div class="space-y-6 mobile-card-scroll">
+                                    <div class="bg-primary/30 p-4 rounded-2xl border border-white/5">
+                                        <label
+                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Gerenciamento
+                                            de Midia</label>
+                                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                            <button onclick="document.getElementById('photoInput').click()"
+                                                class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
+                                                <div class="text-accent mb-1 flex justify-center"><svg class="w-5 h-5"
+                                                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path
+                                                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                                    </svg></div>
+                                                <span class="text-[9px] font-bold uppercase tracking-tight">Alterar
+                                                    Foto</span>
+                                            </button>
+                                            <button onclick="document.getElementById('videoInput').click()"
+                                                class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
+                                                <div class="text-pink-500 mb-1 flex justify-center"><svg class="w-5 h-5"
+                                                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path
+                                                            d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                    </svg></div>
+                                                <span class="text-[9px] font-bold uppercase tracking-tight">Add
+                                                    Video</span>
+                                            </button>
+                                            <button onclick="openEditorModal()"
+                                                class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
+                                                <div class="text-purple-400 mb-1 flex justify-center"><svg
+                                                        class="w-5 h-5" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
+                                                    </svg></div>
+                                                <span
+                                                    class="text-[9px] font-bold uppercase tracking-tight">Editar</span>
+                                            </button>
+                                            <button onclick="document.getElementById('musicInput').click()"
+                                                class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 text-center transition-all">
+                                                <div class="text-emerald-400 mb-1 flex justify-center"><svg
+                                                        class="w-5 h-5" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M9 19V6l12-2v13M9 19a2 2 0 11-4 0 2 2 0 014 0zm12-2a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                    </svg></div>
+                                                <span class="text-[9px] font-bold uppercase tracking-tight">Add
+                                                    Musica</span>
+                                            </button>
+                                        </div>
+                                        <input type="file" id="photoInput" class="hidden" accept="image/*"
+                                            onchange="uploadMedia(this, 'photo')">
+                                        <input type="file" id="videoInput" class="hidden" accept="video/*"
+                                            onchange="uploadMedia(this, 'video')">
+                                        <input type="file" id="musicInput" class="hidden" accept="audio/*"
+                                            onchange="uploadMedia(this, 'music')">
+
+                                        <div id="mediaStatus"
+                                            class="mt-3 p-2 bg-accent/10 border border-accent/20 rounded-lg text-[10px] text-accent hidden">
+                                        </div>
+
+                                        <div id="videoToolsPanel"
+                                            class="hidden mt-4 bg-black/20 border border-white/10 rounded-xl p-3 space-y-3">
+                                            <div class="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <label
+                                                        class="block text-[9px] font-bold text-slate-400 uppercase tracking-widest">Video
+                                                        Studio</label>
+                                                    <p class="text-[10px] text-slate-500 mt-1">Defina capa e trim para
+                                                        o draft antes da publicacao.</p>
+                                                </div>
+                                                <button type="button" onclick="captureVideoCover()"
+                                                    class="bg-pink-500/10 hover:bg-pink-500/20 border border-pink-500/20 text-pink-300 rounded-lg px-3 py-2 text-[10px] font-bold transition-all">
+                                                    Capturar Capa
+                                                </button>
+                                            </div>
+                                            <div class="bg-surface/60 border border-white/10 rounded-xl p-3 space-y-2">
+                                                <div
+                                                    class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
+                                                    <span>Timeline de Video</span>
+                                                    <span id="videoCurrentTimeLabel">0.0s</span>
+                                                </div>
+                                                <input id="videoTimelineInput" type="range" min="0" max="100" step="0.1"
+                                                    value="0" class="w-full accent-pink-400"
+                                                    oninput="scrubVideoTimeline()">
+                                                <div class="grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+                                                    <span id="videoStartLabel">Inicio 0.0s</span>
+                                                    <span class="text-center" id="videoCoverLabel">Capa 0.0s</span>
+                                                    <span class="text-right" id="videoEndLabel">Fim auto</span>
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <div>
+                                                    <label
+                                                        class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Inicio
+                                                        (s)</label>
+                                                    <input id="videoTrimStartInput" type="number" min="0" step="0.1"
+                                                        value="0"
+                                                        class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                        oninput="updateVideoTrimState()">
+                                                </div>
+                                                <div>
+                                                    <label
+                                                        class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Fim
+                                                        (s)</label>
+                                                    <input id="videoTrimEndInput" type="number" min="0" step="0.1"
+                                                        placeholder="auto"
+                                                        class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                        oninput="updateVideoTrimState()">
+                                                </div>
+                                            </div>
+                                            <div class="flex flex-col sm:flex-row gap-2">
+                                                <button type="button" onclick="seekVideoTrim('start')"
+                                                    class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                    Usar tempo atual no inicio
+                                                </button>
+                                                <button type="button" onclick="seekVideoTrim('end')"
+                                                    class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                    Usar tempo atual no fim
+                                                </button>
+                                            </div>
+                                            <div class="flex flex-col sm:flex-row gap-2">
+                                                <button type="button" onclick="useCurrentTimeAsCover()"
+                                                    class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                    Usar tempo atual na capa
+                                                </button>
+                                            </div>
+                                            <div class="bg-surface/60 border border-white/10 rounded-xl p-3 space-y-3">
+                                                <div
+                                                    class="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-widest">
+                                                    <span>Timeline de Musica</span>
+                                                    <span id="musicCurrentTimeLabel">0.0s</span>
+                                                </div>
+                                                <div class="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Inicio
+                                                            da musica</label>
+                                                        <input id="musicStartInput" type="number" min="0" step="0.1"
+                                                            value="0"
+                                                            class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                            oninput="updateMusicState()">
+                                                    </div>
+                                                    <div>
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Fim
+                                                            da musica</label>
+                                                        <input id="musicEndInput" type="number" min="0" step="0.1"
+                                                            placeholder="auto"
+                                                            class="w-full bg-surface border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                                            oninput="updateMusicState()">
+                                                    </div>
+                                                </div>
+                                                <input id="musicTimelineInput" type="range" min="0" max="100" step="0.1"
+                                                    value="0" class="w-full accent-emerald-400"
+                                                    oninput="scrubMusicTimeline()">
+                                                <div class="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Volume
+                                                            da musica</label>
+                                                        <input id="musicVolumeInput" type="range" min="0" max="1"
+                                                            step="0.05" value="0.7" class="w-full accent-emerald-400"
+                                                            oninput="updateMusicState()">
+                                                    </div>
+                                                    <div>
+                                                        <label
+                                                            class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Audio
+                                                            original</label>
+                                                        <input id="originalAudioVolumeInput" type="range" min="0"
+                                                            max="1" step="0.05" value="0.25"
+                                                            class="w-full accent-slate-400"
+                                                            oninput="updateMusicState()">
+                                                    </div>
+                                                </div>
+                                                <div class="flex gap-2">
+                                                    <button type="button" onclick="seekMusicStartFromVideo()"
+                                                        class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                        Usar ponto atual na musica
+                                                    </button>
+                                                    <button type="button" onclick="toggleMusicPreview()"
+                                                        class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg py-2 text-[10px] font-bold transition-all">
+                                                        Preview musica
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div id="videoMetaStatus"
+                                                class="text-[10px] text-slate-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                                                Nenhum ajuste de video aplicado.
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-4">
+                                            <label
+                                                class="block text-[8px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Regerar
+                                                Card VIP</label>
+                                            <button onclick="generateCard()" id="genCardBtn"
+                                                class="w-full bg-surface border border-white/5 text-white/70 hover:text-white py-2 rounded-lg text-[10px] font-bold transition-all">
+                                                Atualizar Imagem do Post
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="bg-primary/30 p-4 rounded-2xl border border-white/5">
+                                        <label
+                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Acao
+                                            de Publicacao</label>
+                                        <select id="postType"
+                                            class="w-full bg-surface border border-white/5 rounded-xl px-4 py-3 text-xs text-white appearance-none focus:outline-none mb-3">
+                                            <option value="feed">Post no Feed (Foto)</option>
+                                            <option value="story">Story (Foto/Video)</option>
+                                            <option value="reels">Reels (Video)</option>
+                                        </select>
+
+                                        <label
+                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 mt-2">Agendar
+                                            Postagem (Opcional)</label>
+                                        <input type="datetime-local" id="scheduledForInput"
+                                            class="w-full bg-surface border border-white/5 rounded-xl px-4 py-3 text-xs text-white focus:outline-none mb-4"
+                                            onchange="updatePublishBtnText(this.value)">
+
+                                        <!-- OMNICHANNEL MASTER PUBLISH -->
+                                        <div
+                                            class="bg-primary/50 shadow-inner rounded-xl p-3 border border-white/5 mb-4">
+                                            <label
+                                                class="flex items-center gap-3 mb-2.5 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishIg" checked
+                                                    class="rounded w-4 h-4 text-pink-500 focus:ring-pink-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">Publicar no
+                                                    Instagram</span>
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-3 mb-2.5 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishTg" checked
+                                                    class="rounded w-4 h-4 text-blue-500 focus:ring-blue-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">Enviar ao
+                                                    Telegram</span>
+                                                <input id="pubTgTarget" value="-1003632436217" class="hidden">
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishWa" checked
+                                                    class="rounded w-4 h-4 text-green-500 focus:ring-green-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">Enviar ao
+                                                    WhatsApp</span>
+                                                <input id="pubWaTarget" value="120363405661434395@g.us" class="hidden">
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-3 cursor-pointer hover:bg-white/5 p-1 rounded transition-colors">
+                                                <input type="checkbox" id="chkPublishCatalog" checked
+                                                    onchange="toggleCatalogTargetState()"
+                                                    class="rounded w-4 h-4 text-purple-500 focus:ring-purple-500 cursor-pointer bg-black/30 border border-white/10">
+                                                <span class="text-[11px] font-bold text-slate-200">Enviar ao
+                                                    Catalogo</span>
+                                            </label>
+                                            <div class="mt-2 pl-7">
+                                                <label for="catalogTargetSelect"
+                                                    class="block text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1">Destino
+                                                    do catalogo</label>
+                                                <select id="catalogTargetSelect" onchange="applyAutoReplyDefaults()"
+                                                    class="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-slate-100 focus:outline-none focus:border-accent">
+                                                    <option value="dev">Catalogo DEV</option>
+                                                    <option value="prod" selected>Catalogo PROD</option>
+                                                    <option value="both">DEV + PROD</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <!-- MAIN POST BUTTON -->
+                                        <button onclick="publishMaster()" id="pubMasterBtn"
+                                            class="w-full py-4 rounded-xl font-black text-sm transition-all btn-status-idle flex items-center justify-center gap-2 shadow-xl shadow-accent/20">
+                                            LANCAR CAMPANHA (OMNICHANNEL)
+                                        </button>
+
+                                        <button onclick="syncCatalog()" id="pubCatalogBtn"
+                                            class="w-full mt-3 bg-yellow-600/10 hover:bg-yellow-600/20 text-yellow-500 border border-yellow-600/20 py-2 rounded-lg text-[9px] font-bold uppercase transition-all">
+                                            Add ao Catalogo Web
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 2: CAPTION (EDITOR) -->
+                        <div id="tab-caption" class="tab-content space-y-4">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-sm font-bold text-slate-300">Editor de Legenda</h3>
+                                <div class="flex flex-wrap items-center justify-end gap-2">
+                                    <button type="button" onclick="applyDefaultCaptionTemplate(0)"
+                                        class="bg-white/5 hover:bg-white/10 text-white/80 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all">
+                                        MODELO 1
+                                    </button>
+                                    <button type="button" onclick="applyDefaultCaptionTemplate(1)"
+                                        class="bg-white/5 hover:bg-white/10 text-white/80 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all">
+                                        MODELO 2
+                                    </button>
+                                    <button onclick="generateCaption()" id="genCaptionBtn"
+                                        class="bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                        </svg>
+                                        REGERAR COM IA
+                                    </button>
+                                </div>
+                            </div>
+                            <p class="text-[11px] text-slate-500">Use os modelos prontos quando quiser uma copy afiliada
+                                forte sem depender da IA.</p>
+                            <!-- Caption Splitter Container (Hidden by default) -->
+                            <div id="captionOptionsContainer" class="hidden mb-4">
+                                <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">✨
+                                    Opções Sugeridas pela IA (Escolha uma)</label>
+                                <div id="captionCardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <!-- Cards will be injected here -->
+                                </div>
+                            </div>
+                            <textarea id="captionText" rows="12"
+                                class="w-full bg-primary/40 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600 leading-relaxed"
+                                placeholder="Sua legenda aparecerá aqui. Você pode editar livremente..."></textarea>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                                <div class="bg-primary/20 p-3 rounded-xl border border-white/5">
+                                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                        Caracteres</div>
+                                    <div id="captionMetrics" class="mt-1 text-sm font-semibold text-white">0 caracteres
+                                    </div>
+                                </div>
+                                <button type="button" onclick="copyCaptionText()"
+                                    class="bg-primary/20 hover:bg-primary/30 p-3 rounded-xl border border-white/5 text-left transition-all">
+                                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Acao
+                                        Rapida</div>
+                                    <div class="mt-1 text-sm font-semibold text-white">Copiar legenda</div>
+                                </button>
+                                <div class="bg-primary/20 p-3 rounded-xl border border-white/5">
+                                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                        Checklist</div>
+                                    <div id="captionChecklist" class="mt-1 text-xs text-slate-300 leading-relaxed">
+                                        Legenda, CTA e hashtags ainda pendentes.</div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="bg-primary/20 p-4 rounded-xl border border-white/5 relative">
+                                    <div class="flex justify-between items-center mb-2">
+                                        <label
+                                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Hashtags
+                                            do Post</label>
+                                        <button onclick="suggestHashtags()" id="suggestTagsBtn"
+                                            class="text-[9px] text-accent font-bold uppercase transition-all flex items-center gap-1 hover:text-white">
+                                            ✨ Sugerir
+                                        </button>
+                                    </div>
+                                    <input id="hashtagInput"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                        placeholder="#oferta #achadinhos #promoção">
+                                </div>
+                                <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Call
+                                        to Action (WhatsApp/Telegram)</label>
+                                    <input id="ctaInput"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                        placeholder="Comente EU QUERO / Link na Bio">
+                                    <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        <button type="button" onclick="applyCtaPreset('catalog')"
+                                            class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-[10px] font-bold text-white/80 transition-all">CTA
+                                            Catalogo</button>
+                                        <button type="button" onclick="applyCtaPreset('whatsapp')"
+                                            class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-[10px] font-bold text-white/80 transition-all">CTA
+                                            WhatsApp</button>
+                                        <button type="button" onclick="applyCtaPreset('urgency')"
+                                            class="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-[10px] font-bold text-white/80 transition-all">CTA
+                                            Urgencia</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Auto Reply Toggle -->
+                            <div
+                                class="bg-primary/30 p-4 rounded-xl border border-white/5 flex items-center justify-between mt-4">
+                                <div>
+                                    <h4 class="text-[10px] font-bold text-white uppercase tracking-widest">Auto-Resposta
+                                        "Eu Quero"</h4>
+                                    <p class="text-[8px] text-slate-500 mt-0.5">Envia o link no Direct automaticamente
+                                        para quem comentar.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="autoReplyCheck" checked class="sr-only peer"
+                                        onchange="document.getElementById('autoReplySettings').classList.toggle('hidden', !this.checked)">
+                                    <div
+                                        class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent">
+                                    </div>
+                                </label>
+                            </div>
+
+                            <div id="autoReplySettings"
+                                class="space-y-4 bg-primary/20 p-4 rounded-xl border border-white/5 mt-2">
+                                <div>
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Palavras-chave
+                                        (gatilhos)</label>
+                                    <input id="autoReplyKeyword" oninput="markAutoReplyManual(this)"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
+                                        placeholder="eu quero, manda, link" value="eu quero, link">
+                                </div>
+                                <div>
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Mensagem
+                                        do Direct (DM)</label>
+                                    <textarea id="autoReplyMessage" rows="2" oninput="markAutoReplyManual(this)"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600"
+                                        placeholder="Aqui está o link do produto que você pediu:"></textarea>
+                                </div>
+                                <div>
+                                    <label
+                                        class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Link
+                                        Personalizado (Opcional)</label>
+                                    <input id="autoReplyLink" oninput="markAutoReplyManual(this)"
+                                        class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent placeholder-slate-600"
+                                        placeholder="Deixe em branco para usar o link gerado do produto">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 3: PUBLISH (LOGS & STATUS) -->
+                        <div id="tab-publish" class="tab-content space-y-4">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-sm font-bold text-slate-300">Historico de Publicacoes</h3>
+                                <button onclick="loadDraftsHistory()"
+                                    class="bg-white/5 hover:bg-white/10 text-white/70 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                    ATUALIZAR
+                                </button>
+                            </div>
+
+                            <div id="draftsLoading" class="text-center py-8 hidden">
+                                <div
+                                    class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3">
+                                </div>
+                                <p class="text-xs text-slate-500">Carregando historico...</p>
+                            </div>
+
+                            <div id="draftsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <!-- Draft cards will be injected here -->
+                                <div
+                                    class="col-span-full bg-primary/30 rounded-2xl border border-white/5 p-6 text-center text-slate-400 text-sm">
+                                    Nenhuma publicacao encontrada.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Convert Another / Footer -->
+                    <div class="px-6 pb-6 pt-2 flex justify-between items-center bg-surface/20">
+                        <button onclick="logout()"
+                            class="text-[10px] text-red-400 opacity-60 hover:opacity-100 flex items-center gap-1 transition-all uppercase tracking-widest font-bold">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                            </svg>
+                            Sair
+                        </button>
+                        <span id="sessionInfo" class="text-[10px] text-slate-500 uppercase tracking-widest">Sessao nao
+                            iniciada</span>
+                        <button onclick="convertAnother()"
+                            class="text-[10px] text-accent font-bold uppercase tracking-widest hover:text-white transition-all">
+                            Converter Outro ->
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Old action buttons row (removed/replaced) -->
+            </div>
+        </div>
+    </main>
+
+    <!-- QR Modal -->
+    <div id="qrModal" onclick="if(event.target===this)closeQr()">
+        <div
+            class="bg-surface border border-white/10 rounded-[24px] p-8 flex flex-col items-center gap-5 shadow-2xl max-w-sm w-full mx-4">
+            <h3 class="text-white font-bold text-xl">QR Code do Link VIP</h3>
+            <div id="qrCanvas" class="bg-white p-3 rounded-2xl"></div>
+            <button onclick="closeQr()"
+                class="text-slate-500 hover:text-white text-sm transition-colors">Fechar</button>
+        </div>
+    </div>
+
+    <!-- Studio Editor Modal -->
+    <div id="editorModal"
+        class="hidden fixed inset-0 z-50 bg-[#0f1115]/92 backdrop-blur-sm flex items-end sm:items-center justify-center sm:pt-16">
+        <div
+            class="bg-surface border border-white/10 rounded-t-[24px] sm:rounded-[24px] overflow-hidden shadow-2xl w-full max-w-7xl flex flex-col lg:flex-row h-[100dvh] sm:h-[92vh] lg:h-[86vh]">
+            <!-- Canvas Area -->
+            <div
+                class="flex-1 min-h-[34dvh] sm:min-h-[42dvh] bg-black/60 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
+                <div id="instaStageOverlay"
+                    class="pointer-events-none absolute inset-4 sm:inset-6 rounded-[24px] sm:rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_55%)]">
+                </div>
+                <canvas id="imageEditorCanvas"
+                    class="max-w-full max-h-full rounded-[22px] shadow-[0_0_40px_rgba(0,0,0,0.55)] bg-[#111827]"></canvas>
+            </div>
+            <!-- Tools Sidebar -->
+            <div
+                class="w-full lg:w-[390px] bg-surface border-t lg:border-t-0 lg:border-l border-white/10 p-4 sm:p-6 flex flex-col h-[56dvh] sm:h-auto overflow-y-auto">
+                <div class="flex items-start justify-between gap-3 mb-5 sm:mb-6">
+                    <h3 class="text-white font-bold text-base sm:text-lg flex items-center gap-2">
+                        <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
+                        </svg>
+                        Studio Editor
+                    </h3>
+                    <button type="button" onclick="closeEditorModal()"
+                        class="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-bold text-slate-300 transition-all hover:bg-white/10 hover:text-white">
+                        Fechar
+                    </button>
+                </div>
+
+                <div class="space-y-6 flex-1">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="space-y-2">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Preset</label>
+                            <select id="editorPresetSelect" onchange="applyEditorPreset()"
+                                class="w-full bg-primary/50 border border-white/10 rounded-xl px-3 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                                <option value="feed">Feed 1:1</option>
+                                <option value="portrait">Feed 4:5</option>
+                                <option value="story">Story 9:16</option>
+                                <option value="reel">Reel Cover</option>
+                                <option value="catalog">Catalogo VIP</option>
+                            </select>
+                        </div>
+                        <div class="space-y-2">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ajuste</label>
+                            <select id="editorFitSelect" onchange="renderEditor()"
+                                class="w-full bg-primary/50 border border-white/10 rounded-xl px-3 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                                <option value="cover">Cover</option>
+                                <option value="contain">Contain</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="space-y-2">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Zoom</label>
+                            <input id="editorScaleInput" type="range" min="0.6" max="1.8" step="0.05" value="1"
+                                oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset
+                                X</label>
+                            <input id="editorOffsetXInput" type="range" min="-600" max="600" step="5" value="0"
+                                oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                        <div class="space-y-2">
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Offset
+                                Y</label>
+                            <input id="editorOffsetYInput" type="range" min="-900" max="900" step="5" value="0"
+                                oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="space-y-2">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Brilho</label>
+                            <input id="editorBrightnessInput" type="range" min="60" max="140" step="5" value="100"
+                                oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                        <div class="space-y-2">
+                            <label
+                                class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Contraste</label>
+                            <input id="editorContrastInput" type="range" min="70" max="150" step="5" value="100"
+                                oninput="renderEditor()" class="w-full accent-accent">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button type="button" onclick="toggleEditorSafeArea()"
+                            class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Safe Area
+                        </button>
+                        <button type="button" onclick="resetEditorView()"
+                            class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Resetar
+                        </button>
+                    </div>
+                    <!-- Text Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Texto</label>
+                        <input type="text" id="editorTextInput" placeholder="Texto de destaque..."
+                            class="w-full bg-primary/50 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                        <button onclick="addEditorText()"
+                            class="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Adicionar ao Canvas
+                        </button>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button type="button" onclick="addEditorText('headline')"
+                                class="bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                                Headline
+                            </button>
+                            <button type="button" onclick="addEditorText('cta')"
+                                class="bg-accent/10 hover:bg-accent/20 border border-accent/20 text-accent rounded-xl py-2.5 text-xs font-bold transition-all">
+                                CTA
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Badge Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Selo (Badge)</label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button onclick="addEditorBadge('discount')"
+                                class="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                % Off
+                            </button>
+                            <button onclick="addEditorBadge('frete')"
+                                class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                Frete Grátis
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button onclick="addEditorBadge('lightning')"
+                            class="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-300 rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Relampago
+                        </button>
+                        <button onclick="addEditorBadge('whatsapp')"
+                            class="bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-300 rounded-xl py-2.5 text-xs font-bold transition-all">
+                            WhatsApp
+                        </button>
+                    </div>
+
+                    <div class="space-y-3">
+                        <label
+                            class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Trilha</label>
+                        <input type="text" id="editorMusicInput" placeholder="Ex.: Funk leve / pop clean / lo-fi"
+                            class="w-full bg-primary/50 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                        <label class="inline-flex items-center gap-2 text-xs text-slate-300">
+                            <input type="checkbox" id="editorMusicToggle"
+                                class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
+                            Marcar trilha para exportacao futura
+                        </label>
+                    </div>
+
+                    <div class="pt-4 border-t border-white/10">
+                        <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
+                            para reposicioná-los.</p>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="mt-6 pt-4 sm:pt-6 border-t border-white/10 flex flex-col gap-3 sticky bottom-0 bg-surface">
+                    <button onclick="applyEditorChanges()"
+                        class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
+                        Aplicar Alterações
+                    </button>
+                    <button onclick="closeEditorModal()"
+                        class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mini Visual Editor Modal -->
+    <div id="editorModal"
+        class="hidden fixed inset-0 z-50 bg-[#0f1115]/90 backdrop-blur-sm flex items-center justify-center pt-16">
+        <div
+            class="bg-surface border border-white/10 rounded-[24px] overflow-hidden shadow-2xl w-full max-w-4xl flex h-[80vh]">
+            <!-- Canvas Area -->
+            <div class="flex-1 bg-black/50 flex items-center justify-center p-8 relative overflow-hidden">
+                <canvas id="imageEditorCanvas"
+                    class="max-w-full max-h-full rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"></canvas>
+            </div>
+            <!-- Tools Sidebar -->
+            <div class="w-80 bg-surface border-l border-white/10 p-6 flex flex-col h-full overflow-y-auto">
+                <h3 class="text-white font-bold text-lg mb-6 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15.232 5.232l3.536 3.536M9 11l3 3L7 19H4v-3l8-8z" />
+                    </svg>
+                    Mini Editor
+                </h3>
+
+                <div class="space-y-6 flex-1">
+                    <!-- Text Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Texto</label>
+                        <input type="text" id="editorTextInput" placeholder="Texto de destaque..."
+                            class="w-full bg-primary/50 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-accent/50 transition-colors">
+                        <button onclick="addEditorText()"
+                            class="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl py-2.5 text-xs font-bold transition-all">
+                            Adicionar ao Canvas
+                        </button>
+                    </div>
+
+                    <!-- Badge Controls -->
+                    <div class="space-y-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest">Adicionar
+                            Selo (Badge)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="addEditorBadge('discount')"
+                                class="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                % Off
+                            </button>
+                            <button onclick="addEditorBadge('frete')"
+                                class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
+                                Frete Grátis
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-white/10">
+                        <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
+                            para reposicioná-los.</p>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
+                    <button onclick="applyEditorChanges()"
+                        class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
+                        Aplicar Alterações
+                    </button>
+                    <button onclick="closeEditorModal()"
+                        class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // === Auth ===
+        let savedAdminKey = '';
+        let currentSession = null;
+        let currentCaptionOptions = [];
+        const rawFetch = window.fetch.bind(window);
+        window.fetch = function (input, init = {}) {
+            const url = typeof input === 'string' ? input : (input?.url || '');
+            const protectedPath = url.startsWith('/api/admin/') || url.startsWith('/auth/');
+            if (!protectedPath) {
+                return rawFetch(input, init);
+            }
+            const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+            if (savedAdminKey) {
+                headers.set('X-Admin-Key', savedAdminKey);
+            }
+            return rawFetch(input, {
+                ...init,
+                credentials: 'include',
+                headers
+            }).then(response => {
+                if (response.status === 401 &&
+                    !url.startsWith('/auth/login') &&
+                    !url.startsWith('/auth/me')) {
+                    showLoggedOutState('Sua sessao expirou. Faca login novamente.');
+                }
+                return response;
+            });
+        };
+        function showAuthenticatedState(session) {
+            currentSession = session || null;
+            document.getElementById('passwordGate').classList.add('hidden');
+            document.getElementById('mainContent').classList.remove('hidden');
+            document.getElementById('loginError').classList.add('hidden');
+            const username = session?.username || 'desconhecido';
+            const role = session?.role || 'operator';
+            const sessionInfo = document.getElementById('sessionInfo');
+            if (sessionInfo) {
+                sessionInfo.textContent = `${username} (${role})`;
+            }
+        }
+        function showLoggedOutState(message = '') {
+            currentSession = null;
+            document.getElementById('passwordGate').classList.remove('hidden');
+            document.getElementById('mainContent').classList.add('hidden');
+            document.getElementById('adminPasswordInput').value = '';
+            const sessionInfo = document.getElementById('sessionInfo');
+            if (sessionInfo) {
+                sessionInfo.textContent = 'Sessao nao iniciada';
+            }
+            const errorEl = document.getElementById('loginError');
+            if (message) {
+                errorEl.textContent = message;
+                errorEl.classList.remove('hidden');
+            } else {
+                errorEl.classList.add('hidden');
+            }
+        }
+        async function attemptLogin() {
+            const username = document.getElementById('adminUsernameInput').value.trim();
+            const password = document.getElementById('adminPasswordInput').value;
+            const rememberMe = document.getElementById('rememberMe').checked;
+            if (!username || !password) return;
+            const btn = document.querySelector('#passwordGate button[onclick="attemptLogin()"]');
+            const errorEl = document.getElementById('loginError');
+            errorEl.classList.add('hidden');
+            btn.disabled = true;
+            btn.textContent = 'Entrando...';
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, rememberMe })
+                });
+                if (!res.ok) {
+                    const message = res.status === 423
+                        ? 'Conta bloqueada temporariamente.'
+                        : 'Credenciais invalidas. Tente novamente.';
+                    showLoggedOutState(message);
+                    document.getElementById('adminPasswordInput').focus();
+                    return;
+                }
+                const session = await res.json();
+                showAuthenticatedState(session);
+            } catch {
+                showLoggedOutState('Erro de conexao com o servidor.');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Entrar';
+            }
+        }
+        async function logout() {
+            try {
+                await fetch('/auth/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } finally {
+                showLoggedOutState();
+            }
+        }
+        window.addEventListener('load', async () => {
+            try {
+                const res = await fetch('/auth/me');
+                if (!res.ok) {
+                    showLoggedOutState();
+                    return;
+                }
+                const session = await res.json();
+                showAuthenticatedState(session);
+            } catch {
+                showLoggedOutState('Erro ao validar a sessao.');
+            }
+        });
+        // === State ===
+        let currentConvertedUrl = '';
+        let currentShareText = '';
+        let currentData = null;
+        let currentImageIndex = 0;
+
+        function resetImagePresentation(img) {
+            if (!img) return;
+            img.style.opacity = '1';
+            img.style.filter = 'none';
+            img.style.mixBlendMode = 'normal';
+        }
+
+        async function trackClick(url, source = 'direct') {
+            try {
+                await fetch('/api/analytics/click', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        TargetUrl: url,
+                        Source: source,
+                        Category: 'converter'
+                    })
+                });
+            } catch (e) {
+                console.error('Telemetry error:', e);
+            }
+        }
+
+        // === Convert ===
+        async function handleConvert() {
+            const urlInput = document.getElementById('urlInput').value.trim();
+            if (!urlInput) { showError('Cole um link para converter.'); return; }
+
+            const btn = document.getElementById('submitBtn');
+            const btnText = btn.querySelector('.btn-text');
+            const spinner = document.getElementById('spinner');
+            const resultArea = document.getElementById('resultArea');
+            const skeletonLoader = document.getElementById('skeletonLoader');
+            const errorAlert = document.getElementById('errorAlert');
+
+            errorAlert.style.display = 'none';
+            resultArea.style.display = 'none';
+            document.getElementById('studioPanel').classList.add('hidden');
+            skeletonLoader.classList.remove('hidden');
+            btn.disabled = true;
+            btnText.style.display = 'none';
+            spinner.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/conversor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: urlInput })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversÃ£o.');
+
+                trackClick(data.trackedUrl || urlInput, 'admin_convert_success');
+
+                currentData = data;
+                currentConvertedUrl = data.trackedUrl || data.convertedUrl || data.originalUrl || urlInput;
+
+                resetImagePresentation(document.getElementById('productImage'));
+                document.getElementById('productImage').src = data.imageUrl || '';
+                document.getElementById('storeBadge').textContent = data.store || 'Loja';
+                document.getElementById('productTitle').textContent = data.title || 'Oferta';
+                document.getElementById('productPrice').textContent = data.price || 'Preço sob consulta';
+
+                const oldPriceEl = document.getElementById('productOldPrice');
+                if (data.previousPrice && data.previousPrice !== data.price) {
+                    oldPriceEl.textContent = data.previousPrice; oldPriceEl.style.display = 'inline';
+                } else { oldPriceEl.style.display = 'none'; }
+
+                const discountBadge = document.getElementById('discountBadge');
+                if (data.discountPercent > 0) {
+                    discountBadge.textContent = `${data.discountPercent}% OFF`; discountBadge.style.display = 'block';
+                } else { discountBadge.style.display = 'none'; }
+
+                const deliveryEl = document.getElementById('deliveryInfo');
+                if (data.estimatedDelivery) {
+                    document.getElementById('deliveryText').textContent = data.estimatedDelivery;
+                    deliveryEl.style.display = 'flex';
+                } else { deliveryEl.style.display = 'none'; }
+
+                const couponText = data.hasCoupon && data.couponCode ? `\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Cupom: ${data.couponCode}` : '';
+                currentShareText = `*${data.title}*\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ Por apenas: *${data.price}*${couponText}\n\n🛍️ Compre aqui: ${currentConvertedUrl}`;
+
+                skeletonLoader.classList.add('hidden');
+                resultArea.style.display = 'block';
+                document.getElementById('studioPanel').classList.remove('hidden');
+
+                // Initial preview sync
+                if (data.videoUrl) {
+                    const vid = document.getElementById('instaPreviewVid');
+                    vid.src = data.videoUrl;
+                    vid.classList.remove('hidden');
+                    document.getElementById('instaPreviewImg').classList.add('hidden');
+                    const postTypeSel = document.getElementById('postType');
+                    if (postTypeSel) { postTypeSel.value = 'reel'; }
+                    document.getElementById('videoToolsPanel').classList.remove('hidden');
+                } else {
+                    resetImagePresentation(document.getElementById('instaPreviewImg'));
+                    document.getElementById('instaPreviewImg').src = data.imageUrl || '';
+                    document.getElementById('instaPreviewImg').classList.remove('hidden');
+                    document.getElementById('instaPreviewVid').classList.add('hidden');
+                    document.getElementById('videoToolsPanel').classList.add('hidden');
+                }
+
+                // Auto generate card and caption
+                generateCard();
+                generateCaption();
+                applyAutoReplyDefaults();
+
+                currentData = {
+                    title: data.title,
+                    price: data.price,
+                    previousPrice: data.previousPrice,
+                    discountPercent: data.discountPercent,
+                    description: data.description,
+                    imageUrl: data.imageUrl,
+                    videoUrl: data.videoUrl,
+                    videoCoverUrl: data.imageUrl || null,
+                    videoCoverAtSeconds: 0,
+                    videoTrimStartSeconds: 0,
+                    videoTrimEndSeconds: null,
+                    videoMusicCue: null,
+                    musicTrackUrl: null,
+                    musicStartSeconds: 0,
+                    musicEndSeconds: null,
+                    musicVolume: 0.7,
+                    originalAudioVolume: 0.25,
+                    store: data.store,
+                    originalUrl: data.originalUrl,
+                    trackedUrl: data.trackedUrl,
+                    convertedUrl: data.convertedUrl,
+                    images: data.images?.length ? data.images : [data.imageUrl]
+                };
+                currentImageIndex = 0;
+                syncVideoTools();
+
+                resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (error) {
+                skeletonLoader.classList.add('hidden');
+                showError(error.message);
+            } finally {
+                btn.disabled = false;
+                btnText.style.display = 'block';
+                spinner.style.display = 'none';
+            }
+        }
+
+        // === Studio Actions ===
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById(`tab-${tab}-btn`).classList.add('active');
+            document.getElementById(`tab-${tab}`).classList.add('active');
+
+            if (tab === 'publish') {
+                loadDraftsHistory();
+            }
+        }
+
+        function setFormat(format) {
+            const container = document.getElementById('instaMockContainer');
+            const btns = document.querySelectorAll('.format-btn');
+            const normalizedFormat = format === 'reel' ? 'reels' : format;
+
+            btns.forEach(b => b.classList.remove('active'));
+            document.getElementById(`fmt-${normalizedFormat}`)?.classList.add('active');
+
+            if (normalizedFormat === 'story' || normalizedFormat === 'reels') {
+                container.classList.add('stories');
+                document.getElementById('postType').value = normalizedFormat;
+            } else {
+                container.classList.remove('stories');
+                document.getElementById('postType').value = 'feed';
+            }
+            syncPreview(); // Call syncPreview to update carousel/sticker visibility
+        }
+
+        function updatePublishBtnText(dateVal) {
+            const btn = document.getElementById('pubInstaBtn');
+            if (dateVal) {
+                btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ AGENDAR NO INSTAGRAM';
+            } else {
+                btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ PUBLICAR NO INSTAGRAM';
+            }
+        }
+
+        async function generateCard() {
+            if (!currentData) return;
+            const btn = document.getElementById('genCardBtn');
+            btn.disabled = true;
+            btn.textContent = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Gerando...';
+
+            try {
+                const res = await fetch('/api/admin/generate-card', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({
+                        title: currentData.title,
+                        price: currentData.price,
+                        previousPrice: currentData.previousPrice,
+                        discountPercent: currentData.discountPercent,
+                        imageUrl: currentData.imageUrl
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const b64 = `data:image/jpeg;base64,${data.cardBase64}`;
+                    document.getElementById('cardImage').src = b64;
+                    document.getElementById('instaPreviewImg').src = b64;
+                    document.getElementById('instaPreviewVid').classList.add('hidden');
+                    document.getElementById('instaPreviewImg').classList.remove('hidden');
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '✨ Atualizar Card';
+            }
+        }
+
+        async function generateCaption() {
+            if (!currentData) return;
+            const btn = document.getElementById('genCaptionBtn');
+            btn.disabled = true;
+
+            try {
+                const productName = currentData.title || currentData.store || 'Oferta em destaque';
+                const offerContext = [
+                    currentConvertedUrl ? `Link: ${currentConvertedUrl}` : '',
+                    currentData.price ? `Preco: ${currentData.price}` : '',
+                    currentData.store ? `Loja: ${currentData.store}` : '',
+                    currentData.description ? `Descricao: ${currentData.description}` : ''
+                ].filter(Boolean).join('. ');
+                const res = await fetch('/api/admin/generate-caption', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({
+                        productName: productName,
+                        offerContext: offerContext
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const parsedCaptions = parseAiCaptionOutput(data.caption);
+
+                    if (parsedCaptions.length > 1) {
+                        // We have multiple options, display the selector UI
+                        displayCaptionOptions(parsedCaptions);
+                        // Pick the first one by default just in case
+                        selectCaptionOption(0);
+                    } else {
+                        // Standard fallback, dump everything into the textbox
+                        document.getElementById('captionOptionsContainer').classList.add('hidden');
+                        document.getElementById('captionText').value = data.caption;
+                    }
+
+                    document.getElementById('hashtagInput').value = "#achadinhos #ofertas #promoção #dicas #compras";
+                    syncPreview();
+                    // Auto-switch to caption tab for review after generation
+                    setTimeout(() => switchTab('caption'), 800);
+                }
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function parseAiCaptionOutput(rawText) {
+            if (!rawText) return [];
+
+            // Try to split by "Legenda X" markers
+            const regex = /Legenda \d+.*?:\s*([\s\S]*?)(?=Legenda \d+.*?:|Hashtags sugeridas:|Melhor variação|$)/gi;
+            const matches = [...rawText.matchAll(regex)];
+
+            if (matches && matches.length > 0) {
+                return matches.map(m => m[1].trim()).filter(text => text.length > 10);
+            }
+
+            // Fallback: If no strict markers, try splitting by double breaks if it looks like discrete blocks
+            const blocks = rawText.split(/\n\s*\n/).filter(b => b.trim().length > 30 && !b.toLowerCase().includes('formato obrigatório'));
+            if (blocks.length > 1) return blocks;
+
+            return [rawText.trim()];
+        }
+
+        function normalizeDisplayPrice(price) {
+            if (!price) return 'preco sob consulta';
+            return String(price).trim();
+        }
+
+        function resolveCatalogCtaLink() {
+            const explicit = document.getElementById('autoReplyLink')?.value?.trim();
+            if (explicit) return explicit;
+            const target = document.getElementById('catalogTargetSelect')?.value || (isDevRuntime() ? 'dev' : 'prod');
+            return getCatalogLinkByTarget(target);
+        }
+
+        function buildDefaultCaptionTemplates() {
+            const title = currentData?.title || currentData?.productName || 'Oferta em destaque';
+            const price = normalizeDisplayPrice(currentData?.price);
+            const store = currentData?.store || 'Loja oficial';
+            const link = resolveCatalogCtaLink();
+
+            return [
+                `OFERTA QUE VALE O CLIQUE\n\n${title}\n\n💰 Valor atual: ${price}\n🏬 Loja: ${store}\n✅ Produto com potencial de alta procura\n🚚 Confira disponibilidade e condicoes atualizadas no catalogo\n\nSe voce estava esperando uma boa oportunidade para garantir esse item, esse e o momento de entrar antes que o preco mude.\n\n👉 Acesse o nosso catalogo VIP para abrir a oferta completa:\n${link}\n\nEntre tambem no WhatsApp para receber os melhores achados em primeira mao.\n\n#achadinhos #ofertas #promocao #desconto #catalogovip`,
+                `ACHADINHO DO DIA\n\n${title}\n\n💸 Preco em destaque: ${price}\n🛒 Disponivel em: ${store}\n⭐ Se fizer sentido para voce, vale checar agora porque esse tipo de oferta costuma girar rapido\n\nNo nosso catalogo voce encontra o link atualizado, mais ofertas selecionadas e os achadinhos que estao performando melhor.\n\n🔥 Toque no link do catalogo e veja os detalhes:\n${link}\n\nSalve esta oferta e compartilhe com quem tambem gosta de comprar bem.\n\n#achadinho #ofertadodia #promocoes #comprasinteligentes #reidasofertas`
+            ];
+        }
+
+        function applyDefaultCaptionTemplate(index) {
+            const templates = buildDefaultCaptionTemplates();
+            displayCaptionOptions(templates);
+            selectCaptionOption(index);
+            const defaultHashtags = index === 0
+                ? '#achadinhos #ofertas #promocao #desconto #catalogovip'
+                : '#achadinho #ofertadodia #promocoes #comprasinteligentes #reidasofertas';
+            document.getElementById('hashtagInput').value = defaultHashtags;
+            if (!document.getElementById('ctaInput').value.trim()) {
+                document.getElementById('ctaInput').value = 'Acesse o catalogo VIP e veja a oferta completa';
+            }
+            switchTab('caption');
+            syncPreview();
+        }
+
+        function copyCaptionText() {
+            const text = document.getElementById('captionText').value || '';
+            if (!text.trim()) {
+                showToast('Nenhuma legenda para copiar.', true);
+                return;
+            }
+            trackClick(currentConvertedUrl, 'admin_copy_caption');
+            navigator.clipboard.writeText(text)
+                .then(() => showToast('Legenda copiada.'))
+                .catch(() => showToast('Falha ao copiar legenda.', true));
+        }
+
+        function applyCtaPreset(type) {
+            const catalogLink = resolveCatalogCtaLink();
+            const ctaInput = document.getElementById('ctaInput');
+            if (!ctaInput) return;
+
+            if (type === 'catalog') {
+                ctaInput.value = `Acesse o catalogo VIP e veja a oferta completa: ${catalogLink}`;
+            } else if (type === 'whatsapp') {
+                ctaInput.value = 'Comente EU QUERO ou entre no WhatsApp para receber os melhores achadinhos primeiro.';
+            } else {
+                ctaInput.value = 'Confira agora no catalogo porque esse tipo de oferta pode mudar rapidamente.';
+            }
+
+            syncPreview();
+        }
+
+        function updateCaptionInsights() {
+            const caption = document.getElementById('captionText')?.value || '';
+            const hashtags = document.getElementById('hashtagInput')?.value || '';
+            const cta = document.getElementById('ctaInput')?.value || '';
+            const metrics = document.getElementById('captionMetrics');
+            const checklist = document.getElementById('captionChecklist');
+            if (metrics) {
+                metrics.textContent = `${caption.length} caracteres`;
+            }
+            if (checklist) {
+                const items = [
+                    caption.trim().length > 40 ? 'Legenda ok' : 'Legenda curta',
+                    cta.trim().length > 10 ? 'CTA ok' : 'CTA pendente',
+                    hashtags.trim().length > 0 ? 'Hashtags ok' : 'Hashtags pendentes'
+                ];
+                checklist.textContent = items.join(' • ');
+            }
+        }
+
+        function displayCaptionOptions(captions) {
+            const container = document.getElementById('captionOptionsContainer');
+            const grid = document.getElementById('captionCardsGrid');
+
+            currentCaptionOptions = Array.isArray(captions) ? captions.slice() : [];
+            grid.innerHTML = '';
+            currentCaptionOptions.forEach((cap, index) => {
+                // Peek first 100 chars for preview
+                const preview = cap.substring(0, 100).replace(/\n/g, ' ') + '...';
+
+                grid.innerHTML += `
+                    <button type="button" id="capCard_${index}" data-caption-index="${index}" class="caption-card w-full bg-surface border border-white/10 p-4 rounded-xl cursor-pointer hover:border-accent/50 hover:bg-surface/80 transition-all text-left group">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest group-[.selected]:text-accent group-hover:text-accent">Opção ${index + 1}</span>
+                            <div class="w-4 h-4 rounded-full border border-white/20 flex items-center justify-center group-[.selected]:bg-accent group-[.selected]:border-accent transition-colors">
+                                <svg class="w-2.5 h-2.5 text-primary opacity-0 group-[.selected]:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-300 leading-relaxed line-clamp-3">${preview}</p>
+                    </button>
+                `;
+            });
+
+            grid.querySelectorAll('[data-caption-index]').forEach(card => {
+                card.addEventListener('click', () => {
+                    const index = Number(card.getAttribute('data-caption-index'));
+                    selectCaptionOption(index);
+                });
+            });
+
+            container.classList.remove('hidden');
+        }
+
+        function selectCaptionOption(index) {
+            const fullText = currentCaptionOptions[index];
+            if (!fullText) return;
+            // Update UI selection state
+            document.querySelectorAll('.caption-card').forEach(c => c.classList.remove('selected', 'border-accent'));
+            const selectedCard = document.getElementById(`capCard_${index}`);
+            if (selectedCard) {
+                selectedCard.classList.add('selected', 'border-accent');
+            }
+
+            // Set textarea and update preview
+            document.getElementById('captionText').value = fullText;
+            syncPreview();
+        }
+
+        function syncVideoTools() {
+            const panel = document.getElementById('videoToolsPanel');
+            const startInput = document.getElementById('videoTrimStartInput');
+            const endInput = document.getElementById('videoTrimEndInput');
+            const status = document.getElementById('videoMetaStatus');
+            const musicStartInput = document.getElementById('musicStartInput');
+            const musicEndInput = document.getElementById('musicEndInput');
+            const musicVolumeInput = document.getElementById('musicVolumeInput');
+            const originalAudioVolumeInput = document.getElementById('originalAudioVolumeInput');
+            const video = document.getElementById('instaPreviewVid');
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!panel || !startInput || !endInput || !status) return;
+
+            const hasVideo = !!currentData?.videoUrl;
+            panel.classList.toggle('hidden', !hasVideo);
+            if (!hasVideo) {
+                status.textContent = 'Nenhum ajuste de video aplicado.';
+                return;
+            }
+
+            startInput.value = String(currentData.videoTrimStartSeconds ?? 0);
+            endInput.value = currentData.videoTrimEndSeconds != null ? String(currentData.videoTrimEndSeconds) : '';
+            if (musicStartInput) musicStartInput.value = String(currentData.musicStartSeconds ?? 0);
+            if (musicEndInput) musicEndInput.value = currentData.musicEndSeconds != null ? String(currentData.musicEndSeconds) : '';
+            if (musicVolumeInput) musicVolumeInput.value = String(currentData.musicVolume ?? 0.7);
+            if (originalAudioVolumeInput) originalAudioVolumeInput.value = String(currentData.originalAudioVolume ?? 0.25);
+
+            const trimBits = [];
+            if ((currentData.videoTrimStartSeconds ?? 0) > 0) trimBits.push(`inicio ${currentData.videoTrimStartSeconds}s`);
+            if (currentData.videoTrimEndSeconds != null) trimBits.push(`fim ${currentData.videoTrimEndSeconds}s`);
+            const coverBit = currentData.videoCoverUrl ? 'capa definida' : 'sem capa capturada';
+            const musicBit = currentData.musicTrackUrl
+                ? `musica ${currentData.musicStartSeconds ?? 0}s-${currentData.musicEndSeconds ?? 'auto'}s`
+                : (currentData.videoMusicCue ? `trilha: ${currentData.videoMusicCue}` : 'sem trilha');
+            status.textContent = `${coverBit} | ${trimBits.length ? trimBits.join(' | ') : 'sem trim'} | ${musicBit}`;
+
+            updateTimelineRanges(video, audio);
+            syncPreviewAudioState();
+        }
+
+        function updateVideoTrimState() {
+            if (!currentData) return;
+            const start = parseFloat(document.getElementById('videoTrimStartInput').value || '0');
+            const endRaw = document.getElementById('videoTrimEndInput').value;
+            const end = endRaw ? parseFloat(endRaw) : null;
+            currentData.videoTrimStartSeconds = Number.isFinite(start) ? Math.max(0, start) : 0;
+            currentData.videoTrimEndSeconds = Number.isFinite(end) ? Math.max(0, end) : null;
+            syncVideoTools();
+        }
+
+        function updateMusicState() {
+            if (!currentData) return;
+            const musicStart = parseFloat(document.getElementById('musicStartInput').value || '0');
+            const musicEndRaw = document.getElementById('musicEndInput').value;
+            const musicEnd = musicEndRaw ? parseFloat(musicEndRaw) : null;
+            const musicVolume = parseFloat(document.getElementById('musicVolumeInput').value || '0.7');
+            const originalVolume = parseFloat(document.getElementById('originalAudioVolumeInput').value || '0.25');
+            currentData.musicStartSeconds = Number.isFinite(musicStart) ? Math.max(0, musicStart) : 0;
+            currentData.musicEndSeconds = Number.isFinite(musicEnd) ? Math.max(0, musicEnd) : null;
+            currentData.musicVolume = Number.isFinite(musicVolume) ? musicVolume : 0.7;
+            currentData.originalAudioVolume = Number.isFinite(originalVolume) ? originalVolume : 0.25;
+            syncVideoTools();
+        }
+
+        function seekVideoTrim(target) {
+            const video = document.getElementById('instaPreviewVid');
+            if (!currentData?.videoUrl || !video) return;
+            const current = Number(video.currentTime || 0).toFixed(1);
+            if (target === 'start') {
+                document.getElementById('videoTrimStartInput').value = current;
+            } else {
+                document.getElementById('videoTrimEndInput').value = current;
+            }
+            updateVideoTrimState();
+        }
+
+        function useCurrentTimeAsCover() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!currentData?.videoUrl || !video) return;
+            currentData.videoCoverAtSeconds = Number(Number(video.currentTime || 0).toFixed(1));
+            captureVideoCover();
+        }
+
+        function scrubVideoTimeline() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!video || !currentData?.videoUrl) return;
+            const value = parseFloat(document.getElementById('videoTimelineInput').value || '0');
+            video.currentTime = value;
+            document.getElementById('videoCurrentTimeLabel').textContent = `${value.toFixed(1)}s`;
+        }
+
+        function scrubMusicTimeline() {
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!audio || !currentData?.musicTrackUrl) return;
+            const value = parseFloat(document.getElementById('musicTimelineInput').value || '0');
+            audio.currentTime = value;
+            document.getElementById('musicCurrentTimeLabel').textContent = `${value.toFixed(1)}s`;
+        }
+
+        function seekMusicStartFromVideo() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!video || !currentData) return;
+            document.getElementById('musicStartInput').value = Number(video.currentTime || 0).toFixed(1);
+            updateMusicState();
+        }
+
+        function toggleMusicPreview() {
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!audio || !currentData?.musicTrackUrl) return;
+            if (audio.paused) {
+                audio.play().catch(() => { });
+            } else {
+                audio.pause();
+            }
+        }
+
+        function updateTimelineRanges(video, audio) {
+            const videoTimeline = document.getElementById('videoTimelineInput');
+            const musicTimeline = document.getElementById('musicTimelineInput');
+            if (videoTimeline && video && Number.isFinite(video.duration) && video.duration > 0) {
+                videoTimeline.max = String(video.duration);
+                videoTimeline.value = String(Math.min(video.currentTime || 0, video.duration));
+                document.getElementById('videoCurrentTimeLabel').textContent = `${(video.currentTime || 0).toFixed(1)}s`;
+                document.getElementById('videoStartLabel').textContent = `Inicio ${(currentData?.videoTrimStartSeconds ?? 0).toFixed(1)}s`;
+                document.getElementById('videoCoverLabel').textContent = `Capa ${(parseFloat(currentData?.videoCoverAtSeconds || 0)).toFixed(1)}s`;
+                document.getElementById('videoEndLabel').textContent = currentData?.videoTrimEndSeconds != null
+                    ? `Fim ${Number(currentData.videoTrimEndSeconds).toFixed(1)}s`
+                    : `Fim ${video.duration.toFixed(1)}s`;
+            }
+            if (musicTimeline && audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+                musicTimeline.max = String(audio.duration);
+                musicTimeline.value = String(Math.min(audio.currentTime || 0, audio.duration));
+                document.getElementById('musicCurrentTimeLabel').textContent = `${(audio.currentTime || 0).toFixed(1)}s`;
+            }
+        }
+
+        function syncPreviewAudioState() {
+            const video = document.getElementById('instaPreviewVid');
+            const audio = document.getElementById('instaPreviewAudio');
+            if (!video) return;
+            video.volume = currentData?.originalAudioVolume ?? 0.25;
+            if (!audio || !currentData?.musicTrackUrl) return;
+            audio.volume = currentData?.musicVolume ?? 0.7;
+        }
+
+        async function captureVideoCover() {
+            const video = document.getElementById('instaPreviewVid');
+            if (!currentData?.videoUrl || !video) return;
+            if (video.readyState < 2) {
+                showToast('Aguarde o video carregar para capturar a capa.', true);
+                return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 1080;
+            canvas.height = video.videoHeight || 1920;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+            if (!blob) {
+                showToast('Falha ao capturar capa do video.', true);
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', blob, 'video-cover.jpg');
+            const res = await fetch('/api/admin/upload-media', {
+                method: 'POST',
+                headers: { 'X-Admin-Key': savedAdminKey },
+                body: formData
+            });
+            const data = await res.json();
+            if (!data.success) {
+                showToast('Nao foi possivel salvar a capa do video.', true);
+                return;
+            }
+
+            currentData.videoCoverUrl = data.url;
+            currentData.videoCoverAtSeconds = Number(Number(video.currentTime || 0).toFixed(1));
+            currentData.imageUrl = data.url;
+            currentData.images = [data.url];
+            document.getElementById('productImage').src = data.url;
+            document.getElementById('instaPreviewImg').src = data.url;
+            showToast('Capa do video capturada e salva.');
+            syncVideoTools();
+            syncPreview();
+        }
+
+        async function suggestHashtags() {
+            if (!currentData) return;
+            const btn = document.getElementById('suggestTagsBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/admin/generate-hashtags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({
+                        productName: currentData.title
+                    })
+                });
+                const data = await res.json();
+                if (data.success && data.hashtags) {
+                    document.getElementById('hashtagInput').value = data.hashtags;
+                    syncPreview();
+                    showToast('✨ Hashtags Sugeridas!');
+                } else {
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha ao sugerir hashtags.', true);
+                }
+            } catch {
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro de rede.', true);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        function syncPreview() {
+            const cap = document.getElementById('captionText').value;
+            const tags = document.getElementById('hashtagInput').value;
+            const cta = document.getElementById('ctaInput').value;
+            const type = document.getElementById('postType').value;
+            updateCaptionInsights();
+
+            let fullText = cap;
+            if (cta) fullText += "\n\n" + cta;
+
+            document.getElementById('instaPreviewCaption').textContent = fullText;
+            document.getElementById('instaPreviewHashtags').textContent = tags;
+
+            // Layout updates
+            const linkSticker = document.getElementById('instaLinkSticker');
+            if (type === 'story' || type === 'reel' || type === 'reels') {
+                document.getElementById('instaMockContainer').classList.add('stories');
+                linkSticker.classList.toggle('hidden', type !== 'story');
+            } else {
+                document.getElementById('instaMockContainer').classList.remove('stories');
+                linkSticker.classList.add('hidden');
+            }
+
+            const previewImg = document.getElementById('instaPreviewImg');
+            const previewVid = document.getElementById('instaPreviewVid');
+            const previewAudio = document.getElementById('instaPreviewAudio');
+            if (currentData?.videoUrl && (type === 'story' || type === 'reel' || type === 'reels')) {
+                previewVid.src = currentData.videoUrl;
+                previewVid.classList.remove('hidden');
+                previewImg.classList.add('hidden');
+            } else {
+                previewVid.classList.add('hidden');
+                previewImg.classList.remove('hidden');
+                previewImg.src = currentData?.videoCoverUrl || currentData?.imageUrl || previewImg.src;
+            }
+            if (currentData?.musicTrackUrl) {
+                previewAudio.src = currentData.musicTrackUrl;
+            }
+
+            updateCarouselView();
+            syncVideoTools();
+        }
+
+        function updateCarouselView() {
+            const type = document.getElementById('postType').value;
+            const prev = document.getElementById('carouselPrevBtn');
+            const next = document.getElementById('carouselNextBtn');
+            const dots = document.getElementById('carouselDots');
+
+            if (!currentData || !currentData.images || currentData.images.length <= 1 || type !== 'feed') {
+                prev.classList.add('hidden');
+                next.classList.add('hidden');
+                dots.classList.add('hidden');
+                if (currentData) {
+                    resetImagePresentation(document.getElementById('instaPreviewImg'));
+                    document.getElementById('instaPreviewImg').src = currentData.images?.[0] || currentData.imageUrl;
+                }
+                return;
+            }
+
+            // Show arrows & dots for multiple images in Feed mode
+            prev.classList.toggle('hidden', currentImageIndex === 0);
+            next.classList.toggle('hidden', currentImageIndex === currentData.images.length - 1);
+
+            resetImagePresentation(document.getElementById('instaPreviewImg'));
+            document.getElementById('instaPreviewImg').src = currentData.images[currentImageIndex];
+
+            dots.classList.remove('hidden');
+            dots.innerHTML = '';
+            for (let i = 0; i < currentData.images.length; i++) {
+                dots.innerHTML += `<div class="w-1.5 h-1.5 rounded-full ${i === currentImageIndex ? 'bg-white' : 'bg-white/40'}"></div>`;
+            }
+        }
+
+        function navigateCarousel(delta) {
+            if (!currentData || !currentData.images) return;
+            currentImageIndex += delta;
+            if (currentImageIndex < 0) currentImageIndex = 0;
+            if (currentImageIndex >= currentData.images.length) currentImageIndex = currentData.images.length - 1;
+            updateCarouselView();
+        }
+
+        // Add event listeners for real-time sync
+        document.getElementById('captionText').addEventListener('input', syncPreview);
+        document.getElementById('hashtagInput').addEventListener('input', syncPreview);
+        document.getElementById('ctaInput').addEventListener('input', syncPreview);
+        document.getElementById('postType').addEventListener('change', syncPreview); // Listen to post type changes
+        document.getElementById('instaPreviewVid').addEventListener('timeupdate', () => {
+            const video = document.getElementById('instaPreviewVid');
+            const audio = document.getElementById('instaPreviewAudio');
+            updateTimelineRanges(video, audio);
+            if (currentData?.musicTrackUrl && !audio.paused && Number.isFinite(video.currentTime)) {
+                const musicOffset = currentData.musicStartSeconds ?? 0;
+                const desiredAudioTime = Math.max(0, video.currentTime - musicOffset);
+                if (Math.abs((audio.currentTime || 0) - desiredAudioTime) > 0.35) {
+                    audio.currentTime = desiredAudioTime;
+                }
+            }
+        });
+        document.getElementById('instaPreviewVid').addEventListener('play', () => {
+            const audio = document.getElementById('instaPreviewAudio');
+            if (currentData?.musicTrackUrl) {
+                syncPreviewAudioState();
+                audio.currentTime = Math.max(0, (document.getElementById('instaPreviewVid').currentTime || 0) - (currentData.musicStartSeconds ?? 0));
+                audio.play().catch(() => { });
+            }
+        });
+        document.getElementById('instaPreviewVid').addEventListener('pause', () => {
+            document.getElementById('instaPreviewAudio').pause();
+        });
+        document.getElementById('instaPreviewAudio').addEventListener('loadedmetadata', () => {
+            updateTimelineRanges(document.getElementById('instaPreviewVid'), document.getElementById('instaPreviewAudio'));
+        });
+
+        async function uploadMedia(input, type) {
+            const file = input.files[0];
+            if (!file) return;
+
+            const status = document.getElementById('mediaStatus');
+            status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Subindo ${type}...`;
+            status.classList.remove('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/api/admin/upload-media', {
+                    method: 'POST',
+                    headers: { 'X-Admin-Key': savedAdminKey },
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.success) {
+                    status.textContent = `✅ ${type.toUpperCase()} carregado!`;
+                    if (type === 'photo') {
+                        currentData.imageUrl = data.url;
+                        currentData.videoCoverUrl = data.url;
+                        document.getElementById('instaPreviewImg').src = data.url;
+                        document.getElementById('instaPreviewVid').classList.add('hidden');
+                        document.getElementById('instaPreviewImg').classList.remove('hidden');
+                        generateCard();
+                    } else if (type === 'video') {
+                        currentData.videoUrl = data.url;
+                        currentData.videoTrimStartSeconds = 0;
+                        currentData.videoTrimEndSeconds = null;
+                        const v = document.getElementById('instaPreviewVid');
+                        v.src = data.url;
+                        v.classList.remove('hidden');
+                        document.getElementById('instaPreviewImg').classList.add('hidden');
+                        document.getElementById('videoToolsPanel').classList.remove('hidden');
+                        v.onloadedmetadata = () => syncVideoTools();
+                        v.play();
+                    } else if (type === 'music') {
+                        currentData.musicTrackUrl = data.url;
+                        currentData.videoMusicCue = file.name;
+                        currentData.musicStartSeconds = 0;
+                        currentData.musicEndSeconds = null;
+                        const audio = document.getElementById('instaPreviewAudio');
+                        audio.src = data.url;
+                        audio.onloadedmetadata = () => syncVideoTools();
+                    }
+                    syncVideoTools();
+                } else {
+                    status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro no upload.`;
+                }
+            } catch {
+                status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha de rede.`;
+            }
+        }
+
+        function normalizeUiText(text) {
+            if (text === null || text === undefined) return '';
+            let normalized = String(text);
+            const knownBrokenMessages = [
+                ['Selecione pelo menos uma ação.', 'Selecione pelo menos uma acao.'],
+                ['Lançando Campanha...', 'Lancando campanha...'],
+                ['Erro no Rascunho', 'Erro no rascunho'],
+                ['Parcial/Erro', 'Parcial ou erro'],
+                ['Falha de Rede', 'Falha de rede'],
+                ['Erro em alguns canais (veja o console).', 'Erro em alguns canais. Veja o console.'],
+                ['Erro ao ler rascunho', 'Erro ao ler rascunho.'],
+                ['Carregando Rascunho...', 'Carregando rascunho...'],
+                ['Falha ao sugerir hashtags.', 'Falha ao sugerir hashtags.'],
+                ['Erro de rede.', 'Erro de rede.'],
+                ['Distribuição Concluída!', 'Distribuicao concluida!'],
+                ['Hashtags Sugeridas!', 'Hashtags sugeridas!'],
+                ['Salvando edição...', 'Salvando edicao...'],
+                ['Arte aplicada visualmente, mas falhou salvar no servidor.', 'Arte aplicada visualmente, mas falhou ao salvar no servidor.'],
+                ['Arte aplicada visualmente, erro de rede.', 'Arte aplicada visualmente, mas houve erro de rede ao salvar.'],
+                ['AGENDAR NO INSTAGRAM', 'AGENDAR NO INSTAGRAM'],
+                ['PUBLICAR NO INSTAGRAM', 'PUBLICAR NO INSTAGRAM'],
+                ['Gerando...', 'Gerando...']
+            ];
+
+            const maybeBroken = /[ÃÂâ€¢žœš€™]/.test(normalized);
+            if (!maybeBroken) {
+                return normalized;
+            }
+
+            for (let i = 0; i < 3; i++) {
+                try {
+                    const repaired = decodeURIComponent(escape(normalized));
+                    if (!repaired || repaired === normalized) {
+                        break;
+                    }
+
+                    normalized = repaired;
+                } catch {
+                    break;
+                }
+            }
+
+            normalized = normalized
+                .replace(/\uFFFD/g, '')
+                .replace(/\s{2,}/g, ' ')
+                .trim();
+
+            for (const [brokenSuffix, cleanText] of knownBrokenMessages) {
+                if (normalized.endsWith(brokenSuffix) || normalized.includes(brokenSuffix)) {
+                    return cleanText;
+                }
+            }
+
+            return normalized;
+        }
+
+        async function updateStatus(btnId, state, text) {
+            const btn = document.getElementById(btnId);
+            btn.className = `w-full py-3 rounded-xl font-bold text-xs transition-all btn-status-${state}`;
+            btn.textContent = normalizeUiText(text);
+        }
+
+        function toggleCatalogTargetState() {
+            const enabled = document.getElementById('chkPublishCatalog').checked;
+            const select = document.getElementById('catalogTargetSelect');
+            select.disabled = !enabled;
+            select.classList.toggle('opacity-50', !enabled);
+            applyAutoReplyDefaults();
+        }
+
+        function isDevRuntime() {
+            const host = window.location.host || '';
+            return host.includes('-dev.') || host.startsWith('achadinhos-dev') || host.startsWith('localhost') || host.startsWith('127.0.0.1');
+        }
+
+        function resolveCatalogTargetSelection(enabled) {
+            if (!enabled) return 'none';
+            const fallback = isDevRuntime() ? 'dev' : 'prod';
+            const value = (document.getElementById('catalogTargetSelect').value || fallback).toLowerCase();
+            if (isDevRuntime() && value === 'prod') return 'dev';
+            return ['dev', 'prod', 'both'].includes(value) ? value : fallback;
+        }
+
+        function markAutoReplyManual(element) {
+            element.dataset.autogenerated = 'false';
+        }
+
+        function getCatalogLinkForTarget(target) {
+            if (target === 'dev') return 'https://achadinhos-dev.reidasofertas.ia.br/catalogo';
+            if (target === 'prod') return 'https://achadinhos.reidasofertas.ia.br/catalogo';
+            return 'https://achadinhos.reidasofertas.ia.br/catalogo';
+        }
+
+        function applyAutoReplyDefaults(force = false) {
+            const keywordInput = document.getElementById('autoReplyKeyword');
+            const messageInput = document.getElementById('autoReplyMessage');
+            const linkInput = document.getElementById('autoReplyLink');
+            const catalogTarget = resolveCatalogTargetSelection(document.getElementById('chkPublishCatalog').checked);
+            const catalogLink = getCatalogLinkForTarget(catalogTarget);
+            const defaultMessage = `Oi {name}! Separei o link do nosso catalogo para voce:\n{link}\n\nEntre tambem no WhatsApp para acompanhar todas as ofertas em primeira mao.`;
+
+            if (force || !keywordInput.value.trim() || keywordInput.dataset.autogenerated === 'true') {
+                keywordInput.value = 'eu quero, link';
+                keywordInput.dataset.autogenerated = 'true';
+            }
+
+            if (force || !messageInput.value.trim() || messageInput.dataset.autogenerated === 'true') {
+                messageInput.value = defaultMessage;
+                messageInput.dataset.autogenerated = 'true';
+            }
+
+            if (force || !linkInput.value.trim() || linkInput.dataset.autogenerated === 'true') {
+                linkInput.value = catalogLink;
+                linkInput.dataset.autogenerated = 'true';
+            }
+        }
+
+        async function publishMaster() {
+            if (!currentData) return;
+            const btnIg = document.getElementById('chkPublishIg').checked;
+            const btnWa = document.getElementById('chkPublishWa').checked;
+            const btnTg = document.getElementById('chkPublishTg').checked;
+            const btnCat = document.getElementById('chkPublishCatalog').checked;
+            const catalogTarget = resolveCatalogTargetSelection(btnCat);
+
+            if (!btnIg && !btnWa && !btnTg && !btnCat) {
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Selecione pelo menos uma ação.');
+                return;
+            }
+
+            updateStatus('pubMasterBtn', 'loading', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Lançando Campanha...');
+
+            try {
+                const cap = document.getElementById('captionText').value + "\n\n" + document.getElementById('hashtagInput').value;
+                const autoReply = document.getElementById('autoReplyCheck').checked;
+                const autoReplyKeyword = document.getElementById('autoReplyKeyword').value;
+                const autoReplyMessage = document.getElementById('autoReplyMessage').value;
+                const autoReplyLink = document.getElementById('autoReplyLink').value;
+
+                const scheduledEl = document.getElementById('scheduledForInput');
+                let scheduledFor = null;
+                if (scheduledEl && scheduledEl.value) {
+                    scheduledFor = new Date(scheduledEl.value).toISOString();
+                }
+
+                // 1. Sempre criamos o Draft primeiro (Registro de Histórico Central)
+                const draftRes = await fetch('/api/admin/create-draft', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({
+                        productName: currentData.title,
+                        postType: document.getElementById('postType').value,
+                        caption: cap,
+                        imageUrls: [currentData.imageUrl],
+                        videoUrl: currentData.videoUrl || null,
+                        videoCoverUrl: currentData.videoCoverUrl || currentData.imageUrl || null,
+                        videoCoverAtSeconds: currentData.videoCoverAtSeconds ?? 0,
+                        videoMusicCue: currentData.videoMusicCue || null,
+                        videoTrimStartSeconds: currentData.videoTrimStartSeconds ?? 0,
+                        videoTrimEndSeconds: currentData.videoTrimEndSeconds ?? null,
+                        musicTrackUrl: currentData.musicTrackUrl || null,
+                        musicStartSeconds: currentData.musicStartSeconds ?? 0,
+                        musicEndSeconds: currentData.musicEndSeconds ?? null,
+                        musicVolume: currentData.musicVolume ?? 0.7,
+                        originalAudioVolume: currentData.originalAudioVolume ?? 0.25,
+                        autoReplyEnabled: autoReply,
+                        autoReplyKeyword: autoReplyKeyword,
+                        autoReplyMessage: autoReplyMessage,
+                        autoReplyLink: autoReplyLink,
+                        scheduledFor: scheduledFor,
+                        sendToCatalog: btnCat,
+                        catalogTarget: catalogTarget
+                    })
+                });
+
+                const draftData = await draftRes.json();
+                if (!draftData.success) {
+                    updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro no Rascunho');
+                    return;
+                }
+
+                currentDraftId = draftData.draftId;
+
+                // 2. Se for agendado, parar por aqui, pois o worker de back-end cuidará do disparo.
+                if (scheduledFor) {
+                    const scheduledForLabel = new Date(scheduledFor).toLocaleString('pt-BR');
+                    updateStatus('pubMasterBtn', 'success', 'Campanha agendada');
+                    showToast(`Agendado para ${scheduledForLabel}. Draft: ${draftData.draftId}`);
+                    loadDraftsHistory();
+                    return;
+                }
+
+                updateStatus('pubMasterBtn', 'loading', '🚀 Distribuindo Redes...');
+
+                // 3. Disparar Omnichannel API
+                const contentWaTg = document.getElementById('captionText').value + "\n\n🛍️ Compre aqui: " + currentConvertedUrl;
+                const pubRes = await fetch('/api/admin/publish-master', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({
+                        draftId: currentDraftId,
+                        publishInstagram: btnIg,
+                        publishTelegram: btnTg,
+                        publishWhatsApp: btnWa,
+                        telegramChatId: document.getElementById('pubTgTarget').value,
+                        whatsAppTargetId: document.getElementById('pubWaTarget').value,
+                        content: contentWaTg,
+                        imageUrl: currentData.imageUrl ? (currentData.imageUrl.startsWith('http') ? currentData.imageUrl : window.location.origin + currentData.imageUrl) : null,
+                        publishCatalog: btnCat,
+                        catalogTarget: catalogTarget
+                    })
+                });
+
+                const pubData = await pubRes.json();
+                if (pubData.success) {
+                    updateStatus('pubMasterBtn', 'success', '🚀 Campanha no Ar!');
+                    showToast('✅ Distribuição Concluída!');
+                } else {
+                    updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Parcial/Erro');
+                    console.error("Master Publish Errors: ", pubData.channels);
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro em alguns canais (veja o console).', true);
+                }
+            } catch (err) {
+                updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha de Rede');
+                console.error(err);
+            }
+        }
+
+        async function syncCatalog() {
+            if (!currentDraftId) { showToast('Poste no Instagram primeiro.'); return; }
+            updateStatus('pubCatalogBtn', 'loading', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Sincronizando...');
+            try {
+                const res = await fetch('/api/admin/add-to-catalog', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({
+                        draftId: currentDraftId,
+                        catalogTarget: resolveCatalogTargetSelection(true)
+                    })
+                });
+                const data = await res.json();
+                if (data.success) updateStatus('pubCatalogBtn', 'success', '✅ No Catálogo!');
+                else updateStatus('pubCatalogBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro');
+            } catch { updateStatus('pubCatalogBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha'); }
+        }
+
+        // === Utils ===
+        function convertAnother() {
+            document.getElementById('resultArea').style.display = 'none';
+            document.getElementById('studioPanel').classList.add('hidden');
+            document.getElementById('urlInput').value = '';
+            document.getElementById('urlInput').focus();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function copyCaption() {
+            const txt = document.getElementById('captionText').value;
+            navigator.clipboard.writeText(txt);
+            showToast('📋 Legenda copiada!');
+        }
+
+        async function loadDraftsHistory() {
+            const grid = document.getElementById('draftsGrid');
+            const loader = document.getElementById('draftsLoading');
+
+            grid.innerHTML = '';
+            loader.classList.remove('hidden');
+
+            try {
+                const res = await fetch('/api/admin/drafts', {
+                    headers: { 'X-Admin-Key': savedAdminKey }
+                });
+                const data = await res.json();
+
+                loader.classList.add('hidden');
+
+                if (data.success && data.drafts && data.drafts.length > 0) {
+                    data.drafts.forEach(draft => {
+                        const date = new Date(draft.createdAt).toLocaleString('pt-BR');
+                        const scheduledDate = draft.scheduledFor ? new Date(draft.scheduledFor).toLocaleString('pt-BR') : null;
+                        let statusColor = 'bg-slate-500';
+                        let statusText = 'Rascunho';
+
+                        if (draft.status === 'published') { statusColor = 'bg-green-500'; statusText = 'Publicado'; }
+                        else if (draft.status === 'scheduled') { statusColor = 'bg-blue-500'; statusText = 'Agendado'; }
+                        else if (draft.status === 'publishing') { statusColor = 'bg-amber-500'; statusText = 'Publicando'; }
+                        else if ((draft.status || '').includes('failed')) { statusColor = 'bg-red-500'; statusText = 'Erro'; }
+
+                        const metaBits = [];
+                        if (scheduledDate) metaBits.push(`Agendado: ${scheduledDate}`);
+                        if (draft.mediaId) metaBits.push(`Media ID: ${draft.mediaId}`);
+                        if (draft.catalogTarget && draft.catalogTarget !== 'none') metaBits.push(`Catalogo: ${String(draft.catalogTarget).toUpperCase()}`);
+                        const detailText = metaBits.join(' • ');
+                        const errorText = draft.error ? String(draft.error) : '';
+
+                        grid.innerHTML += `
+                            <div class="bg-primary/20 hover:bg-primary/40 p-4 rounded-xl border border-white/5 transition-all cursor-pointer group" onclick="loadDraftIntoEditor('${draft.id}')">
+                                <div class="flex items-start gap-3">
+                                    <div class="w-16 h-16 rounded-lg bg-surface overflow-hidden shrink-0 flex items-center justify-center">
+                                        ${draft.imageUrl ? `<img src="${draft.imageUrl}" class="w-full h-full object-cover">` : '<span class="text-xs text-slate-500">Sem Foto</span>'}
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <h4 class="text-white font-bold text-xs truncate mb-1">${draft.productName || 'Sem nome'}</h4>
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <span class="px-2 py-0.5 rounded-full ${statusColor}/20 text-${statusColor.split('-')[1]}-400 text-[9px] font-bold uppercase">${statusText}</span>
+                                            <span class="text-[9px] text-slate-500 uppercase">${draft.postType}</span>
+                                        </div>
+                                        <p class="text-[9px] text-slate-600">${date}</p>
+                                        ${detailText ? `<p class="mt-1 text-[10px] text-slate-400 leading-relaxed">${detailText}</p>` : ''}
+                                        ${errorText ? `<p class="mt-2 text-[10px] text-red-300 leading-relaxed break-words">${errorText}</p>` : ''}
+                                    </div>
+                                </div>
+                                <div class="mt-3 pt-3 border-t border-white/5">
+                                    <button class="w-full text-[10px] font-bold text-accent uppercase tracking-widest group-hover:bg-accent/10 py-1.5 rounded-lg transition-all">
+                                        Carregar no Estúdio ➡️
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    grid.innerHTML = '<div class="col-span-full text-center py-6 text-slate-500 text-xs">Nenhum histórico encontrado.</div>';
+                }
+            } catch (err) {
+                loader.classList.add('hidden');
+                grid.innerHTML = '<div class="col-span-full text-center py-6 text-red-400 text-xs">Erro ao carregar histórico.</div>';
+            }
+        }
+
+        async function loadDraftIntoEditor(draftId) {
+            showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Carregando Rascunho...');
+            try {
+                const res = await fetch(`/api/admin/draft/${draftId}`, {
+                    headers: { 'X-Admin-Key': savedAdminKey }
+                });
+                const data = await res.json();
+                if (data.success && data.draft) {
+                    const draft = data.draft;
+
+                    // Fill mock data so the editor "thinks" a product is loaded
+                    currentData = {
+                        title: draft.productName || 'Carregado',
+                        imageUrl: draft.imageUrls?.[0] || '',
+                        videoUrl: draft.videoUrl || null,
+                        videoCoverUrl: draft.videoCoverUrl || draft.imageUrls?.[0] || '',
+                        videoCoverAtSeconds: draft.videoCoverAtSeconds ?? 0,
+                        videoTrimStartSeconds: draft.videoTrimStartSeconds ?? 0,
+                        videoTrimEndSeconds: draft.videoTrimEndSeconds ?? null,
+                        videoMusicCue: draft.videoMusicCue || null,
+                        musicTrackUrl: draft.musicTrackUrl || null,
+                        musicStartSeconds: draft.musicStartSeconds ?? 0,
+                        musicEndSeconds: draft.musicEndSeconds ?? null,
+                        musicVolume: draft.musicVolume ?? 0.7,
+                        originalAudioVolume: draft.originalAudioVolume ?? 0.25,
+                        images: draft.imageUrls?.length ? draft.imageUrls : [draft.imageUrls?.[0] || ''],
+                        price: 'R$ 0,00'
+                    };
+
+                    document.getElementById('captionText').value = draft.caption || '';
+                    document.getElementById('postType').value = draft.postType || 'feed';
+                    document.getElementById('autoReplyCheck').checked = draft.autoReplyEnabled;
+                    document.getElementById('autoReplySettings').classList.toggle('hidden', !draft.autoReplyEnabled);
+                    document.getElementById('autoReplyKeyword').value = draft.autoReplyKeyword || 'eu quero, link';
+                    document.getElementById('autoReplyMessage').value = draft.autoReplyMessage || '';
+                    document.getElementById('autoReplyLink').value = draft.autoReplyLink || '';
+                    document.getElementById('chkPublishCatalog').checked = !!(draft.sendToCatalog || (draft.catalogTarget && draft.catalogTarget !== 'none'));
+                    document.getElementById('catalogTargetSelect').value = draft.catalogTarget && draft.catalogTarget !== 'none'
+                        ? draft.catalogTarget
+                        : 'prod';
+                    toggleCatalogTargetState();
+                    applyAutoReplyDefaults();
+
+                    if (draft.scheduledFor) {
+                        const d = new Date(draft.scheduledFor);
+                        // format for datetime-local
+                        document.getElementById('scheduledForInput').value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+                        updatePublishBtnText(true);
+                    } else {
+                        document.getElementById('scheduledForInput').value = '';
+                        updatePublishBtnText(false);
+                    }
+
+                    // Update UI State
+                    document.getElementById('productImage').src = currentData.imageUrl;
+                    document.getElementById('productTitle').textContent = currentData.title;
+                    document.getElementById('instaPreviewImg').src = currentData.imageUrl;
+                    syncVideoTools();
+
+                    setFormat(draft.postType || 'feed');
+                    syncPreview();
+
+                    // Switch to Visual tab to start working on it
+                    switchTab('visual');
+                    showToast('✅ Rascunho Carregado!');
+                }
+            } catch {
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro ao ler rascunho', true);
+            }
+        }
+
+        // === Mini Canvas Editor ===
+        let editorCanvas;
+        let editorCtx;
+        let editorImg = new Image();
+        let editorElements = [];
+        let editorDraggingIndex = -1;
+        let editorDragOffsetX = 0;
+        let editorDragOffsetY = 0;
+
+        function initEditor() {
+            editorCanvas = document.getElementById('imageEditorCanvas');
+            editorCtx = editorCanvas.getContext('2d');
+
+            editorCanvas.addEventListener('mousedown', handleEditorMouseDown);
+            editorCanvas.addEventListener('mousemove', handleEditorMouseMove);
+            window.addEventListener('mouseup', handleEditorMouseUp);
+            // Touch support
+            editorCanvas.addEventListener('touchstart', (e) => handleEditorMouseDown(e.touches[0]), { passive: false });
+            editorCanvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleEditorMouseMove(e.touches[0]); }, { passive: false });
+            window.addEventListener('touchend', handleEditorMouseUp);
+        }
+
+        function openEditorModal() {
+            if (!currentData || !currentData.imageUrl) {
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Precisa de uma imagem base para editar.', true);
+                return;
+            }
+            if (!editorCanvas) initEditor();
+
+            document.getElementById('editorModal').classList.remove('hidden');
+            editorElements = []; // Reset elements
+
+            editorImg.crossOrigin = "anonymous";
+            editorImg.onload = () => {
+                editorCanvas.width = editorImg.width;
+                editorCanvas.height = editorImg.height;
+                renderEditor();
+            };
+            editorImg.src = document.getElementById('instaPreviewImg').src || currentData.imageUrl; // Use current preview
+        }
+
+        function closeEditorModal() {
+            document.getElementById('editorModal').classList.add('hidden');
+        }
+
+        function renderEditor() {
+            if (!editorCtx || !editorImg.width) return;
+
+            // Draw base image
+            editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
+            editorCtx.drawImage(editorImg, 0, 0, editorCanvas.width, editorCanvas.height);
+
+            // Draw elements (from bottom to top)
+            for (const el of editorElements) {
+                if (el.type === 'text') {
+                    editorCtx.font = `bold ${el.size}px sans-serif`;
+                    // Text background
+                    editorCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    const textWidth = editorCtx.measureText(el.text).width;
+                    const padding = el.size * 0.4;
+
+                    // Simple rounded rect for bg
+                    editorCtx.beginPath();
+                    editorCtx.roundRect(el.x - padding, el.y - el.size, textWidth + (padding * 2), el.size + (padding), el.size * 0.2);
+                    editorCtx.fill();
+
+                    // Text
+                    editorCtx.fillStyle = '#ffffff';
+                    editorCtx.fillText(el.text, el.x, el.y);
+
+                    // Update bounding box for interaction
+                    el.width = textWidth + (padding * 2);
+                    el.height = el.size + padding;
+                    el.boundsX = el.x - padding;
+                    el.boundsY = el.y - el.size;
+
+                } else if (el.type === 'badge') {
+                    const tagSize = editorCanvas.width * 0.15; // responsive size
+
+                    if (el.style === 'discount') {
+                        editorCtx.fillStyle = '#ef4444'; // red-500
+                        editorCtx.beginPath();
+                        editorCtx.arc(el.x + tagSize / 2, el.y + tagSize / 2, tagSize / 2, 0, Math.PI * 2);
+                        editorCtx.fill();
+
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${tagSize * 0.3}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        editorCtx.fillText(currentData?.discountPercent ? `${currentData.discountPercent}%` : 'OFF', el.x + tagSize / 2, el.y + tagSize / 2);
+                        editorCtx.fillText('OFF', el.x + tagSize / 2, el.y + tagSize / 2 + tagSize * 0.3);
+                        editorCtx.textAlign = 'left'; // reset
+                    } else if (el.style === 'frete') {
+                        const rw = tagSize * 1.5;
+                        const rh = tagSize * 0.5;
+                        editorCtx.fillStyle = '#22c55e'; // green-500
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(el.x, el.y, rw, rh, rh / 2);
+                        editorCtx.fill();
+
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${rh * 0.5}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        editorCtx.fillText('FRETE GRÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂTIS', el.x + rw / 2, el.y + rh * 0.7);
+                        editorCtx.textAlign = 'left'; // reset
+                    }
+
+                    el.width = (el.style === 'frete') ? tagSize * 1.5 : tagSize;
+                    el.height = (el.style === 'frete') ? tagSize * 0.5 : tagSize;
+                    el.boundsX = el.x;
+                    el.boundsY = el.y;
+                }
+            }
+        }
+
+        function addEditorText() {
+            const input = document.getElementById('editorTextInput');
+            const txt = input.value.trim();
+            if (!txt) return;
+
+            editorElements.push({
+                type: 'text',
+                text: txt,
+                x: editorCanvas.width / 2, // initially center, bounds updated on render
+                y: editorCanvas.height / 2,
+                size: editorCanvas.width * 0.05
+            });
+            input.value = '';
+            renderEditor();
+        }
+
+        function addEditorBadge(style) {
+            editorElements.push({
+                type: 'badge',
+                style: style,
+                x: editorCanvas.width / 2,
+                y: editorCanvas.height / 4
+            });
+            renderEditor();
+        }
+
+        function handleEditorMouseDown(e) {
+            const rect = editorCanvas.getBoundingClientRect();
+            const scaleX = editorCanvas.width / rect.width;
+            const scaleY = editorCanvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+
+            for (let i = editorElements.length - 1; i >= 0; i--) {
+                const el = editorElements[i];
+                if (mouseX >= el.boundsX && mouseX <= el.boundsX + el.width &&
+                    mouseY >= el.boundsY && mouseY <= el.boundsY + el.height) {
+
+                    editorDraggingIndex = i;
+                    editorDragOffsetX = mouseX - el.boundsX;
+                    editorDragOffsetY = mouseY - el.boundsY;
+                    return;
+                }
+            }
+        }
+
+        function handleEditorMouseMove(e) {
+            if (editorDraggingIndex < 0) return;
+
+            const rect = editorCanvas.getBoundingClientRect();
+            const scaleX = editorCanvas.width / rect.width;
+            const scaleY = editorCanvas.height / rect.height;
+
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+
+            const el = editorElements[editorDraggingIndex];
+
+            if (el.type === 'text') {
+                const padding = el.size * 0.4;
+                el.x = (mouseX - editorDragOffsetX) + padding;
+                el.y = (mouseY - editorDragOffsetY) + el.size;
+            } else {
+                el.x = mouseX - editorDragOffsetX;
+                el.y = mouseY - editorDragOffsetY;
+            }
+            renderEditor();
+        }
+
+        function handleEditorMouseUp() {
+            editorDraggingIndex = -1;
+        }
+
+        async function applyEditorChanges() {
+            const dataUrl = editorCanvas.toDataURL('image/jpeg', 0.9);
+
+            document.getElementById('instaPreviewImg').src = dataUrl;
+            document.getElementById('productImage').src = dataUrl;
+
+            closeEditorModal();
+            showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Salvando edição...', false);
+
+            try {
+                const res = await fetch(dataUrl);
+                const blob = await res.blob();
+
+                const formData = new FormData();
+                formData.append('file', blob, 'edited_banner.jpg');
+
+                const uploadRes = await fetch('/api/admin/upload-media', {
+                    method: 'POST',
+                    headers: { 'X-Admin-Key': savedAdminKey },
+                    body: formData
+                });
+
+                const uploadData = await uploadRes.json();
+                if (uploadData.success) {
+                    currentData.imageUrl = uploadData.url;
+                    if (currentData.images && currentData.images.length > 0) {
+                        currentData.images[0] = uploadData.url;
+                    }
+                    showToast('✅ Arte atualizada e salva!');
+                    syncPreview();
+                } else {
+                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Arte aplicada visualmente, mas falhou salvar no servidor.', true);
+                }
+            } catch {
+                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Arte aplicada visualmente, erro de rede.', true);
+            }
+        }
+
+        const studioEditorPresets = {
+            feed: { width: 1080, height: 1080 },
+            portrait: { width: 1080, height: 1350 },
+            story: { width: 1080, height: 1920 },
+            reel: { width: 1080, height: 1350 },
+            catalog: { width: 1080, height: 1440 }
+        };
+        let studioEditorShowSafeArea = true;
+        let studioEditorState = {
+            preset: 'feed',
+            fit: 'cover',
+            scale: 1,
+            offsetX: 0,
+            offsetY: 0,
+            brightness: 100,
+            contrast: 100,
+            musicCue: '',
+            musicEnabled: false
+        };
+
+        function getStudioEditorElement(id) {
+            return document.querySelector(`#editorModal #${id}`) || document.getElementById(id);
+        }
+
+        function removeDuplicateEditorModals() {
+            document.querySelectorAll('#editorModal').forEach((modal, index) => {
+                if (index > 0) modal.remove();
+            });
+        }
+
+        function syncStudioEditorControls() {
+            const map = {
+                editorPresetSelect: studioEditorState.preset,
+                editorFitSelect: studioEditorState.fit,
+                editorScaleInput: studioEditorState.scale,
+                editorOffsetXInput: studioEditorState.offsetX,
+                editorOffsetYInput: studioEditorState.offsetY,
+                editorBrightnessInput: studioEditorState.brightness,
+                editorContrastInput: studioEditorState.contrast,
+                editorMusicInput: studioEditorState.musicCue
+            };
+            Object.entries(map).forEach(([id, value]) => {
+                const el = getStudioEditorElement(id);
+                if (el) el.value = String(value);
+            });
+            const musicToggle = getStudioEditorElement('editorMusicToggle');
+            if (musicToggle) musicToggle.checked = !!studioEditorState.musicEnabled;
+        }
+
+        function readStudioEditorControls() {
+            studioEditorState.preset = getStudioEditorElement('editorPresetSelect')?.value || studioEditorState.preset;
+            studioEditorState.fit = getStudioEditorElement('editorFitSelect')?.value || studioEditorState.fit;
+            studioEditorState.scale = parseFloat(getStudioEditorElement('editorScaleInput')?.value || studioEditorState.scale);
+            studioEditorState.offsetX = parseFloat(getStudioEditorElement('editorOffsetXInput')?.value || studioEditorState.offsetX);
+            studioEditorState.offsetY = parseFloat(getStudioEditorElement('editorOffsetYInput')?.value || studioEditorState.offsetY);
+            studioEditorState.brightness = parseFloat(getStudioEditorElement('editorBrightnessInput')?.value || studioEditorState.brightness);
+            studioEditorState.contrast = parseFloat(getStudioEditorElement('editorContrastInput')?.value || studioEditorState.contrast);
+            studioEditorState.musicCue = getStudioEditorElement('editorMusicInput')?.value?.trim() || '';
+            studioEditorState.musicEnabled = !!getStudioEditorElement('editorMusicToggle')?.checked;
+        }
+
+        function applyEditorPreset() {
+            studioEditorState.preset = getStudioEditorElement('editorPresetSelect')?.value || 'feed';
+            const preset = studioEditorPresets[studioEditorState.preset] || studioEditorPresets.feed;
+            if (editorCanvas) {
+                editorCanvas.width = preset.width;
+                editorCanvas.height = preset.height;
+            }
+            studioEditorState.offsetX = 0;
+            studioEditorState.offsetY = 0;
+            studioEditorState.scale = studioEditorState.preset === 'catalog' ? 0.96 : (studioEditorState.preset === 'story' ? 1.08 : 1);
+            studioEditorState.fit = studioEditorState.preset === 'catalog' ? 'contain' : 'cover';
+            syncStudioEditorControls();
+            renderEditor();
+        }
+
+        function resetEditorView() {
+            studioEditorState.fit = 'cover';
+            studioEditorState.scale = 1;
+            studioEditorState.offsetX = 0;
+            studioEditorState.offsetY = 0;
+            studioEditorState.brightness = 100;
+            studioEditorState.contrast = 100;
+            syncStudioEditorControls();
+            renderEditor();
+        }
+
+        function toggleEditorSafeArea() {
+            studioEditorShowSafeArea = !studioEditorShowSafeArea;
+            renderEditor();
+        }
+
+        function studioEditorImageRect() {
+            readStudioEditorControls();
+            const fit = studioEditorState.fit;
+            const imageRatio = editorImg.width / editorImg.height;
+            const canvasRatio = editorCanvas.width / editorCanvas.height;
+            let width;
+            let height;
+            if ((fit === 'cover' && imageRatio > canvasRatio) || (fit === 'contain' && imageRatio < canvasRatio)) {
+                height = editorCanvas.height;
+                width = height * imageRatio;
+            } else {
+                width = editorCanvas.width;
+                height = width / imageRatio;
+            }
+            width *= studioEditorState.scale;
+            height *= studioEditorState.scale;
+            return {
+                x: (editorCanvas.width - width) / 2 + studioEditorState.offsetX,
+                y: (editorCanvas.height - height) / 2 + studioEditorState.offsetY,
+                width,
+                height
+            };
+        }
+
+        initEditor = function () {
+            removeDuplicateEditorModals();
+            editorCanvas = getStudioEditorElement('imageEditorCanvas');
+            if (!editorCanvas) return;
+            editorCtx = editorCanvas.getContext('2d');
+            editorCanvas.onmousedown = handleEditorMouseDown;
+            editorCanvas.onmousemove = handleEditorMouseMove;
+            window.onmouseup = handleEditorMouseUp;
+            editorCanvas.ontouchstart = (e) => handleEditorMouseDown(e.touches[0]);
+            editorCanvas.ontouchmove = (e) => {
+                e.preventDefault();
+                handleEditorMouseMove(e.touches[0]);
+            };
+            window.ontouchend = handleEditorMouseUp;
+            syncStudioEditorControls();
+        };
+
+        openEditorModal = function () {
+            if (!currentData || !currentData.imageUrl) {
+                showToast('Precisa de uma imagem base para editar.', true);
+                return;
+            }
+            if (!editorCanvas) initEditor();
+            document.getElementById('editorModal').classList.remove('hidden');
+            editorElements = [];
+            syncStudioEditorControls();
+            applyEditorPreset();
+            editorImg.crossOrigin = 'anonymous';
+            editorImg.onload = () => renderEditor();
+            editorImg.src = document.getElementById('instaPreviewImg').src || currentData.imageUrl;
+        };
+
+        renderEditor = function () {
+            if (!editorCtx || !editorImg.width || !editorCanvas) return;
+            readStudioEditorControls();
+            editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
+            editorCtx.fillStyle = '#0f172a';
+            editorCtx.fillRect(0, 0, editorCanvas.width, editorCanvas.height);
+
+            const rect = studioEditorImageRect();
+            editorCtx.save();
+            editorCtx.filter = `brightness(${studioEditorState.brightness}%) contrast(${studioEditorState.contrast}%)`;
+            editorCtx.drawImage(editorImg, rect.x, rect.y, rect.width, rect.height);
+            editorCtx.restore();
+
+            if (studioEditorShowSafeArea) {
+                const marginX = editorCanvas.width * 0.08;
+                const marginY = editorCanvas.height * 0.08;
+                editorCtx.save();
+                editorCtx.strokeStyle = 'rgba(255,255,255,0.55)';
+                editorCtx.lineWidth = 3;
+                editorCtx.setLineDash([18, 14]);
+                editorCtx.strokeRect(marginX, marginY, editorCanvas.width - marginX * 2, editorCanvas.height - marginY * 2);
+                editorCtx.restore();
+            }
+
+            for (const el of editorElements) {
+                if (el.type === 'text') {
+                    const paddingX = el.size * 0.42;
+                    const paddingY = el.size * 0.3;
+                    const textWidth = editorCtx.measureText(el.text).width;
+                    const boxWidth = textWidth + paddingX * 2;
+                    const boxHeight = el.size + paddingY * 1.6;
+                    const x = el.x - paddingX;
+                    const y = el.y - el.size;
+                    editorCtx.font = `700 ${el.size}px sans-serif`;
+                    if (el.style === 'cta') {
+                        editorCtx.fillStyle = '#f97316';
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(x, y, boxWidth, boxHeight, 24);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#0f1115';
+                    } else {
+                        editorCtx.fillStyle = 'rgba(15,23,42,0.72)';
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(x, y, boxWidth, boxHeight, 26);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#ffffff';
+                    }
+                    editorCtx.fillText(el.text, el.x, el.y);
+                    el.width = boxWidth;
+                    el.height = boxHeight;
+                    el.boundsX = x;
+                    el.boundsY = y;
+                } else if (el.type === 'badge') {
+                    const size = Math.max(editorCanvas.width * 0.12, 110);
+                    if (el.style === 'discount') {
+                        editorCtx.fillStyle = '#ef4444';
+                        editorCtx.beginPath();
+                        editorCtx.arc(el.x + size / 2, el.y + size / 2, size / 2, 0, Math.PI * 2);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${size * 0.28}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        const pct = currentData?.discountPercent ? `${currentData.discountPercent}%` : 'OFERTA';
+                        editorCtx.fillText(pct, el.x + size / 2, el.y + size * 0.46);
+                        editorCtx.fillText('OFF', el.x + size / 2, el.y + size * 0.74);
+                        el.width = size;
+                        el.height = size;
+                    } else {
+                        const labels = {
+                            frete: { text: 'FRETE GRATIS', bg: '#22c55e' },
+                            lightning: { text: 'OFERTA RELAMPAGO', bg: '#f59e0b' },
+                            whatsapp: { text: 'CHAMA NO WHATS', bg: '#10b981' }
+                        };
+                        const def = labels[el.style] || labels.frete;
+                        const width = size * 1.8;
+                        const height = size * 0.42;
+                        editorCtx.fillStyle = def.bg;
+                        editorCtx.beginPath();
+                        editorCtx.roundRect(el.x, el.y, width, height, 24);
+                        editorCtx.fill();
+                        editorCtx.fillStyle = '#ffffff';
+                        editorCtx.font = `bold ${Math.max(22, height * 0.38)}px sans-serif`;
+                        editorCtx.textAlign = 'center';
+                        editorCtx.fillText(def.text, el.x + width / 2, el.y + height * 0.63);
+                        el.width = width;
+                        el.height = height;
+                    }
+                    editorCtx.textAlign = 'left';
+                    el.boundsX = el.x;
+                    el.boundsY = el.y;
+                }
+            }
+        };
+
+        addEditorText = function (style = 'headline') {
+            const input = getStudioEditorElement('editorTextInput');
+            const txt = input?.value?.trim();
+            if (!txt || !editorCanvas) return;
+            editorElements.push({
+                type: 'text',
+                style,
+                text: txt,
+                x: editorCanvas.width * 0.12,
+                y: editorCanvas.height * (style === 'cta' ? 0.86 : 0.18),
+                size: editorCanvas.width * (style === 'cta' ? 0.04 : 0.052)
+            });
+            input.value = '';
+            renderEditor();
+        };
+
+        addEditorBadge = function (style) {
+            if (!editorCanvas) return;
+            editorElements.push({
+                type: 'badge',
+                style,
+                x: editorCanvas.width * 0.08,
+                y: editorCanvas.height * 0.08
+            });
+            renderEditor();
+        };
+
+        handleEditorMouseDown = function (e) {
+            if (!editorCanvas) return;
+            const rect = editorCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (editorCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (editorCanvas.height / rect.height);
+            for (let i = editorElements.length - 1; i >= 0; i--) {
+                const el = editorElements[i];
+                if (x >= el.boundsX && x <= el.boundsX + el.width && y >= el.boundsY && y <= el.boundsY + el.height) {
+                    editorDraggingIndex = i;
+                    editorDragOffsetX = x - el.boundsX;
+                    editorDragOffsetY = y - el.boundsY;
+                    return;
+                }
+            }
+        };
+
+        handleEditorMouseMove = function (e) {
+            if (editorDraggingIndex < 0 || !editorCanvas) return;
+            const rect = editorCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (editorCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (editorCanvas.height / rect.height);
+            const el = editorElements[editorDraggingIndex];
+            if (el.type === 'text') {
+                el.x = x - editorDragOffsetX + el.size * 0.42;
+                el.y = y - editorDragOffsetY + el.size;
+            } else {
+                el.x = x - editorDragOffsetX;
+                el.y = y - editorDragOffsetY;
+            }
+            renderEditor();
+        };
+
+        handleEditorMouseUp = function () {
+            editorDraggingIndex = -1;
+        };
+
+        applyEditorChanges = async function () {
+            if (!editorCanvas) return;
+            readStudioEditorControls();
+            const dataUrl = editorCanvas.toDataURL('image/jpeg', 0.92);
+            document.getElementById('instaPreviewImg').src = dataUrl;
+            document.getElementById('productImage').src = dataUrl;
+            closeEditorModal();
+            showToast('Salvando edicao do studio...', false);
+            try {
+                const res = await fetch(dataUrl);
+                const blob = await res.blob();
+                const formData = new FormData();
+                formData.append('file', blob, 'edited_banner.jpg');
+                const uploadRes = await fetch('/api/admin/upload-media', {
+                    method: 'POST',
+                    headers: { 'X-Admin-Key': savedAdminKey },
+                    body: formData
+                });
+                const uploadData = await uploadRes.json();
+                if (uploadData.success) {
+                    currentData.imageUrl = uploadData.url;
+                    if (currentData.images?.length) {
+                        currentData.images[0] = uploadData.url;
+                    }
+                    if (studioEditorState.musicEnabled && studioEditorState.musicCue) {
+                        currentData.videoMusicCue = studioEditorState.musicCue;
+                    }
+                    showToast('Arte atualizada e salva!');
+                    syncVideoTools();
+                    syncPreview();
+                } else {
+                    showToast('Arte aplicada visualmente, mas falhou ao salvar no servidor.', true);
+                }
+            } catch {
+                showToast('Arte aplicada visualmente, mas houve erro de rede ao salvar.', true);
+            }
+        };
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = normalizeUiText(message);
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('errorAlert');
+            el.textContent = normalizeUiText(msg); el.style.display = 'block';
+        }
+
+        function attachNormalizedTextObserver(elementId) {
+            const target = document.getElementById(elementId);
+            if (!target || typeof MutationObserver === 'undefined') {
+                return;
+            }
+
+            let syncing = false;
+            const observer = new MutationObserver(() => {
+                if (syncing) {
+                    return;
+                }
+
+                const current = target.textContent || '';
+                const normalized = normalizeUiText(current);
+                if (normalized !== current) {
+                    syncing = true;
+                    target.textContent = normalized;
+                    syncing = false;
+                }
+            });
+
+            observer.observe(target, { childList: true, characterData: true, subtree: true });
+        }
+
+        let qrInstance = null;
+        function showQrCode() {
+            if (!currentConvertedUrl) return;
+            const modal = document.getElementById('qrModal');
+            const canvas = document.getElementById('qrCanvas');
+            canvas.innerHTML = '';
+            qrInstance = new QRCode(canvas, { text: currentConvertedUrl, width: 220, height: 220, colorDark: '#0f172a', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H });
+            modal.classList.add('show');
+        }
+        function closeQr() { document.getElementById('qrModal').classList.remove('show'); }
+        if (isDevRuntime()) {
+            const catalogTargetSelect = document.getElementById('catalogTargetSelect');
+            if (catalogTargetSelect) {
+                catalogTargetSelect.value = 'dev';
+            }
+        }
+        attachNormalizedTextObserver('toast');
+        attachNormalizedTextObserver('errorAlert');
+        attachNormalizedTextObserver('mediaStatus');
+        toggleCatalogTargetState();
+    </script>
+</body>
+
+</html>

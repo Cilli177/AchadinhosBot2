@@ -13,7 +13,7 @@ namespace AchadinhosBot.Next.Tests;
 public sealed class MercadoLivreFallbackTests
 {
     [Fact]
-    public async Task ConvertAsync_UsesManualFallback_WhenMercadoLivreApiIsUnavailable()
+    public async Task ConvertAsync_UsesLocalManualFallback_WithoutMercadoLivreApiCalls()
     {
         var handler = new StubHttpMessageHandler(request =>
         {
@@ -40,8 +40,8 @@ public sealed class MercadoLivreFallbackTests
         Assert.Contains("https://produto.mercadolivre.com.br/MLB-123456789", result.ConvertedUrl!, StringComparison.Ordinal);
         Assert.Contains("matt_tool=tool123", result.ConvertedUrl!, StringComparison.Ordinal);
         Assert.Contains("matt_word=word456", result.ConvertedUrl!, StringComparison.Ordinal);
-        Assert.Contains("https://api.mercadolibre.com/items/MLB123456789", handler.RequestedUrls, StringComparer.OrdinalIgnoreCase);
-        Assert.Contains("https://api.mercadolibre.com/products/MLB123456789", handler.RequestedUrls, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain(handler.RequestedUrls, url => url.Contains("api.mercadolibre.com/items/MLB123456789", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(handler.RequestedUrls, url => url.Contains("api.mercadolibre.com/products/MLB123456789", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

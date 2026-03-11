@@ -13,4 +13,7 @@ public sealed record AffiliateLinkResult(
     string? ValidationError,
     string? Error,
     bool CorrectionApplied,
-    string? CorrectionNote);
+    string? CorrectionNote)
+{
+    public string? EnrichmentUrl { get; init; }
+}

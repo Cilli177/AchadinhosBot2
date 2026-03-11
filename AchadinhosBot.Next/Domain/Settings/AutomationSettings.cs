@@ -1,3 +1,5 @@
+using AchadinhosBot.Next.Domain.Models;
+
 namespace AchadinhosBot.Next.Domain.Settings;
 
 public sealed class AutomationSettings
@@ -217,7 +219,7 @@ public sealed class InstagramPostSettings
     public List<long> TelegramChatIds { get; set; } = new();
     public InstagramOfferContextMode OfferContextMode { get; set; } = InstagramOfferContextMode.Off;
     public bool UseOfferContext { get; set; }
-    public bool UseAi { get; set; }
+    public bool UseAi { get; set; } = true;
     public int VariationsCount { get; set; } = 2;
     public string AiProvider { get; set; } = "openai";
     public bool UseUltraPrompt { get; set; }
@@ -291,6 +293,8 @@ public sealed class InstagramPublishSettings
     public long StoryAutoPilotApprovalTelegramChatId { get; set; }
     public string? StoryAutoPilotApprovalWhatsAppGroupId { get; set; }
     public string? StoryAutoPilotApprovalWhatsAppInstanceName { get; set; }
+    public bool SendToCatalog { get; set; } = false;
+    public string CatalogTarget { get; set; } = CatalogTargets.Prod;
 }
 
 public enum InstagramOfferContextMode

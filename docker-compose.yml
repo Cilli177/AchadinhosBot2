@@ -34,6 +34,8 @@ services:
       RABBITMQ__PASSWORD: ${RABBITMQ__PASSWORD:-guest}
     volumes:
       - achadinhos_dev_data:/app/data
+      - achadinhos_dev_media:/app/wwwroot/media/admin
 
 volumes:
   achadinhos_dev_data:
+  achadinhos_dev_media:

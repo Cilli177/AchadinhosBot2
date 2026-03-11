@@ -1,0 +1,9 @@
+{
+    "ProductName": "Integration Test AutoReply",
+    "PostType": "feed",
+    "Caption": "Test",
+    "ImageUrls": [
+        "/media/test.jpg"
+    ],
+    "AutoReplyEnabled": true
+}

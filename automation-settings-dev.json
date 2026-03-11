@@ -1,0 +1,225 @@
+{
+  "Integrations": {
+    "Telegram": {
+      "Connected": false,
+      "Identifier": null,
+      "LastLoginAt": null,
+      "Notes": "N\u00E3o conectado"
+    },
+    "WhatsApp": {
+      "Connected": false,
+      "Identifier": null,
+      "LastLoginAt": null,
+      "Notes": "N\u00E3o conectado"
+    },
+    "MercadoLivre": {
+      "Connected": false,
+      "Identifier": null,
+      "LastLoginAt": null,
+      "Notes": "N\u00E3o conectado"
+    }
+  },
+  "AutoReplies": [
+    {
+      "Id": "be744f71-a17c-41d9-ac24-a4f1e8001715",
+      "Name": "Boas-vindas",
+      "Trigger": "oi",
+      "ResponseTemplate": "Ol\u00E1! Manda seu link que eu converto para afiliado \uD83D\uDE80",
+      "Enabled": true
+    }
+  ],
+  "LinkAutomation": {
+    "AutoConvertIncomingLinks": true,
+    "AutoSendToDestinationChannel": false,
+    "DestinationChannel": "@seuCanal"
+  },
+  "AutoRepliesSettings": {
+    "Enabled": true
+  },
+  "TelegramForwarding": {
+    "Enabled": false,
+    "DestinationChatId": 0,
+    "SourceChatIds": [],
+    "AppendSheinCode": true,
+    "FooterText": "\uD83D\uDD25 Vi no: @ReiDasOfertasVIP"
+  },
+  "WhatsAppForwarding": {
+    "Enabled": false,
+    "ProcessFromMeOnly": true,
+    "SourceChatIds": [],
+    "DestinationGroupIds": [],
+    "AppendSheinCode": true,
+    "SendMediaEnabled": true,
+    "FooterText": "",
+    "InstanceName": null
+  },
+  "WhatsAppForwardingRoutes": [],
+  "TelegramToWhatsApp": {
+    "Enabled": false,
+    "SourceChatIds": [],
+    "DestinationGroupIds": []
+  },
+  "TelegramToWhatsAppRoutes": [],
+  "LinkResponder": {
+    "Enabled": false,
+    "AllowWhatsApp": true,
+    "AllowTelegramBot": false,
+    "AllowTelegramUserbot": false,
+    "TrackingEnabled": true,
+    "WhatsAppAllowPrivate": true,
+    "WhatsAppAllowGroups": false,
+    "WhatsAppChatIds": [],
+    "TelegramAllowPrivate": true,
+    "TelegramAllowGroups": false,
+    "TelegramChatIds": [],
+    "AppendSheinCode": true,
+    "FooterText": "",
+    "ReplyTemplate": "Link convertido:\n{link}",
+    "ReplyOnFailure": "Link n\u00E3o suportado."
+  },
+  "BioHub": {
+    "Enabled": true,
+    "PublicBaseUrl": "",
+    "BrandName": "Rei das Ofertas",
+    "Headline": "Achadinhos em destaque",
+    "Subheadline": "Toque no bot\u00E3o para abrir a oferta com o melhor link.",
+    "ButtonLabel": "Abrir oferta",
+    "MaxItems": 40,
+    "DefaultSource": "bio",
+    "DefaultCampaign": ""
+  },
+  "MercadoLivreCompliance": {
+    "Enabled": false,
+    "BlockAutoFlows": true,
+    "RequireManualApproval": true,
+    "EnforceChannelWhitelist": false,
+    "BlockWhenChannelUnknown": true,
+    "AllowedChannels": []
+  },
+  "LinkIntegrity": {
+    "Enabled": true,
+    "BlockAutomaticFlowOnNonAffiliated": true,
+    "BlockAutomaticFlowOnConversionFailure": true,
+    "IgnoreUnknownStores": true,
+    "EnforcedStores": [
+      "Amazon",
+      "Shopee",
+      "Shein",
+      "Mercado Livre"
+    ]
+  },
+  "CouponHub": {
+    "Enabled": true,
+    "AppendToConvertedMessages": true,
+    "AppendToInstagramCaptions": true,
+    "MaxCouponsPerStore": 1,
+    "Coupons": []
+  },
+  "ContentCalendar": {
+    "Enabled": true,
+    "PollIntervalSeconds": 60,
+    "MaxAttempts": 3
+  },
+  "InstagramPosts": {
+    "Enabled": true,
+    "Triggers": [
+      "criar postagem",
+      "postar",
+      "insta"
+    ],
+    "AllowWhatsApp": true,
+    "AllowTelegramBot": false,
+    "AllowTelegramUserbot": false,
+    "WhatsAppAllowPrivate": true,
+    "WhatsAppAllowGroups": false,
+    "WhatsAppChatIds": [],
+    "TelegramAllowPrivate": true,
+    "TelegramAllowGroups": true,
+    "TelegramChatIds": [],
+    "OfferContextMode": 0,
+    "UseOfferContext": false,
+    "UseAi": false,
+    "VariationsCount": 2,
+    "AiProvider": "openai",
+    "UseUltraPrompt": false,
+    "UseShortProductName": false,
+    "UseBenefitBullets": false,
+    "UseAbSuggestion": true,
+    "UseImageDownload": false,
+    "CaptionTemplates": [
+      "Oferta em destaque: {title}\n\n{lead}\n\nComente \u0022{keyword}\u0022 para receber o link.\n\n{hashtags}",
+      "Oferta: {title}\n\nPontos principais:\n- {bullet1}\n- {bullet2}\n- {bullet3}\n\nComente \u0022{keyword}\u0022 para receber o link.\n\n{hashtags}",
+      "Oferta do dia: {title}\n\n{short}\n\nComente \u0022{keyword}\u0022 para receber o link.\n\n{hashtags}"
+    ],
+    "NichePreset": "geral",
+    "PromptPreset": "premium",
+    "PromptTemplate": "Voce e um copywriter profissional de afiliados no Brasil.\nCrie um post para Instagram objetivo, persuasivo e com linguagem natural.\nNao invente preco ou beneficios nao informados.\n\n{{format}}\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\n\nRodape (se houver): {{footer}}\n",
+    "FooterText": ""
+  },
+  "InstagramPublish": {
+    "Enabled": true,
+    "GraphBaseUrl": "https://graph.facebook.com/v19.0",
+    "AccessToken": "EAAYME7Cl5x4BQ4oqB5mvoMZBqM7raGeuW6cpjNyemuwMWYkr8q993XoR7PWrgOANYOFzRrHVXe03vFH9qNFpvZCNh9m6r2WY4UJwFw012MqIHbMkM6fNkPn3BdGR6TL5VC9egZChZBEaJtblURPOwYithztL9aXO1NVnOdo3ZBZB5UtKa9ZCVOygrgkWBYuXHnlc5BD6gbPRyWK5jkLQ5VMlsyZAAwjnr1RZAsm8rru8ZD",
+    "InstagramUserId": "17841479982697707",
+    "VerifyToken": "ig_verify_reidasofertasvip_20260309",
+    "AutoReplyEnabled": true,
+    "AutoReplyOnlyOnKeywordMatch": true,
+    "ReplyTemplate": "Aqui esta o link: {link}",
+    "ReplyNoMatchTemplate": "Comente a palavra correta para receber o link.",
+    "AutoDmEnabled": false,
+    "DmProvider": "meta",
+    "DmFallbackToManyChatOnError": true,
+    "DmTemplate": "Oi {name}! Aqui esta seu link: {link}",
+    "ManyChatWebhookUrl": null,
+    "ManyChatApiKey": null,
+    "AutoPilotEnabled": false,
+    "AutoPilotIntervalMinutes": 180,
+    "AutoPilotTopCount": 3,
+    "AutoPilotLookbackHours": 24,
+    "AutoPilotRepeatWindowHours": 48,
+    "AutoPilotAllowShortLinks": false,
+    "AutoPilotWeightSales": 35,
+    "AutoPilotWeightReturn": 30,
+    "AutoPilotWeightDiscount": 25,
+    "AutoPilotWeightRecency": 10,
+    "AutoPilotRequireOfficialProductData": true,
+    "AutoPilotMinimumImageMatchScore": 80,
+    "AutoPilotRequireAiCaption": true,
+    "AutoPilotSendForApproval": true,
+    "AutoPilotApprovalChannel": "telegram",
+    "AutoPilotApprovalTelegramChatId": 0,
+    "AutoPilotApprovalWhatsAppGroupId": null,
+    "AutoPilotApprovalWhatsAppInstanceName": null,
+    "StoryAutoPilotEnabled": false,
+    "StoryAutoPilotIntervalMinutes": 240,
+    "StoryAutoPilotTopCount": 2,
+    "StoryAutoPilotLookbackHours": 24,
+    "StoryAutoPilotRepeatWindowHours": 24,
+    "StoryAutoPilotSendForApproval": true,
+    "StoryAutoPilotApprovalChannel": "whatsapp",
+    "StoryAutoPilotApprovalTelegramChatId": 0,
+    "StoryAutoPilotApprovalWhatsAppGroupId": null,
+    "StoryAutoPilotApprovalWhatsAppInstanceName": null
+  },
+  "OpenAI": {
+    "ApiKey": null,
+    "Model": "gpt-4o-mini",
+    "Temperature": 0.7,
+    "MaxOutputTokens": 700,
+    "BaseUrl": "https://api.openai.com/v1"
+  },
+  "Gemini": {
+    "ApiKey": null,
+    "ApiKeys": [],
+    "Model": "gemini-2.5-flash",
+    "BaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "MaxOutputTokens": 1200
+  },
+  "DeepSeek": {
+    "ApiKey": null,
+    "Model": "deepseek-chat",
+    "Temperature": 0.7,
+    "MaxOutputTokens": 1200,
+    "BaseUrl": "https://api.deepseek.com"
+  }
+}
