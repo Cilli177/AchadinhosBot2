@@ -504,6 +504,28 @@
                                 </svg>
                                 <span id="deliveryText"></span>
                             </div>
+                            <div id="convertedLinkActions" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1" hidden style="display:none;">
+                                <button type="button" onclick="openConvertedOffer()"
+                                    class="w-full bg-accent hover:bg-accentHover text-primary font-bold text-sm px-4 py-3 rounded-xl transition-all shadow-lg hover:shadow-accent/20 flex items-center justify-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M14 3h7m0 0v7m0-7L10 14" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M5 5h5M5 5v14h14v-5" />
+                                    </svg>
+                                    <span>Abrir Oferta</span>
+                                </button>
+                                <button type="button" onclick="copyConvertedOfferLink()"
+                                    class="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-sm px-4 py-3 rounded-xl transition-all flex items-center justify-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M10 10h8a2 2 0 012 2v8a2 2 0 01-2 2h-8a2 2 0 01-2-2v-8a2 2 0 012-2z" />
+                                    </svg>
+                                    <span>Copiar Link</span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1520,10 +1542,22 @@
             const resultArea = document.getElementById('resultArea');
             const skeletonLoader = document.getElementById('skeletonLoader');
             const errorAlert = document.getElementById('errorAlert');
+            const convertedLinkActions = document.getElementById('convertedLinkActions');
+            const hideConvertedLinkActions = () => {
+                convertedLinkActions.classList.add('hidden');
+                convertedLinkActions.hidden = true;
+                convertedLinkActions.style.display = 'none';
+            };
+            const showConvertedLinkActions = () => {
+                convertedLinkActions.classList.remove('hidden');
+                convertedLinkActions.hidden = false;
+                convertedLinkActions.style.display = 'grid';
+            };
 
             errorAlert.style.display = 'none';
             resultArea.style.display = 'none';
             document.getElementById('studioPanel').classList.add('hidden');
+            hideConvertedLinkActions();
             skeletonLoader.classList.remove('hidden');
             btn.disabled = true;
             btnText.style.display = 'none';
@@ -1542,6 +1576,9 @@
 
                 currentData = data;
                 currentConvertedUrl = data.trackedUrl || data.convertedUrl || data.originalUrl || urlInput;
+                if (currentConvertedUrl) {
+                    showConvertedLinkActions();
+                }
 
                 resetImagePresentation(document.getElementById('productImage'));
                 document.getElementById('productImage').src = data.imageUrl || '';
@@ -1624,6 +1661,8 @@
                 resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (error) {
                 skeletonLoader.classList.add('hidden');
+                currentConvertedUrl = '';
+                hideConvertedLinkActions();
                 showError(error.message);
             } finally {
                 btn.disabled = false;
@@ -2549,6 +2588,28 @@
             const txt = document.getElementById('captionText').value;
             navigator.clipboard.writeText(txt);
             showToast('📋 Legenda copiada!');
+        }
+
+        function openConvertedOffer() {
+            if (!currentConvertedUrl) {
+                showToast('Nenhum link convertido disponivel.', true);
+                return;
+            }
+
+            trackClick(currentConvertedUrl, 'admin_open_offer');
+            window.open(currentConvertedUrl, '_blank', 'noopener,noreferrer');
+        }
+
+        function copyConvertedOfferLink() {
+            if (!currentConvertedUrl) {
+                showToast('Nenhum link convertido disponivel.', true);
+                return;
+            }
+
+            trackClick(currentConvertedUrl, 'admin_copy_converted_link');
+            navigator.clipboard.writeText(currentConvertedUrl)
+                .then(() => showToast('Link convertido copiado.'))
+                .catch(() => showToast('Falha ao copiar link convertido.', true));
         }
 
         async function loadDraftsHistory() {
