@@ -84,10 +84,10 @@ public sealed class Phase7AnalyticsAndCommandsTests
     private sealed class StubClickLogStore(params ClickLogEntry[] entries) : IClickLogStore
     {
         private readonly IReadOnlyList<ClickLogEntry> _entries = entries;
-        public Task AppendAsync(ClickLogEntry entry, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task<IReadOnlyList<ClickLogEntry>> QueryAsync(string? search, int limit, CancellationToken cancellationToken)
+        public Task AppendAsync(ClickLogEntry entry, string? category, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<IReadOnlyList<ClickLogEntry>> QueryAsync(string? category, string? search, int limit, CancellationToken cancellationToken)
             => Task.FromResult(_entries);
-        public Task ClearAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ClearAsync(string? category, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class StubInstagramAiLogStore(params InstagramAiLogEntry[] entries) : IInstagramAiLogStore

@@ -179,6 +179,7 @@ public sealed class InstagramPhase2Tests
                 new FakeHttpClientFactory(new RecordingHandler()),
                 new InMemoryMediaStore(),
                 new StubMetaGraphClient(),
+                new StubVideoProcessingService(),
                 new ThrowingInstagramPublisher(),
                 outbox,
                 new StubCatalogOfferStore(),
@@ -230,6 +231,7 @@ public sealed class InstagramPhase2Tests
             new FakeHttpClientFactory(new RecordingHandler()),
             new InMemoryMediaStore(),
             new StubMetaGraphClient(),
+            new StubVideoProcessingService(),
             new RecordingInstagramPublisher(),
             new InMemoryInstagramOutboxStore(),
             catalogStore,
@@ -396,6 +398,15 @@ public sealed class InstagramPhase2Tests
 
         public Task<MetaGraphOperationResult> SendDirectMessageAsync(InstagramPublishSettings settings, string recipientId, string message, CancellationToken cancellationToken)
             => Task.FromResult(new MetaGraphOperationResult(true));
+    }
+
+    private sealed class StubVideoProcessingService : IVideoProcessingService
+    {
+        public Task<VideoProcessingResult> PrepareForInstagramPublicationAsync(
+            InstagramPublishDraft draft,
+            string? publicBaseUrl,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new VideoProcessingResult(true, draft.VideoUrl, draft.VideoCoverUrl, false, null));
     }
 
     private sealed class StubCatalogOfferStore : ICatalogOfferStore

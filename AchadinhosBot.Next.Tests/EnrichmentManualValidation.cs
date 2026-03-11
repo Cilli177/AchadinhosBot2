@@ -4,6 +4,7 @@ using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Infrastructure.Amazon;
 using AchadinhosBot.Next.Infrastructure.Instagram;
+using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.ProductData;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,9 +34,10 @@ public sealed class EnrichmentManualValidation
         var amazonCreator = new AmazonCreatorApiClient(affiliateOptions, clientFactory, NullLogger<AmazonCreatorApiClient>.Instance);
         using var memoryCache = new MemoryCache(new MemoryCacheOptions());
         var amazonHtmlScraper = new AmazonHtmlScraperService(clientFactory, memoryCache, NullLogger<AmazonHtmlScraperService>.Instance);
+        var mercadoLivreHtmlScraper = new MercadoLivreHtmlScraperService(clientFactory, memoryCache, NullLogger<MercadoLivreHtmlScraperService>.Instance);
         var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, amazonHtmlScraper, NullLogger<InstagramLinkMetaService>.Instance);
         var m_meliAuth = new FakeMeliAuth();
-        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
+        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, mercadoLivreHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
         
         var processor = new MessageProcessor(
             null!, null!, null!, null!, null!,
@@ -64,9 +66,10 @@ public sealed class EnrichmentManualValidation
         var amazonCreator = new AmazonCreatorApiClient(affiliateOptions, clientFactory, NullLogger<AmazonCreatorApiClient>.Instance);
         using var memoryCache = new MemoryCache(new MemoryCacheOptions());
         var amazonHtmlScraper = new AmazonHtmlScraperService(clientFactory, memoryCache, NullLogger<AmazonHtmlScraperService>.Instance);
+        var mercadoLivreHtmlScraper = new MercadoLivreHtmlScraperService(clientFactory, memoryCache, NullLogger<MercadoLivreHtmlScraperService>.Instance);
         var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, amazonHtmlScraper, NullLogger<InstagramLinkMetaService>.Instance);
         var m_meliAuth = new FakeMeliAuth();
-        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
+        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, mercadoLivreHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
         
         var processor = new MessageProcessor(
             null!, null!, null!, null!, null!,
