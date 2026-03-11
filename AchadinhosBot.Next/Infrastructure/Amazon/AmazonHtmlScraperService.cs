@@ -101,7 +101,7 @@ public sealed class AmazonHtmlScraperService
         client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
         client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Ch-Ua-Mobile", "?0");
         client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Ch-Ua-Platform", "\"Windows\"");
-        client.DefaultRequestHeaders.UpgradeInsecureRequests = true;
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
         client.DefaultRequestHeaders.TryAddWithoutValidation("Cache-Control", "max-age=0");
         client.DefaultRequestHeaders.TryAddWithoutValidation("Connection", "keep-alive");
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");

@@ -13,6 +13,7 @@
 
 # Local secrets and runtime sessions
 AchadinhosBot.Next/.env
+.env
 .env.prod
 AchadinhosBot.Next/WTelegram.session
 AchadinhosBot.Next/bin/**/WTelegram.session
@@ -495,3 +496,20 @@ $RECYCLE.BIN/
 tmp-*
 tmp_*.json
 _build_check/
+
+# Local diagnostics and one-off patch scripts
+/analyze_*.py
+/debug_*.py
+/fix_frontend_encoding.py
+/generate_hashes.*
+/verify_hashes.*
+/hashes.*
+/patch_*.py
+/scan_dump.py
+/ml_*.html
+/TestScraper/
+/temp_hasher/
+/test_amzlink.cs
+/AchadinhosBot.Next/wwwroot/img/
+/docs/relatorios/RELATORIO_FINAL_MERCADO_LIVRE_INSTAGRAM_OPTIMIZATION.md
+/templates/*.jpg

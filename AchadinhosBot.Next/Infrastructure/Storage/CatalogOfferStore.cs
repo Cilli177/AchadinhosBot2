@@ -9,17 +9,16 @@ namespace AchadinhosBot.Next.Infrastructure.Storage;
 public sealed class CatalogOfferStore : ICatalogOfferStore
 {
     private readonly string _dataDirectory;
+    private readonly ICatalogOfferEnrichmentService? _enrichmentService;
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
-    public CatalogOfferStore()
+    public CatalogOfferStore(ICatalogOfferEnrichmentService? enrichmentService = null)
     {
         _dataDirectory = Path.Combine(AppContext.BaseDirectory, "data");
+        _enrichmentService = enrichmentService;
     }
 
-    public async Task<CatalogSyncResult> SyncFromPublishedDraftsAsync(
-        IReadOnlyList<InstagramPublishDraft> drafts, 
-        CancellationToken cancellationToken,
-        Infrastructure.ProductData.OfficialProductDataService? productDataService = null)
+    public async Task<CatalogSyncResult> SyncFromPublishedDraftsAsync(IReadOnlyList<InstagramPublishDraft> drafts, CancellationToken cancellationToken)
     {
         await _mutex.WaitAsync(cancellationToken);
         try
@@ -43,7 +42,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
                 var targetDrafts = published
                     .Where(d => CatalogTargets.Expand(d.CatalogTarget, d.SendToCatalog).Contains(target, StringComparer.OrdinalIgnoreCase))
                     .ToList();
-                var result = await SyncTargetDatabaseAsync(db, targetDrafts, processedDraftIds, target, now, productDataService, cancellationToken);
+                var result = await SyncTargetDatabaseAsync(db, targetDrafts, processedDraftIds, target, now, cancellationToken);
 
                 await WriteAsync(target, db, cancellationToken);
 
@@ -156,7 +155,6 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         HashSet<string> processedDraftIds,
         string target,
         DateTimeOffset now,
-        Infrastructure.ProductData.OfficialProductDataService? productDataService,
         CancellationToken ct)
     {
         var created = 0;
@@ -204,19 +202,20 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             existing.UpdatedAt = now;
 
             // Enrichment
-            if (productDataService != null)
+            if (_enrichmentService != null)
             {
-                var official = await productDataService.TryGetBestAsync(existing.OfferUrl, null, ct);
-                if (official != null)
+                var enrichment = await _enrichmentService.TryEnrichAsync(existing.OfferUrl, ct);
+                if (enrichment != null)
                 {
-                    existing.IsLightningDeal = official.IsLightningDeal;
-                    existing.LightningDealExpiry = official.LightningDealExpiry;
-                    existing.CouponCode = official.CouponCode;
-                    existing.CouponDescription = official.CouponDescription;
+                    existing.IsLightningDeal = enrichment.IsLightningDeal;
+                    existing.LightningDealExpiry = enrichment.LightningDealExpiry;
+                    existing.CouponCode = enrichment.CouponCode;
+                    existing.CouponDescription = enrichment.CouponDescription;
                     
-                    // Update prices if official data is more fresh/accurate
-                    if (!string.IsNullOrWhiteSpace(official.CurrentPrice)) 
-                        existing.PriceText = official.CurrentPrice;
+                    if (!string.IsNullOrWhiteSpace(enrichment.CurrentPrice))
+                    {
+                        existing.PriceText = enrichment.CurrentPrice;
+                    }
                 }
             }
             if (string.IsNullOrWhiteSpace(existing.Keyword))

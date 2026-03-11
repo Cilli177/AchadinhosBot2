@@ -222,6 +222,7 @@ builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
 builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
 builder.Services.AddSingleton<InstagramLinkMetaService>();
 builder.Services.AddSingleton<OfficialProductDataService>();
+builder.Services.AddSingleton<ICatalogOfferEnrichmentService, CatalogOfferEnrichmentService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
 builder.Services.AddSingleton<IMetaGraphClient, MetaGraphClient>();
 builder.Services.AddSingleton<IInstagramPublishService, InstagramPublishService>();
@@ -438,8 +439,8 @@ app.MapGet("/", (HttpContext context, IWebHostEnvironment env) =>
     var host = context.Request.Host.Host;
     if (host.StartsWith("bio.", StringComparison.OrdinalIgnoreCase))
     {
-        var path = Path.Combine(env.WebRootPath, "links.html");
-        return File.Exists(path) ? Results.File(path, "text/html") : Results.NotFound();
+        var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : string.Empty;
+        return Results.Redirect($"/bio{query}", permanent: false);
     }
     
     // Fallback normal: dashboard.html
@@ -447,10 +448,10 @@ app.MapGet("/", (HttpContext context, IWebHostEnvironment env) =>
     return File.Exists(dashboardPath) ? Results.File(dashboardPath, "text/html") : Results.NotFound();
 });
 
-app.MapGet("/links", (IWebHostEnvironment env) =>
+app.MapGet("/links", (HttpContext context) =>
 {
-    var path = Path.Combine(env.WebRootPath, "links.html");
-    return File.Exists(path) ? Results.File(path, "text/html") : Results.NotFound();
+    var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : string.Empty;
+    return Results.Redirect($"/bio{query}", permanent: false);
 });
 
 
@@ -2287,13 +2288,12 @@ api.MapPut("/settings", async (
 api.MapPost("/catalog/sync", async (
     IInstagramPublishStore publishStore,
     ICatalogOfferStore catalogOfferStore,
-    OfficialProductDataService officialProductDataService,
     IAuditTrail audit,
     HttpContext context,
     CancellationToken ct) =>
 {
     var drafts = await publishStore.ListAsync(ct);
-    var result = await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct, officialProductDataService);
+    var result = await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
     await audit.WriteAsync("catalog.sync", context.User.Identity?.Name ?? "unknown", result, ct);
     return Results.Ok(new
     {
@@ -7233,7 +7233,7 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("</head>");
     sb.AppendLine("<body><main class=\"wrap\">");
     sb.AppendLine("  <section class=\"head\">");
-    sb.AppendLine("    <img src=\"/logo.png\" class=\"logo\" alt=\"Rei das Ofertas VIP\">");
+    sb.AppendLine("    <div class=\"logo\" aria-hidden=\"true\" style=\"display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.8rem;color:var(--gold);\">VIP</div>");
     sb.AppendLine($"    <h1>{System.Net.WebUtility.HtmlEncode(brandName)}</h1>");
     sb.AppendLine($"    <p>{System.Net.WebUtility.HtmlEncode(headline)}</p>");
     sb.AppendLine($"    <p style=\"margin-top:12px; font-size:0.8rem; opacity:0.7;\">Origem: {System.Net.WebUtility.HtmlEncode(source)}</p>");
