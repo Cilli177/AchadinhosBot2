@@ -101,7 +101,7 @@ public sealed class AmazonHtmlScraperService
         client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
         client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Ch-Ua-Mobile", "?0");
         client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Ch-Ua-Platform", "\"Windows\"");
-        client.DefaultRequestHeaders.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
+        client.DefaultRequestHeaders.UpgradeInsecureRequests = true;
         client.DefaultRequestHeaders.TryAddWithoutValidation("Cache-Control", "max-age=0");
         client.DefaultRequestHeaders.TryAddWithoutValidation("Connection", "keep-alive");
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
@@ -126,7 +126,7 @@ public sealed class AmazonHtmlScraperService
 
         var images = ExtractImages(html);
         var title = ExtractTitle(html);
-        var (price, oldPrice, discount) = ExtractPrices(html);
+        var (price, oldPrice, discount, isLightning, expiry, couponCode, couponDesc) = ExtractEnrichedOfferInfo(html);
 
         if (LooksLikeGenericAmazonTitle(title))
             title = null;
@@ -139,7 +139,11 @@ public sealed class AmazonHtmlScraperService
             Price: price,
             OldPrice: oldPrice,
             DiscountPercent: discount,
-            Images: images);
+            Images: images,
+            IsLightningDeal: isLightning,
+            LightningDealExpiry: expiry,
+            CouponCode: couponCode,
+            CouponDescription: couponDesc);
     }
 
     // ─── CAPTCHA Detection ────────────────────────────────────────────────────
@@ -309,7 +313,7 @@ public sealed class AmazonHtmlScraperService
         return null;
     }
 
-    // ─── Price Extraction ─────────────────────────────────────────────────────
+    // ─── Enriched Offer Extraction ─────────────────────────────────────────────
 
     private static bool LooksLikeGenericAmazonTitle(string? title)
     {
@@ -318,6 +322,42 @@ public sealed class AmazonHtmlScraperService
 
         var normalized = WebUtility.HtmlDecode(title).Trim().ToLowerInvariant();
         return normalized is "amazon.com.br" or "amazon brasil" or "amazon brazil" or "amazon";
+    }
+
+    private static (string? Price, string? OldPrice, int? Discount, bool IsLightning, DateTimeOffset? Expiry, string? CouponCode, string? CouponDesc) ExtractEnrichedOfferInfo(string html)
+    {
+        var priceInfo = ExtractPrices(html);
+        
+        bool isLightning = html.Contains("lightning-deal", StringComparison.OrdinalIgnoreCase) 
+                        || html.Contains("OFERTA RELÂMPAGO", StringComparison.OrdinalIgnoreCase);
+        
+        DateTimeOffset? expiry = null;
+        if (isLightning)
+        {
+            // Try to find countdown in milliseconds or seconds (Amazon often has 'dealStatus' or 'expiryTime' in JS)
+            var expiryMatch = Regex.Match(html, @"""msToEnd""\s*:\s*(\d+)", RegexOptions.IgnoreCase);
+            if (expiryMatch.Success && long.TryParse(expiryMatch.Groups[1].Value, out var ms))
+            {
+                expiry = DateTimeOffset.UtcNow.AddMilliseconds(ms);
+            }
+        }
+
+        string? couponCode = null;
+        string? couponDesc = null;
+
+        // Match coupon patterns
+        var couponMatch = Regex.Match(html, @"id=""vPCCoupon""[^>]*>([\s\S]*?)</div>", RegexOptions.IgnoreCase);
+        if (couponMatch.Success)
+        {
+            var content = couponMatch.Groups[1].Value;
+            couponDesc = Regex.Replace(content, @"<[^>]+>", " ").Trim();
+            
+            // Extract code if present in text (e.g. "Use o código XPTO10")
+            var codeMatch = Regex.Match(content, @"([A-Z0-9]{5,15})", RegexOptions.IgnoreCase);
+            if (codeMatch.Success) couponCode = codeMatch.Groups[1].Value.ToUpperInvariant();
+        }
+
+        return (priceInfo.Price, priceInfo.OldPrice, priceInfo.Discount, isLightning, expiry, couponCode, couponDesc);
     }
 
     private static (string? Price, string? OldPrice, int? Discount) ExtractPrices(string html)
@@ -422,4 +462,8 @@ public sealed record AmazonScrapedProduct(
     string? Price,
     string? OldPrice,
     int? DiscountPercent,
-    List<string> Images);
+    List<string> Images,
+    bool IsLightningDeal = false,
+    DateTimeOffset? LightningDealExpiry = null,
+    string? CouponCode = null,
+    string? CouponDescription = null);

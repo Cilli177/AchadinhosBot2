@@ -426,6 +426,12 @@
                         <p class="text-accent font-bold text-xs mt-0.5">${item.price}</p>
                     </div>
                 </a>`).join('');
+
+            // Add telemetry to history links
+            grid.querySelectorAll('a').forEach(a => {
+                a.onclick = () => trackClick(a.href, 'Converter_History_Click');
+            });
+
             document.querySelectorAll('#historyGrid .tilt-card').forEach(applyTilt);
         }
 
@@ -436,10 +442,31 @@
             if (card) applyTilt(card);
         });
 
+        // --- Telemetry ---
+        async function trackClick(targetUrl, source = 'Converter', campaign = null) {
+            try {
+                await fetch('/api/analytics/click', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        targetUrl,
+                        source,
+                        campaign,
+                        category: 'converter',
+                        trackingId: 'conv_' + Math.random().toString(36).substring(2, 9)
+                    })
+                });
+            } catch (e) {
+                console.error('Telemetry failed', e);
+            }
+        }
+
         // --- Main Convert ---
         async function handleConvert() {
             const urlInput = document.getElementById('urlInput').value.trim();
             if (!urlInput) { showError('Cole um link para converter.'); return; }
+
+            trackClick(urlInput, 'Converter_Request');
 
             const btn = document.getElementById('submitBtn');
             const btnText = btn.querySelector('.btn-text');
@@ -454,7 +481,6 @@
             btn.disabled = true;
             btnText.style.display = 'none';
             spinner.style.display = 'block';
-
             try {
                 const response = await fetch('/api/conversor', {
                     method: 'POST',
@@ -532,6 +558,7 @@
 
         function copyResult() {
             if (!currentConvertedUrl) return;
+            trackClick(currentConvertedUrl, 'Converter_Copy_Link');
             navigator.clipboard.writeText(currentConvertedUrl)
                 .then(() => showToast('🔗 Link copiado!'))
                 .catch(() => showToast('Erro ao copiar.'));
@@ -539,17 +566,22 @@
 
         function copyFormattedOffer() {
             if (!currentShareText) return;
+            trackClick(currentConvertedUrl, 'Converter_Copy_Offer');
             navigator.clipboard.writeText(currentShareText)
                 .then(() => showToast('📋 Oferta copiada com formatação!'))
                 .catch(() => showToast('Erro ao copiar.'));
         }
 
         function openLink() {
-            if (currentConvertedUrl) window.open(currentConvertedUrl, '_blank', 'noopener,noreferrer');
+            if (currentConvertedUrl) {
+                trackClick(currentConvertedUrl, 'Converter_Open_Link');
+                window.open(currentConvertedUrl, '_blank', 'noopener,noreferrer');
+            }
         }
 
         function shareWhatsApp() {
             if (!currentShareText) return;
+            trackClick(currentConvertedUrl, 'Converter_WhatsApp_Share');
             window.open(`https://wa.me/?text=${encodeURIComponent(currentShareText)}`, '_blank');
         }
 

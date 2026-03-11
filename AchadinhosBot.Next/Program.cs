@@ -274,6 +274,7 @@ if (startTelegramUserbotWorker)
 }
 
 builder.Services.AddHostedService<InstagramOutboundReplayService>();
+builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
 
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<DeliverySafetyPolicy>();
@@ -432,6 +433,27 @@ app.MapConverterEndpoint();
 app.MapAdminEndpoints();
 app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 
+app.MapGet("/", (HttpContext context, IWebHostEnvironment env) =>
+{
+    var host = context.Request.Host.Host;
+    if (host.StartsWith("bio.", StringComparison.OrdinalIgnoreCase))
+    {
+        var path = Path.Combine(env.WebRootPath, "links.html");
+        return File.Exists(path) ? Results.File(path, "text/html") : Results.NotFound();
+    }
+    
+    // Fallback normal: dashboard.html
+    var dashboardPath = Path.Combine(env.WebRootPath, "dashboard.html");
+    return File.Exists(dashboardPath) ? Results.File(dashboardPath, "text/html") : Results.NotFound();
+});
+
+app.MapGet("/links", (IWebHostEnvironment env) =>
+{
+    var path = Path.Combine(env.WebRootPath, "links.html");
+    return File.Exists(path) ? Results.File(path, "text/html") : Results.NotFound();
+});
+
+
 app.MapGet("/conversor", (IWebHostEnvironment env) =>
 {
     var path = Path.Combine(env.WebRootPath, "conversor.html");
@@ -585,6 +607,10 @@ app.MapPost("/api/conversor", async (
                     viewModel.DataSource = !string.IsNullOrWhiteSpace(fallbackOfficial?.DataSource) ? fallbackOfficial!.DataSource : "meta-fallback";
                     viewModel.ConvertedUrl = FirstNonEmpty(fallbackResolvedUrl, normalizedInputUrl) ?? normalizedInputUrl;
                     viewModel.TrackedUrl = viewModel.ConvertedUrl;
+                    viewModel.IsLightningDeal = fallbackOfficial?.IsLightningDeal ?? false;
+                    viewModel.LightningDealExpiry = fallbackOfficial?.LightningDealExpiry;
+                    viewModel.CouponCode = fallbackOfficial?.CouponCode;
+                    viewModel.CouponDescription = fallbackOfficial?.CouponDescription;
                     viewModel.ConversionHost = ExtractHostForDisplay(viewModel.ConvertedUrl);
                     viewModel.DomainHost = ExtractHostForDisplay(viewModel.TrackedUrl);
                 }
@@ -822,6 +848,10 @@ app.MapPost("/api/conversor", async (
                     productPageMeta.PreviousPriceText ?? string.Empty,
                     convertedMeta.PreviousPriceText ?? string.Empty,
                     originalMeta.PreviousPriceText ?? string.Empty) ?? string.Empty);
+                viewModel.IsLightningDeal = officialData?.IsLightningDeal ?? false;
+                viewModel.LightningDealExpiry = officialData?.LightningDealExpiry;
+                viewModel.CouponCode = officialData?.CouponCode;
+                viewModel.CouponDescription = officialData?.CouponDescription;
 
                 // Validate previous price: must be greater than current price, otherwise discard
                 if (!string.IsNullOrWhiteSpace(viewModel.PreviousPrice) && !string.IsNullOrWhiteSpace(viewModel.Price))
@@ -944,7 +974,11 @@ app.MapGet("/bio", async (
                 OriginalLink = link?.Trim() ?? string.Empty,
                 Store = ResolveStoreNameFromUrl(link),
                 ItemNumber = catalogItem?.ItemNumber,
-                Keyword = FirstNonEmpty(catalogItem?.Keyword, cta?.Keyword?.Trim())
+                Keyword = FirstNonEmpty(catalogItem?.Keyword, cta?.Keyword?.Trim()),
+                IsLightningDeal = catalogItem?.IsLightningDeal ?? false,
+                LightningDealExpiry = catalogItem?.LightningDealExpiry,
+                CouponCode = catalogItem?.CouponCode,
+                CouponDescription = catalogItem?.CouponDescription
             };
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Link))
@@ -2253,12 +2287,13 @@ api.MapPut("/settings", async (
 api.MapPost("/catalog/sync", async (
     IInstagramPublishStore publishStore,
     ICatalogOfferStore catalogOfferStore,
+    OfficialProductDataService officialProductDataService,
     IAuditTrail audit,
     HttpContext context,
     CancellationToken ct) =>
 {
     var drafts = await publishStore.ListAsync(ct);
-    var result = await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    var result = await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct, officialProductDataService);
     await audit.WriteAsync("catalog.sync", context.User.Identity?.Name ?? "unknown", result, ct);
     return Results.Ok(new
     {
@@ -3336,7 +3371,7 @@ api.MapGet("/logs/clicks", async (
     IClickLogStore clickLogStore,
     CancellationToken ct) =>
 {
-    var items = await clickLogStore.QueryAsync(q, limit ?? 200, ct);
+    var items = await clickLogStore.QueryAsync(null, q, limit ?? 200, ct);
     return Results.Ok(new { items });
 });
 
@@ -3349,7 +3384,7 @@ api.MapGet("/logs/funnel", async (
     var windowHours = Math.Clamp(hours ?? 168, 1, 720);
     var since = DateTimeOffset.UtcNow.AddHours(-windowHours);
     var conversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 2000 }, ct);
-    var clicks = await clickLogStore.QueryAsync(null, 2000, ct);
+    var clicks = await clickLogStore.QueryAsync(null, null, 2000, ct);
 
     var conversionsWindow = conversions
         .Where(x => x.Timestamp >= since)
@@ -3437,7 +3472,7 @@ api.MapGet("/logs/funnel", async (
 
 api.MapPost("/logs/clicks/clear", async (IClickLogStore clickLogStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
 {
-    await clickLogStore.ClearAsync(ct);
+    await clickLogStore.ClearAsync(null, ct);
     await audit.WriteAsync("logs.clicks.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
     return Results.Ok(new { success = true });
 });
@@ -3656,7 +3691,7 @@ app.MapGet("/r/{id}", async (
         Referrer = string.IsNullOrWhiteSpace(referrer) ? null : referrer,
         UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
         IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
-    }, ct);
+    }, null, ct);
 
     return Results.Redirect(entry.TargetUrl);
 });
@@ -7145,24 +7180,63 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
     sb.AppendLine($"  <title>{System.Net.WebUtility.HtmlEncode(brandName)} - Links</title>");
     sb.AppendLine("  <style>");
-    sb.AppendLine("    :root{--bg:#f7f5ef;--card:#fffaf2;--line:#e8dfcc;--text:#1f1a14;--muted:#6a5f4e;--btn:#1f8f5f;--btnText:#fff;}");
-    sb.AppendLine("    *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(180deg,#fffdf8 0%,var(--bg) 100%);color:var(--text)}");
-    sb.AppendLine("    .wrap{max-width:760px;margin:0 auto;padding:24px 16px 48px}");
-    sb.AppendLine("    .head{padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--card);margin-bottom:18px}");
-    sb.AppendLine("    h1{margin:0 0 8px;font-size:1.4rem} p{margin:0;color:var(--muted)}");
-    sb.AppendLine("    .card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px 14px 12px;margin-bottom:10px}");
-    sb.AppendLine("    .title{font-weight:700;font-size:1rem;line-height:1.35}");
-    sb.AppendLine("    .meta{margin-top:6px;color:var(--muted);font-size:.9rem}");
-    sb.AppendLine("    .btn{display:inline-block;margin-top:10px;background:var(--btn);color:var(--btnText);text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:700}");
-    sb.AppendLine("    .empty{padding:14px;border:1px dashed var(--line);border-radius:12px;color:var(--muted)}");
-    sb.AppendLine("    .foot{margin-top:14px;font-size:.82rem;color:var(--muted)}");
+    sb.AppendLine("    :root {");
+    sb.AppendLine("      --bg: #020617; /* Slate-950 */");
+    sb.AppendLine("      --card: rgba(15, 23, 42, 0.7); /* Slate-900 with transparency */");
+    sb.AppendLine("      --line: rgba(196, 164, 104, 0.2); /* Gold trace */");
+    sb.AppendLine("      --gold: #c4a468;");
+    sb.AppendLine("      --text: #f8fafc;");
+    sb.AppendLine("      --muted: #94a3b8;");
+    sb.AppendLine("      --btn: #c4a468;");
+    sb.AppendLine("      --btnText: #020617;");
+    sb.AppendLine("    }");
+    sb.AppendLine("    * { box-sizing: border-box; }");
+    sb.AppendLine("    body { margin: 0; font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg); color: var(--text); background-attachment: fixed; }");
+    sb.AppendLine("    .wrap { max-width: 600px; margin: 0 auto; padding: 40px 16px 80px; }");
+    sb.AppendLine("    .head { text-align: center; margin-bottom: 40px; padding: 20px; border-radius: 20px; background: radial-gradient(circle at center, rgba(196,164,104,0.1) 0%, transparent 70%); }");
+    sb.AppendLine("    .logo { width: 100px; height: 100px; margin: 0 auto 20px; border-radius: 50%; border: 2px solid var(--gold); padding: 5px; box-shadow: 0 0 20px rgba(196,164,104,0.3); }");
+    sb.AppendLine("    h1 { margin: 0 0 8px; font-size: 1.6rem; color: var(--gold); letter-spacing: 1px; text-transform: uppercase; font-weight: 800; }");
+    sb.AppendLine("    p { margin: 0; color: var(--muted); font-size: 0.95rem; }");
+    sb.AppendLine("    .card { position: relative; border: 1px solid var(--line); border-radius: 18px; background: var(--card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 16px; margin-bottom: 16px; transition: all 0.3s ease; display: block; text-decoration: none; color: inherit; }");
+    sb.AppendLine("    .card:hover { border-color: var(--gold); transform: translateY(-3px); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(196,164,104,0.1); }");
+    sb.AppendLine("    .title { font-weight: 700; font-size: 1.1rem; line-height: 1.4; color: var(--gold); margin-bottom: 4px; }");
+    sb.AppendLine("    .meta { color: var(--muted); font-size: 0.85rem; display: flex; gap: 10px; align-items: center; }");
+    sb.AppendLine("    .btn { display: block; width: 100%; text-align: center; margin-top: 14px; background: var(--btn); color: var(--btnText); text-decoration: none; padding: 12px; border-radius: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }");
+    sb.AppendLine("    .badge-lightning { display: inline-block; background: #e11d48; color: white; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 900; text-transform: uppercase; margin-bottom: 10px; animation: pulse-red 2s infinite; }");
+    sb.AppendLine("    @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(225, 29, 72, 0); } 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); } }");
+    sb.AppendLine("    .coupon-tag { display: inline-flex; align-items: center; gap: 4px; background: rgba(196, 164, 104, 0.15); color: var(--gold); padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 800; margin-top: 8px; border: 1px solid rgba(196, 164, 104, 0.3); }");
+    sb.AppendLine("    .empty { padding: 30px; border: 1px dashed var(--line); border-radius: 20px; color: var(--muted); text-align: center; }");
+    sb.AppendLine("    .foot { margin-top: 40px; text-align: center; font-size: 0.8rem; color: var(--muted); }");
     sb.AppendLine("  </style>");
+    sb.AppendLine("  <script>");
+    sb.AppendLine("    function updateCountdowns() {");
+    sb.AppendLine("        const now = new Date().getTime();");
+    sb.AppendLine("        document.querySelectorAll('[data-expiry]').forEach(el => {");
+    sb.AppendLine("            const expiryStr = el.getAttribute('data-expiry');");
+    sb.AppendLine("            if (!expiryStr) return;");
+    sb.AppendLine("            const expiry = new Date(expiryStr).getTime();");
+    sb.AppendLine("            const diff = expiry - now;");
+    sb.AppendLine("            if (diff <= 0) {");
+    sb.AppendLine("                el.innerHTML = 'Oferta Expirada';");
+    sb.AppendLine("                el.style.animation = 'none'; el.style.background = '#444';");
+    sb.AppendLine("                return;");
+    sb.AppendLine("            }");
+    sb.AppendLine("            const h = Math.floor(diff / 3600000);");
+    sb.AppendLine("            const m = Math.floor((diff % 3600000) / 60000);");
+    sb.AppendLine("            const s = Math.floor((diff % 60000) / 1000);");
+    sb.AppendLine("            el.innerHTML = `⚡ ${h}h ${m}m ${s}s`;");
+    sb.AppendLine("        });");
+    sb.AppendLine("    }");
+    sb.AppendLine("    setInterval(updateCountdowns, 1000);");
+    sb.AppendLine("    window.onload = updateCountdowns;");
+    sb.AppendLine("  </script>");
     sb.AppendLine("</head>");
     sb.AppendLine("<body><main class=\"wrap\">");
     sb.AppendLine("  <section class=\"head\">");
-    sb.AppendLine($"    <h1>{System.Net.WebUtility.HtmlEncode(headline)}</h1>");
-    sb.AppendLine($"    <p>{System.Net.WebUtility.HtmlEncode(subheadline)}</p>");
-    sb.AppendLine($"    <p style=\"margin-top:6px;font-size:.82rem;\">Origem: <strong>{System.Net.WebUtility.HtmlEncode(source)}</strong> | Campanha: <strong>{System.Net.WebUtility.HtmlEncode(campaignLabel)}</strong></p>");
+    sb.AppendLine("    <img src=\"/logo.png\" class=\"logo\" alt=\"Rei das Ofertas VIP\">");
+    sb.AppendLine($"    <h1>{System.Net.WebUtility.HtmlEncode(brandName)}</h1>");
+    sb.AppendLine($"    <p>{System.Net.WebUtility.HtmlEncode(headline)}</p>");
+    sb.AppendLine($"    <p style=\"margin-top:12px; font-size:0.8rem; opacity:0.7;\">Origem: {System.Net.WebUtility.HtmlEncode(source)}</p>");
     sb.AppendLine("  </section>");
 
     if (items.Count == 0)
@@ -7181,7 +7255,18 @@ static string BuildBioLinksPageHtml(
             var createdAt = item.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
 
             sb.AppendLine("  <article class=\"card\">");
+            if (item.IsLightningDeal)
+            {
+                var expiryAttr = item.LightningDealExpiry.HasValue 
+                    ? $" data-expiry=\"{item.LightningDealExpiry.Value:yyyy-MM-ddTHH:mm:ssZ}\"" 
+                    : "";
+                sb.AppendLine($"    <div class=\"badge-lightning\"{expiryAttr}>Oferta Relâmpago</div>");
+            }
             sb.AppendLine($"    <div class=\"title\">{title}</div>");
+            if (!string.IsNullOrWhiteSpace(item.CouponCode))
+            {
+                sb.AppendLine($"    <div class=\"coupon-tag\">🎟️ Cupom: <strong>{System.Net.WebUtility.HtmlEncode(item.CouponCode)}</strong></div>");
+            }
             if (item.ItemNumber.HasValue)
             {
                 sb.AppendLine($"    <div class=\"meta\">Item: <strong>{item.ItemNumber.Value}</strong></div>");
@@ -7533,7 +7618,57 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
         .vip-card { background: linear-gradient(145deg, #1e293b, #0f172a); border: 1px solid rgba(196, 164, 104, 0.15); transition: transform 0.3s ease, box-shadow 0.3s ease; }
         .vip-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(196, 164, 104, 0.15); border-color: rgba(196, 164, 104, 0.4); }
         .image-wrapper { background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; height: 240px; border-bottom: 1px solid rgba(196, 164, 104, 0.1); }
+        .badge-lightning { 
+            background: #e11d48; 
+            color: white; 
+            animation: pulse-red 2s infinite; 
+        }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(225, 29, 72, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); }
+        }
     </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.addEventListener('click', function(e) {
+                const link = e.target.closest('a');
+                if (link && link.href) {
+                    fetch('/api/analytics/click', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            TargetUrl: link.href,
+                            Source: 'catalog_web',
+                            Category: 'catalog'
+                        })
+                    }).catch(() => {});
+                }
+            });
+
+            function updateCountdowns() {
+                const now = new Date().getTime();
+                document.querySelectorAll('[data-expiry]').forEach(el => {
+                    const expiryStr = el.getAttribute('data-expiry');
+                    if (!expiryStr) return;
+                    const expiry = new Date(expiryStr).getTime();
+                    const diff = expiry - now;
+                    if (diff <= 0) {
+                        el.innerHTML = "Oferta Expirada";
+                        el.classList.remove('badge-lightning');
+                        el.classList.add('bg-slate-500');
+                        return;
+                    }
+                    const h = Math.floor(diff / 3600000);
+                    const m = Math.floor((diff % 3600000) / 60000);
+                    const s = Math.floor((diff % 60000) / 1000);
+                    el.innerHTML = `⚡ ${h}h ${m}m ${s}s`;
+                });
+            }
+            setInterval(updateCountdowns, 1000);
+            updateCountdowns();
+        });
+    </script>
 </head>
 <body class="min-h-screen pb-12">
     <!-- Header -->
@@ -7587,6 +7722,29 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
             
             var published = item.PublishedAt.ToString("dd/MM/yyyy");
 
+            var dealBadge = "";
+            if (item.IsLightningDeal)
+            {
+                var expiryAttr = item.LightningDealExpiry.HasValue 
+                    ? $" data-expiry=\"{item.LightningDealExpiry.Value:yyyy-MM-ddTHH:mm:ssZ}\"" 
+                    : "";
+                dealBadge = $@"
+                    <div class=""absolute top-3 right-3 badge-lightning text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded z-10 border border-white/20 shadow-lg""{expiryAttr}>
+                        Oferta Relâmpago
+                    </div>";
+            }
+            
+            var couponBadge = "";
+            if (!string.IsNullOrWhiteSpace(item.CouponCode))
+            {
+                couponBadge = $$$"""
+                    <div class="mt-2 inline-flex items-center gap-1.5 bg-accent/10 border border-accent/20 px-2.5 py-1 rounded-lg">
+                        <svg class="w-3.5 h-3.5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
+                        <span class="text-accent text-[11px] font-bold uppercase">Cupom Ativo</span>
+                    </div>
+                """;
+            }
+
             var cardHtml = $$$"""
             <article class="vip-card rounded-2xl overflow-hidden flex flex-col h-full group">
                 <a href="{{{detailLink}}}" class="block relative image-wrapper">
@@ -7594,6 +7752,7 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
                     <div class="absolute top-3 left-3 bg-primary/90 text-accent text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm border border-accent/20 z-10">
                         {{{published}}}
                     </div>
+                    {{{dealBadge}}}
                     <!-- View overlay -->
                     <div class="absolute inset-0 bg-primary/40 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center justify-center backdrop-blur-[2px]">
                         <span class="bg-accent text-primary font-bold px-4 py-2 rounded-full transform translate-y-4 group-hover:translate-y-0 transition-transform">Ver Detalhes</span>
@@ -7607,9 +7766,11 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
                         <span class="text-accent">#{{{item.ItemNumber}}}</span>
                     </div>
                     
-                    <h3 class="text-white font-semibold flex-1 leading-snug mb-4">
+                    <h3 class="text-white font-semibold flex-1 leading-snug mb-2">
                         <a href="{{{detailLink}}}" class="hover:text-accent transition-colors" title="{{{title}}}">{{{titleShort}}}</a>
                     </h3>
+                    
+                    {{{couponBadge}}}
                     
                     <div class="mt-auto pt-4 border-t border-white/5 flex items-center justify-between">
                         <div class="flex flex-col">
@@ -7655,8 +7816,23 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
     var savings_text = "Desconto aplicado";
     var publish_date = item.PublishedAt.ToString("dd/MM/yyyy HH:mm");
     
-    // As we lack specific coupon parsing right now in CatalogOfferItem, we leave it empty.
-    var coupon = ""; 
+    // Enrichment
+    var isLightning = item.IsLightningDeal;
+    var expiry = item.LightningDealExpiry;
+    var coupon = item.CouponCode ?? "";
+    var couponDesc = item.CouponDescription ?? "";
+    
+    var dealBadge = "";
+    if (isLightning)
+    {
+        var expiryAttr = expiry.HasValue 
+            ? $" data-expiry=\"{expiry.Value:yyyy-MM-ddTHH:mm:ssZ}\"" 
+            : "";
+        dealBadge = $@"
+            <div class=""absolute top-6 right-6 bg-vipRed text-white text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl z-20 shadow-2xl animate-pulse""{expiryAttr}>
+                ⚡ Oferta Relâmpago
+            </div>";
+    }
     var couponBlock1 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
 <div class="mt-8 p-6 bg-slate-50 rounded-2xl border-l-4 border-accent">
     <p class="text-sm font-bold text-slate-500 uppercase mb-2">Instrução de Compra:</p>
@@ -7666,9 +7842,15 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
 
     var couponBlock2 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
 <div class="mt-8 pt-8 border-t border-white/10">
-    <div class="bg-white/5 rounded-xl p-4 text-center">
-        <p class="text-white/60 text-xs uppercase tracking-widest mb-1">CUPOM ATIVO</p>
-        <p class="text-accent font-mono font-bold text-xl tracking-wider">{{coupon}}</p>
+    <div class="bg-white/5 rounded-xl p-6 text-center border border-accent/20">
+        <p class="text-white/60 text-[10px] uppercase tracking-widest mb-2 font-bold">CUPOM ATIVO</p>
+        <div class="flex items-center justify-center gap-3">
+            <p id="couponCode" class="text-accent font-mono font-black text-2xl tracking-widest cursor-pointer hover:scale-105 transition-transform">{{coupon}}</p>
+            <button onclick="copyCoupon('{{coupon}}')" class="bg-accent/20 hover:bg-accent/30 text-accent p-2 rounded-lg transition-colors" title="Copiar Cupom">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+            </button>
+        </div>
+        <p class="text-accent/60 text-[10px] mt-2 italic">{{couponDesc}}</p>
     </div>
 </div>
 """;
@@ -7734,6 +7916,55 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
             font-family: 'Montserrat', sans-serif;
         }
     </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.addEventListener('click', function(e) {
+                const link = e.target.closest('a');
+                if (link && link.href) {
+                    fetch('/api/analytics/click', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            TargetUrl: link.href,
+                            Source: 'catalog_web',
+                            Category: 'catalog'
+                        })
+                    }).catch(() => {});
+                }
+            });
+
+            function updateCountdowns() {
+                const now = new Date().getTime();
+                document.querySelectorAll('[data-expiry]').forEach(el => {
+                    const expiryStr = el.getAttribute('data-expiry');
+                    if (!expiryStr) return;
+                    const expiry = new Date(expiryStr).getTime();
+                    const diff = expiry - now;
+                    if (diff <= 0) {
+                        el.innerHTML = "Oferta Expirada";
+                        el.classList.add('bg-slate-500');
+                        el.classList.remove('bg-vipRed', 'animate-pulse');
+                        return;
+                    }
+                    const h = Math.floor(diff / 3600000);
+                    const m = Math.floor((diff % 3600000) / 60000);
+                    const s = Math.floor((diff % 60000) / 1000);
+                    el.innerHTML = `⚡ Expira em: ${h}h ${m}m ${s}s`;
+                });
+            }
+            setInterval(updateCountdowns, 1000);
+            updateCountdowns();
+
+            window.copyCoupon = function(code) {
+                navigator.clipboard.writeText(code).then(() => {
+                    const btn = event.currentTarget;
+                    const original = btn.innerHTML;
+                    btn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                    setTimeout(() => { btn.innerHTML = original; }, 2000);
+                });
+            };
+        });
+    </script>
 </head>
 <body class="text-slate-900 overflow-x-hidden">
 
@@ -7758,7 +7989,8 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
             <div class="hero-gradient rounded-3xl overflow-hidden shadow-2xl flex flex-col lg:flex-row items-center p-8 lg:p-16 gap-12">
                 
                 <!-- Product Image Area -->
-                <div class="w-full lg:w-1/2 flex justify-center items-center animate-float">
+                <div class="w-full lg:w-1/2 flex justify-center items-center animate-float relative">
+                    {{dealBadge}}
                     <div class="relative group">
                         <div class="absolute -inset-4 bg-accent/20 rounded-full blur-3xl group-hover:bg-accent/30 transition duration-500"></div>
                         <div class="relative">
@@ -11648,6 +11880,10 @@ internal sealed record BioLinkItem
     public string Store { get; init; } = "Loja";
     public int? ItemNumber { get; init; }
     public string? Keyword { get; init; }
+    public bool IsLightningDeal { get; init; }
+    public DateTimeOffset? LightningDealExpiry { get; init; }
+    public string? CouponCode { get; init; }
+    public string? CouponDescription { get; init; }
 }
 internal sealed record PublicLinkConverterViewModel
 {
@@ -11663,10 +11899,12 @@ internal sealed record PublicLinkConverterViewModel
     public string Price { get; set; } = string.Empty;
     public string PreviousPrice { get; set; } = string.Empty;
     public int? DiscountPercent { get; set; }
+    public bool IsLightningDeal { get; set; }
+    public DateTimeOffset? LightningDealExpiry { get; set; }
     public string EstimatedDelivery { get; set; } = string.Empty;
     public bool HasCoupon { get; set; }
-    public string CouponCode { get; set; } = string.Empty;
-    public string CouponDescription { get; set; } = string.Empty;
+    public string? CouponCode { get; set; }
+    public string? CouponDescription { get; set; }
     public string ImageUrl { get; set; } = string.Empty;
     public string VideoUrl { get; set; } = string.Empty;
     public bool IsAffiliated { get; set; }

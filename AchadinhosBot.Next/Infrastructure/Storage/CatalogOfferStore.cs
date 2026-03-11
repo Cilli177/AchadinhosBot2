@@ -16,7 +16,10 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         _dataDirectory = Path.Combine(AppContext.BaseDirectory, "data");
     }
 
-    public async Task<CatalogSyncResult> SyncFromPublishedDraftsAsync(IReadOnlyList<InstagramPublishDraft> drafts, CancellationToken cancellationToken)
+    public async Task<CatalogSyncResult> SyncFromPublishedDraftsAsync(
+        IReadOnlyList<InstagramPublishDraft> drafts, 
+        CancellationToken cancellationToken,
+        Infrastructure.ProductData.OfficialProductDataService? productDataService = null)
     {
         await _mutex.WaitAsync(cancellationToken);
         try
@@ -40,7 +43,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
                 var targetDrafts = published
                     .Where(d => CatalogTargets.Expand(d.CatalogTarget, d.SendToCatalog).Contains(target, StringComparer.OrdinalIgnoreCase))
                     .ToList();
-                var result = SyncTargetDatabase(db, targetDrafts, processedDraftIds, target, now);
+                var result = await SyncTargetDatabaseAsync(db, targetDrafts, processedDraftIds, target, now, productDataService, cancellationToken);
 
                 await WriteAsync(target, db, cancellationToken);
 
@@ -147,12 +150,14 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
     }
 
-    private CatalogSyncResult SyncTargetDatabase(
+    private async Task<CatalogSyncResult> SyncTargetDatabaseAsync(
         CatalogDatabase db,
         IReadOnlyList<InstagramPublishDraft> drafts,
         HashSet<string> processedDraftIds,
         string target,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Infrastructure.ProductData.OfficialProductDataService? productDataService,
+        CancellationToken ct)
     {
         var created = 0;
         var updated = 0;
@@ -197,6 +202,23 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             existing.Active = true;
             existing.PublishedAt = draft.CreatedAt;
             existing.UpdatedAt = now;
+
+            // Enrichment
+            if (productDataService != null)
+            {
+                var official = await productDataService.TryGetBestAsync(existing.OfferUrl, null, ct);
+                if (official != null)
+                {
+                    existing.IsLightningDeal = official.IsLightningDeal;
+                    existing.LightningDealExpiry = official.LightningDealExpiry;
+                    existing.CouponCode = official.CouponCode;
+                    existing.CouponDescription = official.CouponDescription;
+                    
+                    // Update prices if official data is more fresh/accurate
+                    if (!string.IsNullOrWhiteSpace(official.CurrentPrice)) 
+                        existing.PriceText = official.CurrentPrice;
+                }
+            }
             if (string.IsNullOrWhiteSpace(existing.Keyword))
             {
                 existing.Keyword = BuildKeyword(draft, existing.ItemNumber);
@@ -344,6 +366,8 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         {
             "story" => "story",
             "stories" => "story",
+            "reel" => "reel",
+            "reels" => "reel",
             _ => "feed"
         };
     }

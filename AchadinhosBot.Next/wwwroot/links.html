@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rei das Ofertas VIP - Elite Link</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;800;900&family=Inter:wght@300;400;600&family=Outfit:wght@300;400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#050505',
+                        brandOrange: '#FF6600',
+                        brandOrangeHover: '#E65C00',
+                        brandDark: '#0a0a0a',
+                        textMuted: '#777777',
+                    },
+                    fontFamily: {
+                        display: ['Montserrat', 'sans-serif'],
+                        sans: ['Outfit', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #050505;
+            color: #ffffff;
+            -webkit-font-smoothing: antialiased;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .font-display {
+            font-family: 'Montserrat', sans-serif;
+        }
+
+        .bg-elite {
+            background: radial-gradient(circle at 50% -20%, rgba(255, 102, 0, 0.12) 0%, #050505 60%);
+            min-height: 100vh;
+        }
+
+        .elite-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 102, 0, 0.15);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+        }
+
+        .elite-card:hover {
+            border-color: rgba(255, 102, 0, 0.5);
+            background: rgba(255, 102, 0, 0.05);
+            transform: translateY(-5px);
+            box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.9);
+        }
+
+        .btn-orange {
+            background: linear-gradient(135deg, #FF6600, #FF8C00);
+            color: #000000;
+            font-weight: 900;
+            letter-spacing: 0.1em;
+            transition: all 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+            box-shadow: 0 10px 30px -5px rgba(255, 102, 0, 0.4);
+        }
+
+        .btn-orange:hover {
+            transform: scale(1.02);
+            box-shadow: 0 15px 40px -5px rgba(255, 102, 0, 0.6);
+            filter: brightness(1.1);
+        }
+
+        .logo-glow {
+            position: relative;
+        }
+
+        .logo-glow::before {
+            content: '';
+            position: absolute;
+            inset: -15px;
+            background: radial-gradient(circle, rgba(255, 102, 0, 0.1) 0%, transparent 70%);
+            animation: breathe 4s ease-in-out infinite;
+        }
+
+        @keyframes breathe {
+
+            0%,
+            100% {
+                opacity: 0.4;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.7;
+                transform: scale(1.15);
+            }
+        }
+
+        .orange-shimmer {
+            background: linear-gradient(90deg, #ffffff 0%, #FF6600 50%, #ffffff 100%);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: text-shimmer 5s linear infinite;
+        }
+
+        @keyframes text-shimmer {
+            to {
+                background-position: 200% center;
+            }
+        }
+
+        .reveal {
+            opacity: 0;
+            transform: translateY(25px);
+            transition: all 1s cubic-bezier(0.19, 1, 0.22, 1);
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .vip-accent {
+            color: #FF6600;
+            font-family: 'Syncopate', sans-serif;
+            font-weight: 700;
+        }
+    </style>
+</head>
+
+<body class="bg-elite flex flex-col items-center px-7 py-20">
+
+    <header class="w-full max-w-[450px] flex flex-col items-center mb-16 text-center">
+        <!-- New Orange Geometric Logo -->
+        <div class="logo-glow mb-10 reveal">
+            <div
+                class="w-32 h-32 rounded-[2.5rem] bg-black/60 overflow-hidden flex items-center justify-center border border-white/10 shadow-3xl">
+                <img src="img/logo-rei-3d.png" alt="Rei" class="w-full h-full object-cover p-2">
+            </div>
+        </div>
+
+        <div class="flex flex-col items-center gap-3 reveal" style="transition-delay: 200ms;">
+            <div class="flex items-center gap-3">
+                <div class="h-[1px] w-6 bg-brandOrange/30"></div>
+                <span
+                    class="text-[9px] font-black uppercase tracking-[0.6em] text-brandOrange/80 font-display">Elite</span>
+                <div class="h-[1px] w-6 bg-brandOrange/30"></div>
+            </div>
+            <h1 class="text-3xl font-extrabold uppercase tracking-tight orange-shimmer leading-tight font-display">REI
+                DAS
+                OFERTAS <span class="vip-accent">VIP</span></h1>
+        </div>
+
+        <p class="mt-5 text-textMuted text-[10px] font-semibold uppercase tracking-[0.5em] reveal"
+            style="transition-delay: 400ms;">
+            O Domínio dos Preços Baixos
+        </p>
+    </header>
+
+    <main class="w-full max-w-[420px] flex flex-col gap-6">
+
+        <!-- SEARCH BAR -->
+        <div class="relative reveal" style="transition-delay: 500ms;">
+            <input type="text" id="catalogSearch" placeholder="PROCURAR PRODUTO NO CATÁLOGO..."
+                class="w-full bg-white/5 border border-white/10 rounded-[1.5rem] px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] text-white focus:outline-none focus:border-brandOrange/50 focus:bg-white/10 transition-all placeholder:text-white/20">
+            <button onclick="handleSearch()"
+                class="absolute right-4 top-1/2 -translate-y-1/2 text-brandOrange hover:scale-110 transition-transform">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- HOT DEALS SECTION -->
+        <div id="hotDealsContainer" class="hidden flex flex-col gap-4 reveal" style="transition-delay: 550ms;">
+            <div class="flex items-center gap-3 px-2">
+                <span class="relative flex h-2 w-2">
+                    <span
+                        class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brandOrange opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-brandOrange"></span>
+                </span>
+                <h3 class="text-[10px] font-black uppercase tracking-[0.4em] text-brandOrange/90 font-display">Mais
+                    Vistos Agora</h3>
+            </div>
+
+            <div id="hotDealsGrid" class="grid grid-cols-1 gap-3">
+                <!-- Dynamic Hot Deals -->
+            </div>
+        </div>
+
+        <!-- PRIMARY CTA - Orange Style -->
+        <a href="https://chat.whatsapp.com/seu-grupo-aqui"
+            class="btn-orange p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center reveal"
+            style="transition-delay: 600ms;">
+            <span class="text-[10px] font-black uppercase tracking-[0.5em] mb-2 opacity-70 font-display">Acesso</span>
+            <span class="text-xl font-black uppercase tracking-wide">ENTRAR NO GRUPO VIP</span>
+            <div class="mt-4 flex items-center gap-3 bg-black/15 px-5 py-2 rounded-full">
+                <span class="relative flex h-2 w-2">
+                    <span
+                        class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                </span>
+                <span class="text-[9px] font-black uppercase tracking-[0.3em]" id="scarcityLabel">Vagas Limitadas</span>
+            </div>
+        </a>
+
+        <!-- SECONDARY LINKS -->
+        <div class="flex flex-col gap-5 pt-2">
+            <a href="/conversor" class="elite-card p-6 rounded-[2rem] flex items-center justify-between group reveal"
+                style="transition-delay: 750ms;">
+                <div class="flex flex-col">
+                    <span
+                        class="text-[9px] font-black uppercase tracking-[0.4em] text-brandOrange/70 mb-2 font-display">Search</span>
+                    <span class="text-base font-bold uppercase tracking-widest text-white/90">Buscar Catálogo</span>
+                </div>
+                <div
+                    class="w-12 h-12 border border-white/5 bg-white/5 rounded-2xl flex items-center justify-center text-brandOrange group-hover:bg-brandOrange group-hover:text-primary transition-all duration-500 shadow-xl">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+            </a>
+
+            <div class="grid grid-cols-2 gap-5">
+                <a href="https://instagram.com/achadinhos.vip"
+                    class="elite-card p-7 rounded-[2.2rem] flex flex-col items-center gap-5 group reveal"
+                    style="transition-delay: 900ms;">
+                    <div
+                        class="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center text-white/30 group-hover:text-brandOrange transition-all duration-500">
+                        <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                            <path
+                                d="M12 2.163c3.204 0 3.584.012 4.85.07 1.17.054 1.805.249 2.227.412.56.216.96.474 1.38.894.42.42.678.82.894 1.38.163.422.358 1.057.412 2.227.059 1.266.071 1.646.071 4.85s-.012 3.584-.07 4.85c-.054 1.17-.249 1.805-.412 2.227-.216.56-.474.96-.894 1.38-.42.42-.82.678-1.38.894-.422.163-1.057.358-2.227.412-1.266.059-1.646.071-4.85.071s-3.584-.012-4.85-.07c-1.17-.054-1.805-.249-2.227-.412-.56-.216-.96-.474-1.38-.894-.42-.42-.678-.82-.894-1.38-.163-.422-.358-1.057-.412-2.227-.059-1.266-.071-1.646-.071-4.85s.012-3.584.07-4.85c.054-1.17.249-1.805.412-2.227.216-.56.474-.96.894-1.38.42-.42.82-.678 1.38-.894.422-.163-1.057.358-2.227.412 1.266-.059 1.646-.071 4.85-.071M12 0C8.741 0 8.333.014 7.053.072 5.775.132 4.905.333 4.14.63c-.789.306-1.459.717-2.126 1.384S.935 3.35.63 4.14C.333 4.905.131 5.775.072 7.053.012 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.06 1.277.261 2.148.558 2.913.306.788.717 1.459 1.384 2.126.667.666 1.336 1.079 2.126 1.384.766.296 1.636.499 2.913.558C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 1.277-.06 2.148-.262 2.913-.558.788-.306 1.459-.718 2.126-1.384.666-.667 1.079-1.335 1.384-2.126.296-.765.499-1.636.558-2.913.06-1.28.072-1.689.072-4.948 0-3.259-.014-3.668-.072-4.948-.06-1.277-.262-2.148-.558-2.913-.306-.788-.718-1.459-1.384-2.126-1.335-.667-2.126-1.079-2.913-1.384-.765-.296-1.636-.499-2.913-.558C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z" />
+                        </svg>
+                    </div>
+                    <span
+                        class="text-[9px] font-black uppercase tracking-[0.5em] text-white/30 group-hover:text-brandOrange font-display">Insta</span>
+                </a>
+                <a href="https://t.me/achadinhos"
+                    class="elite-card p-7 rounded-[2.2rem] flex flex-col items-center gap-5 group reveal"
+                    style="transition-delay: 1000ms;">
+                    <div
+                        class="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center text-white/30 group-hover:text-brandOrange transition-all duration-500">
+                        <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                            <path
+                                d="M11.944 0C5.347 0 0 5.347 0 11.944c0 6.597 5.347 11.944 11.944 11.944 6.597 0 11.944-5.347 11.944-11.944C23.888 5.347 18.541 0 11.944 0zm5.204 8.524c-.145.744-3.085 12.834-3.242 13.52-.056.241-.168.42-.321.524-.154.104-.337.148-.535.127-.198-.021-.408-.094-.616-.211-.208-.117-.4-.258-.567-.417l-3.329-3.003-1.742.84c-.219.106-.421.157-.604.153-.183-.004-.34-.059-.47-.165-.13-.106-.213-.242-.25-.407l-.68-2.227L.811 13.43c-.417-.145-.62-.352-.61-.621.01-.269.231-.482.663-.639l19.957-8.156c.433-.173.74-.183.921-.03.181.153.21.436.087.85z" />
+                        </svg>
+                    </div>
+                    <span
+                        class="text-[9px] font-black uppercase tracking-[0.5em] text-white/30 group-hover:text-brandOrange font-display">Tele</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="mt-12 py-8 border-t border-white/5 flex flex-col items-center gap-5 reveal"
+            style="transition-delay: 1100ms;">
+            <div
+                class="px-7 py-2.5 rounded-full border border-brandOrange/20 bg-brandOrange/5 text-[9px] font-black uppercase tracking-[0.6em] text-brandOrange/70 font-display">
+                Verificado • Premium
+            </div>
+            <p class="text-[8px] font-black text-white/10 uppercase tracking-[0.8em]">+10.432 membros ativos</p>
+        </div>
+
+    </main>
+
+    <footer class="mt-auto pt-16 pb-12 text-white/15 reveal" style="transition-delay: 1200ms;">
+        <span class="text-[8px] font-black uppercase tracking-[1em] font-display">REI DAS OFERTAS VIP &copy; 2026</span>
+    </footer>
+
+    <script>
+        // --- Telemetry ---
+        async function trackClick(targetUrl, source = 'BioHub', campaign = null) {
+            try {
+                await fetch('/api/analytics/click', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        targetUrl,
+                        source,
+                        campaign,
+                        category: 'bio',
+                        trackingId: 'bio_' + Math.random().toString(36).substring(2, 9)
+                    })
+                });
+            } catch (e) {
+                console.error('Telemetry failed', e);
+            }
+        }
+
+        // Intercept all links for telemetry
+        document.addEventListener('click', (e) => {
+            const link = e.target.closest('a');
+            if (link && link.href) {
+                const source = link.dataset.source || 'BioHub_Link';
+                trackClick(link.href, source);
+            }
+        });
+
+        async function loadHotDeals() {
+            try {
+                const res = await fetch('/api/analytics/hot-deals');
+                const data = await res.json();
+                if (data.success && data.deals && data.deals.length > 0) {
+                    const grid = document.getElementById('hotDealsGrid');
+                    const container = document.getElementById('hotDealsContainer');
+
+                    grid.innerHTML = data.deals.map(deal => `
+                        <a href="${deal.affiliateUrl}" data-source="HotDeal" target="_blank" class="elite-card p-4 rounded-[1.8rem] flex items-center gap-4 group transition-all">
+                            <div class="w-16 h-16 bg-white rounded-2xl flex-shrink-0 flex items-center justify-center p-2 overflow-hidden border border-white/5">
+                                <img src="${deal.imageUrl}" class="max-w-full max-h-full object-contain group-hover:scale-110 transition-transform" onerror="this.style.opacity='0.2'">
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-[8px] font-black uppercase tracking-widest text-brandOrange/70">${deal.store}</span>
+                                    <span class="w-1.5 h-1.5 rounded-full bg-white/10"></span>
+                                    <span class="text-[8px] font-black uppercase tracking-widest text-white/30">${deal.viewCount} views</span>
+                                </div>
+                                <h4 class="text-xs font-bold text-white/90 truncate uppercase tracking-tight">${deal.productName}</h4>
+                                <p class="text-brandOrange font-black text-sm mt-0.5">${deal.price || 'OFERTA'}</p>
+                            </div>
+                            <div class="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/20 group-hover:bg-brandOrange group-hover:text-black transition-all">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                            </div>
+                        </a>
+                    `).join('');
+
+                    container.classList.remove('hidden');
+                }
+            } catch (e) {
+                console.error('Failed to load hot deals', e);
+            }
+        }
+
+        function handleSearch() {
+            const query = document.getElementById('catalogSearch').value.trim();
+            if (query) {
+                trackClick('/conversor?q=' + encodeURIComponent(query), 'BioHub_Search');
+                window.location.href = '/conversor?q=' + encodeURIComponent(query);
+            }
+        }
+
+        document.getElementById('catalogSearch').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleSearch();
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const reveals = document.querySelectorAll('.reveal');
+            reveals.forEach(el => el.classList.add('active'));
+            loadHotDeals();
+
+            // Random Social Proof Toast
+            const visitorCount = 1000 + Math.floor(Math.random() * 500);
+            const proofEl = document.createElement('div');
+            proofEl.className = 'fixed bottom-8 left-1/2 -translate-x-1/2 elite-card px-6 py-3 rounded-full border border-brandOrange/20 bg-black/80 backdrop-blur-xl flex items-center gap-3 z-50 transition-all duration-1000 translate-y-20 opacity-0';
+            proofEl.innerHTML = `
+                <div class="flex -space-x-2">
+                    <div class="w-5 h-5 rounded-full bg-brandOrange/20 border border-black overflow-hidden"><img src="https://i.pravatar.cc/100?u=1" class="w-full h-full grayscale"></div>
+                    <div class="w-5 h-5 rounded-full bg-brandOrange/20 border border-black overflow-hidden"><img src="https://i.pravatar.cc/100?u=2" class="w-full h-full grayscale"></div>
+                    <div class="w-5 h-5 rounded-full bg-brandOrange/20 border border-black overflow-hidden flex items-center justify-center text-[6px] font-bold text-brandOrange">VIP</div>
+                </div>
+                <span class="text-[9px] font-black uppercase tracking-widest text-white/80">Rei das Ofertas: <span class="text-brandOrange">${visitorCount}</span> online agora</span>
+            `;
+            document.body.appendChild(proofEl);
+
+            setTimeout(() => {
+                proofEl.classList.remove('translate-y-20', 'opacity-0');
+            }, 3000);
+        });
+
+        const label = document.getElementById('scarcityLabel');
+        const states = ["Vagas Limitadas", "Alta Atividade", "Prioridade VIP", "Sala Exclusiva"];
+        let idx = 0;
+        setInterval(() => {
+            idx = (idx + 1) % states.length;
+            label.style.opacity = 0;
+            setTimeout(() => {
+                label.innerText = states[idx].toUpperCase();
+                label.style.opacity = 1;
+            }, 400);
+        }, 8000);
+    </script>
+</body>
+
+</html>

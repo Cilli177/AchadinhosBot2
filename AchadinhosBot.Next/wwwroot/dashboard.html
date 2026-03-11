@@ -1,13 +1,830 @@
-<!doctype html><html lang="pt-BR"><head>  <meta charset="UTF-8" />  <meta name="viewport" content="width=device-width, initial-scale=1.0" />  <title>AchadinhosBot.Next - Painel</title>  <link rel="preconnect" href="https://fonts.googleapis.com" />  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />  <link    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@400;500;600&display=swap"    rel="stylesheet" />  <link rel="stylesheet" href="dashboard.css" /></head><body>  <div class="layout">    <aside class="sidebar">      <h3>Painel</h3>      <div class="nav">        <button data-tab="connections" onclick="showSection('connections')">Conexões</button>        <button data-tab="ops" onclick="showSection('ops')">Operação</button>        <button data-tab="route" onclick="showSection('route')">Telegram -> WhatsApp</button>        <button data-tab="linkresponder" onclick="showSection('linkresponder')">Resposta de link</button>        <button data-tab="mercadolivre" onclick="showSection('mercadolivre')">Mercado Livre</button>        <button data-tab="instagram" onclick="showSection('instagram')">Instagram</button>        <button data-tab="instagram-publish" onclick="showSection('instagram-publish')">Instagram Publicar</button>        <button data-tab="instagram-story" onclick="showSection('instagram-story')">Instagram Story</button>        <button data-tab="bio-growth" onclick="showSection('bio-growth')">Bio & Growth</button>        <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>        <button data-tab="logs" onclick="showSection('logs')">          Logs          <span id="logsBadge" class="badge-dot hidden">0</span>        </button>        <button data-tab="playground" onclick="showSection('playground')">Playground</button>        <button data-tab="debug" onclick="showSection('debug')">Debug</button>      </div>      <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()">Alternar tema</button>    </aside>    <main class="content">      <div class="container">        <div class="hero">
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AchadinhosBot.Next - Painel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>Painel</h3>
+      <div class="nav"> <button data-tab="connections" onclick="showSection('connections')">Conexões</button> <button
+          data-tab="ops" onclick="showSection('ops')">Operação</button> <button data-tab="route"
+          onclick="showSection('route')">Telegram -> WhatsApp</button> <button data-tab="linkresponder"
+          onclick="showSection('linkresponder')">Resposta de link</button> <button data-tab="mercadolivre"
+          onclick="showSection('mercadolivre')">Mercado Livre</button> <button data-tab="instagram"
+          onclick="showSection('instagram')">Instagram</button> <button data-tab="instagram-publish"
+          onclick="showSection('instagram-publish')">Instagram Publicar</button> <button data-tab="instagram-story"
+          onclick="showSection('instagram-story')">Instagram Story</button> <button data-tab="bio-growth"
+          onclick="showSection('bio-growth')">Bio & Growth</button> <button data-tab="autoreplies"
+          onclick="showSection('autoreplies')">Respostas automáticas</button> <button data-tab="logs"
+          onclick="showSection('logs')"> Logs <span id="logsBadge" class="badge-dot hidden">0</span> </button> <button
+          data-tab="playground" onclick="showSection('playground')">Playground</button> <button data-tab="debug"
+          onclick="showSection('debug')">Debug</button> <button data-tab="analytics"
+          onclick="showSection('analytics')">Analytics 📊</button> </div> <button id="themeToggle" class="theme-toggle"
+        onclick="toggleTheme()">Alternar tema</button>
+    </aside>
+    <main class="content">
+      <div class="container">
+        <div class="hero">
           <div class="hero-content">
-            <h1>AchadinhosBot.Next — Painel de Operação</h1>            <p class="meta">Automação, integrações e repasse de ofertas em tempo real.</p>            <div class="stats">              <div class="stat">Status: <span id="statStatus">Online</span></div>              <div class="stat">Userbot: <span id="statUserbot">Conectando...</span></div>              <div class="stat">Últimos logs: <span id="statLogs">0</span></div>            </div>          </div>          <div class="stats">            <span id="chipTelegramBot" class="chip warn">Telegram Bot: Não conectado</span>            <span id="chipUserbot" class="chip warn">Telegram Userbot: Conectando...</span>            <span id="chipWhatsApp" class="chip warn">WhatsApp: Não conectado</span>            <span id="chipMercadoLivre" class="chip warn">Mercado Livre: Não validado</span>          </div>          <div id="envPill" class="pill env-pill env-other">Ambiente: Detectando...</div>        </div>        <section id="loginCard" class="card">          <h2>Acesso ao painel</h2>          <label>Usuário</label>          <input id="username" placeholder="admin" />          <label>Senha</label>          <input id="password" type="password" placeholder="••••••••" />          <button onclick="login()">Entrar</button>          <p id="loginStatus" class="status warn">Não autenticado</p>        </section>        <section id="panel" class="hidden">          <div class="card" style="margin-top:16px;">            <div class="row" style="justify-content: space-between;">              <h2>Sessão</h2>              <button class="danger" onclick="logout()">Sair</button>            </div>            <p id="sessionInfo" class="status ok"></p>          </div>          <div id="section-connections" class="hidden">            <div class="grid" style="margin-top:16px;">              <section class="card">                <h2>Telegram (Bot API)</h2>                <label data-tooltip="Adicione/valide um token de bot e teste o status no Telegram.">Bot Token (opcional)</label>                <input id="telegramBotToken" type="password" placeholder="123456:AA..." />                <div class="row">                  <button id="btnTelegramConnect" onclick="connectTelegram()">Adicionar bot e testar</button>                  <span id="telegramStatus" class="status warn">Não conectado</span>                </div>                <p id="telegramStatusDetail" class="status muted">Sem teste recente.</p>              </section>              <section class="card">                <h2 data-tooltip="Use quando o Telegram pedir código SMS/Telegram ou senha 2FA. As credenciais ficam apenas na memória.">Telegram Userbot (Reconexão)</h2>                <label>Telefone (opcional)</label>                <input id="userbotAuthPhone" placeholder="+5513999999999" />                <label>Código de verificação (opcional)</label>                <input id="userbotAuthCode" type="password" placeholder="12345" />                <label>Senha 2FA (opcional)</label>                <input id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />                <div class="row">                  <label class="switch"><input type="checkbox" id="userbotForceReconnect" /><span                      class="slider"></span></label>                  <span class="muted">Forçar reconexão após aplicar</span>                </div>                <div class="row">                  <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e reconectar</button>                </div>                <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>              </section>              <section class="card">                <h2>WhatsApp (Evolution API)</h2>                <label>Instance Name</label>                <input id="waInstanceName" placeholder="ZapOfertas" />                <button id="btnWhatsAppConnect" onclick="connectWhatsApp()">Conectar e gerar QR</button>                <button class="secondary" onclick="createWhatsAppInstance()">Criar nova instância</button>                <div class="row">                  <span id="waForwardStatus" class="status warn">Repasse inativo</span>                  <label class="switch"><input type="checkbox" id="waForwardEnabled" /><span                      class="slider"></span></label>                  <span class="muted">Repasse ativo</span>                </div>                <div class="row">                  <label class="switch"><input type="checkbox" id="waFromMeOnly" /><span class="slider"></span></label>                  <span class="muted">Processar apenas mensagens enviadas por mim</span>                </div>                <div class="row">                  <label class="switch"><input type="checkbox" id="waSendMedia" /><span class="slider"></span></label>                  <span class="muted">Enviar imagens (WhatsApp)</span>                </div>                <label>Rodapé (texto extra)</label>                <input id="waFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />                <div class="row">                  <label class="switch"><input type="checkbox" id="waAppendShein" /><span class="slider"></span></label>                  <span class="muted">Anexar código Shein</span>                </div>                <p id="whatsappStatus" class="status warn">Não conectado</p>                <img id="qrImage" class="qr hidden" alt="QR code WhatsApp" />                <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>              </section>              <section class="card">                <h2 data-tooltip="Valida client_id, refresh_token e conta vinculada usando variáveis do bloco Affiliate no backend.">Mercado Livre (OAuth)</h2>                <div class="row">                  <button id="btnMercadoLivreConnect" onclick="connectMercadoLivre()">Testar conexão</button>                  <span id="mercadoLivreStatus" class="status warn">Não validado</span>                </div>              </section>            </div>          </div>          <div id="section-ops">            <section class="card" style="margin-top:16px;">              <div class="row" style="justify-content: space-between;">                <h2 data-tooltip="Status rápido das integrações e da última mídia capturada.">Saúde dos Mensageiros</h2>                <span class="status muted">Monitoramento rápido</span>              </div>                            <div class="row">                <span id="healthTelegramBot" class="badge warn">Telegram Bot</span>                <span id="healthUserbot" class="badge warn">Telegram Userbot</span>                <span id="healthWhatsApp" class="badge warn">WhatsApp</span>              </div>              <p class="muted">Mídia: <span id="healthMedia" class="badge muted">Sem dados</span></p>              <p class="muted">Última mídia: <span id="healthMediaDetail">-</span></p>            </section>            <div class="grid" style="margin-top:16px;">              <section class="card">                <h2 data-tooltip="Monitora grupos com a conta pessoal logada e repassa ofertas para o canal/grupo destino.">Telegram Userbot (WTelegram)</h2>                <div class="row">                  <span id="userbotStatus" class="status warn">Aguardando conexão</span>                  <label class="switch"><input type="checkbox" id="userbotEnabled" /><span                      class="slider"></span></label>                  <span class="muted">Repasse ativo</span>                </div>                <div class="row">                  <button onclick="refreshUserbotChats()">Atualizar grupos</button>                  <button class="secondary" onclick="loadUserbotChats()">Recarregar</button>                </div>                <label>Destino (ID do grupo/canal)</label>                <input id="userbotDestinationId" placeholder="-1003612784929" />                <div class="row">                  <label class="switch"><input type="checkbox" id="userbotAppendShein" /><span                      class="slider"></span></label>                  <span class="muted">Anexar código Shein</span>                </div>                <label>Rodapé (texto extra)</label>                <input id="userbotFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />                <div class="row">                  <input id="userbotSearch" data-tooltip="Selecione abaixo os grupos de origem (fontes de ofertas) para escutar." placeholder="Buscar grupo por nome ou ID" />                  <span class="muted">Selecionados: <strong id="userbotSelectedCount">0</strong></span>                </div>                <div class="row">                  <button class="secondary" onclick="selectAllUserbotChats()">Selecionar todos</button>                  <button class="secondary" onclick="clearUserbotSelection()">Limpar seleção</button>                  <button class="secondary" onclick="showAllUserbotChats()">Mostrar todos</button>                  <button class="secondary" onclick="saveUserbotSelection()">Salvar seleção</button>                </div>                <p id="userbotSaveStatus" class="status muted"></p>                <div id="userbotSelectedChips" class="muted"></div>                <details>
+            <h1>AchadinhosBot.Next — Painel de Operação</h1>
+            <p class="meta">Automação, integrações e repasse de ofertas em tempo real.</p>
+            <div class="stats">
+              <div class="stat">Status: <span id="statStatus">Online</span></div>
+              <div class="stat">Userbot: <span id="statUserbot">Conectando...</span></div>
+              <div class="stat">Últimos logs: <span id="statLogs">0</span></div>
+            </div>
+          </div>
+          <div class="stats"> <span id="chipTelegramBot" class="chip warn">Telegram Bot: Não conectado</span> <span
+              id="chipUserbot" class="chip warn">Telegram Userbot: Conectando...</span> <span id="chipWhatsApp"
+              class="chip warn">WhatsApp: Não conectado</span> <span id="chipMercadoLivre" class="chip warn">Mercado
+              Livre: Não validado</span> </div>
+          <div id="envPill" class="pill env-pill env-other">Ambiente: Detectando...</div>
+        </div>
+        <section id="loginCard" class="card">
+          <h2>Acesso ao painel</h2> <label>Usuário</label> <input id="username" placeholder="admin" />
+          <label>Senha</label> <input id="password" type="password" placeholder="••••••••" /> <button
+            onclick="login()">Entrar</button>
+          <p id="loginStatus" class="status warn">Não autenticado</p>
+        </section>
+        <section id="panel" class="hidden">
+          <div class="card" style="margin-top:16px;">
+            <div class="row" style="justify-content: space-between;">
+              <h2>Sessão</h2> <button class="danger" onclick="logout()">Sair</button>
+            </div>
+            <p id="sessionInfo" class="status ok"></p>
+          </div>
+          <div id="section-connections" class="hidden">
+            <div class="grid" style="margin-top:16px;">
+              <section class="card">
+                <h2>Telegram (Bot API)</h2> <label
+                  data-tooltip="Adicione/valide um token de bot e teste o status no Telegram.">Bot Token
+                  (opcional)</label> <input id="telegramBotToken" type="password" placeholder="123456:AA..." />
+                <div class="row"> <button id="btnTelegramConnect" onclick="connectTelegram()">Adicionar bot e
+                    testar</button> <span id="telegramStatus" class="status warn">Não conectado</span> </div>
+                <p id="telegramStatusDetail" class="status muted">Sem teste recente.</p>
+              </section>
+              <section class="card">
+                <h2
+                  data-tooltip="Use quando o Telegram pedir código SMS/Telegram ou senha 2FA. As credenciais ficam apenas na memória.">
+                  Telegram Userbot (Reconexão)</h2> <label>Telefone (opcional)</label> <input id="userbotAuthPhone"
+                  placeholder="+5513999999999" /> <label>Código de verificação (opcional)</label> <input
+                  id="userbotAuthCode" type="password" placeholder="12345" /> <label>Senha 2FA (opcional)</label> <input
+                  id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
+                <div class="row"> <label class="switch"><input type="checkbox" id="userbotForceReconnect" /><span
+                      class="slider"></span></label> <span class="muted">Forçar reconexão após aplicar</span> </div>
+                <div class="row"> <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e
+                    reconectar</button> </div>
+                <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>
+              </section>
+              <section class="card">
+                <h2>WhatsApp (Evolution API)</h2> <label>Instance Name</label> <input id="waInstanceName"
+                  placeholder="ZapOfertas" /> <button id="btnWhatsAppConnect" onclick="connectWhatsApp()">Conectar e
+                  gerar QR</button> <button class="secondary" onclick="createWhatsAppInstance()">Criar nova
+                  instância</button>
+                <div class="row"> <span id="waForwardStatus" class="status warn">Repasse inativo</span> <label
+                    class="switch"><input type="checkbox" id="waForwardEnabled" /><span class="slider"></span></label>
+                  <span class="muted">Repasse ativo</span> </div>
+                <div class="row"> <label class="switch"><input type="checkbox" id="waFromMeOnly" /><span
+                      class="slider"></span></label> <span class="muted">Processar apenas mensagens enviadas por
+                    mim</span> </div>
+                <div class="row"> <label class="switch"><input type="checkbox" id="waSendMedia" /><span
+                      class="slider"></span></label> <span class="muted">Enviar imagens (WhatsApp)</span> </div>
+                <label>Rodapé (texto extra)</label> <input id="waFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+                <div class="row"> <label class="switch"><input type="checkbox" id="waAppendShein" /><span
+                      class="slider"></span></label> <span class="muted">Anexar código Shein</span> </div>
+                <p id="whatsappStatus" class="status warn">Não conectado</p> <img id="qrImage" class="qr hidden"
+                  alt="QR code WhatsApp" />
+                <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>
+              </section>
+              <section class="card">
+                <h2
+                  data-tooltip="Valida client_id, refresh_token e conta vinculada usando variáveis do bloco Affiliate no backend.">
+                  Mercado Livre (OAuth)</h2>
+                <div class="row"> <button id="btnMercadoLivreConnect" onclick="connectMercadoLivre()">Testar
+                    conexão</button> <span id="mercadoLivreStatus" class="status warn">Não validado</span> </div>
+              </section>
+            </div>
+          </div>
+          <div id="section-ops">
+            <section class="card" style="margin-top:16px;">
+              <div class="row" style="justify-content: space-between;">
+                <h2 data-tooltip="Status rápido das integrações e da última mídia capturada.">Saúde dos Mensageiros</h2>
+                <span class="status muted">Monitoramento rápido</span>
+              </div>
+              <div class="row"> <span id="healthTelegramBot" class="badge warn">Telegram Bot</span> <span
+                  id="healthUserbot" class="badge warn">Telegram Userbot</span> <span id="healthWhatsApp"
+                  class="badge warn">WhatsApp</span> </div>
+              <p class="muted">Mídia: <span id="healthMedia" class="badge muted">Sem dados</span></p>
+              <p class="muted">Última mídia: <span id="healthMediaDetail">-</span></p>
+            </section>
+            <div class="grid" style="margin-top:16px;">
+              <section class="card">
+                <h2
+                  data-tooltip="Monitora grupos com a conta pessoal logada e repassa ofertas para o canal/grupo destino.">
+                  Telegram Userbot (WTelegram)</h2>
+                <div class="row"> <span id="userbotStatus" class="status warn">Aguardando conexão</span> <label
+                    class="switch"><input type="checkbox" id="userbotEnabled" /><span class="slider"></span></label>
+                  <span class="muted">Repasse ativo</span> </div>
+                <div class="row"> <button onclick="refreshUserbotChats()">Atualizar grupos</button> <button
+                    class="secondary" onclick="loadUserbotChats()">Recarregar</button> </div> <label>Destino (ID do
+                  grupo/canal)</label> <input id="userbotDestinationId" placeholder="-1003612784929" />
+                <div class="row"> <label class="switch"><input type="checkbox" id="userbotAppendShein" /><span
+                      class="slider"></span></label> <span class="muted">Anexar código Shein</span> </div> <label>Rodapé
+                  (texto extra)</label> <input id="userbotFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+                <div class="row"> <input id="userbotSearch"
+                    data-tooltip="Selecione abaixo os grupos de origem (fontes de ofertas) para escutar."
+                    placeholder="Buscar grupo por nome ou ID" /> <span class="muted">Selecionados: <strong
+                      id="userbotSelectedCount">0</strong></span> </div>
+                <div class="row"> <button class="secondary" onclick="selectAllUserbotChats()">Selecionar todos</button>
+                  <button class="secondary" onclick="clearUserbotSelection()">Limpar seleção</button> <button
+                    class="secondary" onclick="showAllUserbotChats()">Mostrar todos</button> <button class="secondary"
+                    onclick="saveUserbotSelection()">Salvar seleção</button> </div>
+                <p id="userbotSaveStatus" class="status muted"></p>
+                <div id="userbotSelectedChips" class="muted"></div>
+                <details>
                   <summary>Configurações Avançadas de Origem</summary>
-                  <label data-tooltip="Adicione aqui IDs de canais privados que não apareceram na lista acima.">IDs manuais (um por linha ou separado por vírgula)</label>
+                  <label data-tooltip="Adicione aqui IDs de canais privados que não apareceram na lista acima.">IDs
+                    manuais (um por linha ou separado por vírgula)</label>
                   <textarea id="userbotManualIds" rows="4" placeholder="-100123...\n-100456..."></textarea>
-                </details>                <div id="userbotChats" class="muted">Nenhum grupo carregado.</div>              </section>              <section class="card">                <h2 data-tooltip="Selecione de quais grupos o bot deve capturar ofertas.">WhatsApp Grupos (Origem)</h2>                                <div class="row">                  <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>                  <button class="secondary" onclick="loadWhatsAppGroups()">Recarregar</button>                </div>                <div class="row">                  <select id="waRoutePicker" style="max-width:260px;" onchange="switchWhatsAppRoute()"></select>                  <button class="secondary" onclick="addWhatsAppRoute()">+ Nova rota</button>                  <button class="secondary" onclick="removeWhatsAppRoute()">Excluir rota</button>                </div>                <label>Nome da rota</label>                <input id="waRouteName" placeholder="Rota principal" oninput="renameWhatsAppRoute()" />                                <div class="row">                  <input id="waSourceSearch" placeholder="Buscar grupo por nome ou ID" />                  <span class="muted">Selecionados: <strong id="waSourceSelectedCount">0</strong></span>                </div>                <div class="row">                  <button class="secondary" onclick="selectAllWhatsAppSourceGroups()">Selecionar todos</button>                  <button class="secondary" onclick="clearWhatsAppSourceSelection()">Limpar seleção</button>                  <button class="secondary" onclick="showAllWhatsAppSourceGroups()">Mostrar todos</button>                  <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>                </div>                <p id="waSourceSaveStatus" class="status muted"></p>                <div id="waSourceSelectedChips" class="muted"></div>                <label>IDs manuais (um por linha ou separado por vírgula)</label>                <textarea id="waManualSourceIds" rows="3" placeholder="1203630@g.us"></textarea>                <div id="waSourceGroups" class="muted">Nenhum grupo carregado.</div>              </section>              <section class="card">                <h2 data-tooltip="Selecione para onde as ofertas convertidas serão enviadas.">WhatsApp Grupos (Destino)</h2>                                <div class="row">                  <input id="waDestSearch" placeholder="Buscar grupo por nome ou ID" />                  <span class="muted">Selecionados: <strong id="waSelectedCount">0</strong></span>                </div>                <div class="row">                  <button class="secondary" onclick="selectAllWhatsAppGroups()">Selecionar todos</button>                  <button class="secondary" onclick="clearWhatsAppSelection()">Limpar seleção</button>                  <button class="secondary" onclick="showAllWhatsAppGroups()">Mostrar todos</button>                  <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>                </div>                <p id="waSaveStatus" class="status muted"></p>                <div id="waSelectedChips" class="muted"></div>                <label>IDs manuais (um por linha ou separado por vírgula)</label>                <textarea id="waManualIds" rows="3" placeholder="1203630@g.us"></textarea>                <div id="waGroups" class="muted">Nenhum grupo carregado.</div>              </section>            </div>          </div>          <div id="section-linkresponder" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Quando alguém envia um link, o bot responde com o link afiliado.">Resposta de Links (Gatilho)</h2>                            <div class="row">                <label class="switch"><input type="checkbox" id="responderEnabled" /><span                    class="slider"></span></label>                <span class="muted">Ativar resposta</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="responderWhatsApp" /><span                    class="slider"></span></label>                <span class="muted">WhatsApp</span>                <label class="switch"><input type="checkbox" id="responderTelegramBot" /><span                    class="slider"></span></label>                <span class="muted">Telegram Bot</span>                <label class="switch"><input type="checkbox" id="responderTelegramUserbot" /><span                    class="slider"></span></label>                <span class="muted">Telegram Userbot</span>              </div>              <div class="grid" style="margin-top:12px;">                <section class="card">                  <h3>Origem WhatsApp</h3>                  <div class="row">                    <label class="switch"><input type="checkbox" id="responderWaPrivate" /><span                        class="slider"></span></label>                    <span class="muted">Privado</span>                    <label class="switch"><input type="checkbox" id="responderWaGroups" /><span                        class="slider"></span></label>                    <span class="muted">Grupos</span>                  </div>                  <label>IDs permitidos (opcional)</label>                  <textarea id="responderWaIds" rows="3"                    placeholder="551199999@s.whatsapp.net&#10;1203630@g.us"></textarea>                </section>                <section class="card">                  <h3>Origem Telegram</h3>                  <div class="row">                    <label class="switch"><input type="checkbox" id="responderTgPrivate" /><span                        class="slider"></span></label>                    <span class="muted">Privado</span>                    <label class="switch"><input type="checkbox" id="responderTgGroups" /><span                        class="slider"></span></label>                    <span class="muted">Grupos</span>                  </div>                  <label>IDs permitidos (opcional)</label>                  <textarea id="responderTgIds" rows="3" placeholder="123456789&#10;-100123..."></textarea>                </section>              </div>              <div class="grid" style="margin-top:12px;">                <section class="card">                  <h3>Resposta</h3>                  <label>Template (use {link} ou {text})</label>                  <textarea id="responderTemplate" rows="3" placeholder="Link convertido:&#10;{link}"></textarea>                  <label>Quando não converter (apenas privado)</label>                  <input id="responderFailTemplate" placeholder="Link não suportado." />                </section>                <section class="card">                  <h3>Extras</h3>                  <div class="row">                    <label class="switch"><input type="checkbox" id="responderAppendShein" /><span                        class="slider"></span></label>                    <span class="muted">Anexar código Shein</span>                  </div>                  <div class="row">                    <label class="switch"><input type="checkbox" id="responderTracking" /><span                        class="slider"></span></label>                    <span class="muted">Ativar tracking de cliques</span>                  </div>                  <label>Rodapé (texto extra)</label>                  <input id="responderFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />                </section>              </div>              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="saveLinkResponder()">Salvar gatilho</button>                <span id="responderSaveStatus" class="status muted"></span>              </div>            </section>            <section class="card" style="margin-top:16px;">              <h2>Logs de Resposta</h2>              <div class="row">                <input id="responderLogSearch" placeholder="Buscar por URL ou ID" />                <button onclick="loadResponderLogs()">Carregar</button>              </div>              <div class="table-wrap" style="margin-top:8px;">                <table>                  <thead>                    <tr>                      <th>Data/Hora</th>                      <th>Origem</th>                      <th>Tipo</th>                      <th>Status</th>                      <th>URL Original</th>                      <th>URL Convertido</th>                      <th>Cliques</th>                    </tr>                  </thead>                  <tbody id="responderLogBody"></tbody>                </table>              </div>            </section>            <section class="card" style="margin-top:16px;">              <h2>Clicks (Resposta)</h2>              <div class="row">                <input id="responderClickSearch" placeholder="Buscar por URL ou ID" />                <button onclick="loadResponderClicks()">Carregar</button>                <button class="secondary" onclick="clearResponderClicks()">Limpar logs</button>              </div>              <div class="table-wrap" style="margin-top:8px;">                <table>                  <thead>                    <tr>                      <th>Data/Hora</th>                      <th>ID</th>                      <th>URL de destino</th>                    </tr>                  </thead>                  <tbody id="responderClickBody"></tbody>                </table>              </div>            </section>          </div>          <div id="section-mercadolivre" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Controle de bloqueio em automações, whitelist de canais e fila de aprovação manual.">Compliance Mercado Livre</h2>                            <div class="row">                <label class="switch"><input type="checkbox" id="mlCompEnabled" /><span class="slider"></span></label>                <span class="muted">Ativar compliance Mercado Livre</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="mlCompBlockAuto" /><span class="slider"></span></label>                <span class="muted">Bloquear fluxo automático com links Mercado Livre</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="mlCompRequireApproval" /><span                    class="slider"></span></label>                <span class="muted">Exigir aprovação manual para Mercado Livre</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="mlCompWhitelistEnabled" /><span                    class="slider"></span></label>                <span class="muted">Ativar whitelist de canais</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="mlCompBlockUnknown" /><span                    class="slider"></span></label>                <span class="muted">Bloquear quando canal não for identificado</span>              </div>              <label>Canais permitidos (um por linha)</label>              <textarea id="mlCompAllowedChannels" rows="4"                placeholder="1203630@g.us&#10;manychat-teste@c.us&#10;-100123456789"></textarea>              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="saveMercadoLivreCompliance()">Salvar compliance</button>                <span id="mlCompSaveStatus" class="status muted"></span>              </div>            </section>            <section class="card" style="margin-top:16px;">              <h2>Pendências de Aprovação Manual</h2>              <div class="row">                <select id="mlPendingStatus" style="max-width:220px;">                  <option value="pending">Pendente</option>                  <option value="approved">Aprovado</option>                  <option value="rejected">Rejeitado</option>                  <option value="">Todos</option>                </select>                <button onclick="loadMercadoLivrePending()">Carregar fila</button>                <span id="mlPendingCount" class="status muted"></span>              </div>              <div class="table-wrap" style="margin-top:8px;">                <table>                  <thead>                    <tr>                      <th>Data/Hora</th>                      <th>Status</th>                      <th>Origem</th>                      <th>Canal</th>                      <th>Razão</th>                      <th>URLs</th>                      <th>Ações</th>                    </tr>                  </thead>                  <tbody id="mlPendingBody"></tbody>
-                </table>              </div>            </section>          </div>          <div id="section-route" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Escolha grupos de origem no Telegram e destinos no WhatsApp para envio direto.">Rota Telegram -> WhatsApp</h2>                            <div class="row">                <select id="tgWaRoutePicker" style="max-width:260px;" onchange="switchTgWaRoute()"></select>                <button class="secondary" onclick="addTgWaRoute()">+ Nova rota</button>                <button class="secondary" onclick="removeTgWaRoute()">Excluir rota</button>              </div>              <label>Nome da rota</label>              <input id="tgWaRouteName" placeholder="Rota Telegram principal" oninput="renameTgWaRoute()" />              <div class="row">                <label class="switch"><input type="checkbox" id="tgWaEnabled" /><span class="slider"></span></label>                <span class="muted">Rota ativa</span>              </div>              <div class="row">                <button class="secondary" onclick="saveTelegramToWhatsAppRoute()">Salvar rota</button>                <span id="tgWaSaveStatus" class="status muted"></span>              </div>              <div class="grid" style="margin-top:12px;">                <section class="card">                  <h3>Origem (Telegram)</h3>                  <div class="row">                    <input id="tgWaSourceSearch" placeholder="Buscar grupo por nome ou ID" />                    <span class="muted">Selecionados: <strong id="tgWaSourceCount">0</strong></span>                  </div>                  <div class="row">                    <button class="secondary" onclick="selectAllTgWaSource()">Selecionar todos</button>                    <button class="secondary" onclick="clearTgWaSource()">Limpar seleção</button>                    <button class="secondary" onclick="showAllTgWaSource()">Mostrar todos</button>                  </div>                  <div id="tgWaSourceChips" class="muted"></div>                  <label>IDs manuais (um por linha ou separado por vírgula)</label>                  <textarea id="tgWaSourceManual" rows="3" placeholder="-100123...\n-100456..."></textarea>                  <div id="tgWaSourceList" class="muted">Nenhum grupo carregado.</div>                </section>                <section class="card">                  <h3>Destino (WhatsApp)</h3>                  <div class="row">                    <input id="tgWaDestSearch" placeholder="Buscar grupo por nome ou ID" />                    <span class="muted">Selecionados: <strong id="tgWaDestCount">0</strong></span>                  </div>                  <div class="row">                    <button class="secondary" onclick="selectAllTgWaDest()">Selecionar todos</button>                    <button class="secondary" onclick="clearTgWaDest()">Limpar seleção</button>                    <button class="secondary" onclick="showAllTgWaDest()">Mostrar todos</button>                  </div>                  <div id="tgWaDestChips" class="muted"></div>                  <label>IDs manuais (um por linha ou separado por vírgula)</label>                  <textarea id="tgWaDestManual" rows="3" placeholder="1203630@g.us"></textarea>                  <div id="tgWaDestList" class="muted">Nenhum grupo carregado.</div>                </section>              </div>            </section>          </div>          <div id="section-instagram" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Gatilhos: criar postagem, postar, insta. Se enviar "postar produto" ele gera direto.">Postagens para Instagram</h2>                            <div class="row">                <label class="switch"><input type="checkbox" id="instaEnabled" /><span class="slider"></span></label>                <span class="muted">Ativar Instagram</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="instaAllowWhatsApp" /><span                    class="slider"></span></label>                <span class="muted">WhatsApp</span>                <label class="switch"><input type="checkbox" id="instaAllowTelegramBot" /><span                    class="slider"></span></label>                <span class="muted">Telegram Bot</span>                <label class="switch"><input type="checkbox" id="instaAllowTelegramUserbot" /><span                    class="slider"></span></label>                <span class="muted">Telegram Userbot</span>              </div>              <div class="grid" style="margin-top:12px;">                <section class="card">                  <h3>WhatsApp</h3>                  <div class="row">                    <label class="switch"><input type="checkbox" id="instaWaPrivate" /><span                        class="slider"></span></label>                    <span class="muted">Privado</span>                    <label class="switch"><input type="checkbox" id="instaWaGroups" /><span                        class="slider"></span></label>                    <span class="muted">Grupos</span>                  </div>                  <label>IDs permitidos (opcional)</label>                  <textarea id="instaWaIds" rows="2" placeholder="1203630@g.us&#10;1203631@g.us"></textarea>                                  </section>                <section class="card">                  <h3>Telegram</h3>                  <div class="row">                    <label class="switch"><input type="checkbox" id="instaTgPrivate" /><span                        class="slider"></span></label>                    <span class="muted">Privado</span>                    <label class="switch"><input type="checkbox" id="instaTgGroups" /><span                        class="slider"></span></label>                    <span class="muted">Grupos</span>                  </div>                  <label>IDs permitidos (opcional)</label>                  <textarea id="instaTgIds" rows="2" placeholder="-100123&#10;-100456"></textarea>                                  </section>              </div>              <label>Contexto da oferta</label>              <select id="instaContextMode">                <option value="Off">Desativado</option>                <option value="Suggestion">Sugestão rápida</option>                <option value="ExtraPost">Post extra</option>              </select>              <label>IA (OpenAI)</label>              <div class="row">                <label class="switch"><input type="checkbox" id="instaUseAi" /><span class="slider"></span></label>                <span class="muted">Usar IA para gerar legendas</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="instaUltraPrompt" /><span                    class="slider"></span></label>                <span class="muted">Ultra premium (high ticket)</span>                <label class="switch"><input type="checkbox" id="instaShortName" /><span class="slider"></span></label>                <span class="muted">Encurtar nome do produto</span>                <label class="switch"><input type="checkbox" id="instaBenefits" /><span class="slider"></span></label>                <span class="muted">Adicionar bullets de benefícios</span>                <label class="switch"><input type="checkbox" id="instaImageDownload" /><span                    class="slider"></span></label>                <span class="muted">Baixar imagens do link</span>              </div>              <label>Estilo do prompt</label>              <select id="instaPromptPreset" onchange="applyInstaPromptPreset()">                <option value="profissional">Profissional (afiliados)</option>                <option value="premium">Premium (profissional)</option>                <option value="agressivo">Agressivo (urgência/venda)</option>                <option value="minimalista">Minimalista (clean)</option>                <option value="custom">Personalizado</option>              </select>              <label>Provedor de IA</label>              <select id="instaAiProvider">                <option value="openai">OpenAI</option>                <option value="gemini">Gemini</option>                <option value="both">OpenAI + Gemini</option>              </select>              <section class="card">                <h3>OpenAI</h3>                <input id="openaiApiKey" type="password" placeholder="Chave OpenAI (sk-...)" />                <div class="row">                  <input id="openaiModel" placeholder="Modelo (ex: gpt-4o-mini)" />                  <input id="openaiTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura (0-2)" />                  <input id="openaiMaxTokens" type="number" step="1" min="100" max="2000"                    placeholder="Max output tokens" />                </div>              </section>              <section class="card">                <h3>Gemini</h3>                <label>Chaves API (uma por linha)</label>                <div id="geminiApiKeyRows"></div>
-                <div class="row" style="margin-top:8px;">                  <button class="secondary" type="button" onclick="addGeminiApiKeyRow()">+ Adicionar chave</button>                </div>                <div class="row">                  <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />                  <input id="geminiMaxTokens" type="number" step="1" min="200" max="4096"                    placeholder="Max output tokens" />                </div>              </section>              <label>Variações de legenda</label>              <input id="instaVariations" type="number" min="1" max="5" step="1" placeholder="2" />              <section class="card" style="margin-top:12px;">                <h3 data-tooltip="Personalize os modelos 1, 2 e 3 usados por /ig template.">Templates de Legenda (/ig template)</h3>                                <p class="muted">Placeholders: <code>{title}</code>, <code>{lead}</code>, <code>{body}</code>,                  <code>{short}</code>, <code>{keyword}</code>, <code>{hashtags}</code>, <code>{bullet1}</code>,                  <code>{bullet2}</code>, <code>{bullet3}</code></p>                <label>Template 1</label>                <textarea id="instaCaptionTemplate1" rows="4" placeholder="Oferta em destaque: {title}"></textarea>                <label>Template 2</label>                <textarea id="instaCaptionTemplate2" rows="5"                  placeholder="Oferta: {title}&#10;&#10;Pontos principais:&#10;- {bullet1}&#10;- {bullet2}&#10;- {bullet3}"></textarea>                <label>Template 3</label>
-                <textarea id="instaCaptionTemplate3" rows="4"                  placeholder="Oferta do dia: {title}&#10;&#10;{short}"></textarea>              </section>              <label>Prompt IA (editável)</label>              <textarea id="instaPrompt" rows="8"                placeholder="Use {{format}} e os placeholders: {{input}}, {{link}}, {{context}}, {{footer}}, {{images}}, {{title}}, {{description}}"></textarea>              <section class="card" style="margin-top:12px;">                <h3>Teste de IA</h3>                <label>Entrada para teste</label>                <textarea id="instaTestInput" rows="3" placeholder="Cole o nome do produto e/ou link"></textarea>                <label>Contexto (opcional)</label>                <textarea id="instaTestContext" rows="3" placeholder="Texto da oferta para ajudar a IA"></textarea>                <button class="secondary" onclick="runInstaAiTest()">Testar IA</button>                <pre id="instaTestResult"></pre>              </section>              <section class="card" style="margin-top:12px;">                <h3>Logs IA</h3>                <div class="row">                  <input id="instaAiLogSearch" placeholder="Buscar por provedor, erro, modelo..." />                  <button class="secondary" onclick="loadInstaAiLogs()">Atualizar</button>                  <button class="secondary" onclick="clearInstaAiLogs()">Limpar</button>                </div>                <div id="instaAiLogs" class="log-table"></div>              </section>              <label>Gatilhos (um por linha)</label>              <textarea id="instaTriggers" rows="3" placeholder="criar postagem&#10;postar&#10;insta"></textarea>              <label>Rodapé (opcional)</label>              <input id="instaFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="saveInstagramSettings()">Salvar Instagram</button>                <span id="instaSaveStatus" class="status muted"></span>              </div>            </section>          </div>          <div id="section-instagram-publish" class="hidden">            <section class="card" style="margin-top:16px;">              <h2>Instagram - Publicar e Comentarios</h2>              <div class="row">                <label class="switch"><input type="checkbox" id="igPubEnabled" /><span class="slider"></span></label>                <span class="muted">Ativar publicacao Instagram</span>              </div>              <label>Access Token</label>              <input id="igPubToken" type="password" placeholder="Token do Meta Graph API" />              <label>Instagram User ID</label>              <input id="igPubUserId" placeholder="ID da conta do Instagram (business)" />              <label>Graph Base URL</label>              <input id="igPubBaseUrl" placeholder="https://graph.facebook.com/v19.0" />              <label>Webhook Verify Token</label>              <input id="igPubVerifyToken" placeholder="Token para validação do webhook" />              <label>Template resposta (com {link} e {keyword})</label>              <input id="igPubReplyTemplate" placeholder="Aqui esta o link: {link}" />              <label>Template quando nao houver match</label>              <input id="igPubReplyNoMatch" placeholder="Comente a palavra correta para receber o link." />              <div class="row">                <label class="switch"><input type="checkbox" id="igPubAutoReplyEnabled" /><span                    class="slider"></span></label>                <span class="muted">Responder comentarios automaticamente</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="igPubAutoReplyOnlyKeyword" /><span                    class="slider"></span></label>                <span class="muted">Somente quando palavra-chave bater</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="igPubAutoDmEnabled" /><span                    class="slider"></span></label>                <span class="muted">Enviar DM automatica para CTA</span>              </div>              <label>Provedor DM</label>              <select id="igPubDmProvider">                <option value="meta">Meta Graph API</option>                <option value="manychat">ManyChat Webhook</option>              </select>              <div class="row">                <label class="switch"><input type="checkbox" id="igPubDmFallbackManyChat" /><span                    class="slider"></span></label>                <span class="muted">Fallback para ManyChat quando Meta falhar</span>              </div>              <label>Template DM (usa {link}, {keyword}, {name}, {comment})</label>              <textarea id="igPubDmTemplate" rows="3" placeholder="Oi {name}! Aqui esta seu link: {link}"></textarea>              <label>ManyChat Webhook URL</label>              <input id="igPubManyChatWebhookUrl" placeholder="https://api.manychat.com/... ou webhook do fluxo" />              <label>ManyChat API Key (opcional)</label>              <input id="igPubManyChatApiKey" type="password" placeholder="Bearer token da integracao ManyChat" />              <section class="card" style="margin-top:12px;">                <h3>Autopilot - Qualidade e Confiabilidade</h3>                <div class="row">                  <label class="switch"><input type="checkbox" id="igAutoRequireOfficial" /><span                      class="slider"></span></label>                  <span class="muted">Exigir fonte oficial de produto (API oficial)</span>                </div>                <label>Match mínimo imagem/produto (0-100)</label>                <input id="igAutoMinImageMatch" type="number" min="0" max="100" step="1" placeholder="80" />                <div class="row">                  <label class="switch"><input type="checkbox" id="igAutoRequireAi" /><span                      class="slider"></span></label>                  <span class="muted">Exigir legenda gerada por IA (sem fallback genérico)</span>                </div>                <div class="row" style="margin-top:8px;">                  <button class="secondary" type="button" onclick="loadApiDiagnostics()">Ver status das APIs</button>                  <span id="apiDiagStatus" class="status muted"></span>                </div>                <pre id="apiDiagResult" style="max-height:220px;overflow:auto;"></pre>              </section>              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="saveInstagramPublishSettings()">Salvar configuracoes</button>                <button onclick="testInstagramPublish()">Testar conexao</button>                <span id="igPubSaveStatus" class="status muted"></span>              </div>            </section>            <section class="card" style="margin-top:16px;">              <h3>Novo post</h3>              <label>Produto</label>              <input id="igDraftProduct" placeholder="Nome do produto" />              <label>Legenda</label>              <textarea id="igDraftCaption" rows="5" placeholder="Legenda pronta para o Instagram"></textarea>              <label>Hashtags</label>              <textarea id="igDraftHashtags" rows="2" placeholder="#ofertas #achadinhos"></textarea>              <label>URLs de imagens (uma por linha)</label>              <textarea id="igDraftImages" rows="3" placeholder="https://..."></textarea>              <label>CTAs (uma por linha: PALAVRA => link)</label>              <textarea id="igDraftCtas" rows="3" placeholder="OLED => https://...\nSOM => https://..."></textarea>              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="saveInstagramDraft(false)">Salvar rascunho</button>                <button onclick="saveInstagramDraft(true)">Publicar agora</button>                <span id="igDraftStatus" class="status muted"></span>              </div>            </section>            <section class="card" style="margin-top:16px;">              <h3 data-tooltip="Gera comandos prontos para acelerar o fluxo no WhatsApp.">Operacoes Rapidas (WhatsApp)</h3>                            <label>Produto ou link</label>              <input id="igQuickInput" placeholder="https://link-da-oferta ou nome do produto" />              <label>Palavra CTA</label>              <input id="igQuickCta" placeholder="BIKE" />              <label>Imagem (opcional)</label>              <input id="igQuickImage" placeholder="https://url-da-imagem.jpg" />              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="generateIgQuickCommands()">Gerar comandos</button>                <button class="secondary" onclick="copyIgQuickCommands()">Copiar comandos</button>                <button onclick="copyIgFastCommand()">Copiar /ig rapido</button>              </div>              <textarea id="igQuickCommands" rows="6" placeholder="/ig criar ..."></textarea>              <span id="igQuickStatus" class="status muted"></span>            </section>            <section class="card" style="margin-top:16px;">              <h3>Fila de posts</h3>              <div class="row">                <button class="secondary" onclick="loadInstagramDrafts()">Atualizar</button>              </div>              <div id="igDraftList" class="log-table"></div>            </section>            <section class="card" style="margin-top:16px;">              <h3>Comentarios pendentes</h3>              <div class="row">                <button class="secondary" onclick="loadInstagramComments()">Atualizar</button>              </div>              <div id="igCommentList" class="log-table"></div>            </section>            <section class="card" style="margin-top:16px;">              <h3>Logs Instagram</h3>              <div class="row">                <input id="igPubLogSearch" placeholder="Buscar por erro, media, draft..." />                <button class="secondary" onclick="loadInstagramPublishLogs()">Atualizar</button>                <button class="secondary" onclick="clearInstagramPublishLogs()">Limpar</button>              </div>              <div id="igPubLogs" class="log-table"></div>            </section>          </div>          <div id="section-instagram-story" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Configuração dedicada para Story com canal/grupo de aprovação separado do feed.">Instagram Story - AutoPilot</h2>                            <div class="row">                <label class="switch"><input type="checkbox" id="igStoryAutoEnabled" /><span                    class="slider"></span></label>                <span class="muted">Ativar AutoStory automático</span>              </div>              <div class="row">                <div style="flex:1;">                  <label>Intervalo (minutos)</label>                  <input id="igStoryInterval" type="number" min="15" max="1440" step="1" placeholder="240" />                </div>                <div style="flex:1;">                  <label>Top produtos por rodada</label>                  <input id="igStoryTopCount" type="number" min="1" max="10" step="1" placeholder="2" />                </div>              </div>              <div class="row">                <div style="flex:1;">                  <label>Janela de análise (horas)</label>                  <input id="igStoryLookback" type="number" min="6" max="168" step="1" placeholder="24" />                </div>                <div style="flex:1;">                  <label>Repetição mínima (horas)</label>                  <input id="igStoryRepeatWindow" type="number" min="6" max="240" step="1" placeholder="24" />                </div>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="igStorySendApproval" /><span                    class="slider"></span></label>                <span class="muted">Enviar para aprovação antes de publicar</span>              </div>              <label>Canal de aprovação</label>              <select id="igStoryApprovalChannel">                <option value="whatsapp">WhatsApp</option>                <option value="telegram">Telegram</option>              </select>              <label>Telegram Chat ID (se canal = Telegram)</label>              <input id="igStoryApprovalTelegramChatId" type="number" step="1" placeholder="-1001234567890" />              <label>WhatsApp Group ID (se canal = WhatsApp)</label>              <input id="igStoryApprovalWhatsAppGroupId" placeholder="1203630...@g.us" />              <label>Instância WhatsApp (opcional)</label>              <input id="igStoryApprovalWhatsAppInstance" placeholder="ZapOfertas" />              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="saveInstagramStorySettings()">Salvar AutoStory</button>                <button onclick="runInstagramAutoStory(false)">Rodar AutoStory agora</button>                <button class="secondary" onclick="runInstagramAutoStory(true)">Dry-run</button>                <span id="igStoryStatus" class="status muted"></span>              </div>            </section>          </div>          <div id="section-bio-growth" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Configure a landing da bio para usar o mesmo link em Instagram, Stories e ManyChat.">Bio Hub (Link unico)</h2>                            <div class="row">                <label class="switch"><input type="checkbox" id="bioHubEnabled" /><span class="slider"></span></label>                <span class="muted">Bio hub ativo</span>              </div>              <label>Marca</label>              <input id="bioHubBrandName" placeholder="Rei das Ofertas" />              <label>Titulo</label>              <input id="bioHubHeadline" placeholder="Achadinhos em destaque" />              <label>Subtitulo</label>              <input id="bioHubSubheadline" placeholder="Toque no botao para abrir a oferta." />              <div class="row">                <div style="flex:1;">                  <label>Texto do botao</label>                  <input id="bioHubButtonLabel" placeholder="Abrir oferta" />                </div>                <div style="flex:1;">                  <label>Maximo de itens</label>                  <input id="bioHubMaxItems" type="number" min="5" max="80" step="1" placeholder="40" />                </div>              </div>              <div class="row">                <div style="flex:1;">                  <label>Origem padrao</label>                  <input id="bioHubDefaultSource" placeholder="bio" />                </div>                <div style="flex:1;">                  <label>Campanha padrao</label>                  <input id="bioHubDefaultCampaign" placeholder="insta-feed" />                </div>              </div>              <label>Dominio publico dos links</label>              <input id="bioHubPublicBaseUrl" placeholder="https://achadinhos.reidasofertas.ia.br" />              <div class="row" style="margin-top:12px;">                <button class="secondary" onclick="saveBioHubSettings()">Salvar Bio Hub</button>                <button class="secondary" onclick="refreshBioLinksPreview()">Atualizar links</button>                <button class="secondary" onclick="syncCatalogNow()">Sincronizar catalogo</button>                <span id="bioHubStatus" class="status muted"></span>              </div>              <div class="table-wrap" style="margin-top:10px;">                <table>                  <thead>                    <tr>                      <th>Uso</th>                      <th>Link</th>                      <th>Ação</th>                    </tr>                  </thead>                  <tbody id="bioLinksTableBody"></tbody>                </table>              </div>            </section>            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Resumo por origem/campanha para decidir o que entra no feed e story.">Funnel de Cliques</h2>                            <div class="row">                <select id="bioFunnelHours">                  <option value="24">Ultimas 24h</option>                  <option value="72">Ultimas 72h</option>                  <option value="168" selected>Ultimos 7 dias</option>                  <option value="336">Ultimos 14 dias</option>                </select>                <button class="secondary" onclick="loadBioFunnel()">Atualizar funnel</button>                <span id="bioFunnelStatus" class="status muted"></span>              </div>              <div class="grid" style="margin-top:10px;">                <div class="card" style="padding:12px;">                  <h3 style="margin:0 0 6px;">Totais</h3>                  <pre id="bioFunnelTotals">Sem dados.</pre>                </div>                <div class="card" style="padding:12px;">                  <h3 style="margin:0 0 6px;">Top Origens</h3>                  <pre id="bioFunnelSources">Sem dados.</pre>                </div>              </div>              <div class="card" style="padding:12px;margin-top:10px;">                <h3 style="margin:0 0 6px;">Top Campanhas</h3>                <pre id="bioFunnelCampaigns">Sem dados.</pre>              </div>            </section>          </div>          <div id="section-autoreplies" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Formato: uma regra por linha no padrão gatilho => resposta.">Respostas Automáticas</h2>                            <div class="row">                <label class="switch"><input type="checkbox" id="autoRepliesEnabled" /><span                    class="slider"></span></label>                <span class="muted">Ativar respostas automáticas</span>              </div>              <textarea id="rules" rows="7"></textarea>              <div class="row">                <label class="switch"><input type="checkbox" id="autoConvert" /><span class="slider"></span></label>                <span class="muted">Converter links automaticamente</span>              </div>              <div class="row">                <label class="switch"><input type="checkbox" id="autoSend" /><span class="slider"></span></label>                <span class="muted">Enviar automaticamente para canal destino</span>              </div>              <label>Canal de destino</label>              <input id="destinationChannel" placeholder="@MeuCanalAfiliado" />              <button id="saveBtn" onclick="saveSettings()">Salvar Configurações</button>              <button class="secondary" onclick="loadSettings()">Recarregar</button>              <p id="saveStatus" class="status"></p>            </section>          </div>          <div id="section-logs" class="hidden">            <section class="card" style="margin-top:16px;">              <h2 data-tooltip="Mostra se a imagem foi capturada e enviada (ou o motivo da falha).">Log de Mídia</h2>                            <div id="mediaAlert" class="alert hidden"></div>              <div class="row">                <button onclick="loadMediaFailures()">Carregar falhas</button>                <button class="secondary" onclick="clearMediaFailures()">Limpar falhas</button>              </div>              <div class="table-wrap" style="margin-top:8px;">                <table>                  <thead>                    <tr>                      <th>Data/Hora</th>                      <th>Origem</th>                      <th>Destino</th>                      <th>Status</th>                      <th>Motivo</th>                      <th>Detalhe</th>                      <th>Ação</th>                    </tr>                  </thead>                  <tbody id="mediaTableBody"></tbody>                </table>              </div>            </section>            <section class="card" style="margin-top:16px;">              <h2>Logs de Conversão</h2>              <div class="row">                <select id="logStore">                  <option value="">Todas as lojas</option>                  <option>Amazon</option>                  <option>Mercado Livre</option>                  <option>Shopee</option>                  <option>Shein</option>                  <option>Unknown</option>                </select>                <select id="logSuccess">                  <option value="">Todos</option>                  <option value="true">Sucesso</option>                  <option value="false">Falha</option>                </select>                <input id="logSearch" placeholder="Buscar por URL, origem ou ID" />                <select id="logLimit">                  <option value="50">50</option>                  <option value="100">100</option>                  <option value="200" selected>200</option>                  <option value="500">500</option>                </select>                <button onclick="loadConversionLogs()">Carregar</button>                <button class="secondary" onclick="clearConversionLogs()">Limpar logs</button>              </div>              <p id="logStatus" class="status muted">Sem dados ainda.</p>              <div id="logAlert" class="alert hidden"></div>              <div class="table-wrap" style="margin-top:8px;">                <table>                  <thead>                    <tr>                      <th>ID</th>                      <th>Data/Hora</th>                      <th>Loja</th>                      <th>Status</th>                      <th>Mídia</th>                      <th>Cliques</th>                      <th>Validação</th>                      <th>Correção</th>                      <th>Erro</th>                      <th>Origem/Destino</th>                      <th>URL Original</th>                      <th>URL Convertido</th>                      <th>Ações</th>                      <th>Tempo (ms)</th>                    </tr>                  </thead>                  <tbody id="logTableBody"></tbody>                </table>              </div>            </section>          </div>          <div id="section-playground" class="hidden">            <section class="card" style="margin-top:16px;">              <h2>Playground</h2>              <label>Mensagem para simular</label>              <textarea id="playgroundText" rows="4" placeholder="Cole uma mensagem com links aqui"></textarea>              <button onclick="runPlayground()">Simular</button>              <pre id="playgroundResult"></pre>            </section>          </div>          <div id="section-debug" class="hidden">            <section class="card" style="margin-top:16px;">              <h2>Debug (JSON)</h2>              <pre id="debug"></pre>            </section>          </div>        </section>      </div>    </main>  </div>  <script src="dashboard.js"></script>  <div id="toastContainer"></div>
+                </details>
+                <div id="userbotChats" class="muted">Nenhum grupo carregado.</div>
+              </section>
+              <section class="card">
+                <h2 data-tooltip="Selecione de quais grupos o bot deve capturar ofertas.">WhatsApp Grupos (Origem)</h2>
+                <div class="row"> <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>
+                  <button class="secondary" onclick="loadWhatsAppGroups()">Recarregar</button> </div>
+                <div class="row"> <select id="waRoutePicker" style="max-width:260px;"
+                    onchange="switchWhatsAppRoute()"></select> <button class="secondary" onclick="addWhatsAppRoute()">+
+                    Nova rota</button> <button class="secondary" onclick="removeWhatsAppRoute()">Excluir rota</button>
+                </div> <label>Nome da rota</label> <input id="waRouteName" placeholder="Rota principal"
+                  oninput="renameWhatsAppRoute()" />
+                <div class="row"> <input id="waSourceSearch" placeholder="Buscar grupo por nome ou ID" /> <span
+                    class="muted">Selecionados: <strong id="waSourceSelectedCount">0</strong></span> </div>
+                <div class="row"> <button class="secondary" onclick="selectAllWhatsAppSourceGroups()">Selecionar
+                    todos</button> <button class="secondary" onclick="clearWhatsAppSourceSelection()">Limpar
+                    seleção</button> <button class="secondary" onclick="showAllWhatsAppSourceGroups()">Mostrar
+                    todos</button> <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>
+                </div>
+                <p id="waSourceSaveStatus" class="status muted"></p>
+                <div id="waSourceSelectedChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
+                  vírgula)</label> <textarea id="waManualSourceIds" rows="3" placeholder="1203630@g.us"></textarea>
+                <div id="waSourceGroups" class="muted">Nenhum grupo carregado.</div>
+              </section>
+              <section class="card">
+                <h2 data-tooltip="Selecione para onde as ofertas convertidas serão enviadas.">WhatsApp Grupos (Destino)
+                </h2>
+                <div class="row"> <input id="waDestSearch" placeholder="Buscar grupo por nome ou ID" /> <span
+                    class="muted">Selecionados: <strong id="waSelectedCount">0</strong></span> </div>
+                <div class="row"> <button class="secondary" onclick="selectAllWhatsAppGroups()">Selecionar
+                    todos</button> <button class="secondary" onclick="clearWhatsAppSelection()">Limpar seleção</button>
+                  <button class="secondary" onclick="showAllWhatsAppGroups()">Mostrar todos</button> <button
+                    class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button> </div>
+                <p id="waSaveStatus" class="status muted"></p>
+                <div id="waSelectedChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
+                  vírgula)</label> <textarea id="waManualIds" rows="3" placeholder="1203630@g.us"></textarea>
+                <div id="waGroups" class="muted">Nenhum grupo carregado.</div>
+              </section>
+            </div>
+          </div>
+          <div id="section-linkresponder" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Quando alguém envia um link, o bot responde com o link afiliado.">Resposta de Links
+                (Gatilho)</h2>
+              <div class="row"> <label class="switch"><input type="checkbox" id="responderEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Ativar resposta</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="responderWhatsApp" /><span
+                    class="slider"></span></label> <span class="muted">WhatsApp</span> <label class="switch"><input
+                    type="checkbox" id="responderTelegramBot" /><span class="slider"></span></label> <span
+                  class="muted">Telegram Bot</span> <label class="switch"><input type="checkbox"
+                    id="responderTelegramUserbot" /><span class="slider"></span></label> <span class="muted">Telegram
+                  Userbot</span> </div>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>Origem WhatsApp</h3>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="responderWaPrivate" /><span
+                        class="slider"></span></label> <span class="muted">Privado</span> <label class="switch"><input
+                        type="checkbox" id="responderWaGroups" /><span class="slider"></span></label> <span
+                      class="muted">Grupos</span> </div> <label>IDs permitidos (opcional)</label> <textarea
+                    id="responderWaIds" rows="3" placeholder="551199999@s.whatsapp.net&#10;1203630@g.us"></textarea>
+                </section>
+                <section class="card">
+                  <h3>Origem Telegram</h3>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="responderTgPrivate" /><span
+                        class="slider"></span></label> <span class="muted">Privado</span> <label class="switch"><input
+                        type="checkbox" id="responderTgGroups" /><span class="slider"></span></label> <span
+                      class="muted">Grupos</span> </div> <label>IDs permitidos (opcional)</label> <textarea
+                    id="responderTgIds" rows="3" placeholder="123456789&#10;-100123..."></textarea>
+                </section>
+              </div>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>Resposta</h3> <label>Template (use {link} ou {text})</label> <textarea id="responderTemplate"
+                    rows="3" placeholder="Link convertido:&#10;{link}"></textarea> <label>Quando não converter (apenas
+                    privado)</label> <input id="responderFailTemplate" placeholder="Link não suportado." />
+                </section>
+                <section class="card">
+                  <h3>Extras</h3>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="responderAppendShein" /><span
+                        class="slider"></span></label> <span class="muted">Anexar código Shein</span> </div>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="responderTracking" /><span
+                        class="slider"></span></label> <span class="muted">Ativar tracking de cliques</span> </div>
+                  <label>Rodapé (texto extra)</label> <input id="responderFooter"
+                    placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+                </section>
+              </div>
+              <div class="row" style="margin-top:12px;"> <button class="secondary" onclick="saveLinkResponder()">Salvar
+                  gatilho</button> <span id="responderSaveStatus" class="status muted"></span> </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h2>Logs de Resposta</h2>
+              <div class="row"> <input id="responderLogSearch" placeholder="Buscar por URL ou ID" /> <button
+                  onclick="loadResponderLogs()">Carregar</button> </div>
+              <div class="table-wrap" style="margin-top:8px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Data/Hora</th>
+                      <th>Origem</th>
+                      <th>Tipo</th>
+                      <th>Status</th>
+                      <th>URL Original</th>
+                      <th>URL Convertido</th>
+                      <th>Cliques</th>
+                    </tr>
+                  </thead>
+                  <tbody id="responderLogBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h2>Clicks (Resposta)</h2>
+              <div class="row"> <input id="responderClickSearch" placeholder="Buscar por URL ou ID" /> <button
+                  onclick="loadResponderClicks()">Carregar</button> <button class="secondary"
+                  onclick="clearResponderClicks()">Limpar logs</button> </div>
+              <div class="table-wrap" style="margin-top:8px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Data/Hora</th>
+                      <th>ID</th>
+                      <th>URL de destino</th>
+                    </tr>
+                  </thead>
+                  <tbody id="responderClickBody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+          <div id="section-mercadolivre" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Controle de bloqueio em automações, whitelist de canais e fila de aprovação manual.">
+                Compliance Mercado Livre</h2>
+              <div class="row"> <label class="switch"><input type="checkbox" id="mlCompEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Ativar compliance Mercado Livre</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="mlCompBlockAuto" /><span
+                    class="slider"></span></label> <span class="muted">Bloquear fluxo automático com links Mercado
+                  Livre</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="mlCompRequireApproval" /><span
+                    class="slider"></span></label> <span class="muted">Exigir aprovação manual para Mercado Livre</span>
+              </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="mlCompWhitelistEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Ativar whitelist de canais</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="mlCompBlockUnknown" /><span
+                    class="slider"></span></label> <span class="muted">Bloquear quando canal não for identificado</span>
+              </div> <label>Canais permitidos (um por linha)</label> <textarea id="mlCompAllowedChannels" rows="4"
+                placeholder="1203630@g.us&#10;manychat-teste@c.us&#10;-100123456789"></textarea>
+              <div class="row" style="margin-top:12px;"> <button class="secondary"
+                  onclick="saveMercadoLivreCompliance()">Salvar compliance</button> <span id="mlCompSaveStatus"
+                  class="status muted"></span> </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h2>Pendências de Aprovação Manual</h2>
+              <div class="row"> <select id="mlPendingStatus" style="max-width:220px;">
+                  <option value="pending">Pendente</option>
+                  <option value="approved">Aprovado</option>
+                  <option value="rejected">Rejeitado</option>
+                  <option value="">Todos</option>
+                </select> <button onclick="loadMercadoLivrePending()">Carregar fila</button> <span id="mlPendingCount"
+                  class="status muted"></span> </div>
+              <div class="table-wrap" style="margin-top:8px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Data/Hora</th>
+                      <th>Status</th>
+                      <th>Origem</th>
+                      <th>Canal</th>
+                      <th>Razão</th>
+                      <th>URLs</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mlPendingBody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+          <div id="section-route" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Escolha grupos de origem no Telegram e destinos no WhatsApp para envio direto.">Rota
+                Telegram -> WhatsApp</h2>
+              <div class="row"> <select id="tgWaRoutePicker" style="max-width:260px;"
+                  onchange="switchTgWaRoute()"></select> <button class="secondary" onclick="addTgWaRoute()">+ Nova
+                  rota</button> <button class="secondary" onclick="removeTgWaRoute()">Excluir rota</button> </div>
+              <label>Nome da rota</label> <input id="tgWaRouteName" placeholder="Rota Telegram principal"
+                oninput="renameTgWaRoute()" />
+              <div class="row"> <label class="switch"><input type="checkbox" id="tgWaEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Rota ativa</span> </div>
+              <div class="row"> <button class="secondary" onclick="saveTelegramToWhatsAppRoute()">Salvar rota</button>
+                <span id="tgWaSaveStatus" class="status muted"></span> </div>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>Origem (Telegram)</h3>
+                  <div class="row"> <input id="tgWaSourceSearch" placeholder="Buscar grupo por nome ou ID" /> <span
+                      class="muted">Selecionados: <strong id="tgWaSourceCount">0</strong></span> </div>
+                  <div class="row"> <button class="secondary" onclick="selectAllTgWaSource()">Selecionar todos</button>
+                    <button class="secondary" onclick="clearTgWaSource()">Limpar seleção</button> <button
+                      class="secondary" onclick="showAllTgWaSource()">Mostrar todos</button> </div>
+                  <div id="tgWaSourceChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
+                    vírgula)</label> <textarea id="tgWaSourceManual" rows="3"
+                    placeholder="-100123...\n-100456..."></textarea>
+                  <div id="tgWaSourceList" class="muted">Nenhum grupo carregado.</div>
+                </section>
+                <section class="card">
+                  <h3>Destino (WhatsApp)</h3>
+                  <div class="row"> <input id="tgWaDestSearch" placeholder="Buscar grupo por nome ou ID" /> <span
+                      class="muted">Selecionados: <strong id="tgWaDestCount">0</strong></span> </div>
+                  <div class="row"> <button class="secondary" onclick="selectAllTgWaDest()">Selecionar todos</button>
+                    <button class="secondary" onclick="clearTgWaDest()">Limpar seleção</button> <button
+                      class="secondary" onclick="showAllTgWaDest()">Mostrar todos</button> </div>
+                  <div id="tgWaDestChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
+                    vírgula)</label> <textarea id="tgWaDestManual" rows="3" placeholder="1203630@g.us"></textarea>
+                  <div id="tgWaDestList" class="muted">Nenhum grupo carregado.</div>
+                </section>
+              </div>
+            </section>
+          </div>
+          <div id="section-instagram" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Gatilhos: criar postagem, postar, insta. Se enviar " postar produto" ele gera direto.">
+                Postagens para Instagram</h2>
+              <div class="row"> <label class="switch"><input type="checkbox" id="instaEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Ativar Instagram</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="instaAllowWhatsApp" /><span
+                    class="slider"></span></label> <span class="muted">WhatsApp</span> <label class="switch"><input
+                    type="checkbox" id="instaAllowTelegramBot" /><span class="slider"></span></label> <span
+                  class="muted">Telegram Bot</span> <label class="switch"><input type="checkbox"
+                    id="instaAllowTelegramUserbot" /><span class="slider"></span></label> <span class="muted">Telegram
+                  Userbot</span> </div>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>WhatsApp</h3>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="instaWaPrivate" /><span
+                        class="slider"></span></label> <span class="muted">Privado</span> <label class="switch"><input
+                        type="checkbox" id="instaWaGroups" /><span class="slider"></span></label> <span
+                      class="muted">Grupos</span> </div> <label>IDs permitidos (opcional)</label> <textarea
+                    id="instaWaIds" rows="2" placeholder="1203630@g.us&#10;1203631@g.us"></textarea>
+                </section>
+                <section class="card">
+                  <h3>Telegram</h3>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="instaTgPrivate" /><span
+                        class="slider"></span></label> <span class="muted">Privado</span> <label class="switch"><input
+                        type="checkbox" id="instaTgGroups" /><span class="slider"></span></label> <span
+                      class="muted">Grupos</span> </div> <label>IDs permitidos (opcional)</label> <textarea
+                    id="instaTgIds" rows="2" placeholder="-100123&#10;-100456"></textarea>
+                </section>
+              </div> <label>Contexto da oferta</label> <select id="instaContextMode">
+                <option value="Off">Desativado</option>
+                <option value="Suggestion">Sugestão rápida</option>
+                <option value="ExtraPost">Post extra</option>
+              </select> <label>IA (OpenAI)</label>
+              <div class="row"> <label class="switch"><input type="checkbox" id="instaUseAi" /><span
+                    class="slider"></span></label> <span class="muted">Usar IA para gerar legendas</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="instaUltraPrompt" /><span
+                    class="slider"></span></label> <span class="muted">Ultra premium (high ticket)</span> <label
+                  class="switch"><input type="checkbox" id="instaShortName" /><span class="slider"></span></label> <span
+                  class="muted">Encurtar nome do produto</span> <label class="switch"><input type="checkbox"
+                    id="instaBenefits" /><span class="slider"></span></label> <span class="muted">Adicionar bullets de
+                  benefícios</span> <label class="switch"><input type="checkbox" id="instaImageDownload" /><span
+                    class="slider"></span></label> <span class="muted">Baixar imagens do link</span> </div>
+              <label>Estilo do prompt</label> <select id="instaPromptPreset" onchange="applyInstaPromptPreset()">
+                <option value="profissional">Profissional (afiliados)</option>
+                <option value="premium">Premium (profissional)</option>
+                <option value="agressivo">Agressivo (urgência/venda)</option>
+                <option value="minimalista">Minimalista (clean)</option>
+                <option value="custom">Personalizado</option>
+              </select> <label>Provedor de IA</label> <select id="instaAiProvider">
+                <option value="openai">OpenAI</option>
+                <option value="gemini">Gemini</option>
+                <option value="both">OpenAI + Gemini</option>
+              </select>
+              <section class="card">
+                <h3>OpenAI</h3> <input id="openaiApiKey" type="password" placeholder="Chave OpenAI (sk-...)" />
+                <div class="row"> <input id="openaiModel" placeholder="Modelo (ex: gpt-4o-mini)" /> <input
+                    id="openaiTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura (0-2)" /> <input
+                    id="openaiMaxTokens" type="number" step="1" min="100" max="2000" placeholder="Max output tokens" />
+                </div>
+              </section>
+              <section class="card">
+                <h3>Gemini</h3> <label>Chaves API (uma por linha)</label>
+                <div id="geminiApiKeyRows"></div>
+                <div class="row" style="margin-top:8px;"> <button class="secondary" type="button"
+                    onclick="addGeminiApiKeyRow()">+ Adicionar chave</button> </div>
+                <div class="row"> <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" /> <input
+                    id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
+                </div>
+              </section> <label>Variações de legenda</label> <input id="instaVariations" type="number" min="1" max="5"
+                step="1" placeholder="2" />
+              <section class="card" style="margin-top:12px;">
+                <h3 data-tooltip="Personalize os modelos 1, 2 e 3 usados por /ig template.">Templates de Legenda (/ig
+                  template)</h3>
+                <p class="muted">Placeholders: <code>{title}</code>, <code>{lead}</code>, <code>{body}</code>,
+                  <code>{short}</code>, <code>{keyword}</code>, <code>{hashtags}</code>, <code>{bullet1}</code>,
+                  <code>{bullet2}</code>, <code>{bullet3}</code></p> <label>Template 1</label> <textarea
+                  id="instaCaptionTemplate1" rows="4" placeholder="Oferta em destaque: {title}"></textarea>
+                <label>Template 2</label> <textarea id="instaCaptionTemplate2" rows="5"
+                  placeholder="Oferta: {title}&#10;&#10;Pontos principais:&#10;- {bullet1}&#10;- {bullet2}&#10;- {bullet3}"></textarea>
+                <label>Template 3</label>
+                <textarea id="instaCaptionTemplate3" rows="4"
+                  placeholder="Oferta do dia: {title}&#10;&#10;{short}"></textarea>
+              </section> <label>Prompt IA (editável)</label> <textarea id="instaPrompt" rows="8"
+                placeholder="Use {{format}} e os placeholders: {{input}}, {{link}}, {{context}}, {{footer}}, {{images}}, {{title}}, {{description}}"></textarea>
+              <section class="card" style="margin-top:12px;">
+                <h3>Teste de IA</h3> <label>Entrada para teste</label> <textarea id="instaTestInput" rows="3"
+                  placeholder="Cole o nome do produto e/ou link"></textarea> <label>Contexto (opcional)</label>
+                <textarea id="instaTestContext" rows="3" placeholder="Texto da oferta para ajudar a IA"></textarea>
+                <button class="secondary" onclick="runInstaAiTest()">Testar IA</button>
+                <pre id="instaTestResult"></pre>
+              </section>
+              <section class="card" style="margin-top:12px;">
+                <h3>Logs IA</h3>
+                <div class="row"> <input id="instaAiLogSearch" placeholder="Buscar por provedor, erro, modelo..." />
+                  <button class="secondary" onclick="loadInstaAiLogs()">Atualizar</button> <button class="secondary"
+                    onclick="clearInstaAiLogs()">Limpar</button> </div>
+                <div id="instaAiLogs" class="log-table"></div>
+              </section> <label>Gatilhos (um por linha)</label> <textarea id="instaTriggers" rows="3"
+                placeholder="criar postagem&#10;postar&#10;insta"></textarea> <label>Rodapé (opcional)</label> <input
+                id="instaFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+              <div class="row" style="margin-top:12px;"> <button class="secondary"
+                  onclick="saveInstagramSettings()">Salvar Instagram</button> <span id="instaSaveStatus"
+                  class="status muted"></span> </div>
+            </section>
+          </div>
+          <div id="section-instagram-publish" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2>Instagram - Publicar e Comentarios</h2>
+              <div class="row"> <label class="switch"><input type="checkbox" id="igPubEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Ativar publicacao Instagram</span> </div>
+              <label>Access Token</label> <input id="igPubToken" type="password"
+                placeholder="Token do Meta Graph API" /> <label>Instagram User ID</label> <input id="igPubUserId"
+                placeholder="ID da conta do Instagram (business)" /> <label>Graph Base URL</label> <input
+                id="igPubBaseUrl" placeholder="https://graph.facebook.com/v19.0" /> <label>Webhook Verify Token</label>
+              <input id="igPubVerifyToken" placeholder="Token para validação do webhook" /> <label>Template resposta
+                (com {link} e {keyword})</label> <input id="igPubReplyTemplate"
+                placeholder="Aqui esta o link: {link}" /> <label>Template quando nao houver match</label> <input
+                id="igPubReplyNoMatch" placeholder="Comente a palavra correta para receber o link." />
+              <div class="row"> <label class="switch"><input type="checkbox" id="igPubAutoReplyEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Responder comentarios automaticamente</span>
+              </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="igPubAutoReplyOnlyKeyword" /><span
+                    class="slider"></span></label> <span class="muted">Somente quando palavra-chave bater</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="igPubAutoDmEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Enviar DM automatica para CTA</span> </div>
+              <label>Provedor DM</label> <select id="igPubDmProvider">
+                <option value="meta">Meta Graph API</option>
+                <option value="manychat">ManyChat Webhook</option>
+              </select>
+              <div class="row"> <label class="switch"><input type="checkbox" id="igPubDmFallbackManyChat" /><span
+                    class="slider"></span></label> <span class="muted">Fallback para ManyChat quando Meta falhar</span>
+              </div> <label>Template DM (usa {link}, {keyword}, {name}, {comment})</label> <textarea
+                id="igPubDmTemplate" rows="3" placeholder="Oi {name}! Aqui esta seu link: {link}"></textarea>
+              <label>ManyChat Webhook URL</label> <input id="igPubManyChatWebhookUrl"
+                placeholder="https://api.manychat.com/... ou webhook do fluxo" /> <label>ManyChat API Key
+                (opcional)</label> <input id="igPubManyChatApiKey" type="password"
+                placeholder="Bearer token da integracao ManyChat" />
+              <section class="card" style="margin-top:12px;">
+                <h3>Autopilot - Qualidade e Confiabilidade</h3>
+                <div class="row"> <label class="switch"><input type="checkbox" id="igAutoRequireOfficial" /><span
+                      class="slider"></span></label> <span class="muted">Exigir fonte oficial de produto (API
+                    oficial)</span> </div> <label>Match mínimo imagem/produto (0-100)</label> <input
+                  id="igAutoMinImageMatch" type="number" min="0" max="100" step="1" placeholder="80" />
+                <div class="row"> <label class="switch"><input type="checkbox" id="igAutoRequireAi" /><span
+                      class="slider"></span></label> <span class="muted">Exigir legenda gerada por IA (sem fallback
+                    genérico)</span> </div>
+                <div class="row" style="margin-top:8px;"> <button class="secondary" type="button"
+                    onclick="loadApiDiagnostics()">Ver status das APIs</button> <span id="apiDiagStatus"
+                    class="status muted"></span> </div>
+                <pre id="apiDiagResult" style="max-height:220px;overflow:auto;"></pre>
+              </section>
+              <div class="row" style="margin-top:12px;"> <button class="secondary"
+                  onclick="saveInstagramPublishSettings()">Salvar configuracoes</button> <button
+                  onclick="testInstagramPublish()">Testar conexao</button> <span id="igPubSaveStatus"
+                  class="status muted"></span> </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h3>Novo post</h3> <label>Produto</label> <input id="igDraftProduct" placeholder="Nome do produto" />
+              <label>Legenda</label> <textarea id="igDraftCaption" rows="5"
+                placeholder="Legenda pronta para o Instagram"></textarea> <label>Hashtags</label> <textarea
+                id="igDraftHashtags" rows="2" placeholder="#ofertas #achadinhos"></textarea> <label>URLs de imagens (uma
+                por linha)</label> <textarea id="igDraftImages" rows="3" placeholder="https://..."></textarea>
+              <label>CTAs (uma por linha: PALAVRA => link)</label> <textarea id="igDraftCtas" rows="3"
+                placeholder="OLED => https://...\nSOM => https://..."></textarea>
+              <div class="row" style="margin-top:12px;"> <button class="secondary"
+                  onclick="saveInstagramDraft(false)">Salvar rascunho</button> <button
+                  onclick="saveInstagramDraft(true)">Publicar agora</button> <span id="igDraftStatus"
+                  class="status muted"></span> </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h3 data-tooltip="Gera comandos prontos para acelerar o fluxo no WhatsApp.">Operacoes Rapidas (WhatsApp)
+              </h3> <label>Produto ou link</label> <input id="igQuickInput"
+                placeholder="https://link-da-oferta ou nome do produto" /> <label>Palavra CTA</label> <input
+                id="igQuickCta" placeholder="BIKE" /> <label>Imagem (opcional)</label> <input id="igQuickImage"
+                placeholder="https://url-da-imagem.jpg" />
+              <div class="row" style="margin-top:12px;"> <button class="secondary"
+                  onclick="generateIgQuickCommands()">Gerar comandos</button> <button class="secondary"
+                  onclick="copyIgQuickCommands()">Copiar comandos</button> <button onclick="copyIgFastCommand()">Copiar
+                  /ig rapido</button> </div> <textarea id="igQuickCommands" rows="6"
+                placeholder="/ig criar ..."></textarea> <span id="igQuickStatus" class="status muted"></span>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h3>Fila de posts</h3>
+              <div class="row"> <button class="secondary" onclick="loadInstagramDrafts()">Atualizar</button> </div>
+              <div id="igDraftList" class="log-table"></div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h3>Comentarios pendentes</h3>
+              <div class="row"> <button class="secondary" onclick="loadInstagramComments()">Atualizar</button> </div>
+              <div id="igCommentList" class="log-table"></div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h3>Logs Instagram</h3>
+              <div class="row"> <input id="igPubLogSearch" placeholder="Buscar por erro, media, draft..." /> <button
+                  class="secondary" onclick="loadInstagramPublishLogs()">Atualizar</button> <button class="secondary"
+                  onclick="clearInstagramPublishLogs()">Limpar</button> </div>
+              <div id="igPubLogs" class="log-table"></div>
+            </section>
+          </div>
+          <div id="section-instagram-story" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Configuração dedicada para Story com canal/grupo de aprovação separado do feed.">
+                Instagram Story - AutoPilot</h2>
+              <div class="row"> <label class="switch"><input type="checkbox" id="igStoryAutoEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Ativar AutoStory automático</span> </div>
+              <div class="row">
+                <div style="flex:1;"> <label>Intervalo (minutos)</label> <input id="igStoryInterval" type="number"
+                    min="15" max="1440" step="1" placeholder="240" /> </div>
+                <div style="flex:1;"> <label>Top produtos por rodada</label> <input id="igStoryTopCount" type="number"
+                    min="1" max="10" step="1" placeholder="2" /> </div>
+              </div>
+              <div class="row">
+                <div style="flex:1;"> <label>Janela de análise (horas)</label> <input id="igStoryLookback" type="number"
+                    min="6" max="168" step="1" placeholder="24" /> </div>
+                <div style="flex:1;"> <label>Repetição mínima (horas)</label> <input id="igStoryRepeatWindow"
+                    type="number" min="6" max="240" step="1" placeholder="24" /> </div>
+              </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="igStorySendApproval" /><span
+                    class="slider"></span></label> <span class="muted">Enviar para aprovação antes de publicar</span>
+              </div> <label>Canal de aprovação</label> <select id="igStoryApprovalChannel">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="telegram">Telegram</option>
+              </select> <label>Telegram Chat ID (se canal = Telegram)</label> <input id="igStoryApprovalTelegramChatId"
+                type="number" step="1" placeholder="-1001234567890" /> <label>WhatsApp Group ID (se canal =
+                WhatsApp)</label> <input id="igStoryApprovalWhatsAppGroupId" placeholder="1203630...@g.us" />
+              <label>Instância WhatsApp (opcional)</label> <input id="igStoryApprovalWhatsAppInstance"
+                placeholder="ZapOfertas" />
+              <div class="row" style="margin-top:12px;"> <button class="secondary"
+                  onclick="saveInstagramStorySettings()">Salvar AutoStory</button> <button
+                  onclick="runInstagramAutoStory(false)">Rodar AutoStory agora</button> <button class="secondary"
+                  onclick="runInstagramAutoStory(true)">Dry-run</button> <span id="igStoryStatus"
+                  class="status muted"></span> </div>
+            </section>
+          </div>
+          <div id="section-bio-growth" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Configure a landing da bio para usar o mesmo link em Instagram, Stories e ManyChat.">Bio
+                Hub (Link unico)</h2>
+              <div class="row"> <label class="switch"><input type="checkbox" id="bioHubEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Bio hub ativo</span> </div> <label>Marca</label>
+              <input id="bioHubBrandName" placeholder="Rei das Ofertas" /> <label>Titulo</label> <input
+                id="bioHubHeadline" placeholder="Achadinhos em destaque" /> <label>Subtitulo</label> <input
+                id="bioHubSubheadline" placeholder="Toque no botao para abrir a oferta." />
+              <div class="row">
+                <div style="flex:1;"> <label>Texto do botao</label> <input id="bioHubButtonLabel"
+                    placeholder="Abrir oferta" /> </div>
+                <div style="flex:1;"> <label>Maximo de itens</label> <input id="bioHubMaxItems" type="number" min="5"
+                    max="80" step="1" placeholder="40" /> </div>
+              </div>
+              <div class="row">
+                <div style="flex:1;"> <label>Origem padrao</label> <input id="bioHubDefaultSource" placeholder="bio" />
+                </div>
+                <div style="flex:1;"> <label>Campanha padrao</label> <input id="bioHubDefaultCampaign"
+                    placeholder="insta-feed" /> </div>
+              </div> <label>Dominio publico dos links</label> <input id="bioHubPublicBaseUrl"
+                placeholder="https://achadinhos.reidasofertas.ia.br" />
+              <div class="row" style="margin-top:12px;"> <button class="secondary" onclick="saveBioHubSettings()">Salvar
+                  Bio Hub</button> <button class="secondary" onclick="refreshBioLinksPreview()">Atualizar links</button>
+                <button class="secondary" onclick="syncCatalogNow()">Sincronizar catalogo</button> <span
+                  id="bioHubStatus" class="status muted"></span> </div>
+              <div class="table-wrap" style="margin-top:10px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Uso</th>
+                      <th>Link</th>
+                      <th>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody id="bioLinksTableBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Resumo por origem/campanha para decidir o que entra no feed e story.">Funnel de Cliques
+              </h2>
+              <div class="row"> <select id="bioFunnelHours">
+                  <option value="24">Ultimas 24h</option>
+                  <option value="72">Ultimas 72h</option>
+                  <option value="168" selected>Ultimos 7 dias</option>
+                  <option value="336">Ultimos 14 dias</option>
+                </select> <button class="secondary" onclick="loadBioFunnel()">Atualizar funnel</button> <span
+                  id="bioFunnelStatus" class="status muted"></span> </div>
+              <div class="grid" style="margin-top:10px;">
+                <div class="card" style="padding:12px;">
+                  <h3 style="margin:0 0 6px;">Totais</h3>
+                  <pre id="bioFunnelTotals">Sem dados.</pre>
+                </div>
+                <div class="card" style="padding:12px;">
+                  <h3 style="margin:0 0 6px;">Top Origens</h3>
+                  <pre id="bioFunnelSources">Sem dados.</pre>
+                </div>
+              </div>
+              <div class="card" style="padding:12px;margin-top:10px;">
+                <h3 style="margin:0 0 6px;">Top Campanhas</h3>
+                <pre id="bioFunnelCampaigns">Sem dados.</pre>
+              </div>
+            </section>
+          </div>
+          <div id="section-autoreplies" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Formato: uma regra por linha no padrão gatilho => resposta.">Respostas Automáticas</h2>
+              <div class="row"> <label class="switch"><input type="checkbox" id="autoRepliesEnabled" /><span
+                    class="slider"></span></label> <span class="muted">Ativar respostas automáticas</span> </div>
+              <textarea id="rules" rows="7"></textarea>
+              <div class="row"> <label class="switch"><input type="checkbox" id="autoConvert" /><span
+                    class="slider"></span></label> <span class="muted">Converter links automaticamente</span> </div>
+              <div class="row"> <label class="switch"><input type="checkbox" id="autoSend" /><span
+                    class="slider"></span></label> <span class="muted">Enviar automaticamente para canal destino</span>
+              </div> <label>Canal de destino</label> <input id="destinationChannel" placeholder="@MeuCanalAfiliado" />
+              <button id="saveBtn" onclick="saveSettings()">Salvar Configurações</button> <button class="secondary"
+                onclick="loadSettings()">Recarregar</button>
+              <p id="saveStatus" class="status"></p>
+            </section>
+          </div>
+          <div id="section-logs" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Mostra se a imagem foi capturada e enviada (ou o motivo da falha).">Log de Mídia</h2>
+              <div id="mediaAlert" class="alert hidden"></div>
+              <div class="row"> <button onclick="loadMediaFailures()">Carregar falhas</button> <button class="secondary"
+                  onclick="clearMediaFailures()">Limpar falhas</button> </div>
+              <div class="table-wrap" style="margin-top:8px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Data/Hora</th>
+                      <th>Origem</th>
+                      <th>Destino</th>
+                      <th>Status</th>
+                      <th>Motivo</th>
+                      <th>Detalhe</th>
+                      <th>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mediaTableBody"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h2>Logs de Conversão</h2>
+              <div class="row"> <select id="logStore">
+                  <option value="">Todas as lojas</option>
+                  <option>Amazon</option>
+                  <option>Mercado Livre</option>
+                  <option>Shopee</option>
+                  <option>Shein</option>
+                  <option>Unknown</option>
+                </select> <select id="logSuccess">
+                  <option value="">Todos</option>
+                  <option value="true">Sucesso</option>
+                  <option value="false">Falha</option>
+                </select> <input id="logSearch" placeholder="Buscar por URL, origem ou ID" /> <select id="logLimit">
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="200" selected>200</option>
+                  <option value="500">500</option>
+                </select> <button onclick="loadConversionLogs()">Carregar</button> <button class="secondary"
+                  onclick="clearConversionLogs()">Limpar logs</button> </div>
+              <p id="logStatus" class="status muted">Sem dados ainda.</p>
+              <div id="logAlert" class="alert hidden"></div>
+              <div class="table-wrap" style="margin-top:8px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Data/Hora</th>
+                      <th>Loja</th>
+                      <th>Status</th>
+                      <th>Mídia</th>
+                      <th>Cliques</th>
+                      <th>Validação</th>
+                      <th>Correção</th>
+                      <th>Erro</th>
+                      <th>Origem/Destino</th>
+                      <th>URL Original</th>
+                      <th>URL Convertido</th>
+                      <th>Ações</th>
+                      <th>Tempo (ms)</th>
+                    </tr>
+                  </thead>
+                  <tbody id="logTableBody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+          <div id="section-playground" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2>Playground</h2> <label>Mensagem para simular</label> <textarea id="playgroundText" rows="4"
+                placeholder="Cole uma mensagem com links aqui"></textarea> <button
+                onclick="runPlayground()">Simular</button>
+              <pre id="playgroundResult"></pre>
+            </section>
+          </div>
+          <div id="section-debug" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2>Debug (JSON)</h2>
+              <pre id="debug"></pre>
+            </section>
+          </div>
+          <div id="section-analytics" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <div class="row" style="justify-content: space-between;">
+                <h2>Analytics Dashboard 📊</h2> <button class="secondary"
+                  onclick="loadAnalyticsSummary()">Atualizar</button>
+              </div>
+              <p class="muted">Visão geral de cliques por categoria nas últimas 24h.</p>
+              <div class="grid" style="margin-top:16px;" id="analyticsSummaryCards"> <!-- Totais por categoria -->
+              </div>
+              <div class="card" style="margin-top:24px; padding:16px;">
+                <h3>Top Origens & Campanhas</h3>
+                <div class="grid">
+                  <div>
+                    <h4>Origens</h4>
+                    <pre id="analyticsSources">Carregando...</pre>
+                  </div>
+                  <div>
+                    <h4>Campanhas</h4>
+                    <pre id="analyticsCampaigns">Carregando...</pre>
+                  </div>
+                </div>
+              </div>
+              <div class="card" style="margin-top:24px; padding:16px;">
+                <h3>Cliques Recentes (Categorizados)</h3>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Hora</th>
+                        <th>Categoria</th>
+                        <th>Origem</th>
+                        <th>URL Destino</th>
+                      </tr>
+                    </thead>
+                    <tbody id="analyticsRecentBody">
+                      <tr>
+                        <td colspan="4" class="muted">Carregando...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="dashboard.js"></script>
+  <div id="toastContainer"></div>
   <div id="docModal" class="modal">
     <div class="modal-content">
       <span class="modal-close" onclick="closeDoc()">&times;</span>
@@ -15,4 +832,6 @@
       <div id="docBody"></div>
     </div>
   </div>
-</body></html>
+</body>
+
+</html>

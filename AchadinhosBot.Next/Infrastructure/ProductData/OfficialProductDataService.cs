@@ -193,7 +193,11 @@ public sealed class OfficialProductDataService
                     DataSource: "amazon_html_scraper",
                     SourceUrl: uri.ToString(),
                     EstimatedDelivery: null,
-                    VideoUrl: null);
+                    VideoUrl: null,
+                    IsLightningDeal: scraped.IsLightningDeal,
+                    LightningDealExpiry: scraped.LightningDealExpiry,
+                    CouponCode: scraped.CouponCode,
+                    CouponDescription: scraped.CouponDescription);
             }
         }
 
@@ -1102,5 +1106,9 @@ public sealed record OfficialProductDataResult(
     string DataSource,
     string SourceUrl,
     string? EstimatedDelivery = null,
-    string? VideoUrl = null);
+    string? VideoUrl = null,
+    bool IsLightningDeal = false,
+    DateTimeOffset? LightningDealExpiry = null,
+    string? CouponCode = null,
+    string? CouponDescription = null);
 
