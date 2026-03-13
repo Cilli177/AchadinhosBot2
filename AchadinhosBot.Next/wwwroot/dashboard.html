@@ -10,10 +10,10 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@400;500;600&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="dashboard.css" />
+  <link rel="stylesheet" href="dashboard.css?v=20260312h" />
 </head>
 
-<body>
+<body class="unauthenticated">
   <div class="layout">
     <aside class="sidebar">
       <h3>Painel</h3>
@@ -22,7 +22,9 @@
           onclick="showSection('route')">Telegram -> WhatsApp</button> <button data-tab="linkresponder"
           onclick="showSection('linkresponder')">Resposta de link</button> <button data-tab="mercadolivre"
           onclick="showSection('mercadolivre')">Mercado Livre</button> <button data-tab="instagram"
-          onclick="showSection('instagram')">Instagram</button> <button data-tab="instagram-publish"
+          onclick="showSection('instagram')">Instagram</button> <button data-tab="agents"
+          onclick="showSection('agents')">Agentes</button> <button data-tab="ai-lab"
+          onclick="showSection('ai-lab')">IA Lab</button> <button data-tab="instagram-publish"
           onclick="showSection('instagram-publish')">Instagram Publicar</button> <button data-tab="instagram-story"
           onclick="showSection('instagram-story')">Instagram Story</button> <button data-tab="bio-growth"
           onclick="showSection('bio-growth')">Bio & Growth</button> <button data-tab="autoreplies"
@@ -408,7 +410,7 @@
                 <option value="Off">Desativado</option>
                 <option value="Suggestion">Sugestão rápida</option>
                 <option value="ExtraPost">Post extra</option>
-              </select> <label>IA (OpenAI)</label>
+              </select> <label>IA</label>
               <div class="row"> <label class="switch"><input type="checkbox" id="instaUseAi" /><span
                     class="slider"></span></label> <span class="muted">Usar IA para gerar legendas</span> </div>
               <div class="row"> <label class="switch"><input type="checkbox" id="instaUltraPrompt" /><span
@@ -427,25 +429,16 @@
               </select> <label>Provedor de IA</label> <select id="instaAiProvider">
                 <option value="openai">OpenAI</option>
                 <option value="gemini">Gemini</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="nemotron">Nemotron</option>
+                <option value="qwen">Qwen</option>
+                <option value="vila">VILA</option>
                 <option value="both">OpenAI + Gemini</option>
+                <option value="all">Comparar todos</option>
               </select>
-              <section class="card">
-                <h3>OpenAI</h3> <input id="openaiApiKey" type="password" placeholder="Chave OpenAI (sk-...)" />
-                <div class="row"> <input id="openaiModel" placeholder="Modelo (ex: gpt-4o-mini)" /> <input
-                    id="openaiTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura (0-2)" /> <input
-                    id="openaiMaxTokens" type="number" step="1" min="100" max="2000" placeholder="Max output tokens" />
-                </div>
-              </section>
-              <section class="card">
-                <h3>Gemini</h3> <label>Chaves API (uma por linha)</label>
-                <div id="geminiApiKeyRows"></div>
-                <div class="row" style="margin-top:8px;"> <button class="secondary" type="button"
-                    onclick="addGeminiApiKeyRow()">+ Adicionar chave</button> </div>
-                <div class="row"> <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" /> <input
-                    id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
-                </div>
               </section> <label>Variações de legenda</label> <input id="instaVariations" type="number" min="1" max="5"
                 step="1" placeholder="2" />
+              <p class="muted">Tokens e configuracoes dos providers ficam centralizados na aba IA Lab.</p>
               <section class="card" style="margin-top:12px;">
                 <h3 data-tooltip="Personalize os modelos 1, 2 e 3 usados por /ig template.">Templates de Legenda (/ig
                   template)</h3>
@@ -479,6 +472,138 @@
               <div class="row" style="margin-top:12px;"> <button class="secondary"
                   onclick="saveInstagramSettings()">Salvar Instagram</button> <span id="instaSaveStatus"
                   class="status muted"></span> </div>
+            </section>
+          </div>
+          <div id="section-ai-lab" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2>IA Lab</h2>
+              <p class="muted">Centralize aqui os tokens e configuracoes de OpenAI, Gemini, DeepSeek e Nemotron. Compare as IAs com a mesma entrada antes de promover qualquer provider para o fluxo principal.</p>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>Comparador</h3>
+                  <label>Modo de comparação</label>
+                  <select id="aiLabMode">
+                    <option value="raw" selected>Comparação livre</option>
+                    <option value="structured">Instagram estruturado</option>
+                  </select>
+                  <label>Entrada para teste</label>
+                  <textarea id="aiLabInput" rows="4" placeholder="Cole o nome do produto e/ou link"></textarea>
+                  <label>Contexto (opcional)</label>
+                  <textarea id="aiLabContext" rows="3" placeholder="Texto da oferta para ajudar as IAs"></textarea>
+                  <div class="row" style="margin-top:12px;">
+                    <label><input type="checkbox" id="aiLabProviderOpenAi" checked /> OpenAI</label>
+                    <label><input type="checkbox" id="aiLabProviderGemini" checked /> Gemini</label>
+                    <label><input type="checkbox" id="aiLabProviderDeepSeek" checked /> DeepSeek</label>
+                    <label><input type="checkbox" id="aiLabProviderNemotron" checked /> Nemotron</label>
+                    <label><input type="checkbox" id="aiLabProviderQwen" checked /> Qwen</label>
+                    <label><input type="checkbox" id="aiLabProviderVila" checked /> VILA</label>
+                  </div>
+                  <div class="row" style="margin-top:12px;">
+                    <button class="secondary" onclick="runAiLabCompare()">Comparar IAs</button>
+                    <span id="aiLabStatus" class="status muted"></span>
+                  </div>
+                </section>
+                <section class="card">
+                  <h3>OpenAI</h3>
+                  <input id="openaiApiKey" type="password" placeholder="Chave OpenAI (sk-...)" />
+                  <label>Chaves adicionais (uma por linha)</label>
+                  <textarea id="openaiApiKeys" rows="3" placeholder="sk-...\nsk-..."></textarea>
+                  <div class="row">
+                    <input id="openaiModel" placeholder="Modelo (ex: gpt-4o-mini)" />
+                    <input id="openaiTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura (0-2)" />
+                    <input id="openaiMaxTokens" type="number" step="1" min="100" max="2000" placeholder="Max output tokens" />
+                  </div>
+                </section>
+                <section class="card">
+                  <h3>Gemini</h3>
+                  <label>Chaves API (uma por linha)</label>
+                  <div id="geminiApiKeyRows"></div>
+                  <div class="row" style="margin-top:8px;">
+                    <button class="secondary" type="button" onclick="addGeminiApiKeyRow()">+ Adicionar chave</button>
+                  </div>
+                  <div class="row">
+                    <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />
+                    <input id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
+                  </div>
+                </section>
+                <section class="card">
+                  <h3>DeepSeek</h3>
+                  <input id="deepseekApiKey" type="password" placeholder="Chave DeepSeek" />
+                  <label>Chaves adicionais (uma por linha)</label>
+                  <textarea id="deepseekApiKeys" rows="3" placeholder="sk-...\nsk-..."></textarea>
+                  <div class="row">
+                    <input id="deepseekModel" placeholder="Modelo (ex: deepseek-chat)" />
+                    <input id="deepseekTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura" />
+                    <input id="deepseekMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
+                  </div>
+                </section>
+                <section class="card">
+                  <h3>Nemotron (NVIDIA)</h3>
+                  <input id="nemotronApiKey" type="password" placeholder="Token NVIDIA (nvapi-...)" />
+                  <label>Chaves adicionais (uma por linha)</label>
+                  <textarea id="nemotronApiKeys" rows="3" placeholder="nvapi-...\nnvapi-..."></textarea>
+                  <div class="row">
+                    <input id="nemotronModel" placeholder="Modelo Nemotron" />
+                    <input id="nemotronTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura" />
+                    <input id="nemotronTopP" type="number" step="0.01" min="0.01" max="1" placeholder="Top P" />
+                  </div>
+                  <div class="row">
+                    <input id="nemotronMaxTokens" type="number" step="1" min="200" max="16384" placeholder="Max tokens" />
+                    <input id="nemotronReasoningBudget" type="number" step="1" min="0" max="16384" placeholder="Reasoning budget" />
+                    <label><input type="checkbox" id="nemotronEnableThinking" checked /> Enable thinking</label>
+                  </div>
+                  <div class="row">
+                    <input id="nemotronMonthlyLimit" type="number" step="1" min="0" placeholder="Limite mensal de chamadas" />
+                    <input id="nemotronCostPerCall" type="number" step="0.0001" min="0" placeholder="Custo estimado USD/chamada" />
+                  </div>
+                </section>
+                <section class="card">
+                  <h3>Qwen</h3>
+                  <input id="qwenApiKey" type="password" placeholder="Token Qwen / DashScope" />
+                  <label>Chaves adicionais (uma por linha)</label>
+                  <textarea id="qwenApiKeys" rows="3" placeholder="sk-...\nsk-..."></textarea>
+                  <div class="row">
+                    <input id="qwenModel" placeholder="Modelo texto/agentic (ex: qwen3.5-plus)" />
+                    <input id="qwenVisionModel" placeholder="Modelo visao (ex: qwen3-vl-plus)" />
+                    <input id="qwenTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura" />
+                    <input id="qwenMaxTokens" type="number" step="1" min="200" max="8192" placeholder="Max output tokens" />
+                  </div>
+                  <div class="row">
+                    <input id="qwenBaseUrl" placeholder="Base URL compat OpenAI" />
+                    <label><input type="checkbox" id="qwenEnableThinking" checked /> Enable thinking</label>
+                  </div>
+                  <div class="row">
+                    <input id="qwenMonthlyLimit" type="number" step="1" min="0" placeholder="Limite mensal de chamadas" />
+                    <input id="qwenCostPerCall" type="number" step="0.0001" min="0" placeholder="Custo estimado USD/chamada" />
+                  </div>
+                  <p class="muted">Preparado para analise de imagem e uso agentico via API compativel OpenAI.</p>
+                </section>
+                <section class="card">
+                  <h3>VILA (NVIDIA)</h3>
+                  <input id="vilaApiKey" type="password" placeholder="Token NVIDIA VILA (nvapi-...)" />
+                  <label>Chaves adicionais (uma por linha)</label>
+                  <textarea id="vilaApiKeys" rows="3" placeholder="nvapi-...\nnvapi-..."></textarea>
+                  <div class="row">
+                    <input id="vilaModel" placeholder="Modelo VILA (ex: nvidia/vila)" />
+                    <input id="vilaTemp" type="number" step="0.1" min="0" max="2" placeholder="Temperatura" />
+                    <input id="vilaTopP" type="number" step="0.01" min="0.01" max="1" placeholder="Top P" />
+                  </div>
+                  <div class="row">
+                    <input id="vilaMaxTokens" type="number" step="1" min="200" max="16384" placeholder="Max tokens" />
+                    <input id="vilaBaseUrl" placeholder="Base URL NVIDIA compat chat" />
+                    <label><input type="checkbox" id="vilaEnableThinking" checked /> Enable thinking</label>
+                  </div>
+                  <div class="row">
+                    <input id="vilaMonthlyLimit" type="number" step="1" min="0" placeholder="Limite mensal de chamadas" />
+                    <input id="vilaCostPerCall" type="number" step="0.0001" min="0" placeholder="Custo estimado USD/chamada" />
+                  </div>
+                  <p class="muted">Provider multimodal para avaliar imagem, estilo visual e aderencia do produto antes de publicar.</p>
+                </section>
+              </div>
+              <div class="row" style="margin-top:12px;">
+                <button class="secondary" onclick="saveAiLabSettings()">Salvar IA Lab</button>
+              </div>
+              <div id="aiLabResults" class="grid" style="margin-top:16px;"></div>
             </section>
           </div>
           <div id="section-instagram-publish" class="hidden">
@@ -775,46 +900,228 @@
               <pre id="debug"></pre>
             </section>
           </div>
+          <div id="section-agents" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <div class="row" style="justify-content: space-between;">
+                <div>
+                  <h2>Agente Curador de Ofertas</h2>
+                  <p class="muted">Modo seguro: apenas recomendacoes auditaveis, sem automacao direta em producao.</p>
+                </div>
+                <div class="row">
+                  <select id="agentHoursWindow">
+                    <option value="24">Ultimas 24h</option>
+                    <option value="72" selected>Ultimas 72h</option>
+                    <option value="168">Ultimos 7 dias</option>
+                  </select>
+                  <select id="agentMaxItems">
+                    <option value="5">Top 5</option>
+                    <option value="10" selected>Top 10</option>
+                    <option value="20">Top 20</option>
+                  </select>
+                  <button class="secondary" onclick="loadOfferCuration()">Atualizar recomendacoes</button>
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px; gap:18px; flex-wrap:wrap;">
+                <label class="switch"><input type="checkbox" id="agentIncludeDrafts" checked /><span class="slider"></span></label><span class="muted">Incluir rascunhos</span>
+                <label class="switch"><input type="checkbox" id="agentIncludeScheduled" checked /><span class="slider"></span></label><span class="muted">Incluir agendados</span>
+                <label class="switch"><input type="checkbox" id="agentIncludePublished" checked /><span class="slider"></span></label><span class="muted">Incluir publicados</span>
+              </div>
+              <p id="offerAgentSummary" class="status muted" style="margin-top:12px;">Nenhuma analise executada ainda.</p>
+              <div class="card" style="margin-top:16px; padding:16px;">
+                <div class="row" style="justify-content: space-between;">
+                  <div>
+                    <h3 style="margin:0;">Uso da IA</h3>
+                    <p class="muted" style="margin-top:6px;">Monitoramento operacional do consumo recente da IA do agente.</p>
+                  </div>
+                  <div class="row">
+                    <select id="agentAiUsageHours" onchange="loadAgentAiUsage()">
+                      <option value="24" selected>24h</option>
+                      <option value="72">72h</option>
+                      <option value="168">7 dias</option>
+                    </select>
+                    <button class="secondary" onclick="loadAgentAiUsage()">Atualizar</button>
+                  </div>
+                </div>
+                <p id="agentAiUsageSummary" class="status muted" style="margin-top:12px;">Carregando monitoramento da IA...</p>
+                <div class="grid" style="margin-top:16px;" id="agentAiUsageCards"></div>
+              </div>
+              <div class="grid" style="margin-top:16px;" id="offerAgentHighlights"></div>
+              <div class="table-wrap" style="margin-top:16px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Score</th>
+                      <th>Produto</th>
+                      <th>Status</th>
+                      <th>Acao sugerida</th>
+                      <th>Catalogo</th>
+                      <th>Cliques</th>
+                      <th>Detalhes</th>
+                      <th>Acoes</th>
+                    </tr>
+                  </thead>
+                  <tbody id="offerAgentBody">
+                    <tr><td colspan="8" class="muted">Carregue as recomendacoes do agente.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <div class="row" style="justify-content: space-between;">
+                <div>
+                  <h2>Agente de Oportunidades de Canais</h2>
+                  <p class="muted">Sugere o que vale virar draft de Instagram ou entrada futura de catalogo a partir do que saiu nos canais monitorados.</p>
+                </div>
+                <div class="row">
+                  <select id="waScoutSourceChannel" onchange="rememberAgentUiSelections(); loadAgentChannelTargets()">
+                    <option value="telegram">Telegram DEV</option>
+                    <option value="whatsapp">WhatsApp</option>
+                  </select>
+                  <select id="waScoutSelectionMode" onchange="rememberAgentUiSelections()">
+                    <option value="saved_history" selected>Historico salvo</option>
+                    <option value="since_selection">Somente apos selecao</option>
+                  </select>
+                  <select id="waScoutHoursWindow" onchange="rememberAgentUiSelections()">
+                    <option value="24">Ultimas 24h</option>
+                    <option value="72">Ultimas 72h</option>
+                    <option value="168" selected>Ultimos 7 dias</option>
+                  </select>
+                  <select id="waScoutMaxItems" onchange="rememberAgentUiSelections()">
+                    <option value="5">Top 5</option>
+                    <option value="10" selected>Top 10</option>
+                    <option value="20">Top 20</option>
+                  </select>
+                  <button class="secondary" onclick="loadWhatsAppOfferScout()">Atualizar oportunidades</button>
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px; gap:18px; flex-wrap:wrap;">
+                <label class="switch"><input type="checkbox" id="waScoutUseAiReasoning" onchange="rememberAgentUiSelections()" /><span class="slider"></span></label><span class="muted">Usar IA para justificativa curta</span>
+                <label class="switch"><input type="checkbox" id="waScoutUseAiDecision" onchange="rememberAgentUiSelections()" /><span class="slider"></span></label><span class="muted">Usar IA para decisao com guardrails</span>
+              </div>
+              <div class="card" style="padding:12px; margin-top:12px;">
+                <div class="row" style="justify-content:space-between; align-items:center;">
+                  <h3 style="margin:0;">Grupos monitorados</h3>
+                  <div class="row">
+                    <button class="secondary" onclick="loadAgentChannelTargets()">Carregar grupos</button>
+                    <button class="secondary" onclick="toggleAllAgentChannelTargets(true)">Marcar todos</button>
+                    <button class="secondary" onclick="toggleAllAgentChannelTargets(false)">Desmarcar todos</button>
+                    <button class="secondary" onclick="seedAgentChannelTestLog()">Criar log de teste</button>
+                    <button class="secondary" onclick="clearAgentChannelTargets()">Limpar selecao</button>
+                  </div>
+                </div>
+                <p class="muted" style="margin-top:8px;">Selecione pelos checkboxes quais grupos/canais entram na analise do agente para a fonte atual. No modo "Somente apos selecao", cada grupo usa a data em que foi marcado.</p>
+                <div id="waScoutTargetPicker" class="muted" style="margin-top:10px;">Carregue os grupos para selecionar.</div>
+                <label style="margin-top:10px;">IDs selecionados (um por linha, avancado)</label>
+                <textarea id="waScoutTargetIds" rows="3" placeholder="-1001234567890&#10;1203630@g.us" oninput="scheduleAgentTargetManualSave()"></textarea>
+                <p id="waScoutTargetSaveStatus" class="status muted" style="margin-top:8px;">Selecao ainda nao salva nesta sessao.</p>
+              </div>
+              <p id="waScoutSummary" class="status muted" style="margin-top:12px;">Nenhuma analise executada ainda.</p>
+              <div class="grid" style="margin-top:16px;" id="waScoutHighlights"></div>
+              <div class="table-wrap" style="margin-top:16px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Score</th>
+                      <th>Oferta</th>
+                      <th>Acao sugerida</th>
+                      <th>Catalogo</th>
+                      <th>Cliques</th>
+                      <th>Detalhes</th>
+                      <th>Acoes</th>
+                    </tr>
+                  </thead>
+                  <tbody id="waScoutBody">
+                    <tr><td colspan="7" class="muted">Carregue as oportunidades vindas dos canais monitorados.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
           <div id="section-analytics" class="hidden">
             <section class="card" style="margin-top:16px;">
               <div class="row" style="justify-content: space-between;">
-                <h2>Analytics Dashboard 📊</h2> <button class="secondary"
-                  onclick="loadAnalyticsSummary()">Atualizar</button>
+                <h2>Analytics Dashboard &#128202;</h2>
+                <div class="row">
+                  <select id="analyticsHours" onchange="loadAnalyticsSummary()">
+                    <option value="1">Ultima 1h</option>
+                    <option value="2">Ultimas 2h</option>
+                    <option value="3">Ultimas 3h</option>
+                    <option value="6">Ultimas 6h</option>
+                    <option value="12">Ultimas 12h</option>
+                    <option value="24" selected>Ultimas 24h</option>
+                    <option value="72">Ultimas 72h</option>
+                    <option value="168">Ultimos 7 dias</option>
+                  </select>
+                  <button class="secondary" onclick="loadAnalyticsSummary()">Atualizar</button>
+                </div>
               </div>
-              <p class="muted">Visão geral de cliques por categoria nas últimas 24h.</p>
-              <div class="grid" style="margin-top:16px;" id="analyticsSummaryCards"> <!-- Totais por categoria -->
+              <p class="muted">Visao geral de cliques e comportamento nas ultimas 24h.</p>
+              <div class="subtabs" style="margin-top:16px;">
+                <button id="analyticsTab-overview" class="active" onclick="showAnalyticsSubtab('overview')">Visao Geral</button>
+                <button id="analyticsTab-behavior" onclick="showAnalyticsSubtab('behavior')">Comportamento</button>
+                <button id="analyticsTab-recent" onclick="showAnalyticsSubtab('recent')">Eventos Recentes</button>
               </div>
-              <div class="card" style="margin-top:24px; padding:16px;">
-                <h3>Top Origens & Campanhas</h3>
-                <div class="grid">
-                  <div>
-                    <h4>Origens</h4>
-                    <pre id="analyticsSources">Carregando...</pre>
-                  </div>
-                  <div>
-                    <h4>Campanhas</h4>
-                    <pre id="analyticsCampaigns">Carregando...</pre>
+              <div id="analyticsSubtab-overview">
+                <div class="grid" style="margin-top:16px;" id="analyticsSummaryCards"></div>
+                <div class="grid" style="margin-top:16px;" id="analyticsIdentityCards"></div>
+                <div class="card" style="margin-top:24px; padding:16px;">
+                  <h3>Top Origens & Campanhas</h3>
+                  <div class="grid">
+                    <div>
+                      <h4>Origens</h4>
+                      <pre id="analyticsSources">Carregando...</pre>
+                    </div>
+                    <div>
+                      <h4>Campanhas</h4>
+                      <pre id="analyticsCampaigns">Carregando...</pre>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div class="card" style="margin-top:24px; padding:16px;">
-                <h3>Cliques Recentes (Categorizados)</h3>
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Hora</th>
-                        <th>Categoria</th>
-                        <th>Origem</th>
-                        <th>URL Destino</th>
-                      </tr>
-                    </thead>
-                    <tbody id="analyticsRecentBody">
-                      <tr>
-                        <td colspan="4" class="muted">Carregando...</td>
-                      </tr>
-                    </tbody>
-                  </table>
+              <div id="analyticsSubtab-behavior" class="hidden">
+                <div class="card" style="margin-top:24px; padding:16px;">
+                  <h3>Comportamento</h3>
+                  <div class="grid">
+                    <div>
+                      <h4>Eventos</h4>
+                      <pre id="analyticsEventTypes">Carregando...</pre>
+                    </div>
+                    <div>
+                      <h4>Paginas</h4>
+                      <pre id="analyticsPageTypes">Carregando...</pre>
+                    </div>
+                    <div>
+                      <h4>Dispositivos</h4>
+                      <pre id="analyticsDevices">Carregando...</pre>
+                    </div>
+                    <div>
+                      <h4>Navegadores</h4>
+                      <pre id="analyticsBrowsers">Carregando...</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="analyticsSubtab-recent" class="hidden">
+                <div class="card" style="margin-top:24px; padding:16px;">
+                  <h3>Cliques Recentes</h3>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Hora</th>
+                          <th>Categoria</th>
+                          <th>Evento</th>
+                          <th>Origem</th>
+                          <th>URL Destino</th>
+                        </tr>
+                      </thead>
+                      <tbody id="analyticsRecentBody">
+                        <tr>
+                          <td colspan="5" class="muted">Carregando...</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </section>
@@ -823,7 +1130,7 @@
       </div>
     </main>
   </div>
-  <script src="dashboard.js"></script>
+  <script src="dashboard.js?v=20260313j"></script>
   <div id="toastContainer"></div>
   <div id="docModal" class="modal">
     <div class="modal-content">

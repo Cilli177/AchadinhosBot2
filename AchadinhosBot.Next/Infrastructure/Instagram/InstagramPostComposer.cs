@@ -17,6 +17,9 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
     private readonly OpenAiInstagramPostGenerator _openAiGenerator;
     private readonly GeminiInstagramPostGenerator _geminiGenerator;
     private readonly DeepSeekInstagramPostGenerator _deepSeekGenerator;
+    private readonly NemotronInstagramPostGenerator _nemotronGenerator;
+    private readonly QwenInstagramPostGenerator _qwenGenerator;
+    private readonly VilaNvidiaGenerator _vilaGenerator;
     private readonly ISettingsStore _settingsStore;
     private readonly OfficialProductDataService _officialProductDataService;
     private readonly IPromotionalCardGenerator _promotionalCardGenerator;
@@ -29,6 +32,9 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         OpenAiInstagramPostGenerator openAiGenerator,
         GeminiInstagramPostGenerator geminiGenerator,
         DeepSeekInstagramPostGenerator deepSeekGenerator,
+        NemotronInstagramPostGenerator nemotronGenerator,
+        QwenInstagramPostGenerator qwenGenerator,
+        VilaNvidiaGenerator vilaGenerator,
         ISettingsStore settingsStore,
         OfficialProductDataService officialProductDataService,
         IPromotionalCardGenerator promotionalCardGenerator,
@@ -40,6 +46,9 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         _openAiGenerator = openAiGenerator;
         _geminiGenerator = geminiGenerator;
         _deepSeekGenerator = deepSeekGenerator;
+        _nemotronGenerator = nemotronGenerator;
+        _qwenGenerator = qwenGenerator;
+        _vilaGenerator = vilaGenerator;
         _settingsStore = settingsStore;
         _officialProductDataService = officialProductDataService;
         _promotionalCardGenerator = promotionalCardGenerator;
@@ -83,12 +92,18 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
             var openAi = allSettings.OpenAI ?? new OpenAISettings();
             var gemini = allSettings.Gemini ?? new GeminiSettings();
             var deepSeek = allSettings.DeepSeek ?? new DeepSeekSettings();
+            var nemotron = allSettings.Nemotron ?? new NemotronSettings();
+            var qwen = allSettings.Qwen ?? new QwenSettings();
+            var vila = allSettings.VilaNvidia ?? new VilaNvidiaSettings();
 
-            var provider = string.IsNullOrWhiteSpace(settings.AiProvider) ? "openai" : settings.AiProvider.Trim().ToLowerInvariant();
+            var provider = string.IsNullOrWhiteSpace(settings.AiProvider) ? "nemotron" : settings.AiProvider.Trim().ToLowerInvariant();
             var results = new List<string>();
             var openAiResult = string.Empty;
             var geminiResult = string.Empty;
             var deepSeekResult = string.Empty;
+            var nemotronResult = string.Empty;
+            var qwenResult = string.Empty;
+            var vilaResult = string.Empty;
 
             if (provider is "deepseek")
             {
@@ -96,6 +111,33 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                 if (!string.IsNullOrWhiteSpace(deepSeekResult))
                 {
                     results.Add(deepSeekResult);
+                }
+            }
+
+            if (provider is "nemotron")
+            {
+                nemotronResult = (await _nemotronGenerator.GenerateAsync(input, offerContext, link, settings, nemotron, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(nemotronResult))
+                {
+                    results.Add(nemotronResult);
+                }
+            }
+
+            if (provider is "qwen")
+            {
+                qwenResult = (await _qwenGenerator.GenerateAsync(input, offerContext, link, settings, qwen, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(qwenResult))
+                {
+                    results.Add(qwenResult);
+                }
+            }
+
+            if (provider is "vila")
+            {
+                vilaResult = (await _vilaGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { input, offerContext, link }.Where(x => !string.IsNullOrWhiteSpace(x))), vila, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(vilaResult))
+                {
+                    results.Add(vilaResult);
                 }
             }
 
@@ -117,11 +159,58 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                 }
             }
 
-            // Fallback cruzado: evita cair para o texto generico quando o provider principal falha (ex.: limite de cota).
+            if (provider is "all")
+            {
+                openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(openAiResult))
+                {
+                    results.Add($"=== OPENAI ===\n{openAiResult}");
+                }
+
+                geminiResult = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemini, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(geminiResult))
+                {
+                    results.Add($"=== GEMINI ===\n{geminiResult}");
+                }
+
+                vilaResult = (await _vilaGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { input, offerContext, link }.Where(x => !string.IsNullOrWhiteSpace(x))), vila, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(vilaResult))
+                {
+                    results.Add($"=== VILA ===\n{vilaResult}");
+                }
+
+                deepSeekResult = (await _deepSeekGenerator.GenerateAsync(input, offerContext, link, settings, deepSeek, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(deepSeekResult))
+                {
+                    results.Add($"=== DEEPSEEK ===\n{deepSeekResult}");
+                }
+
+                nemotronResult = (await _nemotronGenerator.GenerateAsync(input, offerContext, link, settings, nemotron, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(nemotronResult))
+                {
+                    results.Add($"=== NEMOTRON ===\n{nemotronResult}");
+                }
+
+                qwenResult = (await _qwenGenerator.GenerateAsync(input, offerContext, link, settings, qwen, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(qwenResult))
+                {
+                    results.Add($"=== QWEN ===\n{qwenResult}");
+                }
+            }
+
+            // Fallback cruzado: prioriza Nemotron como motor principal e usa os demais como reserva.
             if (results.Count == 0)
             {
-                // Tenta DeepSeek como primeiro fallback geral se estiver configurado
-                if (!string.IsNullOrWhiteSpace(deepSeek.ApiKey) && deepSeek.ApiKey != "********")
+                if (!string.IsNullOrWhiteSpace(nemotron.ApiKey) && nemotron.ApiKey != "********")
+                {
+                    nemotronResult = (await _nemotronGenerator.GenerateAsync(input, offerContext, link, settings, nemotron, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(nemotronResult))
+                    {
+                        results.Add(nemotronResult);
+                    }
+                }
+
+                if (results.Count == 0 && !string.IsNullOrWhiteSpace(deepSeek.ApiKey) && deepSeek.ApiKey != "********")
                 {
                     deepSeekResult = (await _deepSeekGenerator.GenerateAsync(input, offerContext, link, settings, deepSeek, cancellationToken))?.Trim() ?? string.Empty;
                     if (!string.IsNullOrWhiteSpace(deepSeekResult))
@@ -144,6 +233,49 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                     if (!string.IsNullOrWhiteSpace(geminiResult))
                     {
                         results.Add(geminiResult);
+                    }
+                }
+                else if (results.Count == 0 && provider == "nemotron")
+                {
+                    deepSeekResult = (await _deepSeekGenerator.GenerateAsync(input, offerContext, link, settings, deepSeek, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(deepSeekResult))
+                    {
+                        results.Add(deepSeekResult);
+                    }
+                }
+                else if (results.Count == 0 && provider == "qwen")
+                {
+                    nemotronResult = (await _nemotronGenerator.GenerateAsync(input, offerContext, link, settings, nemotron, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(nemotronResult))
+                    {
+                        results.Add(nemotronResult);
+                    }
+                }
+
+                if (results.Count == 0 && provider != "openai")
+                {
+                    openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(openAiResult))
+                    {
+                        results.Add(openAiResult);
+                    }
+                }
+
+                if (results.Count == 0 && provider != "gemini")
+                {
+                    geminiResult = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemini, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(geminiResult))
+                    {
+                        results.Add(geminiResult);
+                    }
+                }
+
+                if (results.Count == 0 && provider != "qwen")
+                {
+                    qwenResult = (await _qwenGenerator.GenerateAsync(input, offerContext, link, settings, qwen, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(qwenResult))
+                    {
+                        results.Add(qwenResult);
                     }
                 }
             }

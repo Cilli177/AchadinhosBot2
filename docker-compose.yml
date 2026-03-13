@@ -1,3 +1,5 @@
+name: achadinhos-dev
+
 services:
   achadinhos-next:
     build:

@@ -9,6 +9,7 @@ namespace AchadinhosBot.Next.Infrastructure.Instagram;
 
 public sealed class DeepSeekInstagramPostGenerator
 {
+    private static int _currentKeyIndex = -1;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<DeepSeekInstagramPostGenerator> _logger;
     private readonly IInstagramAiLogStore _logStore;
@@ -34,7 +35,8 @@ public sealed class DeepSeekInstagramPostGenerator
 
     public async Task<string?> GenerateAsync(string productInput, string? offerContext, string? affiliateLink, InstagramPostSettings instaSettings, DeepSeekSettings aiSettings, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey) || aiSettings.ApiKey == "********")
+        var apiKeys = GetApiKeys(aiSettings);
+        if (apiKeys.Count == 0)
         {
             return null;
         }
@@ -92,25 +94,15 @@ public sealed class DeepSeekInstagramPostGenerator
         var started = DateTimeOffset.UtcNow;
         try
         {
-            var client = _httpClientFactory.CreateClient("deepseek");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", aiSettings.ApiKey);
-            
-            // Standard OpenAI Chat Completion endpoint
             var url = $"{baseUrl.TrimEnd('/')}/v1/chat/completions";
             if (baseUrl.Contains("api.deepseek.com", StringComparison.OrdinalIgnoreCase))
             {
                 url = "https://api.deepseek.com/chat/completions";
             }
 
-            using var response = await client.PostAsync(
-                url,
-                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
-                cancellationToken);
-
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            var body = await PostWithKeyRotationAsync(apiKeys, url, payload, cancellationToken);
+            if (string.IsNullOrWhiteSpace(body))
             {
-                _logger.LogWarning("DeepSeek respondeu erro {Status}: {Body}", response.StatusCode, body);
                 return null;
             }
 
@@ -126,6 +118,118 @@ public sealed class DeepSeekInstagramPostGenerator
             await _logStore.AppendAsync(BuildLogEntry(instaSettings, model, "deepseek", productInput, affiliateLink, 0, Array.Empty<string>(), null, ex.Message, started, 0, "Erro na geracao"), cancellationToken);
             return null;
         }
+    }
+
+    public async Task<string?> GenerateFreeformAsync(string prompt, DeepSeekSettings aiSettings, CancellationToken cancellationToken)
+    {
+        var apiKeys = GetApiKeys(aiSettings);
+        if (apiKeys.Count == 0 || string.IsNullOrWhiteSpace(prompt))
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(aiSettings.Model) ? "deepseek-chat" : aiSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(aiSettings.BaseUrl) ? "https://api.deepseek.com" : aiSettings.BaseUrl.Trim();
+        var payload = new
+        {
+            model,
+            messages = new[]
+            {
+                new { role = "system", content = "Responda em portugues do Brasil com clareza e sem formatacao extra desnecessaria." },
+                new { role = "user", content = prompt.Trim() }
+            },
+            temperature = aiSettings.Temperature,
+            max_tokens = aiSettings.MaxOutputTokens
+        };
+
+        try
+        {
+            var url = $"{baseUrl.TrimEnd('/')}/v1/chat/completions";
+            if (baseUrl.Contains("api.deepseek.com", StringComparison.OrdinalIgnoreCase))
+            {
+                url = "https://api.deepseek.com/chat/completions";
+            }
+
+            var body = await PostWithKeyRotationAsync(apiKeys, url, payload, cancellationToken);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return null;
+            }
+
+            return ExtractChatOutputText(body)?.Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao gerar resposta livre via DeepSeek");
+            return null;
+        }
+    }
+
+    private async Task<string?> PostWithKeyRotationAsync(IReadOnlyList<string> apiKeys, string url, object payload, CancellationToken cancellationToken)
+    {
+        var client = _httpClientFactory.CreateClient("deepseek");
+        var startIndex = unchecked((int)((uint)Interlocked.Increment(ref _currentKeyIndex) % (uint)apiKeys.Count));
+        string? lastBody = null;
+
+        for (var i = 0; i < apiKeys.Count; i++)
+        {
+            var keyIndex = (startIndex + i) % apiKeys.Count;
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKeys[keyIndex]);
+            request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+            using var response = await client.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                lastBody = body;
+                if (i < apiKeys.Count - 1 && ShouldTryNextKey(response.StatusCode, body))
+                {
+                    continue;
+                }
+
+                _logger.LogWarning("DeepSeek respondeu erro {Status}: {Body}", response.StatusCode, body);
+                return null;
+            }
+
+            return body;
+        }
+
+        _logger.LogWarning("DeepSeek falhou em todas as chaves: {Body}", lastBody);
+        return null;
+    }
+
+    private static List<string> GetApiKeys(DeepSeekSettings settings)
+    {
+        var keys = new List<string>();
+        if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+        {
+            keys.Add(settings.ApiKey.Trim());
+        }
+
+        if (settings.ApiKeys is not null)
+        {
+            keys.AddRange(settings.ApiKeys
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Where(x => x != "********"));
+        }
+
+        return keys.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    private static bool ShouldTryNextKey(System.Net.HttpStatusCode statusCode, string? body)
+    {
+        var status = (int)statusCode;
+        if (status is 401 or 403 or 429 or 500 or 502 or 503 or 504)
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(body) &&
+               (body.Contains("quota", StringComparison.OrdinalIgnoreCase) ||
+                body.Contains("rate limit", StringComparison.OrdinalIgnoreCase) ||
+                body.Contains("exhaust", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? ExtractChatOutputText(string json)

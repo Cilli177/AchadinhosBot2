@@ -12,12 +12,14 @@
 3. Validar bloqueios de seguranca do ambiente:
    - `DELIVERYSAFETY__BLOCKOFFICIALWHATSAPPALWAYS`
    - destinos oficiais de WhatsApp e Telegram
-4. Subir:
-   - `docker compose -f docker-compose.yml -f docker-compose.dev.override.yml up -d --build`
+4. Subir pela stack oficial:
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-docker-dev.ps1`
 5. Validar:
    - `http://localhost:8083/health`
    - `http://localhost:8083/conversor`
    - `http://localhost:8083/conversor-admin`
+6. Conferir status:
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\status-docker-dev.ps1`
 
 ## Tunnel DEV
 
@@ -35,7 +37,11 @@
 3. Garantir persistencia:
    - dados da aplicacao
    - midia em `/app/wwwroot/media/admin`
-4. Validar:
+4. Subir pela stack oficial:
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-docker-prod.ps1`
+5. Conferir status:
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\status-docker-prod.ps1`
+6. Validar:
    - `/health`
    - login admin
    - publicacao manual
@@ -62,7 +68,8 @@
    - `dotnet test AchadinhosBot.Next.Tests\AchadinhosBot.Next.Tests.csproj --no-restore`
 2. Confirmar `git status` limpo, exceto `.env` local ignorado.
 3. Confirmar que nenhum segredo entrou em commit.
-4. Testar:
+4. Confirmar que nao foi usado `docker compose up` cru fora dos scripts oficiais.
+5. Testar:
    - login admin/operator
    - draft sem catalogo
    - draft com catalogo `dev`

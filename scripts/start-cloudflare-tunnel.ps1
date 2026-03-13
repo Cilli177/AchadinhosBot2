@@ -1,6 +1,7 @@
 param(
     [string]$TunnelName = "achadinhos-fixed",
     [string]$Hostname = "achadinhos.reidasofertas.ia.br",
+    [string[]]$AdditionalHostnames = @(),
     [string]$AppUrl = "http://127.0.0.1:5000",
     [switch]$NoConfigUpdate,
     [string]$ConfigFileName,
@@ -106,6 +107,7 @@ function Write-TunnelConfig {
     param(
         [string]$TunnelId,
         [string]$HostnameValue,
+        [string[]]$ExtraHostnames,
         [string]$OriginUrl,
         [string]$ConfigPath
     )
@@ -115,14 +117,20 @@ function Write-TunnelConfig {
         throw "Arquivo de credenciais nao encontrado: $credPath"
     }
 
-    $yaml = @"
-tunnel: $TunnelId
-credentials-file: $credPath
-ingress:
-  - hostname: $HostnameValue
-    service: $OriginUrl
-  - service: http_status:404
-"@
+    $hostnames = @($HostnameValue) + @($ExtraHostnames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $lines = @(
+        "tunnel: $TunnelId",
+        "credentials-file: $credPath",
+        "ingress:"
+    )
+
+    foreach ($entryHostname in $hostnames | Select-Object -Unique) {
+        $lines += "  - hostname: $entryHostname"
+        $lines += "    service: $OriginUrl"
+    }
+
+    $lines += "  - service: http_status:404"
+    $yaml = ($lines -join [Environment]::NewLine)
 
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($ConfigPath, $yaml, $encoding)
@@ -214,7 +222,12 @@ Ensure-CertFile | Out-Null
 
 $tunnelId = Resolve-TunnelId -CloudflaredPath $cloudflaredPath -Name $TunnelName
 Ensure-DnsRoute -CloudflaredPath $cloudflaredPath -Name $TunnelName -HostnameValue $Hostname
-$configPath = Write-TunnelConfig -TunnelId $tunnelId -HostnameValue $Hostname -OriginUrl $AppUrl -ConfigPath $configPath
+foreach ($extraHostname in $AdditionalHostnames) {
+    if (-not [string]::IsNullOrWhiteSpace($extraHostname)) {
+        Ensure-DnsRoute -CloudflaredPath $cloudflaredPath -Name $TunnelName -HostnameValue $extraHostname
+    }
+}
+$configPath = Write-TunnelConfig -TunnelId $tunnelId -HostnameValue $Hostname -ExtraHostnames $AdditionalHostnames -OriginUrl $AppUrl -ConfigPath $configPath
 
 if (-not $NoConfigUpdate) {
     foreach ($filePath in Get-TargetConfigFiles -RootPath $repoRoot -Scope $ConfigUpdateScope) {

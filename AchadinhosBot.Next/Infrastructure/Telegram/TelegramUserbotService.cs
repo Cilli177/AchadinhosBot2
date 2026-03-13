@@ -460,6 +460,71 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
     }
 
+    public async Task<IReadOnlyList<TelegramUserbotOfferMessage>> ListRecentOffersAsync(IReadOnlyCollection<long> sourceChatIds, int perChatLimit, CancellationToken cancellationToken)
+    {
+        if (_client is null || !_ready || sourceChatIds.Count == 0)
+        {
+            return Array.Empty<TelegramUserbotOfferMessage>();
+        }
+
+        var limit = Math.Clamp(perChatLimit, 5, 100);
+        var dialogs = await GetDialogsAsync(cancellationToken);
+        var titleById = dialogs.ToDictionary(x => x.Id, x => x.Title);
+        var result = new List<TelegramUserbotOfferMessage>();
+
+        foreach (var chatId in sourceChatIds.Distinct())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var peer = ResolvePeer(chatId);
+            if (peer is null)
+            {
+                await RefreshDialogsAsync(cancellationToken);
+                peer = ResolvePeer(chatId);
+            }
+
+            if (peer is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                var history = await _client.Messages_GetHistory(peer, limit: Math.Clamp(limit * 4, 20, 200));
+                if (history is null)
+                {
+                    continue;
+                }
+
+                var items = ExtractHistoryMessages(history)
+                    .Where(m => !string.IsNullOrWhiteSpace(BuildMessageTextForConversion(m)))
+                    .OrderByDescending(m => m.date)
+                    .ThenByDescending(m => m.id)
+                    .Take(limit)
+                    .Select(m => new TelegramUserbotOfferMessage(
+                        chatId,
+                        titleById.TryGetValue(chatId, out var title) ? title : chatId.ToString(),
+                        m.id.ToString(),
+                        m.date.Kind == DateTimeKind.Unspecified
+                            ? new DateTimeOffset(DateTime.SpecifyKind(m.date, DateTimeKind.Utc))
+                            : new DateTimeOffset(m.date.ToUniversalTime()),
+                        BuildMessageTextForConversion(m),
+                        InferScoutMediaKind(m),
+                        null))
+                    .ToArray();
+
+                result.AddRange(items);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao carregar ofertas recentes do chat {ChatId} para o scout.", chatId);
+            }
+        }
+
+        return result
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToArray();
+    }
+
     private string GetPhoneNumberForLogin()
     {
         var runtime = GetCurrentRuntimePhoneNumber();
@@ -1984,6 +2049,32 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         return sb.ToString();
+    }
+
+    private static string InferScoutMediaKind(Message msg)
+    {
+        if (msg.media is MessageMediaDocument docMedia &&
+            docMedia.document is Document document &&
+            !string.IsNullOrWhiteSpace(document.mime_type) &&
+            document.mime_type.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+        {
+            return "video";
+        }
+
+        if (msg.media is MessageMediaPhoto)
+        {
+            return "image";
+        }
+
+        if (msg.media is MessageMediaDocument imageDoc &&
+            imageDoc.document is Document imageDocument &&
+            !string.IsNullOrWhiteSpace(imageDocument.mime_type) &&
+            imageDocument.mime_type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return "image";
+        }
+
+        return "text";
     }
 
     private static string? TryExtractUrlFromEntity(string text, int offset, int length)

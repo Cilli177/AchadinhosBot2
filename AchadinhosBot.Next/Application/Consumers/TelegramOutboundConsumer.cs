@@ -1,5 +1,6 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Logs;
 using MassTransit;
 using Microsoft.Extensions.Options;
 
@@ -9,17 +10,20 @@ public sealed class TelegramOutboundConsumer : IConsumer<SendTelegramMessageComm
 {
     private readonly ITelegramTransport _transport;
     private readonly IIdempotencyStore _idempotencyStore;
+    private readonly ITelegramOutboundLogStore _outboundLogStore;
     private readonly MessagingOptions _messagingOptions;
     private readonly ILogger<TelegramOutboundConsumer> _logger;
 
     public TelegramOutboundConsumer(
         ITelegramTransport transport,
         IIdempotencyStore idempotencyStore,
+        ITelegramOutboundLogStore outboundLogStore,
         IOptions<MessagingOptions> messagingOptions,
         ILogger<TelegramOutboundConsumer> logger)
     {
         _transport = transport;
         _idempotencyStore = idempotencyStore;
+        _outboundLogStore = outboundLogStore;
         _messagingOptions = messagingOptions.Value;
         _logger = logger;
     }
@@ -59,5 +63,14 @@ public sealed class TelegramOutboundConsumer : IConsumer<SendTelegramMessageComm
         {
             throw new InvalidOperationException(result.Message ?? "Falha no envio outbound do Telegram.");
         }
+
+        await _outboundLogStore.AppendAsync(new TelegramOutboundLogEntry
+        {
+            MessageId = command.MessageId,
+            CreatedAtUtc = command.CreatedAtUtc,
+            ChatId = command.ChatId,
+            Text = command.Text,
+            ImageUrl = command.ImageUrl
+        }, context.CancellationToken);
     }
 }

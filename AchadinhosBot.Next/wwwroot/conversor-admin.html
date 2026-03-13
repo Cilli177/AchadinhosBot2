@@ -440,6 +440,16 @@
                     class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-accent to-yellow-300 mb-2">
                     Publicar Oferta VIP</h1>
                 <p class="text-slate-400">Converta, gere o card e publique no Instagram ou envie no WhatsApp.</p>
+                <div class="mt-5 flex flex-col sm:flex-row gap-3 justify-center">
+                    <button type="button" onclick="focusConvertInput()"
+                        class="bg-accent hover:bg-accentHover text-primary font-bold text-sm px-5 py-3 rounded-xl transition-all shadow-lg hover:shadow-accent/20">
+                        Nova Conversao
+                    </button>
+                    <button type="button" onclick="openPublishedHistory()"
+                        class="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-sm px-5 py-3 rounded-xl transition-all">
+                        Ver Publicados
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -1428,6 +1438,9 @@
             if (sessionInfo) {
                 sessionInfo.textContent = `${username} (${role})`;
             }
+            maybeOpenDraftFromUrl();
+            maybeOpenChannelOfferContextFromUrl();
+            maybeOpenStoredAgentAdminContext();
         }
         function showLoggedOutState(message = '') {
             currentSession = null;
@@ -1515,21 +1528,270 @@
             img.style.mixBlendMode = 'normal';
         }
 
-        async function trackClick(url, source = 'direct') {
+        function getAnalyticsId(key, prefix) {
+            try {
+                const existing = localStorage.getItem(key);
+                if (existing) return existing;
+                const created = `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+                localStorage.setItem(key, created);
+                return created;
+            } catch {
+                return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+            }
+        }
+
+        function getSessionId() {
+            try {
+                const existing = sessionStorage.getItem('ard_session_id');
+                if (existing) return existing;
+                const created = `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+                sessionStorage.setItem('ard_session_id', created);
+                return created;
+            } catch {
+                return `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+            }
+        }
+
+        function currentUtmContext() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                utmSource: params.get('utm_source'),
+                utmMedium: params.get('utm_medium'),
+                utmCampaign: params.get('utm_campaign'),
+                utmContent: params.get('utm_content'),
+                utmTerm: params.get('utm_term')
+            };
+        }
+
+        let initialDraftLoaded = false;
+        let initialOfferContextLoaded = false;
+
+        function getDraftIdFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('draftId');
+        }
+
+        function getChannelOfferMessageIdFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('messageId');
+        }
+
+        function getChannelOfferSourceFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('sourceChannel') || 'whatsapp';
+        }
+
+        function getPostTypeFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('postType');
+        }
+
+        function shouldUseDeepAnalysisFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('deepAnalyze') === '1';
+        }
+
+        function getAnalysisSelectionKeyFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('selectionKey');
+        }
+
+        function getStoredAgentAdminContext() {
+            try {
+                const raw = localStorage.getItem('achadinhos.agent.adminContext');
+                return raw ? JSON.parse(raw) : null;
+            } catch {
+                return null;
+            }
+        }
+
+        function clearStoredAgentAdminContext() {
+            try {
+                localStorage.removeItem('achadinhos.agent.adminContext');
+            } catch {
+            }
+        }
+
+        function getStoredAnalysisSelection() {
+            try {
+                const selectionKey = getAnalysisSelectionKeyFromUrl();
+                if (selectionKey) {
+                    const scoped = localStorage.getItem(selectionKey);
+                    if (scoped) {
+                        return JSON.parse(scoped);
+                    }
+                }
+
+                const raw = localStorage.getItem('achadinhos.agent.analysisSelection');
+                return raw ? JSON.parse(raw) : null;
+            } catch {
+                return null;
+            }
+        }
+
+        function clearStoredAnalysisSelection() {
+            try {
+                const selectionKey = getAnalysisSelectionKeyFromUrl();
+                if (selectionKey) {
+                    localStorage.removeItem(selectionKey);
+                }
+                localStorage.removeItem('achadinhos.agent.analysisSelection');
+            } catch {
+            }
+        }
+
+        function maybeOpenDraftFromUrl() {
+            const draftId = getDraftIdFromUrl();
+            if (!draftId || initialDraftLoaded) {
+                return;
+            }
+
+            initialDraftLoaded = true;
+            loadDraftIntoEditor(draftId);
+        }
+
+        async function maybeOpenChannelOfferContextFromUrl() {
+            if (getDraftIdFromUrl()) {
+                return;
+            }
+
+            const messageId = getChannelOfferMessageIdFromUrl();
+            if (!messageId || initialOfferContextLoaded) {
+                return;
+            }
+
+            initialOfferContextLoaded = true;
+            clearStoredAgentAdminContext();
+            await loadChannelOfferContextIntoEditor(messageId, getChannelOfferSourceFromUrl(), getPostTypeFromUrl());
+        }
+
+        async function maybeOpenStoredAgentAdminContext() {
+            if (getDraftIdFromUrl() || getChannelOfferMessageIdFromUrl() || initialOfferContextLoaded) {
+                return;
+            }
+
+            const stored = getStoredAgentAdminContext();
+            if (!stored?.messageId) {
+                return;
+            }
+
+            initialOfferContextLoaded = true;
+            await loadChannelOfferContextIntoEditor(stored.messageId, stored.sourceChannel || 'whatsapp', stored.postType || 'feed');
+            clearStoredAgentAdminContext();
+        }
+
+        function applyStoredAnalysisSelection() {
+            const selection = getStoredAnalysisSelection();
+            if (!selection) {
+                return;
+            }
+
+            if (selection.offerUrl) {
+                document.getElementById('urlInput').value = selection.offerUrl;
+                currentConvertedUrl = selection.offerUrl;
+                document.getElementById('autoReplyLink').value = selection.offerUrl;
+            }
+
+            if (selection.caption) {
+                document.getElementById('captionText').value = selection.caption;
+            }
+
+            if (selection.postType) {
+                const normalizedPostType = selection.postType.toLowerCase() === 'reel' ? 'reels' : selection.postType;
+                document.getElementById('postType').value = normalizedPostType;
+                setFormat(normalizedPostType);
+            }
+
+            if (selection.productName) {
+                document.getElementById('productTitle').textContent = selection.productName;
+            }
+
+            if (selection.imageUrl || selection.videoUrl) {
+                currentData = currentData || {};
+                currentData.title = selection.productName || currentData.title || 'Oferta selecionada';
+                currentData.offerUrl = selection.offerUrl || currentData.offerUrl || '';
+                currentData.imageUrl = selection.imageUrl || currentData.imageUrl || '';
+                currentData.videoUrl = selection.videoUrl || currentData.videoUrl || null;
+                currentData.videoCoverUrl = selection.imageUrl || currentData.videoCoverUrl || '';
+                if (Array.isArray(selection.imageUrlsSelected) && selection.imageUrlsSelected.length > 0) {
+                    currentData.images = selection.imageUrlsSelected;
+                } else if (Array.isArray(selection.imageUrls) && selection.imageUrls.length > 0) {
+                    currentData.images = selection.imageUrls;
+                } else if (selection.imageUrl) {
+                    currentData.images = [selection.imageUrl];
+                } else {
+                    currentData.images = currentData.images || [];
+                }
+
+                if (selection.imageUrl) {
+                    resetImagePresentation(document.getElementById('productImage'));
+                    document.getElementById('productImage').src = selection.imageUrl;
+                    document.getElementById('instaPreviewImg').src = selection.imageUrl;
+                    document.getElementById('instaPreviewImg').classList.remove('hidden');
+                }
+
+                if (selection.videoUrl) {
+                    const previewVideo = document.getElementById('instaPreviewVid');
+                    previewVideo.src = selection.videoUrl;
+                    previewVideo.classList.remove('hidden');
+                    document.getElementById('instaPreviewImg').classList.add('hidden');
+                    document.getElementById('videoToolsPanel').classList.remove('hidden');
+                }
+            }
+
+            syncPreview();
+            clearStoredAnalysisSelection();
+        }
+
+        function getScrollDepth() {
+            const doc = document.documentElement;
+            const scrollTop = window.scrollY || doc.scrollTop || 0;
+            const height = Math.max((doc.scrollHeight || 0) - window.innerHeight, 1);
+            return Math.max(0, Math.min(100, Math.round((scrollTop / height) * 100)));
+        }
+
+        function buildTelemetryPayload(url, source, eventType = null) {
+            const utm = currentUtmContext();
+            return {
+                TargetUrl: url,
+                Source: source,
+                Category: 'converter',
+                VisitorId: getAnalyticsId('ard_visitor_id', 'visitor'),
+                SessionId: getSessionId(),
+                EventType: eventType,
+                PageType: 'admin',
+                PageUrl: window.location.href,
+                SourceComponent: source,
+                Language: navigator.language || null,
+                Timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+                ScreenWidth: window.screen?.width || null,
+                ScreenHeight: window.screen?.height || null,
+                ViewportWidth: window.innerWidth || null,
+                ViewportHeight: window.innerHeight || null,
+                ScrollDepth: getScrollDepth(),
+                TimeOnPageMs: Math.max(0, Math.round(performance.now())),
+                UtmSource: utm.utmSource,
+                UtmMedium: utm.utmMedium,
+                UtmCampaign: utm.utmCampaign,
+                UtmContent: utm.utmContent,
+                UtmTerm: utm.utmTerm
+            };
+        }
+
+        async function trackClick(url, source = 'direct', eventType = null) {
             try {
                 await fetch('/api/analytics/click', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        TargetUrl: url,
-                        Source: source,
-                        Category: 'converter'
-                    })
+                    body: JSON.stringify(buildTelemetryPayload(url, source, eventType)),
+                    keepalive: true
                 });
             } catch (e) {
                 console.error('Telemetry error:', e);
             }
         }
+
+        trackClick(window.location.href, 'admin_view', 'page_view');
 
         // === Convert ===
         async function handleConvert() {
@@ -1572,7 +1834,7 @@
                 const data = await response.json();
                 if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversÃ£o.');
 
-                trackClick(data.trackedUrl || urlInput, 'admin_convert_success');
+                trackClick(data.trackedUrl || urlInput, 'admin_convert_success', 'convert_action');
 
                 currentData = data;
                 currentConvertedUrl = data.trackedUrl || data.convertedUrl || data.originalUrl || urlInput;
@@ -1606,8 +1868,7 @@
                 currentShareText = `*${data.title}*\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ Por apenas: *${data.price}*${couponText}\n\n🛍️ Compre aqui: ${currentConvertedUrl}`;
 
                 skeletonLoader.classList.add('hidden');
-                resultArea.style.display = 'block';
-                document.getElementById('studioPanel').classList.remove('hidden');
+                setHistoryMode(false);
 
                 // Initial preview sync
                 if (data.videoUrl) {
@@ -1680,6 +1941,39 @@
 
             if (tab === 'publish') {
                 loadDraftsHistory();
+            }
+        }
+
+        function focusConvertInput() {
+            const input = document.getElementById('urlInput');
+            const topCard = document.getElementById('mainContent');
+            if (topCard) {
+                topCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            if (input) {
+                input.focus();
+            }
+        }
+
+        function setHistoryMode(enabled) {
+            const resultArea = document.getElementById('resultArea');
+            const vipResultCard = document.getElementById('vipResultCard');
+            const studioPanel = document.getElementById('studioPanel');
+            if (!resultArea || !vipResultCard || !studioPanel) {
+                return;
+            }
+
+            resultArea.style.display = 'block';
+            studioPanel.classList.remove('hidden');
+            vipResultCard.style.display = enabled ? 'none' : '';
+        }
+
+        function openPublishedHistory() {
+            setHistoryMode(true);
+            switchTab('publish');
+            const target = document.getElementById('tab-publish');
+            if (target) {
+                setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
             }
         }
 
@@ -1851,7 +2145,7 @@
                 showToast('Nenhuma legenda para copiar.', true);
                 return;
             }
-            trackClick(currentConvertedUrl, 'admin_copy_caption');
+            trackClick(currentConvertedUrl, 'admin_copy_caption', 'copy_action');
             navigator.clipboard.writeText(text)
                 .then(() => showToast('Legenda copiada.'))
                 .catch(() => showToast('Falha ao copiar legenda.', true));
@@ -2482,6 +2776,7 @@
                         productName: currentData.title,
                         postType: document.getElementById('postType').value,
                         caption: cap,
+                        offerUrl: currentConvertedUrl || null,
                         imageUrls: [currentData.imageUrl],
                         videoUrl: currentData.videoUrl || null,
                         videoCoverUrl: currentData.videoCoverUrl || currentData.imageUrl || null,
@@ -2596,7 +2891,7 @@
                 return;
             }
 
-            trackClick(currentConvertedUrl, 'admin_open_offer');
+            trackClick(currentConvertedUrl, 'admin_open_offer', 'checkout_intent');
             window.open(currentConvertedUrl, '_blank', 'noopener,noreferrer');
         }
 
@@ -2606,7 +2901,7 @@
                 return;
             }
 
-            trackClick(currentConvertedUrl, 'admin_copy_converted_link');
+            trackClick(currentConvertedUrl, 'admin_copy_converted_link', 'copy_action');
             navigator.clipboard.writeText(currentConvertedUrl)
                 .then(() => showToast('Link convertido copiado.'))
                 .catch(() => showToast('Falha ao copiar link convertido.', true));
@@ -2642,9 +2937,20 @@
                         const metaBits = [];
                         if (scheduledDate) metaBits.push(`Agendado: ${scheduledDate}`);
                         if (draft.mediaId) metaBits.push(`Media ID: ${draft.mediaId}`);
-                        if (draft.catalogTarget && draft.catalogTarget !== 'none') metaBits.push(`Catalogo: ${String(draft.catalogTarget).toUpperCase()}`);
-                        const detailText = metaBits.join(' • ');
+                        if (draft.catalogTarget && draft.catalogTarget !== 'none') metaBits.push(`Catalogo sugerido: ${String(draft.catalogTarget).toUpperCase()}`);
+                        if (draft.inCatalog && Array.isArray(draft.catalogTargets) && draft.catalogTargets.length) metaBits.push(`No catalogo: ${draft.catalogTargets.map(x => String(x).toUpperCase()).join(', ')}`);
+                        const detailText = metaBits.join(' | ');
                         const errorText = draft.error ? String(draft.error) : '';
+                        const canPostNow = (draft.status || '') === 'draft';
+                        const canSyncCatalog = (draft.status || '') === 'published';
+                        const catalogLabel = draft.inCatalog ? 'Atualizar catalogo' : 'Adicionar ao catalogo';
+                        const actionButtons = `
+                            <button class="w-full text-[10px] font-bold text-accent uppercase tracking-widest group-hover:bg-accent/10 py-1.5 rounded-lg transition-all">
+                                Carregar no Estudio ->
+                            </button>
+                            ${canPostNow ? `<button onclick="event.stopPropagation(); finalizeDraftNow('${draft.id}')" class="mt-2 w-full text-[10px] font-bold text-white bg-emerald-500/20 hover:bg-emerald-500/30 uppercase tracking-widest py-1.5 rounded-lg transition-all">Postar agora</button>` : ''}
+                            ${canSyncCatalog ? `<button onclick="event.stopPropagation(); addDraftToCatalog('${draft.id}', '${draft.catalogTarget || 'none'}')" class="mt-2 w-full text-[10px] font-bold text-white bg-accent/20 hover:bg-accent/30 uppercase tracking-widest py-1.5 rounded-lg transition-all">${catalogLabel}</button>` : ''}
+                        `;
 
                         grid.innerHTML += `
                             <div class="bg-primary/20 hover:bg-primary/40 p-4 rounded-xl border border-white/5 transition-all cursor-pointer group" onclick="loadDraftIntoEditor('${draft.id}')">
@@ -2664,22 +2970,164 @@
                                     </div>
                                 </div>
                                 <div class="mt-3 pt-3 border-t border-white/5">
-                                    <button class="w-full text-[10px] font-bold text-accent uppercase tracking-widest group-hover:bg-accent/10 py-1.5 rounded-lg transition-all">
-                                        Carregar no Estúdio ➡️
-                                    </button>
+                                    ${actionButtons}
                                 </div>
                             </div>
                         `;
                     });
                 } else {
-                    grid.innerHTML = '<div class="col-span-full text-center py-6 text-slate-500 text-xs">Nenhum histórico encontrado.</div>';
+                    grid.innerHTML = '<div class="col-span-full text-center py-6 text-slate-500 text-xs">Nenhum historico encontrado.</div>';
                 }
             } catch (err) {
                 loader.classList.add('hidden');
-                grid.innerHTML = '<div class="col-span-full text-center py-6 text-red-400 text-xs">Erro ao carregar histórico.</div>';
+                grid.innerHTML = '<div class="col-span-full text-center py-6 text-red-400 text-xs">Erro ao carregar historico.</div>';
             }
         }
 
+        async function finalizeDraftNow(draftId) {
+            try {
+                const res = await fetch('/api/admin/finalize-draft-now', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({ draftId, catalogTarget: 'none' })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Rascunho finalizado com sucesso.');
+                    loadDraftsHistory();
+                    return;
+                }
+                showToast(data.error || 'Falha ao finalizar rascunho.', true);
+            } catch {
+                showToast('Falha de rede ao finalizar rascunho.', true);
+            }
+        }
+
+        async function addDraftToCatalog(draftId, currentTarget) {
+            const fallbackTarget = isDevRuntime() ? 'dev' : 'prod';
+            const resolvedCurrent = String(currentTarget || '').toLowerCase();
+            const target = ['dev', 'prod', 'both'].includes(resolvedCurrent) && resolvedCurrent !== 'none'
+                ? resolvedCurrent
+                : fallbackTarget;
+
+            try {
+                const res = await fetch('/api/admin/add-to-catalog', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                    body: JSON.stringify({ draftId, catalogTarget: target })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const targetLabel = String(data.target || target).toUpperCase();
+                    const actionLabel = data.scheduled ? 'marcado' : 'sincronizado';
+                    showToast(`Catalogo ${actionLabel}: ${targetLabel}.`);
+                    loadDraftsHistory();
+                    return;
+                }
+                showToast(data.error || 'Falha ao enviar para o catalogo.', true);
+            } catch {
+                showToast('Falha de rede ao enviar para o catalogo.', true);
+            }
+        }
+        async function loadChannelOfferContextIntoEditor(messageId, sourceChannel = 'whatsapp', preferredPostType = null) {
+            showToast('Carregando oferta do agente...');
+            try {
+                let deepAnalysis = null;
+                if (shouldUseDeepAnalysisFromUrl()) {
+                    const deepRes = await fetch('/api/agents/channel-offers/deep-analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
+                        body: JSON.stringify({
+                            messageId,
+                            sourceChannel: sourceChannel || 'whatsapp',
+                            createDraft: false,
+                            useAiReasoning: true
+                        })
+                    });
+                    const deepData = await deepRes.json();
+                    if (deepRes.ok && deepData.success && deepData.result) {
+                        deepAnalysis = deepData.result;
+                    }
+                }
+
+                const params = new URLSearchParams({
+                    messageId,
+                    sourceChannel: sourceChannel || 'whatsapp'
+                });
+                const res = await fetch(`/api/admin/channel-offer-context?${params.toString()}`, {
+                    headers: { 'X-Admin-Key': savedAdminKey }
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success || !data.context) {
+                    throw new Error(data.error || 'Falha ao carregar contexto da oferta.');
+                }
+
+                const context = data.context;
+                const effectiveText = (deepAnalysis?.caption || context.effectiveText || context.sourceText || '').trim();
+                const effectiveOfferUrl = (deepAnalysis?.offerUrl || context.offerUrl || context.originalOfferUrl || '').trim();
+                const normalizedPostType = (deepAnalysis?.suggestedPostType || preferredPostType || 'feed').toLowerCase() === 'reel'
+                    ? 'reels'
+                    : (deepAnalysis?.suggestedPostType || preferredPostType || 'feed');
+                const deepPrimaryImage = Array.isArray(deepAnalysis?.imageUrls) && deepAnalysis.imageUrls.length > 0 ? deepAnalysis.imageUrls[0] : '';
+                const deepPrimaryVideo = Array.isArray(deepAnalysis?.videoUrls) && deepAnalysis.videoUrls.length > 0 ? deepAnalysis.videoUrls[0] : '';
+
+                if (effectiveOfferUrl) {
+                    document.getElementById('urlInput').value = effectiveOfferUrl;
+                    await handleConvert();
+                }
+
+                if (!currentData) {
+                    currentData = {
+                        title: deepAnalysis?.productName || context.productName || 'Oferta do canal',
+                        offerUrl: effectiveOfferUrl,
+                        imageUrl: deepPrimaryImage || (context.mediaKind === 'image' ? (context.mediaUrl || '') : ''),
+                        videoUrl: deepPrimaryVideo || (context.mediaKind === 'video' ? (context.mediaUrl || null) : null),
+                        videoCoverUrl: deepPrimaryImage || (context.mediaKind === 'image' ? (context.mediaUrl || null) : null),
+                        images: Array.isArray(deepAnalysis?.imageUrls) && deepAnalysis.imageUrls.length > 0
+                            ? deepAnalysis.imageUrls
+                            : (context.mediaKind === 'image' && context.mediaUrl ? [context.mediaUrl] : [])
+                    };
+                }
+
+                if (effectiveText) {
+                    document.getElementById('captionText').value = effectiveText;
+                }
+
+                if (effectiveOfferUrl) {
+                    currentConvertedUrl = effectiveOfferUrl;
+                    document.getElementById('autoReplyLink').value = effectiveOfferUrl;
+                }
+
+                if (context.mediaKind === 'image' && context.mediaUrl && !currentData.imageUrl) {
+                    currentData.imageUrl = context.mediaUrl;
+                    currentData.images = Array.isArray(currentData.images) && currentData.images.length > 0 ? currentData.images : [context.mediaUrl];
+                    resetImagePresentation(document.getElementById('productImage'));
+                    document.getElementById('productImage').src = context.mediaUrl;
+                    document.getElementById('instaPreviewImg').src = context.mediaUrl;
+                    document.getElementById('instaPreviewImg').classList.remove('hidden');
+                    document.getElementById('instaPreviewVid').classList.add('hidden');
+                }
+
+                if (context.mediaKind === 'video' && context.mediaUrl && !currentData.videoUrl) {
+                    currentData.videoUrl = context.mediaUrl;
+                    const previewVideo = document.getElementById('instaPreviewVid');
+                    previewVideo.src = context.mediaUrl;
+                    previewVideo.classList.remove('hidden');
+                    document.getElementById('instaPreviewImg').classList.add('hidden');
+                    document.getElementById('videoToolsPanel').classList.remove('hidden');
+                }
+
+                document.getElementById('postType').value = normalizedPostType;
+                setFormat(normalizedPostType);
+                applyAutoReplyDefaults();
+                syncPreview();
+                applyStoredAnalysisSelection();
+                switchTab('visual');
+                showToast('Oferta carregada no admin.');
+            } catch (error) {
+                showToast(error.message || 'Falha ao carregar oferta do agente.', true);
+            }
+        }
         async function loadDraftIntoEditor(draftId) {
             showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Carregando Rascunho...');
             try {
@@ -2689,13 +3137,15 @@
                 const data = await res.json();
                 if (data.success && data.draft) {
                     const draft = data.draft;
+                    setHistoryMode(false);
 
                     // Fill mock data so the editor "thinks" a product is loaded
                     currentData = {
                         title: draft.productName || 'Carregado',
-                        imageUrl: draft.imageUrls?.[0] || '',
+                        offerUrl: draft.offerUrl || '',
+                        imageUrl: draft.imageUrls?.[0] || draft.suggestedImageUrls?.[0] || '',
                         videoUrl: draft.videoUrl || null,
-                        videoCoverUrl: draft.videoCoverUrl || draft.imageUrls?.[0] || '',
+                        videoCoverUrl: draft.videoCoverUrl || draft.imageUrls?.[0] || draft.suggestedImageUrls?.[0] || '',
                         videoCoverAtSeconds: draft.videoCoverAtSeconds ?? 0,
                         videoTrimStartSeconds: draft.videoTrimStartSeconds ?? 0,
                         videoTrimEndSeconds: draft.videoTrimEndSeconds ?? null,
@@ -2705,9 +3155,19 @@
                         musicEndSeconds: draft.musicEndSeconds ?? null,
                         musicVolume: draft.musicVolume ?? 0.7,
                         originalAudioVolume: draft.originalAudioVolume ?? 0.25,
-                        images: draft.imageUrls?.length ? draft.imageUrls : [draft.imageUrls?.[0] || ''],
-                        price: 'R$ 0,00'
+                        images: draft.imageUrls?.length
+                            ? draft.imageUrls.filter(Boolean)
+                            : (draft.suggestedImageUrls?.length ? draft.suggestedImageUrls.filter(Boolean) : []),
+                        price: draft.currentPrice || draft.price || 'R$ 0,00',
+                        previousPrice: draft.previousPrice || '',
+                        discountPercent: draft.discountPercent || 0,
+                        estimatedDelivery: draft.estimatedDelivery || '',
+                        videoCandidates: draft.suggestedVideoUrls || [],
+                        imageCandidates: draft.suggestedImageUrls || [],
+                        store: draft.store || ''
                     };
+                    currentConvertedUrl = draft.offerUrl || '';
+                    document.getElementById('urlInput').value = draft.offerUrl || '';
 
                     document.getElementById('captionText').value = draft.caption || '';
                     document.getElementById('postType').value = draft.postType || 'feed';
@@ -2734,13 +3194,27 @@
                     }
 
                     // Update UI State
-                    document.getElementById('productImage').src = currentData.imageUrl;
+                    if (currentData.imageUrl) {
+                        resetImagePresentation(document.getElementById('productImage'));
+                        document.getElementById('productImage').src = currentData.imageUrl;
+                        document.getElementById('instaPreviewImg').src = currentData.imageUrl;
+                        document.getElementById('instaPreviewImg').classList.remove('hidden');
+                    }
                     document.getElementById('productTitle').textContent = currentData.title;
-                    document.getElementById('instaPreviewImg').src = currentData.imageUrl;
+                    if (currentData.videoUrl) {
+                        const previewVideo = document.getElementById('instaPreviewVid');
+                        previewVideo.src = currentData.videoUrl;
+                        previewVideo.classList.remove('hidden');
+                        document.getElementById('instaPreviewImg').classList.add('hidden');
+                        document.getElementById('videoToolsPanel').classList.remove('hidden');
+                    } else {
+                        document.getElementById('instaPreviewVid').classList.add('hidden');
+                    }
                     syncVideoTools();
 
                     setFormat(draft.postType || 'feed');
                     syncPreview();
+                    applyStoredAnalysisSelection();
 
                     // Switch to Visual tab to start working on it
                     switchTab('visual');
@@ -3380,3 +3854,6 @@
 </body>
 
 </html>
+
+
+

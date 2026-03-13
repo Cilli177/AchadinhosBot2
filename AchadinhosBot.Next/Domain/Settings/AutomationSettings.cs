@@ -35,6 +35,9 @@ public sealed class AutomationSettings
     public OpenAISettings OpenAI { get; set; } = new();
     public GeminiSettings Gemini { get; set; } = new();
     public DeepSeekSettings DeepSeek { get; set; } = new();
+    public NemotronSettings Nemotron { get; set; } = new();
+    public QwenSettings Qwen { get; set; } = new();
+    public VilaNvidiaSettings VilaNvidia { get; set; } = new();
 }
 
 public sealed class IntegrationSettings
@@ -221,7 +224,7 @@ public sealed class InstagramPostSettings
     public bool UseOfferContext { get; set; }
     public bool UseAi { get; set; } = true;
     public int VariationsCount { get; set; } = 2;
-    public string AiProvider { get; set; } = "openai";
+    public string AiProvider { get; set; } = "nemotron";
     public bool UseUltraPrompt { get; set; }
     public bool UseShortProductName { get; set; }
     public bool UseBenefitBullets { get; set; }
@@ -307,10 +310,13 @@ public enum InstagramOfferContextMode
 public sealed class OpenAISettings
 {
     public string? ApiKey { get; set; }
+    public List<string> ApiKeys { get; set; } = new();
     public string Model { get; set; } = "gpt-4o-mini";
     public double Temperature { get; set; } = 0.7;
     public int MaxOutputTokens { get; set; } = 700;
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
+    public int MonthlyCallLimit { get; set; }
+    public decimal EstimatedCostPerCallUsd { get; set; }
 }
 
 public sealed class GeminiSettings
@@ -320,13 +326,61 @@ public sealed class GeminiSettings
     public string Model { get; set; } = "gemini-2.5-flash";
     public string BaseUrl { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
     public int MaxOutputTokens { get; set; } = 1200;
+    public int MonthlyCallLimit { get; set; }
+    public decimal EstimatedCostPerCallUsd { get; set; }
 }
 
 public sealed class DeepSeekSettings
 {
     public string? ApiKey { get; set; }
+    public List<string> ApiKeys { get; set; } = new();
     public string Model { get; set; } = "deepseek-chat";
     public double Temperature { get; set; } = 0.7;
     public int MaxOutputTokens { get; set; } = 1200;
     public string BaseUrl { get; set; } = "https://api.deepseek.com";
+    public int MonthlyCallLimit { get; set; }
+    public decimal EstimatedCostPerCallUsd { get; set; }
+}
+
+public sealed class NemotronSettings
+{
+    public string? ApiKey { get; set; }
+    public List<string> ApiKeys { get; set; } = new();
+    public string Model { get; set; } = "nvidia/nemotron-3-super-120b-a12b";
+    public double Temperature { get; set; } = 1.0;
+    public double TopP { get; set; } = 0.95;
+    public int MaxOutputTokens { get; set; } = 4096;
+    public int ReasoningBudget { get; set; } = 4096;
+    public bool EnableThinking { get; set; } = true;
+    public string BaseUrl { get; set; } = "https://integrate.api.nvidia.com/v1";
+    public int MonthlyCallLimit { get; set; }
+    public decimal EstimatedCostPerCallUsd { get; set; }
+}
+
+public sealed class QwenSettings
+{
+    public string? ApiKey { get; set; }
+    public List<string> ApiKeys { get; set; } = new();
+    public string Model { get; set; } = "qwen3.5-plus";
+    public string VisionModel { get; set; } = "qwen3-vl-plus";
+    public double Temperature { get; set; } = 0.7;
+    public int MaxOutputTokens { get; set; } = 4096;
+    public string BaseUrl { get; set; } = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+    public bool EnableThinking { get; set; } = true;
+    public int MonthlyCallLimit { get; set; }
+    public decimal EstimatedCostPerCallUsd { get; set; }
+}
+
+public sealed class VilaNvidiaSettings
+{
+    public string? ApiKey { get; set; }
+    public List<string> ApiKeys { get; set; } = new();
+    public string Model { get; set; } = "nvidia/vila";
+    public double Temperature { get; set; } = 0.2;
+    public double TopP { get; set; } = 0.7;
+    public int MaxOutputTokens { get; set; } = 4096;
+    public string BaseUrl { get; set; } = "https://integrate.api.nvidia.com/v1";
+    public bool EnableThinking { get; set; } = true;
+    public int MonthlyCallLimit { get; set; }
+    public decimal EstimatedCostPerCallUsd { get; set; }
 }

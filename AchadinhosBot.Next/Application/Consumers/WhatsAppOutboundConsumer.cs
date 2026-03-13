@@ -1,5 +1,6 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Logs;
 using MassTransit;
 using Microsoft.Extensions.Options;
 
@@ -9,17 +10,20 @@ public sealed class WhatsAppOutboundConsumer : IConsumer<SendWhatsAppMessageComm
 {
     private readonly IWhatsAppTransport _transport;
     private readonly IIdempotencyStore _idempotencyStore;
+    private readonly IWhatsAppOutboundLogStore _outboundLogStore;
     private readonly MessagingOptions _messagingOptions;
     private readonly ILogger<WhatsAppOutboundConsumer> _logger;
 
     public WhatsAppOutboundConsumer(
         IWhatsAppTransport transport,
         IIdempotencyStore idempotencyStore,
+        IWhatsAppOutboundLogStore outboundLogStore,
         IOptions<MessagingOptions> messagingOptions,
         ILogger<WhatsAppOutboundConsumer> logger)
     {
         _transport = transport;
         _idempotencyStore = idempotencyStore;
+        _outboundLogStore = outboundLogStore;
         _messagingOptions = messagingOptions.Value;
         _logger = logger;
     }
@@ -83,5 +87,18 @@ public sealed class WhatsAppOutboundConsumer : IConsumer<SendWhatsAppMessageComm
         {
             throw new InvalidOperationException(result.Message ?? "Falha no envio outbound do WhatsApp.");
         }
+
+        await _outboundLogStore.AppendAsync(new WhatsAppOutboundLogEntry
+        {
+            MessageId = command.MessageId,
+            CreatedAtUtc = command.CreatedAtUtc,
+            Kind = command.Kind,
+            InstanceName = command.InstanceName,
+            To = command.To,
+            Text = command.Text,
+            MediaUrl = command.MediaUrl,
+            MimeType = command.MimeType,
+            FileName = command.FileName
+        }, context.CancellationToken);
     }
 }

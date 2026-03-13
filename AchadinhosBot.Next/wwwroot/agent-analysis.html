@@ -1,0 +1,1307 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analise Profunda do Agente</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --panel: #fffaf2;
+      --line: #d7c7ad;
+      --text: #261d14;
+      --muted: #6f6255;
+      --accent: #a55d2a;
+      --accent-2: #1f5f5b;
+      --warn: #b45309;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(circle at top, #fff8ee, var(--bg)); color: var(--text); font-family: Inter, sans-serif; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    h1, h2, h3 { font-family: Outfit, sans-serif; margin: 0; }
+    .hero, .panel { background: rgba(255,250,242,.92); border: 1px solid var(--line); border-radius: 24px; box-shadow: 0 16px 40px rgba(38,29,20,.08); }
+    .hero { padding: 28px; display: grid; gap: 18px; }
+    .grid { display: grid; gap: 18px; grid-template-columns: repeat(12, 1fr); margin-top: 18px; }
+    .panel { padding: 20px; }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .muted { color: var(--muted); }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; }
+    .badge { padding: 6px 10px; border-radius: 999px; background: #f3e5d0; color: var(--text); font-size: 12px; font-weight: 700; }
+    .badge.ok { background: #d9efe9; color: #16413d; }
+    .badge.warn { background: #f6e2c8; color: #7a4508; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    button, a.btn { appearance: none; border: 0; border-radius: 14px; padding: 12px 16px; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; text-decoration: none; }
+    button.secondary, a.btn.secondary { background: #efe3d0; color: var(--text); }
+    button.ghost, a.btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+    .choice-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 12px; }
+    .choice-card { border: 1px solid var(--line); border-radius: 18px; background: #fff; padding: 14px; display: grid; gap: 10px; }
+    .choice-card.active { border-color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent-2); }
+    .choice-card pre { min-height: 110px; max-height: 240px; overflow: auto; }
+    .choice-card label { display: flex; gap: 8px; align-items: center; font-weight: 700; }
+    .choice-card .meta { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .choice-card .thumb { width: 100%; border-radius: 16px; border: 1px solid var(--line); background: #f1ece4; min-height: 140px; object-fit: cover; }
+    .pill { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; background: #f3e5d0; font-size: 12px; font-weight: 700; }
+    .confirm-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; }
+    .confirm-card { padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
+    .confirm-card strong { display: block; margin-bottom: 8px; }
+    .comment-box { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
+    .comment-box ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
+    .composer-shell { background: linear-gradient(180deg, #fff8ee 0%, #f4ede3 100%); color: var(--text); border: 1px solid var(--line); border-radius: 28px; padding: 22px; box-shadow: 0 18px 50px rgba(38,29,20,.12); }
+    .composer-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+    .composer-header p { margin: 8px 0 0; }
+    .composer-grid { display: grid; gap: 18px; grid-template-columns: 1.1fr .9fr; margin-top: 16px; }
+    .composer-panel { background: rgba(255,255,255,.84); border: 1px solid rgba(38,29,20,.08); border-radius: 22px; padding: 18px; }
+    .composer-panel h3 { color: var(--text); }
+    .composer-preview { display: grid; gap: 14px; }
+    .preview-frame { background: linear-gradient(180deg, #fffdf8, #ead8c0); border-radius: 28px; padding: 16px; color: #261d14; min-height: 540px; display: grid; grid-template-rows: auto 1fr auto; }
+    .preview-media { background: rgba(255,255,255,.58); border-radius: 22px; border: 1px solid rgba(38,29,20,.08); min-height: 320px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .preview-media img, .preview-media video { width: 100%; height: 100%; object-fit: cover; }
+    .preview-caption { white-space: pre-wrap; line-height: 1.45; font-size: 14px; }
+    .composer-form { display: grid; gap: 14px; }
+    .composer-form label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; color: var(--text); }
+    .composer-form input, .composer-form textarea, .composer-form select { width: 100%; border-radius: 14px; border: 1px solid var(--line); background: #fffdf8; color: var(--text); padding: 12px 14px; font: inherit; }
+    .composer-form textarea { min-height: 160px; resize: vertical; }
+    .composer-metrics { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+    .composer-metric { border-radius: 16px; background: #fff; border: 1px solid var(--line); padding: 12px; }
+    .composer-metric strong { display: block; font-size: 20px; color: var(--text); }
+    .composer-inline { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .composer-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+    .composer-actions button { background: #c66d32; }
+    .composer-actions button.secondary { background: #efe3d0; color: var(--text); }
+    .composer-status { color: var(--muted); min-height: 20px; }
+    .composer-notes { padding: 14px; border-radius: 18px; border: 1px solid var(--line); background: #fff; display: grid; gap: 10px; }
+    .composer-notes ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+    .composer-media-strip { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+    .composer-media-chip { border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 8px; display: grid; gap: 6px; }
+    .composer-media-chip.active { border-color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent-2); }
+    .composer-media-chip.dragging { opacity: .55; transform: scale(.98); }
+    .composer-media-chip img, .composer-media-chip video { width: 100%; height: 88px; object-fit: cover; border-radius: 12px; background: #f1ece4; }
+    .composer-media-chip-actions { display: flex; gap: 6px; }
+    .composer-media-chip-actions button { padding: 6px 8px; border-radius: 10px; font-size: 12px; }
+    .drag-handle { cursor: grab; font-size: 12px; font-weight: 700; color: var(--muted); }
+    .preview-carousel-dots { display: flex; gap: 6px; margin-top: 10px; }
+    .preview-carousel-dots span { width: 8px; height: 8px; border-radius: 999px; background: rgba(38,29,20,.18); }
+    .preview-carousel-dots span.active { background: var(--accent); }
+    .composer-toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
+    .composer-toolbar button { background: #fff; color: var(--text); border: 1px solid var(--line); }
+    .composer-toolbar button.active { background: var(--accent); color: #fff; border-color: transparent; }
+    .style-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+    .style-toolbar button { background: #fff; color: var(--text); border: 1px solid var(--line); }
+    .style-toolbar button.active { background: var(--accent-2); color: #fff; border-color: transparent; }
+    .kv { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .kv div { padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+    .list { margin: 0; padding-left: 18px; }
+    .media-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    .media-grid img, .media-grid video { width: 100%; border-radius: 16px; border: 1px solid var(--line); background: #f1ece4; }
+    .checklist { display: grid; gap: 10px; }
+    .checklist-item { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+    .checklist-item.ok { border-color: #8bb59f; background: #f4fbf7; }
+    .checklist-item.warn { border-color: #dfb17d; background: #fff8f1; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 0; }
+    @media (max-width: 900px) {
+      .span-4, .span-6, .span-8, .span-12 { grid-column: span 12; }
+      .kv, .confirm-grid, .composer-inline, .composer-grid, .composer-metrics { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div class="badges">
+        <span id="badgeAction" class="badge ok">Analise</span>
+        <span id="badgeScore" class="badge">Score</span>
+        <span id="badgeSource" class="badge warn">Fonte</span>
+      </div>
+      <div>
+        <h1 id="title">Analise Profunda</h1>
+        <p id="subtitle" class="muted" style="margin-top:8px;">Carregando resultado do agente...</p>
+      </div>
+      <div class="actions">
+        <a class="btn ghost" href="#composerWorkspace">Ir para composer</a>
+        <button id="createDraftBtn" class="secondary" type="button">Criar draft</button>
+        <a id="openAdminBtn" class="btn secondary" href="/conversor-admin">Admin legado</a>
+        <a id="openDraftBtn" class="btn secondary" href="#" style="display:none;">Abrir draft</a>
+        <button id="addCatalogBtn" class="secondary" type="button" style="display:none;">Adicionar ao catalogo</button>
+        <button id="highlightBioBtn" class="secondary" type="button" style="display:none;">Destacar na bio</button>
+        <button id="publishNowBtn" class="secondary" type="button" style="display:none;">Publicar agora</button>
+        <button id="copyOfferBtn" class="secondary" type="button">Copiar link principal</button>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="panel span-4">
+        <h2>Resumo</h2>
+        <div id="summaryKv" class="kv" style="margin-top:14px;"></div>
+      </section>
+      <section class="panel span-8">
+        <h2>Confirmacao do agente</h2>
+        <p class="muted" style="margin-top:8px;">A IA prepara o material completo. Aqui voce so confirma a legenda, a midia e a acao final.</p>
+        <div id="confirmationGrid" class="confirm-grid"></div>
+      </section>
+      <section class="panel span-8">
+        <h2>Raciocinio</h2>
+        <pre id="reasoningBox" style="margin-top:14px;"></pre>
+      </section>
+
+      <section class="panel span-6">
+        <h2>URLs</h2>
+        <div id="urlReason" class="muted" style="margin-top:12px;"></div>
+        <pre id="primaryUrl" style="margin-top:12px;"></pre>
+        <h3 style="margin-top:14px;">Alternativas encontradas</h3>
+        <pre id="candidateUrls" style="margin-top:10px;"></pre>
+      </section>
+      <section class="panel span-6">
+        <h2>Legendas</h2>
+        <pre id="captionMain" style="margin-top:12px;"></pre>
+        <div class="comment-box">
+          <strong>Comentarios do agente</strong>
+          <ul id="captionComments" style="margin-top:10px;"></ul>
+        </div>
+        <div class="actions" style="margin-top:12px;">
+          <button id="regenCaptionsBtn" class="secondary" type="button">Gerar Mais com IA</button>
+        </div>
+        <div id="captionStyleToolbar" class="style-toolbar"></div>
+        <div id="captionSelector" class="choice-grid"></div>
+      </section>
+
+      <section class="panel span-6">
+        <h2>Motivos</h2>
+        <ul id="reasonsList" class="list" style="margin-top:12px;"></ul>
+      </section>
+      <section class="panel span-6">
+        <h2>Riscos</h2>
+        <ul id="risksList" class="list" style="margin-top:12px;"></ul>
+      </section>
+      <section class="panel span-12" id="memoryPanel" style="display:none;">
+        <h2>Memoria do operador</h2>
+        <div id="memoryKv" class="kv" style="margin-top:14px;"></div>
+      </section>
+
+      <section class="panel span-12">
+        <h2>Midias candidatas</h2>
+        <p class="muted" style="margin-top:8px;">Selecione varias imagens para carrossel ou um video para reel/story.</p>
+        <div id="mediaSelector" class="choice-grid"></div>
+        <div id="mediaGrid" class="media-grid" style="margin-top:14px;"></div>
+      </section>
+
+      <section class="panel span-12">
+        <h2>Texto base analisado</h2>
+        <pre id="sourceText" style="margin-top:14px;"></pre>
+      </section>
+
+      <section id="composerWorkspace" class="span-12 composer-shell">
+        <div class="composer-header">
+          <div>
+            <h2>Composer do Agente</h2>
+            <p class="muted">A IA fecha a oferta aqui. Voce so valida a legenda, a midia, o destino e confirma a acao final.</p>
+          </div>
+          <div class="badges">
+            <span class="badge ok">Fluxo principal</span>
+            <span class="badge">Mesmo contexto da analise</span>
+          </div>
+        </div>
+        <div class="composer-grid">
+          <div class="composer-panel composer-preview">
+            <h3>Preview operacional</h3>
+            <div class="preview-frame">
+              <div style="display:flex; justify-content:space-between; align-items:center; font-weight:700;">
+                <span>achadinhos.vip</span>
+                <span id="composerPreviewType">feed</span>
+              </div>
+              <div class="preview-media" id="composerPreviewMedia">
+                <span class="muted">Sem midia selecionada.</span>
+              </div>
+              <div>
+                <div class="preview-caption" id="composerPreviewCaption">Sem legenda.</div>
+                <div class="muted" id="composerPreviewMeta" style="margin-top:10px; color:#6f6255;">CTA e link aparecem aqui.</div>
+              </div>
+            </div>
+            <div>
+              <h3 style="margin-bottom:10px;">Midias selecionadas</h3>
+              <div id="composerSelectedMedia" class="composer-media-strip"></div>
+            </div>
+            <div class="composer-notes">
+              <strong>Comentarios do agente</strong>
+              <ul id="composerNotesList"></ul>
+            </div>
+            <div class="composer-notes">
+              <strong>Checklist final</strong>
+              <div id="composerChecklist" class="checklist"></div>
+            </div>
+          </div>
+          <div class="composer-panel">
+            <h3>Publicacao direta</h3>
+            <div class="composer-form">
+              <div class="composer-metrics">
+                <div class="composer-metric"><div class="muted">Legenda</div><strong id="composerCaptionCount">0</strong></div>
+                <div class="composer-metric"><div class="muted">Midias</div><strong id="composerMediaCount">0</strong></div>
+                <div class="composer-metric"><div class="muted">Draft</div><strong id="composerDraftState">novo</strong></div>
+              </div>
+              <label>Legenda final
+                <textarea id="composerCaptionInput" placeholder="Legenda final pronta para publicar."></textarea>
+              </label>
+              <div class="composer-toolbar" id="composerCaptionToolbar"></div>
+              <div class="composer-inline">
+                <label>CTA
+                  <input id="composerCtaInput" placeholder='Comente "EU QUERO"' />
+                </label>
+                <label>Tipo de post
+                  <select id="composerPostType">
+                    <option value="feed">Feed</option>
+                    <option value="reels">Reels</option>
+                    <option value="story">Story</option>
+                  </select>
+                </label>
+              </div>
+              <div class="composer-inline">
+                <label>Link final
+                  <input id="composerOfferUrlInput" placeholder="https://..." />
+                </label>
+                <label>Agendar para
+                  <input id="composerScheduledForInput" type="datetime-local" />
+                </label>
+              </div>
+              <div class="composer-inline">
+                <label>Catalogo
+                  <select id="composerCatalogTarget">
+                    <option value="dev">DEV</option>
+                    <option value="prod" selected>PROD</option>
+                    <option value="both">DEV + PROD</option>
+                  </select>
+                </label>
+                <label>Auto reply keyword
+                  <input id="composerAutoReplyKeyword" placeholder="eu quero, link" />
+                </label>
+              </div>
+              <div class="composer-actions">
+                <button id="composerSaveDraftBtn" type="button">Salvar draft</button>
+                <button id="composerPublishBtn" type="button">Publicar agora</button>
+                <button id="composerConfirmPublishBtn" type="button">Confirmar e publicar</button>
+                <button id="composerCatalogBtn" class="secondary" type="button">Enviar ao catalogo</button>
+                <button id="composerBioBtn" class="secondary" type="button">Destacar na bio</button>
+                <a id="composerLegacyAdminBtn" class="btn ghost" href="/conversor-admin">Abrir admin legado</a>
+              </div>
+              <div id="composerStatus" class="composer-status">Composer aguardando selecao do agente.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    function getResultFromStorage() {
+      try {
+        const raw = localStorage.getItem('achadinhos.agent.deepAnalysisResult');
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function getRequestFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      return {
+        messageId: params.get('messageId') || '',
+        sourceChannel: params.get('sourceChannel') || 'telegram',
+        createDraft: params.get('createDraft') === '1',
+        useAiReasoning: params.get('useAiReasoning') !== '0'
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function renderList(id, items) {
+      const el = document.getElementById(id);
+      const safe = Array.isArray(items) ? items.filter(Boolean) : [];
+      el.innerHTML = safe.length ? safe.map(x => `<li>${escapeHtml(x)}</li>`).join('') : '<li class="muted">Nenhum item.</li>';
+    }
+
+    function renderMedia(result) {
+      const media = [];
+      const insightMap = new Map((result.mediaInsights || []).map(item => [item.url, item]));
+      (result.imageUrls || []).forEach(url => media.push({ kind: 'image', url }));
+      (result.videoUrls || []).forEach(url => media.push({ kind: 'video', url }));
+      const el = document.getElementById('mediaGrid');
+      if (!media.length) {
+        el.innerHTML = '<div class="muted">Nenhuma midia encontrada.</div>';
+        return;
+      }
+      el.innerHTML = media.map(item => {
+        const insight = insightMap.get(item.url);
+        const badge = insight ? `<div class="muted" style="margin-top:8px; font-size:12px;">Score ${escapeHtml(String(insight.score || 0))} | ${escapeHtml(insight.reason || '')}</div>` : '';
+        return item.kind === 'video'
+          ? `<div><video src="${escapeHtml(item.url)}" controls preload="metadata"></video>${badge}</div>`
+          : `<div><img src="${escapeHtml(item.url)}" alt="midia candidata" loading="lazy" />${badge}</div>`;
+      }).join('');
+    }
+
+    function updateConfirmationPreview(result) {
+      const payload = getSelectedAnalysisPayload(result);
+      const mediaCount = payload.videoUrl ? 1 : (payload.imageUrlsSelected?.length || (payload.imageUrl ? 1 : 0));
+      const mediaType = payload.videoUrl ? 'Video selecionado' : `${mediaCount} imagem(ns) selecionada(s)`;
+      document.getElementById('confirmationGrid').innerHTML = [
+        ['Legenda ativa', payload.caption || '-'],
+        ['Midia ativa', mediaType],
+        ['Acao pronta', result.draftId ? 'Pode abrir draft, publicar ou enviar ao catalogo' : 'Pode criar draft com a selecao atual']
+      ].map(([label, value]) => `<div class="confirm-card"><strong>${escapeHtml(label)}</strong><div class="muted">${escapeHtml(value)}</div></div>`).join('');
+    }
+
+    function getAgentNotes(result, payload) {
+      const notes = [];
+      notes.push(`Link principal validado: ${payload.offerUrl || 'pendente de validacao'}.`);
+      notes.push(`Confianca da URL: ${result.urlSelectionConfidence || 0}/100. Qualidade dos dados: ${result.dataQualityScore || 0}/100.`);
+      if (result.currentPrice) {
+        notes.push(`Ancore a copy no preco ${result.currentPrice} para reforcar valor percebido.`);
+      }
+      if (result.discountPercent) {
+        notes.push(`Aplique o desconto de ${result.discountPercent}% como prova de oportunidade, sem parecer spam.`);
+      }
+      if (result.couponCode) {
+        notes.push(`Use o cupom ${result.couponCode} apenas se ele estiver confirmado para o item principal.`);
+      }
+      if (payload.videoUrl) {
+        notes.push('A selecao atual favorece reel. Mantenha abertura mais curta e CTA mais rapido.');
+      } else {
+        const imageCount = payload.imageUrlsSelected?.length || (payload.imageUrl ? 1 : 0);
+        notes.push(`A selecao atual favorece carrossel com ${imageCount} imagem(ns).`);
+      }
+      if (result.scraperFallbackApplied) {
+        notes.push(`Fallbacks usados: ${(result.fallbacksUsed || []).join(' | ') || 'scraper complementar sem detalhe adicional'}.`);
+      }
+      notes.push(result.offerType?.toLowerCase() === 'flash'
+        ? 'Oferta com perfil relampago: evite blocos longos e priorize urgencia controlada.'
+        : 'Oferta de catalogo: mantenha a leitura limpa, comercial e confiavel.');
+      return notes;
+    }
+
+    function renderComposerNotes(result) {
+      const payload = getSelectedAnalysisPayload(result);
+      const notes = getAgentNotes(result, payload);
+      if (result.lastOperatorFeedback) {
+        notes.unshift(`Memoria anterior: ${result.lastOperatorFeedback}${result.lastOperatorNote ? ` | ${result.lastOperatorNote}` : ''}`);
+      }
+      const list = document.getElementById('composerNotesList');
+      if (list) {
+        list.innerHTML = notes.map(note => `<li>${escapeHtml(note)}</li>`).join('');
+      }
+    }
+
+    function renderComposerChecklist(result) {
+      const state = getComposerState(result);
+      const payload = state.payload || {};
+      const items = [
+        {
+          ok: !!state.offerUrl,
+          label: 'Link final confirmado',
+          hint: state.offerUrl || 'Defina o link final da oferta.'
+        },
+        {
+          ok: !!state.caption && state.caption.trim().length >= 60,
+          label: 'Legenda pronta para publicar',
+          hint: state.caption ? `${state.caption.length} caracteres` : 'Legenda ainda vazia.'
+        },
+        {
+          ok: !!payload.videoUrl || (payload.imageUrlsSelected?.length || 0) > 0 || !!payload.imageUrl,
+          label: 'Midia principal definida',
+          hint: payload.videoUrl ? 'Video selecionado para reel/story.' : `${payload.imageUrlsSelected?.length || (payload.imageUrl ? 1 : 0)} imagem(ns) selecionada(s).`
+        },
+        {
+          ok: !!state.cta && state.cta.trim().length >= 8,
+          label: 'CTA visivel',
+          hint: state.cta || 'Defina um CTA mais claro.'
+        }
+      ];
+      const el = document.getElementById('composerChecklist');
+      if (!el) return;
+      el.innerHTML = items.map(item => `
+        <div class="checklist-item ${item.ok ? 'ok' : 'warn'}">
+          <strong>${item.ok ? 'OK' : 'Revisar'}</strong>
+          <div>
+            <div style="font-weight:700;">${escapeHtml(item.label)}</div>
+            <div class="muted" style="margin-top:4px;">${escapeHtml(item.hint)}</div>
+          </div>
+        </div>
+      `).join('');
+      return items.every(item => item.ok);
+    }
+
+    function renderCaptionStyleToolbar(result) {
+      const toolbar = document.getElementById('captionStyleToolbar');
+      if (!toolbar) return;
+      const selected = document.body.dataset.captionStyle || 'base';
+      const styles = [
+        ['base', 'Base'],
+        ['premium', 'Premium'],
+        ['urgente', 'Urgente'],
+        ['comparativo', 'Comparativo']
+      ];
+      toolbar.innerHTML = styles.map(([id, label]) => `
+        <button type="button" class="${selected === id ? 'active' : ''}" data-caption-style="${id}">${label}</button>
+      `).join('');
+      toolbar.querySelectorAll('[data-caption-style]').forEach(button => {
+        button.addEventListener('click', async () => {
+          document.body.dataset.captionStyle = button.getAttribute('data-caption-style') || 'base';
+          renderCaptionStyleToolbar(result);
+          if (button.getAttribute('data-caption-style') !== 'base') {
+            await generateMoreCaptions(result, button.getAttribute('data-caption-style') || 'premium');
+          }
+        });
+      });
+    }
+
+    function renderOperatorMemory(result) {
+      const panel = document.getElementById('memoryPanel');
+      const kv = document.getElementById('memoryKv');
+      if (!panel || !kv) return;
+      if (!result.lastOperatorFeedback && !result.lastAppliedAction && !result.lastOutcome && !result.lastDecisionAt) {
+        panel.style.display = 'none';
+        kv.innerHTML = '';
+        return;
+      }
+      panel.style.display = 'block';
+      kv.innerHTML = [
+        ['Feedback', result.lastOperatorFeedback || '-'],
+        ['Ultima acao', result.lastAppliedAction || '-'],
+        ['Outcome', result.lastOutcome || '-'],
+        ['Quando', result.lastDecisionAt ? new Date(result.lastDecisionAt).toLocaleString('pt-BR') : '-'],
+        ['Nota', result.lastOperatorNote || '-']
+      ].map(([k, v]) => `<div><strong>${escapeHtml(k)}</strong><div class="muted" style="margin-top:6px;">${escapeHtml(v)}</div></div>`).join('');
+    }
+
+    function renderComposerCaptionToolbar(result) {
+      const toolbar = document.getElementById('composerCaptionToolbar');
+      if (!toolbar) return;
+
+      const options = Array.from(new Set([result.caption, ...(result.captionOptions || [])].filter(Boolean)));
+      const selectedIndex = Number(document.body.dataset.selectedCaptionIndex || 0);
+      toolbar.innerHTML = options.map((_, index) => `
+        <button type="button" class="${index === selectedIndex ? 'active' : ''}" data-toolbar-caption="${index}">
+          Legenda ${index + 1}
+        </button>
+      `).join('');
+
+      toolbar.querySelectorAll('[data-toolbar-caption]').forEach(button => {
+        button.addEventListener('click', () => {
+          const nextIndex = button.getAttribute('data-toolbar-caption') || '0';
+          document.body.dataset.selectedCaptionIndex = nextIndex;
+          const selected = options[Number(nextIndex) || 0] || result.caption || '';
+          document.getElementById('captionMain').textContent = selected;
+          document.getElementById('composerCaptionInput').value = selected;
+          renderCaptionSelector(result);
+          renderCaptionComments(result);
+          renderComposerCaptionToolbar(result);
+          renderComposerNotes(result);
+          updateConfirmationPreview(result);
+          syncComposerPreview(result);
+        });
+      });
+    }
+
+    function getComposerState(result) {
+      const payload = getSelectedAnalysisPayload(result);
+      return {
+        draftId: result.draftId || '',
+        postType: document.getElementById('composerPostType')?.value || (payload.videoUrl ? 'reels' : 'feed'),
+        caption: document.getElementById('composerCaptionInput')?.value || payload.caption || '',
+        offerUrl: document.getElementById('composerOfferUrlInput')?.value || payload.offerUrl || '',
+        cta: document.getElementById('composerCtaInput')?.value || `Comente "${result.suggestedKeyword || 'EU QUERO'}"`,
+        catalogTarget: document.getElementById('composerCatalogTarget')?.value || 'prod',
+        autoReplyKeyword: document.getElementById('composerAutoReplyKeyword')?.value || (result.suggestedKeyword || 'eu quero, link'),
+        scheduledFor: document.getElementById('composerScheduledForInput')?.value || null,
+        payload
+      };
+    }
+
+    function syncComposerPreview(result) {
+      const state = getComposerState(result);
+      const previewType = document.getElementById('composerPreviewType');
+      const previewMedia = document.getElementById('composerPreviewMedia');
+      const previewCaption = document.getElementById('composerPreviewCaption');
+      const previewMeta = document.getElementById('composerPreviewMeta');
+      const previewStrip = document.getElementById('composerSelectedMedia');
+
+      previewType.textContent = state.postType;
+      previewCaption.textContent = state.caption || 'Sem legenda.';
+      previewMeta.textContent = `${state.cta || 'Sem CTA'} | ${state.offerUrl || 'Sem link final'}`;
+
+      if (state.payload.videoUrl) {
+        previewMedia.innerHTML = `<video src="${escapeHtml(state.payload.videoUrl)}" controls preload="metadata"></video>`;
+      } else if ((state.payload.imageUrlsSelected || []).length > 0 || state.payload.imageUrl) {
+        const img = state.payload.imageUrlsSelected?.[0] || state.payload.imageUrl;
+        const imageCount = state.payload.imageUrlsSelected?.length || (state.payload.imageUrl ? 1 : 0);
+        const dots = Array.from({ length: imageCount }, (_, index) => `<span class="${index === 0 ? 'active' : ''}"></span>`).join('');
+        previewMedia.innerHTML = `
+          <div style="width:100%;">
+            <img src="${escapeHtml(img)}" alt="preview" />
+            ${imageCount > 1 ? `<div class="preview-carousel-dots">${dots}</div>` : ''}
+          </div>
+        `;
+      } else {
+        previewMedia.innerHTML = '<span class="muted">Sem midia selecionada.</span>';
+      }
+
+      const selectedMediaUrls = state.payload.videoUrl
+        ? [{ kind: 'video', url: state.payload.videoUrl }]
+        : (state.payload.imageUrlsSelected?.length
+          ? state.payload.imageUrlsSelected.map(url => ({ kind: 'image', url }))
+          : (state.payload.imageUrl ? [{ kind: 'image', url: state.payload.imageUrl }] : []));
+
+      if (previewStrip) {
+        const insightMap = new Map((result.mediaInsights || []).map(item => [item.url, item]));
+        previewStrip.innerHTML = selectedMediaUrls.length
+          ? selectedMediaUrls.map((item, index) => {
+              const insight = insightMap.get(item.url);
+              return `
+              <div class="composer-media-chip ${index === 0 ? 'active' : ''}" draggable="${item.kind === 'image' ? 'true' : 'false'}" data-media-position="${index}">
+                ${item.kind === 'video'
+                  ? `<video src="${escapeHtml(item.url)}" controls preload="metadata"></video>`
+                  : `<img src="${escapeHtml(item.url)}" alt="midia selecionada ${index + 1}" loading="lazy" />`}
+                <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                  <span class="muted">${item.kind === 'video' ? 'Video principal' : `Imagem ${index + 1}`}</span>
+                  ${item.kind === 'image' ? '<span class="drag-handle">Arraste</span>' : ''}
+                </div>
+                ${insight ? `<span class="muted" style="font-size:11px;">Score ${escapeHtml(String(insight.score || 0))} | ${escapeHtml(insight.reason || '')}</span>` : ''}
+                ${item.kind === 'image'
+                  ? `<div class="composer-media-chip-actions">
+                       <button type="button" class="secondary" data-move-media="${index}" data-move-direction="-1">Subir</button>
+                       <button type="button" class="secondary" data-move-media="${index}" data-move-direction="1">Descer</button>
+                     </div>`
+                  : ''}
+              </div>
+            `}).join('')
+          : '<div class="muted">Nenhuma midia selecionada.</div>';
+
+        previewStrip.querySelectorAll('[data-move-media]').forEach(button => {
+          button.addEventListener('click', () => {
+            moveSelectedMedia(result, Number(button.getAttribute('data-move-media') || 0), Number(button.getAttribute('data-move-direction') || 0));
+          });
+        });
+
+        previewStrip.querySelectorAll('[data-media-position]').forEach(chip => {
+          chip.addEventListener('dragstart', () => {
+            chip.classList.add('dragging');
+            chip.dataset.dragSource = chip.getAttribute('data-media-position') || '0';
+          });
+          chip.addEventListener('dragend', () => {
+            chip.classList.remove('dragging');
+          });
+          chip.addEventListener('dragover', event => {
+            event.preventDefault();
+          });
+          chip.addEventListener('drop', event => {
+            event.preventDefault();
+            const from = Number((previewStrip.querySelector('.dragging')?.getAttribute('data-media-position')) || chip.dataset.dragSource || '0');
+            const to = Number(chip.getAttribute('data-media-position') || '0');
+            if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) return;
+            moveSelectedMediaTo(result, from, to);
+          });
+        });
+      }
+
+      document.getElementById('composerCaptionCount').textContent = String((state.caption || '').length);
+      document.getElementById('composerMediaCount').textContent = String(state.payload.videoUrl ? 1 : ((state.payload.imageUrlsSelected?.length || 0) || (state.payload.imageUrl ? 1 : 0)));
+      document.getElementById('composerDraftState').textContent = state.draftId ? 'existente' : 'novo';
+      renderComposerNotes(result);
+      renderComposerChecklist(result);
+    }
+
+    function hydrateComposer(result) {
+      const payload = getSelectedAnalysisPayload(result);
+      const captionInput = document.getElementById('composerCaptionInput');
+      const ctaInput = document.getElementById('composerCtaInput');
+      const postTypeInput = document.getElementById('composerPostType');
+      const offerUrlInput = document.getElementById('composerOfferUrlInput');
+      const catalogTargetInput = document.getElementById('composerCatalogTarget');
+      const autoReplyKeywordInput = document.getElementById('composerAutoReplyKeyword');
+
+      if (captionInput && !captionInput.dataset.userEdited) {
+        captionInput.value = payload.caption || '';
+      }
+      if (ctaInput && !ctaInput.dataset.userEdited) {
+        ctaInput.value = `Comente "${result.suggestedKeyword || 'EU QUERO'}" para receber o link.`;
+      }
+      if (postTypeInput && !postTypeInput.dataset.userEdited) {
+        postTypeInput.value = payload.videoUrl ? 'reels' : ((payload.imageUrlsSelected?.length || 0) > 1 ? 'feed' : ((payload.postType || 'feed').toLowerCase() === 'reel' ? 'reels' : (payload.postType || 'feed')));
+      }
+      if (offerUrlInput && !offerUrlInput.dataset.userEdited) {
+        offerUrlInput.value = payload.offerUrl || '';
+      }
+      if (catalogTargetInput && !catalogTargetInput.dataset.userEdited) {
+        catalogTargetInput.value = 'dev';
+      }
+      if (autoReplyKeywordInput && !autoReplyKeywordInput.dataset.userEdited) {
+        autoReplyKeywordInput.value = result.suggestedKeyword || 'eu quero, link';
+      }
+
+      ['composerCaptionInput', 'composerCtaInput', 'composerPostType', 'composerOfferUrlInput', 'composerCatalogTarget', 'composerAutoReplyKeyword', 'composerScheduledForInput']
+        .forEach(id => {
+          const el = document.getElementById(id);
+          if (el && !el.dataset.boundComposer) {
+            el.dataset.boundComposer = '1';
+            el.addEventListener('input', () => {
+              el.dataset.userEdited = '1';
+              syncComposerPreview(result);
+            });
+            el.addEventListener('change', () => {
+              el.dataset.userEdited = '1';
+              syncComposerPreview(result);
+            });
+          }
+        });
+
+      renderComposerCaptionToolbar(result);
+      renderCaptionStyleToolbar(result);
+      syncComposerPreview(result);
+    }
+
+    function renderCaptionComments(result) {
+      const payload = getSelectedAnalysisPayload(result);
+      const comments = [];
+      comments.push(`Legenda ativa com foco em ${result.suggestedKeyword || 'CTA principal'}.`);
+      if (result.currentPrice) {
+        comments.push(`Use o preco ${result.currentPrice} como ancora principal de valor.`);
+      }
+      if (result.discountPercent) {
+        comments.push(`Destaque o desconto de ${result.discountPercent}% sem exagerar na urgencia.`);
+      }
+      if (result.couponCode) {
+        comments.push(`Mencione o cupom ${result.couponCode} apenas se ele estiver valido para esta oferta.`);
+      }
+      comments.push(payload.videoUrl
+        ? 'A midia selecionada favorece formato de reel ou story.'
+        : `A selecao atual favorece carrossel com ${payload.imageUrlsSelected?.length || 1} imagem(ns).`);
+      comments.push(result.offerType?.toLowerCase() === 'flash'
+        ? 'Oferta com cara de relampago: mantenha copy mais direta e orientada a acao.'
+        : 'Oferta de catalogo: mantenha copy limpa, clara e focada em beneficio.');
+
+      const el = document.getElementById('captionComments');
+      el.innerHTML = comments.map(comment => `<li>${escapeHtml(comment)}</li>`).join('');
+    }
+
+    function renderCaptionSelector(result) {
+      const options = [result.caption, ...(result.captionOptions || [])].filter(Boolean);
+      const unique = Array.from(new Set(options));
+      const el = document.getElementById('captionSelector');
+      if (!unique.length) {
+        el.innerHTML = '';
+        return;
+      }
+
+      const selectedIndex = Number(document.body.dataset.selectedCaptionIndex || 0);
+      el.innerHTML = unique.map((caption, index) => `
+        <div class="choice-card ${index === selectedIndex ? 'active' : ''}" data-caption-index="${index}">
+          <div class="meta">
+            <label><input type="radio" name="captionPick" value="${index}" ${index === selectedIndex ? 'checked' : ''} /> Legenda ${index + 1}${index === 0 ? ' principal' : ''}</label>
+            <span class="pill">${index === selectedIndex ? 'Em uso' : 'IA'}</span>
+          </div>
+          <pre>${escapeHtml(caption)}</pre>
+        </div>
+      `).join('');
+
+      el.querySelectorAll('input[name="captionPick"]').forEach(input => {
+        input.addEventListener('change', () => {
+          document.body.dataset.selectedCaptionIndex = input.value;
+          const selected = unique[Number(input.value) || 0] || result.caption || '';
+          document.getElementById('captionMain').textContent = selected;
+          document.getElementById('composerCaptionInput').value = selected;
+          document.getElementById('composerCaptionInput').dataset.userEdited = '1';
+          renderCaptionSelector(result);
+          renderCaptionComments(result);
+          renderComposerCaptionToolbar(result);
+          renderCaptionStyleToolbar(result);
+          updateConfirmationPreview(result);
+          syncComposerPreview(result);
+        });
+      });
+    }
+
+    function renderMediaSelector(result) {
+      const media = [
+        ...(result.videoUrls || []).map(url => ({ kind: 'video', url })),
+        ...(result.imageUrls || []).map(url => ({ kind: 'image', url }))
+      ];
+      const insightMap = new Map((result.mediaInsights || []).map(item => [item.url, item]));
+      const el = document.getElementById('mediaSelector');
+      if (!media.length) {
+        el.innerHTML = '';
+        return;
+      }
+
+      const selectedMedia = getSelectedMediaIndexes(media);
+      el.innerHTML = media.map((item, index) => {
+        const insight = insightMap.get(item.url);
+        return `
+        <div class="choice-card ${selectedMedia.includes(index) ? 'active' : ''}">
+          <div class="meta">
+            <label><input type="${item.kind === 'video' ? 'radio' : 'checkbox'}" name="${item.kind === 'video' ? 'videoPick' : 'imagePick'}" value="${index}" ${selectedMedia.includes(index) ? 'checked' : ''} /> ${item.kind === 'video' ? 'Video' : 'Imagem'} ${index + 1}</label>
+            <span class="pill">${selectedMedia.includes(index) ? 'Selecionada' : item.kind === 'video' ? 'Reel' : 'Carousel'}</span>
+          </div>
+          ${item.kind === 'video'
+            ? `<video class="thumb" src="${escapeHtml(item.url)}" controls preload="metadata"></video>`
+            : `<img class="thumb" src="${escapeHtml(item.url)}" alt="midia ${index + 1}" loading="lazy" />`}
+          ${insight ? `<div class="muted" style="font-size:12px;">Score ${escapeHtml(String(insight.score || 0))} | ${escapeHtml(insight.reason || '')}</div>` : ''}
+          ${insight?.styleNotes ? `<div class="muted" style="font-size:11px;">${escapeHtml(insight.styleNotes)}</div>` : ''}
+          <pre>${escapeHtml(item.url)}</pre>
+        </div>
+      `}).join('');
+
+      el.querySelectorAll('input[name="imagePick"], input[name="videoPick"]').forEach(input => {
+        input.addEventListener('change', () => {
+          updateSelectedMediaIndexes(media);
+          renderMediaSelector(result);
+          updateConfirmationPreview(result);
+          syncComposerPreview(result);
+        });
+      });
+    }
+
+    function getSelectedMediaIndexes(media) {
+      try {
+        const raw = document.body.dataset.selectedMediaIndexes || '';
+        const parsed = raw.split(',').map(x => Number(x)).filter(x => Number.isFinite(x));
+        if (parsed.length) {
+          return parsed;
+        }
+      } catch {
+      }
+
+      const firstVideo = media.findIndex(x => x.kind === 'video');
+      return firstVideo >= 0 ? [firstVideo] : (media.length > 0 ? [0] : []);
+    }
+
+    function updateSelectedMediaIndexes(media) {
+      const selectedVideos = Array.from(document.querySelectorAll('input[name="videoPick"]:checked')).map(x => Number(x.value));
+      const selectedImages = Array.from(document.querySelectorAll('input[name="imagePick"]:checked')).map(x => Number(x.value));
+      const selected = selectedVideos.length > 0 ? selectedVideos.slice(0, 1) : selectedImages;
+      document.body.dataset.selectedMediaIndexes = selected.join(',');
+    }
+
+    function moveSelectedMedia(result, selectedPosition, direction) {
+      const media = [
+        ...(result.videoUrls || []).map(url => ({ kind: 'video', url })),
+        ...(result.imageUrls || []).map(url => ({ kind: 'image', url }))
+      ];
+      const selected = getSelectedMediaIndexes(media);
+      if (selected.length <= 1) {
+        return;
+      }
+
+      const nextPosition = selectedPosition + direction;
+      if (nextPosition < 0 || nextPosition >= selected.length) {
+        return;
+      }
+
+      const clone = selected.slice();
+      const [item] = clone.splice(selectedPosition, 1);
+      clone.splice(nextPosition, 0, item);
+      document.body.dataset.selectedMediaIndexes = clone.join(',');
+      renderMediaSelector(result);
+      updateConfirmationPreview(result);
+      syncComposerPreview(result);
+    }
+
+    function moveSelectedMediaTo(result, fromPosition, toPosition) {
+      const media = [
+        ...(result.videoUrls || []).map(url => ({ kind: 'video', url })),
+        ...(result.imageUrls || []).map(url => ({ kind: 'image', url }))
+      ];
+      const selected = getSelectedMediaIndexes(media);
+      if (selected.length <= 1 || fromPosition < 0 || toPosition < 0 || fromPosition >= selected.length || toPosition >= selected.length) {
+        return;
+      }
+
+      const clone = selected.slice();
+      const [item] = clone.splice(fromPosition, 1);
+      clone.splice(toPosition, 0, item);
+      document.body.dataset.selectedMediaIndexes = clone.join(',');
+      renderMediaSelector(result);
+      updateConfirmationPreview(result);
+      syncComposerPreview(result);
+    }
+
+    function getSelectedAnalysisPayload(result) {
+      const captions = [result.caption, ...(result.captionOptions || [])].filter(Boolean);
+      const uniqueCaptions = Array.from(new Set(captions));
+      const allMedia = [
+        ...(result.videoUrls || []).map(url => ({ kind: 'video', url })),
+        ...(result.imageUrls || []).map(url => ({ kind: 'image', url }))
+      ];
+      const selectedCaptionIndex = Number(document.body.dataset.selectedCaptionIndex || 0);
+      const selectedCaption = uniqueCaptions[selectedCaptionIndex] || result.caption || '';
+      const selectedMediaIndexes = getSelectedMediaIndexes(allMedia);
+      const selectedMediaItems = selectedMediaIndexes.map(index => allMedia[index]).filter(Boolean);
+      const selectedVideo = selectedMediaItems.find(x => x.kind === 'video') || null;
+      const selectedImages = selectedMediaItems.filter(x => x.kind === 'image').map(x => x.url);
+
+      return {
+        messageId: result.messageId || '',
+        sourceChannel: result.sourceChannel || 'telegram',
+        draftId: result.draftId || '',
+        postType: result.suggestedPostType || 'feed',
+        offerUrl: result.offerUrl || '',
+        caption: selectedCaption,
+        productName: result.productName || '',
+        imageUrl: selectedImages[0] || result.imageUrls?.[0] || '',
+        imageUrlsSelected: selectedImages,
+        videoUrl: selectedVideo?.url || '',
+        selectedMediaItems,
+        imageUrls: result.imageUrls || [],
+        videoUrls: result.videoUrls || []
+      };
+    }
+
+    async function api(url, method = 'GET', body = null) {
+      const res = await fetch(url, {
+        method,
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      const data = await res.json();
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.error || 'Falha na operacao.');
+      }
+      return data;
+    }
+
+    function buildDraftRequestFromSelection(result) {
+      const state = getComposerState(result);
+      const selected = state.payload;
+      const isVideo = !!selected.videoUrl && state.postType === 'reels';
+      return {
+        productName: selected.productName || 'Oferta analisada',
+        postType: state.postType,
+        caption: state.caption || '',
+        offerUrl: state.offerUrl || '',
+        imageUrls: isVideo ? [] : (selected.imageUrlsSelected?.length ? selected.imageUrlsSelected : (selected.imageUrl ? [selected.imageUrl] : [])),
+        videoUrl: isVideo ? selected.videoUrl : null,
+        videoCoverUrl: isVideo ? (selected.imageUrl || null) : (selected.imageUrl || null),
+        videoCoverAtSeconds: 0,
+        videoMusicCue: null,
+        videoTrimStartSeconds: 0,
+        videoTrimEndSeconds: null,
+        musicTrackUrl: null,
+        musicStartSeconds: 0,
+        musicEndSeconds: null,
+        musicVolume: 0.7,
+        originalAudioVolume: 0.25,
+        autoReplyEnabled: !!state.offerUrl,
+        autoReplyKeyword: state.autoReplyKeyword || 'eu quero, link',
+        autoReplyMessage: 'Oi {name}! Aqui esta o link que voce pediu:\n{link}',
+        autoReplyLink: state.offerUrl || '',
+        scheduledFor: state.scheduledFor,
+        sendToCatalog: false,
+        catalogTarget: null
+      };
+    }
+
+    function persistSelection(result) {
+      const state = getComposerState(result);
+      const payload = {
+        ...state.payload,
+        caption: state.caption,
+        offerUrl: state.offerUrl,
+        postType: state.postType,
+        cta: state.cta,
+        catalogTarget: state.catalogTarget,
+        autoReplyKeyword: state.autoReplyKeyword,
+        scheduledFor: state.scheduledFor
+      };
+      const selectionKey = `achadinhos.agent.analysisSelection.${result.draftId || result.messageId || Date.now()}`;
+      try {
+        localStorage.setItem('achadinhos.agent.analysisSelection', JSON.stringify(payload));
+        localStorage.setItem(selectionKey, JSON.stringify(payload));
+      } catch {
+      }
+      return { payload, selectionKey };
+    }
+
+    async function recordSelectionMemory(result, outcome, feedback = 'accepted') {
+      try {
+        const state = getComposerState(result);
+        const payload = state.payload || {};
+        const selectedMediaUrls = payload.videoUrl
+          ? [payload.videoUrl]
+          : (payload.imageUrlsSelected?.length ? payload.imageUrlsSelected : (payload.imageUrl ? [payload.imageUrl] : []));
+        await api('/api/admin/agents/whatsapp/selection-memory', 'POST', {
+          messageId: result.messageId || '',
+          recommendedAction: result.recommendedAction || '',
+          appliedAction: outcome,
+          draftId: result.draftId || '',
+          feedback,
+          note: `Legenda aprovada no workspace da IA. CTA: ${state.cta || '-'}.`,
+          outcome,
+          postType: state.postType,
+          mediaKind: payload.videoUrl ? 'video' : 'image',
+          captionPreview: (state.caption || '').slice(0, 220),
+          selectedMediaUrls,
+          offerUrl: state.offerUrl || result.offerUrl || ''
+        });
+      } catch {
+      }
+    }
+
+    async function generateMoreCaptions(result, style = 'base') {
+      const payload = getSelectedAnalysisPayload(result);
+      const productName = payload.productName || result.productName || 'Oferta analisada';
+      const stylePrompt = style === 'premium'
+        ? 'Crie uma legenda premium, mais sofisticada, com valor percebido alto e tom confiavel.'
+        : style === 'urgente'
+          ? 'Crie uma legenda urgente, curta, com senso de oportunidade e CTA rapido.'
+          : style === 'comparativo'
+            ? 'Crie uma legenda comparativa, mostrando por que esta oferta vale mais do que opcoes comuns.'
+            : 'Crie uma legenda profissional para Instagram, com gancho forte, beneficio concreto, leitura facil e CTA claro.';
+      const offerContext = [
+        payload.offerUrl ? `Link: ${payload.offerUrl}` : '',
+        result.currentPrice ? `Preco: ${result.currentPrice}` : '',
+        result.previousPrice ? `Preco anterior: ${result.previousPrice}` : '',
+        result.discountPercent ? `Desconto: ${result.discountPercent}%` : '',
+        result.couponCode ? `Cupom: ${result.couponCode}` : '',
+        result.estimatedDelivery ? `Entrega: ${result.estimatedDelivery}` : '',
+        result.store ? `Loja: ${result.store}` : '',
+        result.sourceText ? `Texto base: ${result.sourceText}` : '',
+        `CTA principal: ${result.suggestedKeyword || 'comente para receber o link'}`,
+        stylePrompt,
+        'Nao misture comentarios tecnicos com a legenda. Entregue apenas a legenda final.',
+        'Nao escreva cabecalhos como Legenda 1, hashtags separadas, notas de analise ou sugestoes de imagem.'
+      ].filter(Boolean).join('. ');
+
+      const variants = [];
+      for (let i = 0; i < 3; i += 1) {
+        const data = await api('/api/admin/generate-caption', 'POST', { productName, offerContext: `${offerContext}. Variante ${i + 1}.` });
+        if (data?.caption) {
+          variants.push(data.caption);
+        }
+      }
+
+      result.captionOptions = Array.from(new Set([...(result.captionOptions || []), ...variants]));
+      renderResult(result);
+    }
+
+    function wireActionButtons(result) {
+      const createDraftBtn = document.getElementById('createDraftBtn');
+      const addCatalogBtn = document.getElementById('addCatalogBtn');
+      const highlightBioBtn = document.getElementById('highlightBioBtn');
+      const publishNowBtn = document.getElementById('publishNowBtn');
+      const openDraftBtn = document.getElementById('openDraftBtn');
+      const composerStatus = document.getElementById('composerStatus');
+      const composerSaveDraftBtn = document.getElementById('composerSaveDraftBtn');
+      const composerPublishBtn = document.getElementById('composerPublishBtn');
+      const composerConfirmPublishBtn = document.getElementById('composerConfirmPublishBtn');
+      const composerCatalogBtn = document.getElementById('composerCatalogBtn');
+      const composerBioBtn = document.getElementById('composerBioBtn');
+      const composerLegacyAdminBtn = document.getElementById('composerLegacyAdminBtn');
+
+      createDraftBtn.onclick = async () => {
+        try {
+          const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
+          result.draftId = data.draftId;
+          result.editorUrl = `/conversor-admin?draftId=${encodeURIComponent(data.draftId)}&messageId=${encodeURIComponent(result.messageId || '')}&sourceChannel=${encodeURIComponent(result.sourceChannel || 'telegram')}&postType=${encodeURIComponent(result.suggestedPostType || 'feed')}`;
+          await recordSelectionMemory(result, 'create_draft');
+          renderResult(result);
+        } catch (error) {
+          document.getElementById('subtitle').textContent = error?.message || 'Falha ao criar draft.';
+        }
+      };
+
+      composerSaveDraftBtn.onclick = async () => {
+        try {
+          const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
+          result.draftId = data.draftId;
+          result.editorUrl = `/conversor-admin?draftId=${encodeURIComponent(data.draftId)}&messageId=${encodeURIComponent(result.messageId || '')}&sourceChannel=${encodeURIComponent(result.sourceChannel || 'telegram')}&postType=${encodeURIComponent(result.suggestedPostType || 'feed')}`;
+          await recordSelectionMemory(result, 'save_draft');
+          composerStatus.textContent = `Draft ${data.draftId} salvo pelo composer.`;
+          renderResult(result);
+        } catch (error) {
+          composerStatus.textContent = error?.message || 'Falha ao salvar draft pelo composer.';
+        }
+      };
+
+      composerPublishBtn.onclick = async () => {
+        try {
+          if (!result.draftId) {
+            const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
+            result.draftId = data.draftId;
+          }
+          const state = getComposerState(result);
+          await api('/api/admin/publish-instagram-now', 'POST', {
+            draftId: result.draftId,
+            sendToCatalog: true,
+            catalogTarget: state.catalogTarget
+          });
+          await recordSelectionMemory(result, 'publish_now');
+          composerStatus.textContent = 'Publicacao disparada pelo composer.';
+          renderResult(result);
+        } catch (error) {
+          composerStatus.textContent = error?.message || 'Falha ao publicar pelo composer.';
+        }
+      };
+
+      composerConfirmPublishBtn.onclick = async () => {
+        try {
+          const checklistOk = renderComposerChecklist(result);
+          if (!checklistOk) {
+            composerStatus.textContent = 'Revise o checklist final antes de confirmar a publicacao.';
+            return;
+          }
+          if (!result.draftId) {
+            const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
+            result.draftId = data.draftId;
+          }
+          const state = getComposerState(result);
+          await api('/api/admin/publish-instagram-now', 'POST', {
+            draftId: result.draftId,
+            sendToCatalog: true,
+            catalogTarget: state.catalogTarget
+          });
+          await recordSelectionMemory(result, 'confirm_publish');
+          composerStatus.textContent = 'Checklist aprovado e publicacao confirmada.';
+          renderResult(result);
+        } catch (error) {
+          composerStatus.textContent = error?.message || 'Falha ao confirmar a publicacao.';
+        }
+      };
+
+      composerCatalogBtn.onclick = async () => {
+        try {
+          if (!result.draftId) {
+            const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
+            result.draftId = data.draftId;
+          }
+          const state = getComposerState(result);
+          await api('/api/admin/add-to-catalog', 'POST', { draftId: result.draftId, catalogTarget: state.catalogTarget });
+          await recordSelectionMemory(result, 'add_to_catalog');
+          composerStatus.textContent = `Draft enviado ao catalogo ${state.catalogTarget.toUpperCase()}.`;
+          renderResult(result);
+        } catch (error) {
+          composerStatus.textContent = error?.message || 'Falha ao enviar ao catalogo pelo composer.';
+        }
+      };
+
+      composerBioBtn.onclick = async () => {
+        try {
+          if (!result.draftId) {
+            const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
+            result.draftId = data.draftId;
+          }
+          await api('/api/admin/highlight-on-bio', 'POST', { draftId: result.draftId });
+          await recordSelectionMemory(result, 'highlight_on_bio');
+          composerStatus.textContent = 'Draft enviado para destaque na bio.';
+          renderResult(result);
+        } catch (error) {
+          composerStatus.textContent = error?.message || 'Falha ao destacar na bio pelo composer.';
+        }
+      };
+
+      if (composerLegacyAdminBtn) {
+        composerLegacyAdminBtn.onclick = (event) => {
+          event.preventDefault();
+          const persisted = persistSelection(result);
+          const href = new URL(`/conversor-admin`, window.location.origin);
+          if (result.draftId) href.searchParams.set('draftId', result.draftId);
+          if (result.messageId) href.searchParams.set('messageId', result.messageId);
+          if (result.sourceChannel) href.searchParams.set('sourceChannel', result.sourceChannel);
+          href.searchParams.set('selectionKey', persisted.selectionKey);
+          href.searchParams.set('deepAnalyze', '1');
+          window.open(`${href.pathname}${href.search}`, '_blank');
+        };
+      }
+
+      if (result.draftId) {
+        addCatalogBtn.style.display = 'inline-flex';
+        highlightBioBtn.style.display = 'inline-flex';
+        publishNowBtn.style.display = 'inline-flex';
+
+        addCatalogBtn.onclick = async () => {
+          try {
+            persistSelection(result);
+            await api('/api/admin/add-to-catalog', 'POST', { draftId: result.draftId, catalogTarget: 'dev' });
+          } catch (error) {
+            document.getElementById('subtitle').textContent = error?.message || 'Falha ao adicionar ao catalogo.';
+          }
+        };
+
+        highlightBioBtn.onclick = async () => {
+          try {
+            persistSelection(result);
+            await api('/api/admin/highlight-on-bio', 'POST', { draftId: result.draftId });
+          } catch (error) {
+            document.getElementById('subtitle').textContent = error?.message || 'Falha ao destacar na bio.';
+          }
+        };
+
+        publishNowBtn.onclick = async () => {
+          try {
+            persistSelection(result);
+            await api('/api/admin/publish-instagram-now', 'POST', { draftId: result.draftId, sendToCatalog: true, catalogTarget: 'dev' });
+          } catch (error) {
+            document.getElementById('subtitle').textContent = error?.message || 'Falha ao publicar agora.';
+          }
+        };
+
+        openDraftBtn.style.display = 'inline-flex';
+      } else {
+        addCatalogBtn.style.display = 'none';
+        highlightBioBtn.style.display = 'none';
+        publishNowBtn.style.display = 'none';
+      }
+    }
+
+    async function fetchResultFromApi(request) {
+      const res = await fetch('/api/agents/channel-offers/deep-analyze', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(request)
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success || !data?.result) {
+        throw new Error(data?.error || 'Falha ao executar analise profunda.');
+      }
+      try {
+        localStorage.setItem('achadinhos.agent.deepAnalysisResult', JSON.stringify(data.result));
+      } catch {
+      }
+      return data.result;
+    }
+
+    function renderResult(result) {
+      if (!result) {
+        document.getElementById('subtitle').textContent = 'Nenhum resultado salvo. Execute a analise profunda a partir do dashboard.';
+        return;
+      }
+
+      document.getElementById('badgeAction').textContent = result.recommendedAction || 'Analise';
+      document.getElementById('badgeScore').textContent = `Score ${result.score || 0}`;
+      document.getElementById('badgeSource').textContent = `${result.sourceChannel || 'canal'} #${result.messageId || '-'}`;
+      document.getElementById('title').textContent = result.productName || 'Oferta analisada';
+      document.getElementById('subtitle').textContent = `Post type sugerido: ${result.suggestedPostType || '-'} | CTA: ${result.suggestedKeyword || '-'} | Store: ${result.store || '-'}`;
+
+      document.getElementById('summaryKv').innerHTML = [
+        ['Preco', result.currentPrice || '-'],
+        ['Preco anterior', result.previousPrice || '-'],
+        ['Desconto', result.discountPercent ? `${result.discountPercent}%` : '-'],
+        ['Entrega', result.estimatedDelivery || '-'],
+        ['Cupom', result.couponCode || '-'],
+        ['Confianca URL', result.urlSelectionConfidence ? `${result.urlSelectionConfidence}/100` : '-'],
+        ['Qualidade dados', result.dataQualityScore ? `${result.dataQualityScore}/100` : '-'],
+        ['URL original', result.originalSelectedOfferUrl || '-'],
+        ['Conversao', result.offerUrlWasConverted ? 'convertida' : (result.offerUrlConversionNote || 'nao aplicada')],
+        ['Fallback scraper', result.scraperFallbackApplied ? 'ativo' : 'nao usado'],
+        ['Draft', result.draftId || '-'],
+        ['Instagram', result.instagramScore || 0],
+        ['Catalogo', result.catalogScore || 0]
+      ].map(([k, v]) => `<div><strong>${escapeHtml(k)}</strong><div class="muted" style="margin-top:6px;">${escapeHtml(v)}</div></div>`).join('');
+
+      document.getElementById('reasoningBox').textContent = result.aiReasoning || 'Analise profunda concluida sem texto adicional.';
+      document.getElementById('urlReason').textContent = result.selectedOfferUrlReason || 'URL principal definida sem explicacao adicional.';
+      document.getElementById('primaryUrl').textContent = result.offerUrl || '-';
+      document.getElementById('candidateUrls').textContent = (result.candidateUrls || []).join('\n') || '-';
+      document.getElementById('captionMain').textContent = result.caption || '-';
+      document.getElementById('sourceText').textContent = result.sourceText || '-';
+
+      renderList('reasonsList', result.reasons);
+      renderList('risksList', result.risks);
+      renderCaptionSelector(result);
+      renderCaptionComments(result);
+      renderCaptionStyleToolbar(result);
+      renderMediaSelector(result);
+      renderMedia(result);
+      renderOperatorMemory(result);
+      hydrateComposer(result);
+      updateConfirmationPreview(result);
+
+      const adminBtn = document.getElementById('openAdminBtn');
+      const params = new URLSearchParams();
+      if (result.draftId) params.set('draftId', result.draftId);
+      if (result.messageId) params.set('messageId', result.messageId);
+      if (result.sourceChannel) params.set('sourceChannel', result.sourceChannel);
+      if (result.suggestedPostType) params.set('postType', result.suggestedPostType);
+      params.set('deepAnalyze', '1');
+      adminBtn.href = `/conversor-admin?${params.toString()}`;
+      adminBtn.onclick = (event) => {
+        event.preventDefault();
+        const persisted = persistSelection(result);
+        const href = new URL(adminBtn.href, window.location.origin);
+        href.searchParams.set('selectionKey', persisted.selectionKey);
+        window.open(`${href.pathname}${href.search}`, '_blank');
+      };
+
+      const draftBtn = document.getElementById('openDraftBtn');
+      if (result.draftId) {
+        draftBtn.style.display = 'inline-flex';
+        const draftParams = new URLSearchParams();
+        draftParams.set('draftId', result.draftId);
+        if (result.messageId) draftParams.set('messageId', result.messageId);
+        if (result.sourceChannel) draftParams.set('sourceChannel', result.sourceChannel);
+        if (result.suggestedPostType) draftParams.set('postType', result.suggestedPostType);
+        draftParams.set('deepAnalyze', '1');
+        draftBtn.href = result.editorUrl || `/conversor-admin?${draftParams.toString()}`;
+        draftBtn.onclick = (event) => {
+          event.preventDefault();
+          const persisted = persistSelection(result);
+          const href = new URL(draftBtn.href, window.location.origin);
+          href.searchParams.set('selectionKey', persisted.selectionKey);
+          window.open(`${href.pathname}${href.search}`, '_blank');
+        };
+      } else {
+        draftBtn.style.display = 'none';
+        draftBtn.removeAttribute('href');
+        draftBtn.onclick = null;
+      }
+
+      document.getElementById('copyOfferBtn').onclick = async () => {
+        if (!result.offerUrl) return;
+        try {
+          await navigator.clipboard.writeText(result.offerUrl);
+        } catch {
+        }
+      };
+
+      document.getElementById('regenCaptionsBtn').onclick = async () => {
+        try {
+          await generateMoreCaptions(result);
+        } catch (error) {
+          document.getElementById('subtitle').textContent = error?.message || 'Falha ao gerar novas legendas.';
+        }
+      };
+
+      wireActionButtons(result);
+    }
+
+    async function render() {
+      const request = getRequestFromUrl();
+      let result = null;
+      if (request.messageId) {
+        document.getElementById('subtitle').textContent = `Executando analise do item ${request.messageId}...`;
+        try {
+          result = await fetchResultFromApi(request);
+        } catch (error) {
+          document.getElementById('subtitle').textContent = error?.message || 'Falha ao executar analise profunda.';
+          return;
+        }
+      } else {
+        result = getResultFromStorage();
+      }
+
+      renderResult(result);
+    }
+
+    render();
+  </script>
+</body>
+</html>

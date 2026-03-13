@@ -1,4 +1,4 @@
-﻿let currentRole = null;
+let currentRole = null;
 let logsAutoTimer = null;
 
 async function api(url, method = 'GET', body = null) {
@@ -28,11 +28,12 @@ function showAuthState(authenticated, username = '', role = '') {
 }
 
 function showSection(name) {
-  const sections = ['ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'analytics'];
+  const sections = ['ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'ai-lab', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'analytics'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
   });
+  localStorage.setItem('activeTab', name);
   document.querySelectorAll('.nav button').forEach(btn => {
     btn.classList.toggle('active', btn.getAttribute('data-tab') === name);
   });
@@ -54,6 +55,17 @@ function showSection(name) {
   if (name === 'instagram') {
     loadInstaAiLogs();
   }
+  if (name === 'agents') {
+    hydrateAgentUiState().then(() => {
+      restoreAgentUiState();
+      loadAgentAiUsage();
+      loadOfferCuration();
+      loadAgentChannelTargets().then(() => loadWhatsAppOfferScout());
+    });
+  }
+  if (name === 'ai-lab') {
+    document.getElementById('aiLabResults').innerHTML = '';
+  }
   if (name === 'instagram-publish') {
     loadInstagramDrafts();
     loadInstagramComments();
@@ -62,6 +74,890 @@ function showSection(name) {
   if (name === 'bio-growth') {
     refreshBioLinksPreview();
     loadBioFunnel();
+  }
+}
+
+function renderAgentActionBadge(action) {
+  const normalized = String(action || '').trim().toLowerCase();
+  const map = {
+    convert_link: { label: 'Converter link', cls: 'warn' },
+    add_to_catalog: { label: 'Adicionar ao catalogo', cls: 'ok' },
+    highlight_on_bio: { label: 'Destacar na bio', cls: 'warn' },
+    create_instagram_draft: { label: 'Criar draft IG', cls: 'ok' },
+    review_and_publish: { label: 'Revisar e publicar', cls: 'warn' },
+    review: { label: 'Revisar', cls: 'muted' },
+    no_action: { label: 'Sem acao', cls: 'muted' }
+  };
+  const item = map[normalized] || { label: normalized || 'Sem acao', cls: 'muted' };
+  return `<span class="badge ${item.cls}">${escapeHtml(item.label)}</span>`;
+}
+
+function renderCatalogTargetsBadge(item) {
+  const tags = [];
+  if (item.inCatalogDev) tags.push('<span class="badge ok">DEV</span>');
+  if (item.inCatalogProd) tags.push('<span class="badge warn">PROD</span>');
+  if (!item.inCatalogDev && !item.inCatalogProd && item.suggestedCatalogTarget && item.suggestedCatalogTarget !== 'none') {
+    tags.push(`<span class="badge muted">Sug.: ${escapeHtml(String(item.suggestedCatalogTarget).toUpperCase())}</span>`);
+  }
+  return tags.length > 0 ? tags.join(' ') : '<span class="muted">Fora do catalogo</span>';
+}
+
+function buildAgentAdminUrl(item, sourceChannel) {
+  const params = new URLSearchParams();
+  if (item?.draftId) {
+    params.set('draftId', item.draftId);
+  }
+  if (item?.messageId) {
+    params.set('messageId', item.messageId);
+  }
+  if (sourceChannel) {
+    params.set('sourceChannel', sourceChannel);
+  }
+  if (item?.suggestedPostType) {
+    params.set('postType', item.suggestedPostType);
+  }
+  const query = params.toString();
+  return query ? `/conversor-admin?${query}` : '/conversor-admin';
+}
+
+async function agentOpenWhatsAppAdmin(messageId, sourceChannel, suggestedPostType = 'feed', draftId = '', requiresLinkConversion = false) {
+  const params = new URLSearchParams();
+  if (draftId) params.set('draftId', draftId);
+  if (messageId) params.set('messageId', messageId);
+  if (sourceChannel || getAgentSourceChannel()) params.set('sourceChannel', sourceChannel || getAgentSourceChannel());
+  if (suggestedPostType) params.set('postType', suggestedPostType);
+  if (requiresLinkConversion) params.set('deepAnalyze', '1');
+  const query = params.toString();
+  window.open(query ? `/conversor-admin?${query}` : '/conversor-admin', '_blank');
+}
+
+function formatAgentDetails(item) {
+  const reasons = Array.isArray(item.reasons) && item.reasons.length > 0
+    ? item.reasons.map(x => `� ${escapeHtml(x)}`).join('<br />')
+    : '<span class="muted">Sem justificativa.</span>';
+  const source = item.decisionSource
+    ? `<div style="margin-top:8px;"><strong>Decisao:</strong> ${escapeHtml(item.decisionSource)}${item.decisionProvider ? ` (${escapeHtml(item.decisionProvider)})` : ''}</div>`
+    : '';
+  const memory = item.lastOperatorFeedback || item.lastAppliedAction || item.lastOutcome
+    ? `<div style="margin-top:8px;"><strong>Memoria:</strong> ${escapeHtml(item.lastOperatorFeedback || 'sem feedback')}${item.lastAppliedAction ? ` | ultima acao: ${escapeHtml(item.lastAppliedAction)}` : ''}${item.lastOutcome ? ` | outcome: ${escapeHtml(item.lastOutcome)}` : ''}${item.lastDecisionAt ? ` | ${escapeHtml(formatTs(item.lastDecisionAt))}` : ''}</div>`
+    : '';
+  const aiReasoning = item.aiReasoning
+    ? `<div style="margin-top:8px;"><strong>IA:</strong><br />${escapeHtml(item.aiReasoning)}</div>`
+    : '';
+  const risks = Array.isArray(item.risks) && item.risks.length > 0
+    ? `<div style="margin-top:8px;"><strong>Riscos:</strong><br />${item.risks.map(x => `� ${escapeHtml(x)}`).join('<br />')}</div>`
+    : '';
+  return `${reasons}${source}${memory}${aiReasoning}${risks}`;
+}
+
+function buildOfferAgentHighlights(items) {
+  const highlights = document.getElementById('offerAgentHighlights');
+  if (!highlights) return;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    highlights.innerHTML = '';
+    return;
+  }
+
+  const topScore = items[0]?.score || 0;
+  const addToCatalog = items.filter(x => x.recommendedAction === 'add_to_catalog').length;
+  const bio = items.filter(x => x.recommendedAction === 'highlight_on_bio').length;
+  const review = items.filter(x => x.recommendedAction === 'review_and_publish' || x.recommendedAction === 'review').length;
+
+  const cards = [
+    { label: 'Melhor score', value: topScore, hint: 'prioridade operacional' },
+    { label: 'Catalogo', value: addToCatalog, hint: 'entradas ou refresh sugeridos' },
+    { label: 'Bio', value: bio, hint: 'destaques sugeridos' },
+    { label: 'Revisao', value: review, hint: 'itens para operador revisar' }
+  ];
+
+  highlights.innerHTML = cards.map(card => `
+    <div class="card" style="padding:16px; text-align:center;">
+      <div class="muted" style="font-size:12px; font-weight:600; text-transform:uppercase;">${card.label}</div>
+      <div style="font-size:26px; font-weight:800; color:var(--accent); margin-top:6px;">${card.value}</div>
+      <div class="muted" style="font-size:11px; margin-top:4px;">${card.hint}</div>
+    </div>
+  `).join('');
+}
+
+async function loadAgentAiUsage() {
+  const summary = document.getElementById('agentAiUsageSummary');
+  const cards = document.getElementById('agentAiUsageCards');
+  const hours = Number(document.getElementById('agentAiUsageHours')?.value || 24);
+
+  if (summary) {
+    summary.className = 'status muted';
+    summary.textContent = 'Carregando monitoramento da IA...';
+  }
+  if (cards) cards.innerHTML = '';
+
+  try {
+    const data = await api(`/api/analytics/summary?hours=${encodeURIComponent(hours)}`);
+    const ai = data?.summary?.instagramAi || {};
+    const providers = Array.isArray(ai.providers) ? ai.providers : [];
+    const budgetProviders = Array.isArray(data?.aiUsageBudget?.providers) ? data.aiUsageBudget.providers : [];
+    const topProvider = providers[0] || null;
+    const estimatedUsedTokens = Math.round(providers.reduce((acc, provider) => {
+      const total = Number(provider.total || 0);
+      const avgLatency = Number(provider.avgLatencyMs || 0);
+      return acc + (total * Math.max(1, avgLatency / 20));
+    }, 0));
+    const configuredBudget = budgetProviders.find(provider => Number(provider.monthlyCallLimit || 0) > 0) || null;
+    const leadBudget = topProvider
+      ? budgetProviders.find(provider => String(provider.provider || '').toLowerCase() === String(topProvider.provider || '').toLowerCase())
+      : configuredBudget;
+    const totalEstimatedCost = budgetProviders.reduce((acc, provider) => acc + Number(provider.estimatedCostUsd || 0), 0);
+
+    if (summary) {
+      summary.className = 'status ok';
+      summary.textContent = configuredBudget
+        ? `IA usada nas ultimas ${hours}h. Limites configurados detectados no backend.`
+        : `IA usada nas ultimas ${hours}h. Limite restante ainda nao configurado no backend.`;
+    }
+
+    if (cards) {
+      const items = [
+        { label: 'Chamadas IA', value: ai.total || 0, hint: `requisicoes nas ultimas ${hours}h` },
+        { label: 'Sucesso', value: `${ai.successRate || 0}%`, hint: `${ai.success || 0} execucoes bem-sucedidas` },
+        { label: 'Latencia media', value: `${Math.round(ai.avgLatencyMs || 0)} ms`, hint: 'tempo medio por geracao' },
+        { label: 'Qualidade media', value: `${Math.round(ai.avgQualityScore || 0)}`, hint: 'score medio das saidas' },
+        { label: 'Provider lider', value: topProvider?.provider || '-', hint: topProvider ? `${topProvider.total} chamadas` : 'sem dados' },
+        { label: 'Custo estimado', value: totalEstimatedCost > 0 ? `$${totalEstimatedCost.toFixed(2)}` : '$0.00', hint: 'estimativa por chamada configurada' },
+        configuredBudget
+          ? {
+              label: 'Saldo',
+              value: `${leadBudget?.remainingCalls ?? configuredBudget.remainingCalls}`,
+              hint: `${leadBudget?.provider || configuredBudget.provider}: limite ${leadBudget?.monthlyCallLimit || configuredBudget.monthlyCallLimit}/janela`
+            }
+          : { label: 'Saldo', value: 'Nao configurado', hint: `uso estimado ${estimatedUsedTokens} tokens-equivalentes` }
+      ];
+
+      const providerRows = budgetProviders.length
+        ? `
+          <div class="card" style="padding:16px; grid-column:1 / -1;">
+            <div class="muted" style="font-size:12px; font-weight:700; text-transform:uppercase; margin-bottom:10px;">Providers</div>
+            <div style="display:grid; gap:10px;">
+              ${budgetProviders.map(provider => `
+                <div style="display:grid; grid-template-columns: 1.2fr .8fr .8fr .8fr; gap:10px; align-items:center; border:1px solid rgba(0,0,0,.06); border-radius:12px; padding:10px 12px;">
+                  <div><strong>${escapeHtml(String(provider.provider || '-').toUpperCase())}</strong><div class="muted" style="font-size:11px;">usadas ${escapeHtml(String(provider.usedCalls || 0))}</div></div>
+                  <div><strong>${escapeHtml(String(provider.remainingCalls ?? 0))}</strong><div class="muted" style="font-size:11px;">restantes</div></div>
+                  <div><strong>${escapeHtml(String(provider.monthlyCallLimit ?? 0))}</strong><div class="muted" style="font-size:11px;">limite</div></div>
+                  <div><strong>${Number(provider.estimatedCostUsd || 0) > 0 ? escapeHtml(`$${Number(provider.estimatedCostUsd || 0).toFixed(2)}`) : '$0.00'}</strong><div class="muted" style="font-size:11px;">custo est.</div></div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `
+        : '';
+
+      cards.innerHTML = items.map(card => `
+        <div class="card" style="padding:16px; text-align:center;">
+          <div class="muted" style="font-size:12px; font-weight:600; text-transform:uppercase;">${card.label}</div>
+          <div style="font-size:26px; font-weight:800; color:var(--accent); margin-top:6px;">${escapeHtml(String(card.value))}</div>
+          <div class="muted" style="font-size:11px; margin-top:4px;">${escapeHtml(card.hint)}</div>
+        </div>
+      `).join('') + providerRows;
+    }
+  } catch (e) {
+    if (summary) {
+      summary.className = 'status bad';
+      summary.textContent = e?.data?.error || e?.message || 'Erro ao carregar monitoramento da IA.';
+    }
+    if (cards) cards.innerHTML = '';
+  }
+}
+
+async function loadOfferCuration() {
+  const body = document.getElementById('offerAgentBody');
+  const summary = document.getElementById('offerAgentSummary');
+  const highlights = document.getElementById('offerAgentHighlights');
+  if (body) body.innerHTML = '<tr><td colspan="8" class="muted">Carregando recomendacoes...</td></tr>';
+  if (summary) summary.textContent = 'Executando agente...';
+  if (highlights) highlights.innerHTML = '';
+
+  try {
+    const payload = {
+      hoursWindow: Number(document.getElementById('agentHoursWindow')?.value || 72),
+      maxItems: Number(document.getElementById('agentMaxItems')?.value || 10),
+      includeDrafts: !!document.getElementById('agentIncludeDrafts')?.checked,
+      includeScheduled: !!document.getElementById('agentIncludeScheduled')?.checked,
+      includePublished: !!document.getElementById('agentIncludePublished')?.checked
+    };
+
+    const data = await api('/api/agents/offers/curate', 'POST', payload);
+    const items = Array.isArray(data.suggestions) ? data.suggestions : [];
+
+    if (summary) {
+      summary.className = 'status ok';
+      summary.textContent = data.summary || 'Analise concluida.';
+    }
+
+    buildOfferAgentHighlights(items);
+
+    if (!body) return;
+    if (items.length === 0) {
+      body.innerHTML = '<tr><td colspan="8" class="muted">Nenhuma recomendacao relevante nesta janela.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = items.map(item => {
+      const canAddToCatalog = item.recommendedAction === 'add_to_catalog' || (!item.inCatalogDev && !item.inCatalogProd && item.status === 'published');
+      const canHighlightOnBio = item.status === 'published' && !item.isHighlightedOnBio;
+      const canPublishNow = item.status !== 'published' && item.hasOfferUrl && item.hasMedia;
+      const canReschedule = item.status !== 'published';
+      const catalogTarget = item.suggestedCatalogTarget && item.suggestedCatalogTarget !== 'none'
+        ? item.suggestedCatalogTarget
+        : 'prod';
+      return `
+        <tr>
+          <td><strong>${escapeHtml(String(item.score || 0))}</strong></td>
+          <td>
+            <div><strong>${escapeHtml(item.productName || 'Sem nome')}</strong></div>
+            <div class="muted">${escapeHtml(shortId(item.draftId || ''))}</div>
+          </td>
+          <td><span class="badge muted">${escapeHtml(item.status || '-')}</span></td>
+          <td>${renderAgentActionBadge(item.recommendedAction)}</td>
+          <td>${renderCatalogTargetsBadge(item)}</td>
+          <td>${escapeHtml(String(item.recentClicks || 0))}</td>
+          <td style="min-width:280px;">${formatAgentDetails(item)}</td>
+          <td>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              ${canAddToCatalog ? `<button class="secondary" onclick="agentAddToCatalog('${escapeHtml(item.draftId)}', '${escapeHtml(catalogTarget)}')">Adicionar ao catalogo</button>` : ''}
+              ${canHighlightOnBio ? `<button class="secondary" onclick="agentHighlightOnBio('${escapeHtml(item.draftId)}')">Destacar na bio</button>` : ''}
+              ${canPublishNow ? `<button class="secondary" onclick="agentPublishDraftNow('${escapeHtml(item.draftId)}', '${escapeHtml(catalogTarget)}')">Publicar agora</button>` : ''}
+              ${canReschedule ? `<button class="secondary" onclick="agentRescheduleDraft('${escapeHtml(item.draftId)}', '${escapeHtml(item.scheduledFor || '')}')">Reagendar</button>` : ''}
+              <button class="secondary" onclick="window.open('/conversor-admin?draftId=${escapeHtml(item.draftId)}', '_blank')">Abrir draft</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    if (summary) {
+      summary.className = 'status bad';
+      summary.textContent = e?.data?.error || e?.message || 'Erro ao executar o agente.';
+    }
+    if (body) body.innerHTML = '<tr><td colspan="8" class="bad">Falha ao carregar recomendacoes do agente.</td></tr>';
+  }
+}
+
+async function agentAddToCatalog(draftId, catalogTarget) {
+  try {
+    const response = await api('/api/admin/add-to-catalog', 'POST', { draftId, catalogTarget });
+    const target = response?.target || catalogTarget || 'prod';
+    showToast(`Catalogo atualizado para ${String(target).toUpperCase()}.`, 'success');
+    await loadOfferCuration();
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao atualizar catalogo.', 'error');
+  }
+}
+
+async function agentHighlightOnBio(draftId) {
+  try {
+    await api('/api/admin/highlight-on-bio', 'POST', { draftId });
+    showToast('Oferta marcada como destaque na bio.', 'success');
+    await loadOfferCuration();
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao destacar oferta na bio.', 'error');
+  }
+}
+
+async function agentPublishDraftNow(draftId, catalogTarget = 'prod') {
+  try {
+    const response = await api('/api/admin/publish-instagram-now', 'POST', {
+      draftId,
+      sendToCatalog: true,
+      catalogTarget
+    });
+    showToast(`Publicacao executada. MediaId: ${response?.mediaId || 'ok'}.`, 'success');
+    await Promise.all([loadOfferCuration(), loadWhatsAppOfferScout()]);
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao publicar draft agora.', 'error');
+  }
+}
+
+function toLocalDateTimeInputValue(value) {
+  if (!value) return '';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return '';
+  return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+async function agentRescheduleDraft(draftId, currentScheduledFor = '') {
+  const suggested = toLocalDateTimeInputValue(currentScheduledFor) || toLocalDateTimeInputValue(new Date(Date.now() + 60 * 60 * 1000).toISOString());
+  const value = window.prompt('Novo agendamento (YYYY-MM-DDTHH:mm). Deixe vazio para voltar para draft.', suggested);
+  if (value === null) return;
+
+  try {
+    const scheduledFor = value.trim() ? new Date(value.trim()).toISOString() : null;
+    const response = await api('/api/admin/reschedule-draft', 'POST', { draftId, scheduledFor });
+    const label = response?.scheduledFor ? formatTs(response.scheduledFor) : 'sem agendamento';
+    showToast(`Draft atualizado: ${label}.`, 'success');
+    await Promise.all([loadOfferCuration(), loadWhatsAppOfferScout()]);
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao reagendar draft.', 'error');
+  }
+}
+
+function buildWhatsAppScoutHighlights(items) {
+  const highlights = document.getElementById('waScoutHighlights');
+  if (!highlights) return;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    highlights.innerHTML = '';
+    return;
+  }
+
+  const topScore = items[0]?.score || 0;
+  const drafts = items.filter(x => x.recommendedAction === 'create_instagram_draft').length;
+  const catalog = items.filter(x => x.recommendedAction === 'add_to_catalog').length;
+  const review = items.filter(x => x.recommendedAction === 'review_and_publish' || x.recommendedAction === 'review').length;
+
+  const cards = [
+    { label: 'Melhor score', value: topScore, hint: 'prioridade operacional' },
+    { label: 'Draft IG', value: drafts, hint: 'posts dos canais ainda sem draft' },
+    { label: 'Catalogo', value: catalog, hint: 'itens prontos para catalogo' },
+    { label: 'Revisao', value: review, hint: 'itens para operador revisar' }
+  ];
+
+  highlights.innerHTML = cards.map(card => `
+    <div class="card" style="padding:16px; text-align:center;">
+      <div class="muted" style="font-size:12px; font-weight:600; text-transform:uppercase;">${card.label}</div>
+      <div style="font-size:26px; font-weight:800; color:var(--accent); margin-top:6px;">${card.value}</div>
+      <div class="muted" style="font-size:11px; margin-top:4px;">${card.hint}</div>
+    </div>
+  `).join('');
+}
+
+function parseAgentTargetIds() {
+  const source = getAgentSourceChannel();
+  return String(document.getElementById('waScoutTargetIds')?.value || '')
+    .split(/[\r\n,;]+/)
+    .map(x => x.trim())
+    .map(x => normalizeAgentChatId(x, source))
+    .filter(Boolean);
+}
+
+function getAgentSourceChannel() {
+  return document.getElementById('waScoutSourceChannel')?.value || 'telegram';
+}
+
+const AGENT_UI_STATE_KEY = 'achadinhos.agent.channels.ui.v1';
+let agentUiStateHydrated = false;
+
+function loadAgentUiState() {
+  try {
+    const raw = localStorage.getItem(AGENT_UI_STATE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function mergeAgentUiStates(localState, serverState) {
+  const localManual = localState?.manualTargetIdsBySource && typeof localState.manualTargetIdsBySource === 'object'
+    ? localState.manualTargetIdsBySource
+    : {};
+  const serverManual = serverState?.manualTargetIdsBySource && typeof serverState.manualTargetIdsBySource === 'object'
+    ? serverState.manualTargetIdsBySource
+    : {};
+  const mergedManual = { ...serverManual, ...localManual };
+
+  return {
+    sourceChannel: localState?.sourceChannel || serverState?.sourceChannel || 'telegram',
+    selectionMode: localState?.selectionMode || serverState?.selectionMode || 'saved_history',
+    hoursWindow: Number(localState?.hoursWindow || serverState?.hoursWindow || 168),
+    maxItems: Number(localState?.maxItems || serverState?.maxItems || 10),
+    includeAiReasoning: !!(localState?.includeAiReasoning ?? serverState?.includeAiReasoning),
+    useAiDecision: !!(localState?.useAiDecision ?? serverState?.useAiDecision),
+    manualTargetIdsBySource: mergedManual
+  };
+}
+
+function saveAgentUiState(partial = {}) {
+  const current = loadAgentUiState();
+  const next = { ...current, ...partial };
+  localStorage.setItem(AGENT_UI_STATE_KEY, JSON.stringify(next));
+  return next;
+}
+
+async function hydrateAgentUiState() {
+  if (agentUiStateHydrated) return loadAgentUiState();
+  const localState = loadAgentUiState();
+  try {
+    const state = await api('/api/agents/channel-monitor-ui-state');
+    const merged = mergeAgentUiStates(localState, state || {});
+    localStorage.setItem(AGENT_UI_STATE_KEY, JSON.stringify(merged));
+  } catch {
+    localStorage.setItem(AGENT_UI_STATE_KEY, JSON.stringify(localState || {}));
+  }
+  agentUiStateHydrated = true;
+  return loadAgentUiState();
+}
+
+async function persistAgentUiStateToServer() {
+  const state = loadAgentUiState();
+  try {
+    await api('/api/agents/channel-monitor-ui-state', 'POST', state);
+  } catch {
+  }
+}
+
+function readAgentManualTargetIdsBySource() {
+  const state = loadAgentUiState();
+  return state.manualTargetIdsBySource && typeof state.manualTargetIdsBySource === 'object'
+    ? state.manualTargetIdsBySource
+    : {};
+}
+
+function writeAgentManualTargetIdsForSource(sourceChannel, ids) {
+  const all = readAgentManualTargetIdsBySource();
+  all[String(sourceChannel || getAgentSourceChannel())] = Array.isArray(ids) ? ids : [];
+  saveAgentUiState({ manualTargetIdsBySource: all });
+}
+
+function applyAgentUiState(state) {
+  const source = state.sourceChannel || 'telegram';
+  const sourceEl = document.getElementById('waScoutSourceChannel');
+  const modeEl = document.getElementById('waScoutSelectionMode');
+  const hoursEl = document.getElementById('waScoutHoursWindow');
+  const maxItemsEl = document.getElementById('waScoutMaxItems');
+  const aiReasoningEl = document.getElementById('waScoutUseAiReasoning');
+  const aiDecisionEl = document.getElementById('waScoutUseAiDecision');
+  const targetIdsEl = document.getElementById('waScoutTargetIds');
+  const manualBySource = readAgentManualTargetIdsBySource();
+
+  if (sourceEl) sourceEl.value = source;
+  if (modeEl && state.selectionMode) modeEl.value = state.selectionMode;
+  if (hoursEl && state.hoursWindow) hoursEl.value = String(state.hoursWindow);
+  if (maxItemsEl && state.maxItems) maxItemsEl.value = String(state.maxItems);
+  if (aiReasoningEl) aiReasoningEl.checked = !!state.includeAiReasoning;
+  if (aiDecisionEl) aiDecisionEl.checked = !!state.useAiDecision;
+  if (targetIdsEl) {
+    const ids = Array.isArray(manualBySource[source]) ? manualBySource[source] : [];
+    targetIdsEl.value = ids.join('\n');
+  }
+}
+
+function restoreAgentUiState() {
+  applyAgentUiState(loadAgentUiState());
+}
+
+function rememberAgentUiSelections() {
+  const source = getAgentSourceChannel();
+  saveAgentUiState({
+    sourceChannel: source,
+    selectionMode: document.getElementById('waScoutSelectionMode')?.value || 'saved_history',
+    hoursWindow: Number(document.getElementById('waScoutHoursWindow')?.value || 168),
+    maxItems: Number(document.getElementById('waScoutMaxItems')?.value || 10),
+    includeAiReasoning: !!document.getElementById('waScoutUseAiReasoning')?.checked,
+    useAiDecision: !!document.getElementById('waScoutUseAiDecision')?.checked
+  });
+  writeAgentManualTargetIdsForSource(source, parseAgentTargetIds());
+  persistAgentUiStateToServer();
+}
+
+function getAgentTargetSet(sourceChannel) {
+  const source = String(sourceChannel || getAgentSourceChannel());
+  if (!window.__waScoutTargetsBySource) window.__waScoutTargetsBySource = {};
+  if (!window.__waScoutTargetsBySource[source]) {
+    window.__waScoutTargetsBySource[source] = new Set();
+  }
+  return window.__waScoutTargetsBySource[source];
+}
+
+function getAgentSavedSelections(sourceChannel) {
+  const source = String(sourceChannel || getAgentSourceChannel());
+  if (!window.__waScoutSavedSelectionsBySource) window.__waScoutSavedSelectionsBySource = {};
+  return Array.isArray(window.__waScoutSavedSelectionsBySource[source]) ? window.__waScoutSavedSelectionsBySource[source] : [];
+}
+
+function setAgentSavedSelections(sourceChannel, items) {
+  const source = String(sourceChannel || getAgentSourceChannel());
+  if (!window.__waScoutSavedSelectionsBySource) window.__waScoutSavedSelectionsBySource = {};
+  window.__waScoutSavedSelectionsBySource[source] = Array.isArray(items) ? items : [];
+  window.__waScoutTargetsBySource = window.__waScoutTargetsBySource || {};
+  window.__waScoutTargetsBySource[source] = new Set(window.__waScoutSavedSelectionsBySource[source].map(x => String(x.chatId || x.ChatId || '')));
+}
+
+function getAgentAvailableTargets(sourceChannel) {
+  const source = String(sourceChannel || getAgentSourceChannel());
+  return source === 'telegram'
+    ? ((window.__userbotPayload?.chats || []).map(c => ({ id: String(c.id), title: c.title, meta: c.type || 'telegram' })))
+    : ((window.__waPayload?.groups || []).map(g => ({ id: String(g.id), title: g.name, meta: g.type || 'whatsapp' })));
+}
+
+function buildAgentVisibleTargets(sourceChannel) {
+  const source = String(sourceChannel || getAgentSourceChannel());
+  const available = getAgentAvailableTargets(source);
+  const saved = getAgentSavedSelections(source);
+  const manual = parseAgentTargetIds();
+  const map = new Map();
+
+  available.forEach(item => {
+    map.set(String(item.id), { id: String(item.id), title: item.title || String(item.id), meta: item.meta || source });
+  });
+
+  saved.forEach(item => {
+    const id = String(item.chatId || item.ChatId || '');
+    if (!id) return;
+    if (!map.has(id)) {
+      map.set(id, { id, title: item.title || item.Title || id, meta: `${source} salvo` });
+    }
+  });
+
+  manual.forEach(id => {
+    const normalizedId = normalizeAgentChatId(id, source);
+    if (!normalizedId) return;
+    if (!map.has(normalizedId)) {
+      map.set(normalizedId, { id: normalizedId, title: normalizedId, meta: `${source} manual` });
+    }
+  });
+
+  return Array.from(map.values());
+}
+
+function normalizeAgentChatId(value, sourceChannel) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (String(sourceChannel || getAgentSourceChannel()) !== 'telegram') return raw;
+  if (raw.startsWith('-100')) return raw;
+  if (/^\d+$/.test(raw)) return `-100${raw}`;
+  if (/^-\d+$/.test(raw)) return `-100${raw.slice(1)}`;
+  return raw;
+}
+
+function setAgentTargetSaveStatus(text, type = 'muted') {
+  const el = document.getElementById('waScoutTargetSaveStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `status ${type}`;
+}
+
+function syncAgentTargetIdsFromSelection() {
+  const selected = Array.from(getAgentTargetSet());
+  const targetIds = document.getElementById('waScoutTargetIds');
+  if (targetIds) targetIds.value = selected.join('\n');
+}
+
+let agentTargetSaveTimer = null;
+function scheduleAgentTargetManualSave() {
+  if (agentTargetSaveTimer) clearTimeout(agentTargetSaveTimer);
+  setAgentTargetSaveStatus('Salvando selecao digitada...', 'warn');
+  rememberAgentUiSelections();
+  renderAgentChannelTargets();
+  agentTargetSaveTimer = setTimeout(async () => {
+    await persistAgentChannelTargets();
+    renderAgentChannelTargets();
+  }, 400);
+}
+
+async function loadSavedAgentChannelTargets(sourceChannel) {
+  const source = String(sourceChannel || getAgentSourceChannel());
+  const data = await api(`/api/agents/channel-monitor-selections?sourceChannel=${encodeURIComponent(source)}`);
+  setAgentSavedSelections(source, Array.isArray(data.items) ? data.items : []);
+  const targetIds = document.getElementById('waScoutTargetIds');
+  const currentManual = parseAgentTargetIds();
+  if (targetIds && currentManual.length === 0 && Array.isArray(data.items) && data.items.length > 0) {
+    const restoredIds = data.items
+      .map(item => normalizeAgentChatId(item.chatId || item.ChatId || '', source))
+      .filter(Boolean);
+    targetIds.value = restoredIds.join('\n');
+    writeAgentManualTargetIdsForSource(source, restoredIds);
+    saveAgentUiState({ sourceChannel: source });
+  }
+  setAgentTargetSaveStatus(`Selecao salva: ${Array.isArray(data.items) ? data.items.length : 0} grupo(s).`, 'ok');
+}
+
+async function persistAgentChannelTargets() {
+  const source = getAgentSourceChannel();
+  const selected = new Set(getAgentTargetSet(source));
+  parseAgentTargetIds().forEach(id => selected.add(String(id)));
+  rememberAgentUiSelections();
+
+  const titleMap = new Map(getAgentAvailableTargets(source).map(item => [String(item.id), item.title || String(item.id)]));
+  const payload = {
+    sourceChannel: source,
+    selections: Array.from(selected).map(chatId => ({
+      sourceChannel: source,
+      chatId,
+      title: titleMap.get(String(chatId)) || String(chatId)
+    }))
+  };
+
+  const data = await api('/api/agents/channel-monitor-selections', 'POST', payload);
+  setAgentSavedSelections(source, Array.isArray(data.items) ? data.items : []);
+  syncAgentTargetIdsFromSelection();
+  setAgentTargetSaveStatus(`Selecao salva automaticamente: ${Array.isArray(data.items) ? data.items.length : 0} grupo(s).`, 'ok');
+}
+
+async function clearAgentChannelTargets() {
+  const source = getAgentSourceChannel();
+  if (window.__waScoutTargetsBySource) {
+    window.__waScoutTargetsBySource[source] = new Set();
+  }
+  setAgentSavedSelections(source, []);
+  await api('/api/agents/channel-monitor-selections', 'POST', { sourceChannel: source, selections: [] });
+  const picker = document.getElementById('waScoutTargetPicker');
+  if (picker) picker.innerHTML = 'Selecao limpa.';
+  const targetIds = document.getElementById('waScoutTargetIds');
+  if (targetIds) targetIds.value = '';
+  writeAgentManualTargetIdsForSource(source, []);
+  rememberAgentUiSelections();
+  setAgentTargetSaveStatus('Selecao limpa e salva.', 'ok');
+}
+
+async function toggleAllAgentChannelTargets(checked) {
+  const source = getAgentSourceChannel();
+  const selected = getAgentTargetSet(source);
+  const items = getAgentAvailableTargets(source);
+  selected.clear();
+  if (checked) {
+    items.forEach(item => selected.add(String(item.id)));
+  }
+  syncAgentTargetIdsFromSelection();
+  renderAgentChannelTargets();
+  await persistAgentChannelTargets();
+}
+
+async function loadAgentChannelTargets() {
+  const sourceChannel = getAgentSourceChannel();
+  rememberAgentUiSelections();
+  renderAgentChannelTargets();
+  if (sourceChannel === 'telegram' && !window.__userbotPayload) {
+    await loadUserbotChats();
+  }
+  if (sourceChannel === 'whatsapp' && !window.__waPayload) {
+    await loadWhatsAppGroups();
+  }
+  await loadSavedAgentChannelTargets(sourceChannel);
+  renderAgentChannelTargets();
+}
+
+function renderAgentChannelTargets() {
+  const picker = document.getElementById('waScoutTargetPicker');
+  if (!picker) return;
+
+  const sourceChannel = getAgentSourceChannel();
+  const selected = getAgentTargetSet(sourceChannel);
+  const saved = getAgentSavedSelections(sourceChannel);
+  const savedById = new Map(saved.map(item => [String(item.chatId || item.ChatId || ''), item]));
+  const items = buildAgentVisibleTargets(sourceChannel);
+
+  if (!items || items.length === 0) {
+    picker.innerHTML = sourceChannel === 'whatsapp'
+      ? '<span class="muted">Nenhum grupo carregado. No DEV o WhatsApp depende da Evolution; se ela estiver fora, a lista nao aparece.</span>'
+      : '<span class="muted">Nenhum grupo carregado. Verifique se o userbot do Telegram esta conectado.</span>';
+    return;
+  }
+
+  picker.innerHTML = `<div class="muted" style="margin-bottom:8px;">${sourceChannel === 'telegram' ? 'Chats Telegram visiveis' : 'Grupos WhatsApp visiveis'}: ${items.length}</div><div class="chat-list">` + items.map(item => `
+    <label class="chat-item">
+      <input type="checkbox" data-agent-target="1" value="${escapeHtml(item.id)}" ${selected.has(String(item.id)) ? 'checked' : ''} />
+      <div>
+        <div class="chat-title">${escapeHtml(item.title || item.id)}</div>
+        <div class="chat-meta">${escapeHtml(item.meta)} | ${escapeHtml(item.id)}${savedById.has(String(item.id)) ? ` | monitorado desde ${escapeHtml(formatTs(savedById.get(String(item.id)).selectedAtUtc || savedById.get(String(item.id)).SelectedAtUtc || ''))}` : ''}</div>
+      </div>
+    </label>
+  `).join('') + `</div>`;
+
+  picker.onchange = async (ev) => {
+    const target = ev.target;
+    if (!target || !target.matches('input[data-agent-target="1"]')) return;
+    const value = String(target.value);
+    if (target.checked) selected.add(value);
+    else selected.delete(value);
+    syncAgentTargetIdsFromSelection();
+    rememberAgentUiSelections();
+    await persistAgentChannelTargets();
+    renderAgentChannelTargets();
+  };
+
+  syncAgentTargetIdsFromSelection();
+}
+
+async function loadWhatsAppOfferScout() {
+  const body = document.getElementById('waScoutBody');
+  const summary = document.getElementById('waScoutSummary');
+  const highlights = document.getElementById('waScoutHighlights');
+  if (body) body.innerHTML = '<tr><td colspan="7" class="muted">Carregando oportunidades...</td></tr>';
+  if (summary) summary.textContent = 'Executando agente...';
+  if (highlights) highlights.innerHTML = '';
+
+  try {
+    rememberAgentUiSelections();
+    const payload = {
+      sourceChannel: getAgentSourceChannel(),
+      targetSelectionMode: document.getElementById('waScoutSelectionMode')?.value || 'saved_history',
+      targetChatIds: parseAgentTargetIds(),
+      hoursWindow: Number(document.getElementById('waScoutHoursWindow')?.value || 168),
+      maxItems: Number(document.getElementById('waScoutMaxItems')?.value || 10),
+      includeAiReasoning: !!document.getElementById('waScoutUseAiReasoning')?.checked,
+      useAiDecision: !!document.getElementById('waScoutUseAiDecision')?.checked
+    };
+
+    await persistAgentChannelTargets();
+    const data = await api('/api/agents/whatsapp/offers/scout', 'POST', payload);
+    const items = Array.isArray(data.suggestions) ? data.suggestions : [];
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+
+    if (summary) {
+      summary.className = warnings.length > 0 ? 'status warn' : 'status ok';
+      const channel = data.sourceChannel || payload.sourceChannel || 'whatsapp';
+      const mode = data.targetSelectionMode || payload.targetSelectionMode || 'saved_history';
+      const warningText = warnings.length > 0 ? ` Avisos: ${warnings.join(' | ')}` : '';
+      summary.textContent = `${data.summary || 'Analise concluida.'} Fonte: ${channel}. Modo: ${mode}. Logs: ${data.sourceMessagesAvailable || 0}.${warningText}`;
+    }
+
+    buildWhatsAppScoutHighlights(items);
+
+    if (!body) return;
+    if (items.length === 0) {
+      body.innerHTML = '<tr><td colspan="7" class="muted">Nenhuma oportunidade relevante nesta janela.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = items.map(item => {
+      const canCreateDraft = item.recommendedAction === 'create_instagram_draft' && !item.hasExistingDraft;
+      const canAddToCatalog = item.recommendedAction === 'add_to_catalog' && item.existingDraftId;
+      const canReviewAndPublish = item.recommendedAction === 'review_and_publish' && item.existingDraftId;
+      const canConvertLink = item.recommendedAction === 'convert_link';
+      const canDeepAnalyze = true;
+      const decisionTag = item.decisionSource === 'ai_guarded'
+        ? `<span class="badge ok">IA ${escapeHtml(item.decisionProvider || '')}</span>`
+        : `<span class="badge muted">${escapeHtml(item.decisionSource || 'heuristic')}</span>`;
+      return `
+        <tr>
+          <td><strong>${escapeHtml(String(item.score || 0))}</strong></td>
+          <td>
+            <div><strong>${escapeHtml(item.productName || 'Oferta do canal')}</strong></div>
+            <div class="muted">${escapeHtml(shortId(item.messageId || ''))}</div>
+            <div class="muted">Origem: ${escapeHtml(item.sourceGroupTitle || item.targetChatId || '-')}</div>
+            <div class="muted">${escapeHtml(item.captionPreview || '')}</div>
+            <div class="muted">IG ${escapeHtml(String(item.instagramScore || 0))} | Cat ${escapeHtml(String(item.catalogScore || 0))} | CTA ${escapeHtml(item.suggestedKeyword || '-')}</div>
+            <div class="muted">Formato: ${escapeHtml(item.suggestedPostType || 'feed')} | Midia: ${escapeHtml(item.mediaKind || 'text')}</div>
+            ${item.requiresLinkConversion ? `<div class="muted">Conversao pendente${item.originalOfferUrl ? ` | ${escapeHtml(item.originalOfferUrl)}` : ''}</div>` : ''}
+            <div style="margin-top:6px;">${decisionTag}</div>
+          </td>
+          <td>${renderAgentActionBadge(item.recommendedAction)}</td>
+          <td>${renderCatalogTargetsBadge(item)}</td>
+          <td>${escapeHtml(String(item.recentClicks || 0))}</td>
+          <td style="min-width:280px;">${formatAgentDetails(item)}</td>
+          <td>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              ${canDeepAnalyze ? `<button class="secondary" onclick="agentDeepAnalyzeOffer('${escapeHtml(item.messageId)}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}')">${item.requiresLinkConversion ? 'Converter + IA' : 'Analisar com IA'}</button>` : ''}
+              ${canConvertLink ? `<button class="secondary" onclick="agentApplyWhatsAppRecommendation('${escapeHtml(item.messageId)}', 'convert_link', null, false, false, '${escapeHtml(item.suggestedPostType || 'feed')}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}')">Converter link</button>` : ''}
+              ${canCreateDraft ? `<button class="secondary" onclick="agentApplyWhatsAppRecommendation('${escapeHtml(item.messageId)}', '${escapeHtml(item.recommendedAction)}', null, false, false, '${escapeHtml(item.suggestedPostType || 'feed')}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}')">Aplicar recomendacao</button>` : ''}
+              ${canCreateDraft ? `<button class="secondary" onclick="agentCreateInstagramDraftFromWhatsApp('${escapeHtml(item.messageId)}', true, false, '${escapeHtml(item.suggestedPostType || 'feed')}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}')">Criar draft IA</button>` : ''}
+              ${canCreateDraft ? `<button class="secondary" onclick="agentCreateInstagramDraftFromWhatsApp('${escapeHtml(item.messageId)}', true, true, '${escapeHtml(item.suggestedPostType || 'feed')}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}')">IA + catalogo</button>` : ''}
+              ${canAddToCatalog ? `<button class="secondary" onclick="agentApplyWhatsAppRecommendation('${escapeHtml(item.messageId)}', '${escapeHtml(item.recommendedAction)}', '${escapeHtml(item.existingDraftId)}', false, true, '${escapeHtml(item.suggestedPostType || 'feed')}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}')">Aplicar recomendacao</button>` : ''}
+              ${canReviewAndPublish ? `<button class="secondary" onclick="agentApplyWhatsAppRecommendation('${escapeHtml(item.messageId)}', '${escapeHtml(item.recommendedAction)}', '${escapeHtml(item.existingDraftId)}', false, false, '${escapeHtml(item.suggestedPostType || 'feed')}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}')">Aplicar recomendacao</button>` : ''}
+              <button class="secondary" onclick="agentSendWhatsAppFeedback('${escapeHtml(item.messageId)}', 'accepted', '${escapeHtml(item.recommendedAction || '')}', '${escapeHtml(item.recommendedAction || '')}', '${escapeHtml(item.existingDraftId || '')}')">Aceita</button>
+              <button class="secondary" onclick="agentSendWhatsAppFeedback('${escapeHtml(item.messageId)}', 'rejected', '${escapeHtml(item.recommendedAction || '')}', '', '${escapeHtml(item.existingDraftId || '')}')">Rejeita</button>
+              <button class="secondary" onclick="agentSendWhatsAppFeedback('${escapeHtml(item.messageId)}', 'edited', '${escapeHtml(item.recommendedAction || '')}', '', '${escapeHtml(item.existingDraftId || '')}')">Editou</button>
+              <button class="secondary" onclick="agentOpenWhatsAppAdmin('${escapeHtml(item.messageId || '')}', '${escapeHtml(data.sourceChannel || getAgentSourceChannel())}', '${escapeHtml(item.suggestedPostType || 'feed')}', '${escapeHtml(item.existingDraftId || '')}', ${item.requiresLinkConversion ? 'true' : 'false'})">Abrir admin</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    if (summary) {
+      const source = getAgentSourceChannel();
+      const fallback = source === 'whatsapp'
+        ? 'Falha ao carregar oportunidades. O WhatsApp DEV depende da Evolution e ela pode estar indisponivel.'
+        : 'Falha ao carregar oportunidades do Telegram.';
+      summary.className = 'status bad';
+      summary.textContent = e?.data?.error || e?.message || fallback;
+    }
+    if (body) body.innerHTML = '<tr><td colspan="7" class="bad">Falha ao carregar oportunidades dos canais.</td></tr>';
+  }
+}
+
+async function agentDeepAnalyzeOffer(messageId, sourceChannel = null) {
+  const params = new URLSearchParams({
+    messageId,
+    sourceChannel: sourceChannel || getAgentSourceChannel(),
+    createDraft: '1',
+    useAiReasoning: '1'
+  });
+  window.open(`/agent-analysis.html?${params.toString()}`, '_blank');
+}
+
+async function agentCreateInstagramDraftFromWhatsApp(messageId, useAiCaption = false, sendToCatalog = false, suggestedPostType = 'feed', sourceChannel = null) {
+  try {
+    const response = await api('/api/admin/apply-channel-offer-recommendation', 'POST', {
+      messageId,
+      recommendedAction: 'create_instagram_draft',
+      sourceChannel: sourceChannel || getAgentSourceChannel(),
+      useAiCaption,
+      sendToCatalog,
+      catalogTarget: sendToCatalog ? 'prod' : null,
+      suggestedPostType
+    });
+    const mode = useAiCaption ? 'com IA' : 'manual';
+    showToast(`Draft criado (${mode}): ${response?.draftId || 'ok'}.`, 'success');
+    await Promise.all([loadWhatsAppOfferScout(), loadOfferCuration()]);
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao criar draft a partir do WhatsApp.', 'error');
+  }
+}
+
+async function agentApplyWhatsAppRecommendation(messageId, recommendedAction, existingDraftId = null, useAiCaption = false, sendToCatalog = false, suggestedPostType = 'feed', sourceChannel = null) {
+  try {
+    const response = await api('/api/admin/apply-channel-offer-recommendation', 'POST', {
+      messageId,
+      recommendedAction,
+      sourceChannel: sourceChannel || getAgentSourceChannel(),
+      existingDraftId,
+      useAiCaption,
+      sendToCatalog,
+      catalogTarget: sendToCatalog ? 'prod' : null,
+      suggestedPostType
+    });
+    showToast(`Recomendacao aplicada: ${response?.action || recommendedAction}.`, 'success');
+    await Promise.all([loadWhatsAppOfferScout(), loadOfferCuration()]);
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao aplicar recomendacao do agente.', 'error');
+  }
+}
+
+async function agentSendWhatsAppFeedback(messageId, feedback, recommendedAction = '', appliedAction = '', existingDraftId = '') {
+  try {
+    await api('/api/admin/agents/whatsapp/feedback', 'POST', {
+      messageId,
+      feedback,
+      recommendedAction: recommendedAction || null,
+      appliedAction: appliedAction || null,
+      existingDraftId: existingDraftId || null
+    });
+    showToast(`Feedback registrado: ${feedback}.`, 'success');
+    await loadWhatsAppOfferScout();
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao registrar feedback.', 'error');
+  }
+}
+
+async function seedAgentChannelTestLog() {
+  const sourceChannel = getAgentSourceChannel();
+  const targetIds = parseAgentTargetIds();
+  const chatId = targetIds[0];
+  if (!chatId) {
+    showToast('Selecione ou digite ao menos um grupo antes de criar o log de teste.', 'error');
+    return;
+  }
+
+  try {
+    await persistAgentChannelTargets();
+    const response = await api('/api/agents/channel-monitor-seed-log', 'POST', {
+      sourceChannel,
+      chatId,
+      title: 'Oferta seed do agente'
+    });
+    showToast(`Log de teste criado para ${response.chatId}.`, 'success');
+    await loadWhatsAppOfferScout();
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao criar log de teste.', 'error');
   }
 }
 
@@ -84,7 +980,7 @@ function escapeHtml(text) {
 function shortId(text) {
   const s = String(text || '');
   if (s.length <= 18) return s;
-  return `${s.slice(0, 6)}â€¦${s.slice(-6)}`;
+  return `${s.slice(0, 6)}…${s.slice(-6)}`;
 }
 
 function getGeminiApiKeyRowsFromDom() {
@@ -128,6 +1024,19 @@ function collectGeminiApiKeysFromUi() {
   return getGeminiApiKeyRowsFromDom()
     .map(v => v.trim())
     .filter(Boolean);
+}
+
+function parseApiKeysTextarea(id, fallbackMaskedSingle = '') {
+  const values = String(document.getElementById(id)?.value || '')
+    .split(/\r?\n/)
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  if (fallbackMaskedSingle && !values.includes(fallbackMaskedSingle)) {
+    values.unshift(fallbackMaskedSingle);
+  }
+
+  return Array.from(new Set(values));
 }
 
 function renderSourceBadge(source) {
@@ -298,7 +1207,7 @@ async function login() {
     document.getElementById('loginStatus').className = 'status ok';
     await checkSession();
   } catch (e) {
-    const msg = e?.status === 423 ? 'Conta bloqueada temporariamente' : 'Credenciais invÃ¡lidas';
+    const msg = e?.status === 423 ? 'Conta bloqueada temporariamente' : 'Credenciais inválidas';
     document.getElementById('loginStatus').textContent = msg;
     document.getElementById('loginStatus').className = 'status bad';
   }
@@ -372,7 +1281,7 @@ function renderSettings(s) {
   const isLocked = now < lockUntil;
   const telegramStatusText = s.integrations.telegram.connected
     ? `Conectado (${s.integrations.telegram.identifier || 'sem id'})`
-    : 'NÃ£o conectado';
+    : 'Não conectado';
   const telegramStatusState = s.integrations.telegram.connected ? 'ok' : 'warn';
   if (!isLocked) {
     const telegramStatusEl = document.getElementById('telegramStatus');
@@ -394,7 +1303,7 @@ function renderSettings(s) {
 
   document.getElementById('whatsappStatus').textContent = s.integrations.whatsApp.connected
     ? `Conectado (${s.integrations.whatsApp.identifier || 'sem id'})`
-    : 'NÃ£o conectado';
+    : 'Não conectado';
   document.getElementById('whatsappStatus').className = 'status ' + (s.integrations.whatsApp.connected ? 'ok' : 'warn');
 
   const ml = s.integrations?.mercadoLivre || {};
@@ -403,7 +1312,7 @@ function renderSettings(s) {
   if (mlStatus) {
     mlStatus.textContent = mlConnected
       ? `Conectado (${ml.identifier || 'sem id'})`
-      : 'NÃ£o validado';
+      : 'Não validado';
     mlStatus.className = 'status ' + (mlConnected ? 'ok' : 'warn');
   }
 
@@ -523,6 +1432,8 @@ function renderSettings(s) {
   const openai = s.openAI || {};
   const openaiKey = document.getElementById('openaiApiKey');
   if (openaiKey) openaiKey.value = openai.apiKey ? '********' : '';
+  const openaiKeys = document.getElementById('openaiApiKeys');
+  if (openaiKeys) openaiKeys.value = Array.isArray(openai.apiKeys) && openai.apiKeys.length > 0 ? openai.apiKeys.join('\n') : '';
   const openaiModel = document.getElementById('openaiModel');
   if (openaiModel) openaiModel.value = openai.model || 'gpt-4o-mini';
   const openaiTemp = document.getElementById('openaiTemp');
@@ -554,7 +1465,7 @@ function renderSettings(s) {
   const instaCaptionTemplate3 = document.getElementById('instaCaptionTemplate3');
   if (instaCaptionTemplate3) instaCaptionTemplate3.value = captionTemplates[2] || getDefaultInstaCaptionTemplates()[2];
   const instaAiProvider = document.getElementById('instaAiProvider');
-  if (instaAiProvider) instaAiProvider.value = insta.aiProvider || 'openai';
+  if (instaAiProvider) instaAiProvider.value = insta.aiProvider || 'nemotron';
   const instaUltraPrompt = document.getElementById('instaUltraPrompt');
   if (instaUltraPrompt) instaUltraPrompt.checked = !!insta.useUltraPrompt;
   const instaShortName = document.getElementById('instaShortName');
@@ -577,6 +1488,82 @@ function renderSettings(s) {
   if (geminiModel) geminiModel.value = gemini.model || 'gemini-2.5-flash';
   const geminiMaxTokens = document.getElementById('geminiMaxTokens');
   if (geminiMaxTokens) geminiMaxTokens.value = String(gemini.maxOutputTokens ?? 1200);
+
+  const deepseek = s.deepSeek || {};
+  const deepseekApiKey = document.getElementById('deepseekApiKey');
+  if (deepseekApiKey) deepseekApiKey.value = deepseek.apiKey ? '********' : '';
+  const deepseekApiKeys = document.getElementById('deepseekApiKeys');
+  if (deepseekApiKeys) deepseekApiKeys.value = Array.isArray(deepseek.apiKeys) && deepseek.apiKeys.length > 0 ? deepseek.apiKeys.join('\n') : '';
+  const deepseekModel = document.getElementById('deepseekModel');
+  if (deepseekModel) deepseekModel.value = deepseek.model || 'deepseek-chat';
+  const deepseekTemp = document.getElementById('deepseekTemp');
+  if (deepseekTemp) deepseekTemp.value = String(deepseek.temperature ?? 0.7);
+  const deepseekMaxTokens = document.getElementById('deepseekMaxTokens');
+  if (deepseekMaxTokens) deepseekMaxTokens.value = String(deepseek.maxOutputTokens ?? 1200);
+
+  const nemotron = s.nemotron || {};
+  const nemotronApiKey = document.getElementById('nemotronApiKey');
+  if (nemotronApiKey) nemotronApiKey.value = nemotron.apiKey ? '********' : '';
+  const nemotronApiKeys = document.getElementById('nemotronApiKeys');
+  if (nemotronApiKeys) nemotronApiKeys.value = Array.isArray(nemotron.apiKeys) && nemotron.apiKeys.length > 0 ? nemotron.apiKeys.join('\n') : '';
+  const nemotronModel = document.getElementById('nemotronModel');
+  if (nemotronModel) nemotronModel.value = nemotron.model || 'nvidia/nemotron-3-super-120b-a12b';
+  const nemotronTemp = document.getElementById('nemotronTemp');
+  if (nemotronTemp) nemotronTemp.value = String(nemotron.temperature ?? 1.0);
+  const nemotronTopP = document.getElementById('nemotronTopP');
+  if (nemotronTopP) nemotronTopP.value = String(nemotron.topP ?? 0.95);
+  const nemotronMaxTokens = document.getElementById('nemotronMaxTokens');
+  if (nemotronMaxTokens) nemotronMaxTokens.value = String(nemotron.maxOutputTokens ?? 4096);
+  const nemotronReasoningBudget = document.getElementById('nemotronReasoningBudget');
+  if (nemotronReasoningBudget) nemotronReasoningBudget.value = String(nemotron.reasoningBudget ?? 4096);
+  const nemotronEnableThinking = document.getElementById('nemotronEnableThinking');
+  if (nemotronEnableThinking) nemotronEnableThinking.checked = nemotron.enableThinking ?? true;
+  const nemotronMonthlyLimit = document.getElementById('nemotronMonthlyLimit');
+  if (nemotronMonthlyLimit) nemotronMonthlyLimit.value = String(nemotron.monthlyCallLimit ?? 0);
+  const nemotronCostPerCall = document.getElementById('nemotronCostPerCall');
+  if (nemotronCostPerCall) nemotronCostPerCall.value = String(nemotron.estimatedCostPerCallUsd ?? 0);
+  const qwen = s.qwen || {};
+  const qwenApiKey = document.getElementById('qwenApiKey');
+  if (qwenApiKey) qwenApiKey.value = qwen.apiKey ? '********' : '';
+  const qwenApiKeys = document.getElementById('qwenApiKeys');
+  if (qwenApiKeys) qwenApiKeys.value = Array.isArray(qwen.apiKeys) && qwen.apiKeys.length > 0 ? qwen.apiKeys.join('\n') : '';
+  const qwenModel = document.getElementById('qwenModel');
+  if (qwenModel) qwenModel.value = qwen.model || 'qwen3.5-plus';
+  const qwenVisionModel = document.getElementById('qwenVisionModel');
+  if (qwenVisionModel) qwenVisionModel.value = qwen.visionModel || 'qwen3-vl-plus';
+  const qwenTemp = document.getElementById('qwenTemp');
+  if (qwenTemp) qwenTemp.value = String(qwen.temperature ?? 0.7);
+  const qwenMaxTokens = document.getElementById('qwenMaxTokens');
+  if (qwenMaxTokens) qwenMaxTokens.value = String(qwen.maxOutputTokens ?? 4096);
+  const qwenBaseUrl = document.getElementById('qwenBaseUrl');
+  if (qwenBaseUrl) qwenBaseUrl.value = qwen.baseUrl || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+  const qwenEnableThinking = document.getElementById('qwenEnableThinking');
+  if (qwenEnableThinking) qwenEnableThinking.checked = qwen.enableThinking ?? true;
+  const qwenMonthlyLimit = document.getElementById('qwenMonthlyLimit');
+  if (qwenMonthlyLimit) qwenMonthlyLimit.value = String(qwen.monthlyCallLimit ?? 0);
+  const qwenCostPerCall = document.getElementById('qwenCostPerCall');
+  if (qwenCostPerCall) qwenCostPerCall.value = String(qwen.estimatedCostPerCallUsd ?? 0);
+  const vila = s.vilaNvidia || {};
+  const vilaApiKey = document.getElementById('vilaApiKey');
+  if (vilaApiKey) vilaApiKey.value = vila.apiKey ? '********' : '';
+  const vilaApiKeys = document.getElementById('vilaApiKeys');
+  if (vilaApiKeys) vilaApiKeys.value = Array.isArray(vila.apiKeys) && vila.apiKeys.length > 0 ? vila.apiKeys.join('\n') : '';
+  const vilaModel = document.getElementById('vilaModel');
+  if (vilaModel) vilaModel.value = vila.model || 'nvidia/vila';
+  const vilaTemp = document.getElementById('vilaTemp');
+  if (vilaTemp) vilaTemp.value = String(vila.temperature ?? 0.2);
+  const vilaTopP = document.getElementById('vilaTopP');
+  if (vilaTopP) vilaTopP.value = String(vila.topP ?? 0.7);
+  const vilaMaxTokens = document.getElementById('vilaMaxTokens');
+  if (vilaMaxTokens) vilaMaxTokens.value = String(vila.maxOutputTokens ?? 4096);
+  const vilaBaseUrl = document.getElementById('vilaBaseUrl');
+  if (vilaBaseUrl) vilaBaseUrl.value = vila.baseUrl || 'https://integrate.api.nvidia.com/v1';
+  const vilaEnableThinking = document.getElementById('vilaEnableThinking');
+  if (vilaEnableThinking) vilaEnableThinking.checked = vila.enableThinking ?? true;
+  const vilaMonthlyLimit = document.getElementById('vilaMonthlyLimit');
+  if (vilaMonthlyLimit) vilaMonthlyLimit.value = String(vila.monthlyCallLimit ?? 0);
+  const vilaCostPerCall = document.getElementById('vilaCostPerCall');
+  if (vilaCostPerCall) vilaCostPerCall.value = String(vila.estimatedCostPerCallUsd ?? 0);
   const igPub = s.instagramPublish || {};
   const igPubEnabled = document.getElementById('igPubEnabled');
   if (igPubEnabled) igPubEnabled.checked = igPub.enabled ?? true;
@@ -682,6 +1669,8 @@ async function loadSettings() {
   renderSettings(s);
   await loadUserbotChats();
   await loadWhatsAppGroups();
+  await hydrateAgentUiState();
+  restoreAgentUiState();
   renderTelegramToWhatsAppRoute();
   await loadConversionLogs();
   await loadMediaFailures();
@@ -874,7 +1863,7 @@ function renderMercadoLivrePending(items) {
   };
 
   if (!items || items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pendências.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pend�ncias.</td></tr>';
     if (count) count.textContent = '0 item(s)';
     return;
   }
@@ -908,7 +1897,7 @@ function renderMercadoLivrePending(items) {
         <td><small>${escapeHtml(item.reason || '-')}</small></td>
         <td>
           <div><small><strong>Original:</strong><br>${originalLinksHtml}</small></div>
-          <div style="margin-top:6px;"><small><strong>Convertido (prévia):</strong><br>${convertedLinksHtml}</small></div>
+          <div style="margin-top:6px;"><small><strong>Convertido (pr�via):</strong><br>${convertedLinksHtml}</small></div>
           ${originalImageHtml}
           ${status === 'pending' ? `<div style="margin-top:6px;">
             <small><strong>Link corrigido:</strong></small>
@@ -955,14 +1944,14 @@ async function loadMercadoLivrePending() {
 
 async function approveMercadoLivrePending(id) {
   if (currentRole !== 'admin') return;
-  const note = prompt('Observação de aprovação (opcional):', '') || '';
+  const note = prompt('Observa��o de aprova��o (opcional):', '') || '';
   const overrideUrl = (document.getElementById(`mlOverride_${id}`)?.value || '').trim();
   if (!overrideUrl) {
     alert('Informe o link corrigido antes de aprovar.');
     return;
   }
   if (!/^https?:\/\//i.test(overrideUrl)) {
-    alert('Link corrigido inválido. Use URL completa com http(s).');
+    alert('Link corrigido inv�lido. Use URL completa com http(s).');
     return;
   }
   const sendNow = confirm('Enviar o texto aprovado para o(s) destino(s) agora?');
@@ -978,17 +1967,17 @@ async function approveMercadoLivrePending(id) {
       }
     }
   } catch (e) {
-    alert(e?.data?.error || e?.message || 'Erro ao aprovar pendência.');
+    alert(e?.data?.error || e?.message || 'Erro ao aprovar pend�ncia.');
   }
 }
 async function rejectMercadoLivrePending(id) {
   if (currentRole !== 'admin') return;
-  const note = prompt('Motivo da rejeiÃ§Ã£o (opcional):', '') || '';
+  const note = prompt('Motivo da rejeição (opcional):', '') || '';
   try {
     await api(`/api/mercadolivre/pending/${id}/reject`, 'POST', { note });
     await loadMercadoLivrePending();
   } catch (e) {
-    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendÃªncia.');
+    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendência.');
   }
 }
 
@@ -1027,7 +2016,7 @@ async function saveSettings() {
     document.getElementById('saveStatus').textContent = result.errors.join(' | ');
     document.getElementById('saveStatus').className = 'status bad';
   } else {
-    document.getElementById('saveStatus').textContent = 'ConfiguraÃ§Ãµes salvas.';
+    document.getElementById('saveStatus').textContent = 'Configurações salvas.';
     document.getElementById('saveStatus').className = 'status ok';
   }
   await loadSettings();
@@ -1143,7 +2132,7 @@ async function saveInstagramSettings() {
   existing.instagramPosts.useImageDownload = document.getElementById('instaImageDownload')?.checked ?? false;
   existing.instagramPosts.variationsCount = parseInt(document.getElementById('instaVariations')?.value || '2', 10);
   existing.instagramPosts.promptPreset = document.getElementById('instaPromptPreset')?.value || 'premium';
-  existing.instagramPosts.aiProvider = document.getElementById('instaAiProvider')?.value || 'openai';
+  existing.instagramPosts.aiProvider = document.getElementById('instaAiProvider')?.value || 'nemotron';
   existing.instagramPosts.triggers = parseLines('instaTriggers');
   existing.instagramPosts.footerText = document.getElementById('instaFooter')?.value || '';
   existing.instagramPosts.promptTemplate = document.getElementById('instaPrompt')?.value || '';
@@ -1153,19 +2142,6 @@ async function saveInstagramSettings() {
     (document.getElementById('instaCaptionTemplate2')?.value || defaultCaptionTemplates[1]).trim(),
     (document.getElementById('instaCaptionTemplate3')?.value || defaultCaptionTemplates[2]).trim()
   ];
-
-  existing.openAI = existing.openAI || {};
-  existing.openAI.apiKey = document.getElementById('openaiApiKey')?.value || '';
-  existing.openAI.model = document.getElementById('openaiModel')?.value || 'gpt-4o-mini';
-  existing.openAI.temperature = parseFloat(document.getElementById('openaiTemp')?.value || '0.7');
-  existing.openAI.maxOutputTokens = parseInt(document.getElementById('openaiMaxTokens')?.value || '700', 10);
-
-  existing.gemini = existing.gemini || {};
-  const geminiKeys = collectGeminiApiKeysFromUi();
-  existing.gemini.apiKey = geminiKeys[0] || '';
-  existing.gemini.apiKeys = geminiKeys;
-  existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
-  existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -1177,6 +2153,142 @@ async function saveInstagramSettings() {
   } catch (e) {
     if (status) {
       status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function saveAiLabSettings() {
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('aiLabStatus');
+  if (status) {
+    status.textContent = 'Salvando...';
+    status.className = 'status warn';
+  }
+
+  try {
+    const existing = await api('/api/settings');
+    existing.openAI = existing.openAI || {};
+    existing.openAI.apiKey = document.getElementById('openaiApiKey')?.value || '';
+    existing.openAI.apiKeys = parseApiKeysTextarea('openaiApiKeys', existing.openAI.apiKey === '********' ? '********' : '');
+    existing.openAI.model = document.getElementById('openaiModel')?.value || 'gpt-4o-mini';
+    existing.openAI.temperature = parseFloat(document.getElementById('openaiTemp')?.value || '0.7');
+    existing.openAI.maxOutputTokens = parseInt(document.getElementById('openaiMaxTokens')?.value || '700', 10);
+
+    existing.gemini = existing.gemini || {};
+    const geminiKeys = collectGeminiApiKeysFromUi();
+    existing.gemini.apiKey = geminiKeys[0] || '';
+    existing.gemini.apiKeys = geminiKeys;
+    existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
+    existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
+
+    existing.deepSeek = existing.deepSeek || {};
+    existing.deepSeek.apiKey = document.getElementById('deepseekApiKey')?.value || '';
+    existing.deepSeek.apiKeys = parseApiKeysTextarea('deepseekApiKeys', existing.deepSeek.apiKey === '********' ? '********' : '');
+    existing.deepSeek.model = document.getElementById('deepseekModel')?.value || 'deepseek-chat';
+    existing.deepSeek.temperature = parseFloat(document.getElementById('deepseekTemp')?.value || '0.7');
+    existing.deepSeek.maxOutputTokens = parseInt(document.getElementById('deepseekMaxTokens')?.value || '1200', 10);
+
+    existing.nemotron = existing.nemotron || {};
+    existing.nemotron.apiKey = document.getElementById('nemotronApiKey')?.value || '';
+    existing.nemotron.apiKeys = parseApiKeysTextarea('nemotronApiKeys', existing.nemotron.apiKey === '********' ? '********' : '');
+    existing.nemotron.model = document.getElementById('nemotronModel')?.value || 'nvidia/nemotron-3-super-120b-a12b';
+    existing.nemotron.temperature = parseFloat(document.getElementById('nemotronTemp')?.value || '1');
+    existing.nemotron.topP = parseFloat(document.getElementById('nemotronTopP')?.value || '0.95');
+    existing.nemotron.maxOutputTokens = parseInt(document.getElementById('nemotronMaxTokens')?.value || '4096', 10);
+    existing.nemotron.reasoningBudget = parseInt(document.getElementById('nemotronReasoningBudget')?.value || '4096', 10);
+    existing.nemotron.enableThinking = document.getElementById('nemotronEnableThinking')?.checked ?? true;
+    existing.nemotron.monthlyCallLimit = parseInt(document.getElementById('nemotronMonthlyLimit')?.value || '0', 10);
+    existing.nemotron.estimatedCostPerCallUsd = parseFloat(document.getElementById('nemotronCostPerCall')?.value || '0');
+    existing.qwen = existing.qwen || {};
+    existing.qwen.apiKey = document.getElementById('qwenApiKey')?.value || '';
+    existing.qwen.apiKeys = parseApiKeysTextarea('qwenApiKeys', existing.qwen.apiKey === '********' ? '********' : '');
+    existing.qwen.model = document.getElementById('qwenModel')?.value || 'qwen3.5-plus';
+    existing.qwen.visionModel = document.getElementById('qwenVisionModel')?.value || 'qwen3-vl-plus';
+    existing.qwen.temperature = parseFloat(document.getElementById('qwenTemp')?.value || '0.7');
+    existing.qwen.maxOutputTokens = parseInt(document.getElementById('qwenMaxTokens')?.value || '4096', 10);
+    existing.qwen.baseUrl = document.getElementById('qwenBaseUrl')?.value || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+    existing.qwen.enableThinking = document.getElementById('qwenEnableThinking')?.checked ?? true;
+    existing.qwen.monthlyCallLimit = parseInt(document.getElementById('qwenMonthlyLimit')?.value || '0', 10);
+    existing.qwen.estimatedCostPerCallUsd = parseFloat(document.getElementById('qwenCostPerCall')?.value || '0');
+    existing.vilaNvidia = existing.vilaNvidia || {};
+    existing.vilaNvidia.apiKey = document.getElementById('vilaApiKey')?.value || '';
+    existing.vilaNvidia.apiKeys = parseApiKeysTextarea('vilaApiKeys', existing.vilaNvidia.apiKey === '********' ? '********' : '');
+    existing.vilaNvidia.model = document.getElementById('vilaModel')?.value || 'nvidia/vila';
+    existing.vilaNvidia.temperature = parseFloat(document.getElementById('vilaTemp')?.value || '0.2');
+    existing.vilaNvidia.topP = parseFloat(document.getElementById('vilaTopP')?.value || '0.7');
+    existing.vilaNvidia.maxOutputTokens = parseInt(document.getElementById('vilaMaxTokens')?.value || '4096', 10);
+    existing.vilaNvidia.baseUrl = document.getElementById('vilaBaseUrl')?.value || 'https://integrate.api.nvidia.com/v1';
+    existing.vilaNvidia.enableThinking = document.getElementById('vilaEnableThinking')?.checked ?? true;
+    existing.vilaNvidia.monthlyCallLimit = parseInt(document.getElementById('vilaMonthlyLimit')?.value || '0', 10);
+    existing.vilaNvidia.estimatedCostPerCallUsd = parseFloat(document.getElementById('vilaCostPerCall')?.value || '0');
+
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'IA Lab salvo.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function runAiLabCompare() {
+  const status = document.getElementById('aiLabStatus');
+  const results = document.getElementById('aiLabResults');
+  const providers = [
+    document.getElementById('aiLabProviderOpenAi')?.checked ? 'openai' : null,
+    document.getElementById('aiLabProviderGemini')?.checked ? 'gemini' : null,
+    document.getElementById('aiLabProviderDeepSeek')?.checked ? 'deepseek' : null,
+    document.getElementById('aiLabProviderNemotron')?.checked ? 'nemotron' : null,
+    document.getElementById('aiLabProviderQwen')?.checked ? 'qwen' : null,
+    document.getElementById('aiLabProviderVila')?.checked ? 'vila' : null
+  ].filter(Boolean);
+
+  if (providers.length === 0) {
+    if (status) {
+      status.textContent = 'Selecione ao menos uma IA.';
+      status.className = 'status bad';
+    }
+    return;
+  }
+
+  if (results) results.innerHTML = '<div class="muted">Comparando IAs...</div>';
+  if (status) {
+    status.textContent = 'Executando comparacao...';
+    status.className = 'status warn';
+  }
+
+  try {
+    const data = await api('/api/ai-lab/compare', 'POST', {
+      input: document.getElementById('aiLabInput')?.value || '',
+      context: document.getElementById('aiLabContext')?.value || '',
+      mode: document.getElementById('aiLabMode')?.value || 'raw',
+      providers
+    });
+
+    if (results) {
+      results.innerHTML = (data.results || []).map(item => `
+        <section class="card">
+          <h3>${escapeHtml(String(item.provider || '').toUpperCase())}</h3>
+          <div class="muted">Modo: ${escapeHtml(String(item.mode || 'raw'))} | Latencia: ${escapeHtml(String(item.durationMs || 0))} ms</div>
+          <pre style="white-space:pre-wrap; word-break:break-word; margin-top:12px;">${escapeHtml(item.text || 'Sem resposta.')}</pre>
+        </section>
+      `).join('');
+    }
+
+    if (status) {
+      status.textContent = 'Comparacao concluida.';
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (results) results.innerHTML = '';
+    if (status) {
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao comparar'}`;
       status.className = 'status bad';
     }
   }
@@ -1791,10 +2903,10 @@ async function connectTelegram() {
     const r = await api('/api/integrations/telegram/connect', 'POST', { botToken: botToken || null });
     const message = r.success
       ? `Conectado (${r.username || 'ok'})`
-      : `Erro: ${r.message || 'Falha na conexÃ£o'}`;
+      : `Erro: ${r.message || 'Falha na conexão'}`;
     lockTelegramStatus(message, r.success ? 'ok' : 'bad');
   } catch (e) {
-    const message = `Erro: ${e.data?.error || e.message || 'Falha na requisiÃ§Ã£o'}`;
+    const message = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
     lockTelegramStatus(message, 'bad');
   }
   await loadSettings();
@@ -1835,14 +2947,14 @@ async function connectWhatsApp() {
       document.getElementById('whatsappStatus').textContent = 'QR gerado. Aguardando leitura...';
       document.getElementById('whatsappStatus').className = 'status warn';
     } else if (r.success) {
-      document.getElementById('whatsappStatus').textContent = r.message || 'InstÃ¢ncia jÃ¡ conectada.';
+      document.getElementById('whatsappStatus').textContent = r.message || 'Instância já conectada.';
       document.getElementById('whatsappStatus').className = 'status ok';
     } else {
       document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao gerar QR'}`;
       document.getElementById('whatsappStatus').className = 'status bad';
     }
   } catch (e) {
-    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisiÃ§Ã£o'}`;
+    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
     document.getElementById('whatsappStatus').className = 'status bad';
   }
   setButtonBusy('btnWhatsAppConnect', false);
@@ -1862,17 +2974,17 @@ async function createWhatsAppInstance() {
       document.getElementById('qrImage').src = r.qrCode;
       document.getElementById('qrImage').classList.remove('hidden');
       document.getElementById('qrHint').classList.remove('hidden');
-      document.getElementById('whatsappStatus').textContent = r.message || 'InstÃ¢ncia criada. QR gerado.';
+      document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada. QR gerado.';
       document.getElementById('whatsappStatus').className = 'status warn';
     } else if (r.success) {
-      document.getElementById('whatsappStatus').textContent = r.message || 'InstÃ¢ncia criada com sucesso.';
+      document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada com sucesso.';
       document.getElementById('whatsappStatus').className = 'status ok';
     } else {
-      document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao criar instÃ¢ncia'}`;
+      document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao criar instância'}`;
       document.getElementById('whatsappStatus').className = 'status bad';
     }
   } catch (e) {
-    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisiÃ§Ã£o'}`;
+    document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
     document.getElementById('whatsappStatus').className = 'status bad';
   }
 }
@@ -1887,7 +2999,7 @@ async function applyUserbotAuth() {
   const statusEl = document.getElementById('userbotAuthStatus');
   if (currentRole !== 'admin') {
     if (statusEl) {
-      statusEl.textContent = 'PermissÃ£o insuficiente para atualizar credenciais.';
+      statusEl.textContent = 'Permissão insuficiente para atualizar credenciais.';
       statusEl.className = 'status bad';
     }
     return;
@@ -1907,7 +3019,7 @@ async function applyUserbotAuth() {
 
   if (!payload.phoneNumber && !payload.verificationCode && !payload.password && !payload.forceReconnect) {
     if (statusEl) {
-      statusEl.textContent = 'Informe ao menos um campo ou marque reconexÃ£o.';
+      statusEl.textContent = 'Informe ao menos um campo ou marque reconexão.';
       statusEl.className = 'status bad';
     }
     return;
@@ -1946,10 +3058,10 @@ function renderUserbotChats(payload, settings) {
   const chips = document.getElementById('userbotSelectedChips');
   if (!payload || !payload.chats) {
     container.textContent = 'Nenhum grupo carregado.';
-    status.textContent = 'Userbot indisponÃ­vel';
+    status.textContent = 'Userbot indisponível';
     status.className = 'status bad';
-    setChipStatus('chipUserbot', 'Telegram Userbot: IndisponÃ­vel', 'bad');
-    setHealthBadge('healthUserbot', 'Userbot IndisponÃ­vel', 'bad');
+    setChipStatus('chipUserbot', 'Telegram Userbot: Indisponível', 'bad');
+    setHealthBadge('healthUserbot', 'Userbot Indisponível', 'bad');
     return;
   }
 
@@ -2036,7 +3148,7 @@ async function saveUserbotSelection() {
   if (currentRole !== 'admin') {
     const el = document.getElementById('userbotSaveStatus');
     if (el) {
-      el.textContent = 'PermissÃ£o insuficiente para salvar.';
+      el.textContent = 'Permissão insuficiente para salvar.';
       el.className = 'status bad';
     }
     return;
@@ -2044,7 +3156,7 @@ async function saveUserbotSelection() {
 
   const el = document.getElementById('userbotSaveStatus');
   if (el) {
-    el.textContent = 'Salvando seleÃ§Ã£o...';
+    el.textContent = 'Salvando seleção...';
     el.className = 'status warn';
   }
 
@@ -2062,7 +3174,7 @@ async function saveUserbotSelection() {
   try {
     await api('/api/settings', 'PUT', existing);
     if (el) {
-      el.textContent = 'SeleÃ§Ã£o salva.';
+      el.textContent = 'Seleção salva.';
       el.className = 'status ok';
     }
   } catch (e) {
@@ -2851,7 +3963,7 @@ function getMediaStatusForLog(log) {
 function formatMediaBadge(media) {
   if (!media) return '<span class="badge muted">-</span>';
   if (media.reason === 'media_disabled_text_only') return '<span class="badge warn">Desativado</span>';
-  if (media.reason === 'media_missing_text_only') return '<span class="badge warn">Sem mÃ­dia</span>';
+  if (media.reason === 'media_missing_text_only') return '<span class="badge warn">Sem mídia</span>';
   return media.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">Falha</span>';
 }
 
@@ -2959,8 +4071,8 @@ async function loadConversionLogs() {
     const alert = document.getElementById('logAlert');
     if (invalid.length > 0 || corrected.length > 0) {
       const parts = [];
-      if (invalid.length > 0) parts.push(`AtenÃ§Ã£o: ${invalid.length} link(s) invÃ¡lido(s) sem afiliado.`);
-      if (corrected.length > 0) parts.push(`CorreÃ§Ãµes aplicadas: ${corrected.length}.`);
+      if (invalid.length > 0) parts.push(`Atenção: ${invalid.length} link(s) inválido(s) sem afiliado.`);
+      if (corrected.length > 0) parts.push(`Correções aplicadas: ${corrected.length}.`);
       alert.textContent = parts.join(' ');
       alert.classList.remove('hidden');
     } else {
@@ -3000,7 +4112,7 @@ async function loadMediaFailures() {
         alert.classList.add('hidden');
       } else {
         const latest = items[0];
-        alert.textContent = `Log de mÃ­dia: ${items.length}. Ãšltima: ${new Date(latest.timestamp).toLocaleString()} (${latest.destinationChatRef || '-'})`;
+        alert.textContent = `Log de mídia: ${items.length}. Última: ${new Date(latest.timestamp).toLocaleString()} (${latest.destinationChatRef || '-'})`;
         alert.classList.remove('hidden');
       }
     }
@@ -3082,61 +4194,109 @@ async function clearMediaFailures() {
 
 async function loadAnalyticsSummary() {
   const container = document.getElementById('analyticsSummaryCards');
-  const recentBody = document.getElementById('analyticsRecentBody');
-  const src = document.getElementById('analyticsSources');
-  const cmp = document.getElementById('analyticsCampaigns');
+  const hours = document.getElementById('analyticsHours')?.value || '24';
 
   if (container) container.innerHTML = '<div class="muted">Carregando...</div>';
   
   try {
-    const data = await api('/api/analytics/summary');
+    const data = await api(`/api/analytics/summary?hours=${encodeURIComponent(hours)}`);
     renderAnalyticsSummary(data);
   } catch (e) {
     if (container) container.innerHTML = `<div class="bad">Erro ao carregar analytics: ${e.message || 'Erro deconhecido'}</div>`;
   }
 }
 
+function showAnalyticsSubtab(name) {
+  ['overview', 'behavior', 'recent'].forEach(tabName => {
+    document.getElementById(`analyticsSubtab-${tabName}`)?.classList.toggle('hidden', tabName !== name);
+    document.getElementById(`analyticsTab-${tabName}`)?.classList.toggle('active', tabName === name);
+  });
+}
+
 function renderAnalyticsSummary(data) {
   const container = document.getElementById('analyticsSummaryCards');
+  const identity = document.getElementById('analyticsIdentityCards');
   const recentBody = document.getElementById('analyticsRecentBody');
   const src = document.getElementById('analyticsSources');
   const cmp = document.getElementById('analyticsCampaigns');
+  const evt = document.getElementById('analyticsEventTypes');
+  const pages = document.getElementById('analyticsPageTypes');
+  const devices = document.getElementById('analyticsDevices');
+  const browsers = document.getElementById('analyticsBrowsers');
+  const hours = document.getElementById('analyticsHours')?.value || '24';
+  const hoursLabel = Number.parseInt(hours, 10) >= 24 && Number.parseInt(hours, 10) % 24 === 0
+    ? `${Number.parseInt(hours, 10) / 24} dia(s)`
+    : `${hours}h`;
+
+  const categorized = Array.isArray(data.categorized)
+    ? data.categorized.reduce((acc, item) => {
+        const key = item?.category || item?.Category || 'default';
+        acc[key] = item?.total || item?.Total || 0;
+        return acc;
+      }, {})
+    : (data.categorized || {});
 
   const categories = [
-    { key: 'bio', label: 'Bio Hub', icon: '🔗' },
-    { key: 'catalog', label: 'Catálogo', icon: '📁' },
-    { key: 'converter', label: 'Conversor', icon: '⚡' },
-    { key: 'total', label: 'Total Geral', icon: '📈' }
+    { key: 'bio', label: 'Bio Hub', iconHtml: '&#128279;' },
+    { key: 'catalog', label: 'Catalogo', iconHtml: '&#128717;&#65039;' },
+    { key: 'converter', label: 'Conversor', iconHtml: '&#128260;' },
+    { key: 'total', label: 'Total Geral', iconHtml: '&#128202;' }
   ];
+
+  const identityCards = [
+    { label: 'Visitantes Unicos', value: data.uniqueVisitors || 0, hint: `IDs anonimos em ${hoursLabel}` },
+    { label: 'Sessoes Unicas', value: data.uniqueSessions || 0, hint: `visitas separadas por sessao em ${hoursLabel}` }
+  ];
+
+  const formatBreakdown = (items) => {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return 'Sem dados.';
+    return list.map(x => `${x.key}: ${x.count}`).join('\n');
+  };
 
   if (container) {
     container.innerHTML = categories.map(cat => {
-      const val = (cat.key === 'total') ? data.totalClicks : (data.categorized[cat.key] || 0);
+      const val = (cat.key === 'total') ? data.totalClicks : (categorized[cat.key] || 0);
       return `
-        <div class="card" style="padding:16px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
-          <div style="font-size: 24px; margin-bottom: 8px;">${cat.icon}</div>
-          <div class="muted" style="font-size: 12px; font-weight: 600; text-transform: uppercase;">${cat.label}</div>
-          <div style="font-size: 28px; font-weight: 800; color: var(--accent); margin-top: 4px;">${val}</div>
-          <div class="muted" style="font-size: 11px; margin-top: 4px;">cliques nas últimas 24h</div>
+        <div class="card" style="padding:16px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+          <div style="font-size:24px; margin-bottom:8px;">${cat.iconHtml}</div>
+          <div class="muted" style="font-size:12px; font-weight:600; text-transform:uppercase;">${cat.label}</div>
+          <div style="font-size:28px; font-weight:800; color:var(--accent); margin-top:4px;">${val}</div>
+          <div class="muted" style="font-size:11px; margin-top:4px;">eventos em ${hoursLabel}</div>
         </div>
       `;
     }).join('');
   }
 
-  if (src) src.textContent = JSON.stringify(data.topSources || {}, null, 2);
-  if (cmp) cmp.textContent = JSON.stringify(data.topCampaigns || {}, null, 2);
+  if (identity) {
+    identity.innerHTML = identityCards.map(card => `
+      <div class="card" style="padding:16px; text-align:center;">
+        <div class="muted" style="font-size:12px; font-weight:600; text-transform:uppercase;">${card.label}</div>
+        <div style="font-size:26px; font-weight:800; color:var(--accent); margin-top:6px;">${card.value}</div>
+        <div class="muted" style="font-size:11px; margin-top:4px;">${card.hint}</div>
+      </div>
+    `).join('');
+  }
+
+  if (src) src.textContent = formatBreakdown(data.topSources);
+  if (cmp) cmp.textContent = formatBreakdown(data.topCampaigns);
+  if (evt) evt.textContent = formatBreakdown(data.topEventTypes);
+  if (pages) pages.textContent = formatBreakdown(data.topPageTypes);
+  if (devices) devices.textContent = formatBreakdown(data.topDevices);
+  if (browsers) browsers.textContent = formatBreakdown(data.topBrowsers);
 
   if (recentBody) {
     const items = data.recentItems || [];
     if (items.length === 0) {
-      recentBody.innerHTML = '<tr><td colspan="4" class="muted">Nenhum clique recente.</td></tr>';
+      recentBody.innerHTML = '<tr><td colspan="5" class="muted">Nenhum clique recente.</td></tr>';
     } else {
       recentBody.innerHTML = items.map(i => `
         <tr>
           <td>${formatTs(i.timestamp)}</td>
           <td><span class="badge muted">${escapeHtml(i.category || 'default')}</span></td>
+          <td>${escapeHtml(i.eventType || '-')}</td>
           <td>${escapeHtml(i.source || '-')}</td>
-          <td title="${escapeHtml(i.targetUrl)}">${escapeHtml(i.targetUrl.substring(0, 60))}${i.targetUrl.length > 60 ? '...' : ''}</td>
+          <td title="${escapeHtml(i.targetUrl)}">${escapeHtml((i.targetUrl || '').substring(0, 60))}${(i.targetUrl || '').length > 60 ? '...' : ''}</td>
         </tr>
       `).join('');
     }
@@ -3146,17 +4306,42 @@ function renderAnalyticsSummary(data) {
 loadTheme();
 setEnvironmentBadge(null);
 checkSession();
+
+function bindLoginShortcuts() {
+  const username = document.getElementById('username');
+  const password = document.getElementById('password');
+  if (username && !username.dataset.loginBound) {
+    username.dataset.loginBound = '1';
+    username.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        login();
+      }
+    });
+  }
+  if (password && !password.dataset.loginBound) {
+    password.dataset.loginBound = '1';
+    password.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        login();
+      }
+    });
+  }
+}
+
+bindLoginShortcuts();
 // --- Contextual Help & Toasts (Fase 2) ---
 const sectionGuides = {
   'connections': `
-    <h3>ConexÃµes e IntegraÃ§Ãµes</h3>
+    <h3>Conexões e Integrações</h3>
     <ul>
-      <li><strong>Telegram:</strong> Insira o Token do Bot API para envio de imagens. O Userbot Ã© usado para "ouvir" grupos usando seu prÃ³prio nÃºmero.</li>
-      <li><strong>WhatsApp:</strong> Usamos a Evolution API. Defina um nome de instÃ¢ncia e escaneie o QRCode gerado na tela.</li>
-      <li><strong>Mercado Livre:</strong> A autenticaÃ§Ã£o Ã© feita via backend. Teste a conexÃ£o para garantir que os links estÃ£o sendo encurtados com seu afiliado.</li>
+      <li><strong>Telegram:</strong> Insira o Token do Bot API para envio de imagens. O Userbot é usado para "ouvir" grupos usando seu próprio número.</li>
+      <li><strong>WhatsApp:</strong> Usamos a Evolution API. Defina um nome de instância e escaneie o QRCode gerado na tela.</li>
+      <li><strong>Mercado Livre:</strong> A autenticação é feita via backend. Teste a conexão para garantir que os links estão sendo encurtados com seu afiliado.</li>
     </ul>`,
   'ops': `
-    <h3>OperaÃ§Ãµes e SaÃºde</h3>
+    <h3>Operações e Saúde</h3>
     <ul>
       <li><strong>Telegram Userbot:</strong> Repassa ofertas de canais originais do Telegram para os seus canais do Telegram.</li>
       <li><strong>WhatsApp Origem/Destino:</strong> Defina quais grupos do WhatsApp o bot deve observar (escutar), e para onde deve copiar (rotear).</li>
@@ -3164,66 +4349,72 @@ const sectionGuides = {
   'route': `
     <h3>Rota Telegram -> WhatsApp</h3>
     <ul>
-      <li><strong>PropÃ³sito:</strong> Capture ofertas silenciosamente em canais VIP do Telegram, e repasse-as automaticamente convertidas para seus Grupos de Oferta do WhatsApp.</li>
+      <li><strong>Propósito:</strong> Capture ofertas silenciosamente em canais VIP do Telegram, e repasse-as automaticamente convertidas para seus Grupos de Oferta do WhatsApp.</li>
     </ul>`,
   'linkresponder': `
     <h3>Resposta de Links (Auto-Responder)</h3>
     <ul>
-      <li>Quando alguÃ©m te manda uma DM com um link da Amazon, Shopee, ou Mercado Livre, o bot responde automaticamente com seu link de afiliado por cima!</li>
+      <li>Quando alguém te manda uma DM com um link da Amazon, Shopee, ou Mercado Livre, o bot responde automaticamente com seu link de afiliado por cima!</li>
     </ul>`,
   'mercadolivre': `
     <h3>Compliance Mercado Livre</h3>
     <ul>
-      <li>Bloqueia links indesejados e previne que o algoritmo do ML suspenda sua conta de afiliado exigindo aprovaÃ§Ãµes manuais ou baseadas em Whitelist.</li>
+      <li>Bloqueia links indesejados e previne que o algoritmo do ML suspenda sua conta de afiliado exigindo aprovações manuais ou baseadas em Whitelist.</li>
     </ul>`,
   'instagram': `
     <h3>Instagram Prompts e IA</h3>
     <ul>
-      <li>Defina como o conteÃºdo do post serÃ¡ montado pelo ChatGPT ou Gemini.</li>
-      <li>Templates prontos podem ser escolhidos na caixa de seleÃ§Ã£o. Lembre-se de definir a chave (sk-...) da API.</li>
+      <li>Defina como o conteúdo do post será montado pelo ChatGPT ou Gemini.</li>
+      <li>Templates prontos podem ser escolhidos na caixa de seleção. Lembre-se de definir a chave (sk-...) da API.</li>
+    </ul>`,
+  'agents': `
+    <h3>Agentes de IA</h3>
+    <ul>
+      <li><strong>Curador de ofertas:</strong> avalia drafts, catalogo e cliques para sugerir as proximas acoes.</li>
+      <li><strong>Modo seguro:</strong> nesta fase o agente so recomenda. A aplicacao das acoes continua manual e auditada.</li>
     </ul>`,
   'instagram-publish': `
-    <h3>PublicaÃ§Ã£o Instagram (Meta Graph)</h3>
+    <h3>Publicação Instagram (Meta Graph)</h3>
     <ul>
-      <li>O robÃ´ pode postar carrossÃ©is automaticamente no Feed da conta comercial.</li>
-      <li>Configure respostas automÃ¡ticas de comentÃ¡rios avisando que o link foi enviado no Direct!</li>
+      <li>O robô pode postar carrosséis automaticamente no Feed da conta comercial.</li>
+      <li>Configure respostas automáticas de comentários avisando que o link foi enviado no Direct!</li>
     </ul>`,
   'instagram-story': `
-    <h3>Story AutomÃ¡tico</h3>
+    <h3>Story Automático</h3>
     <ul>
-      <li><strong>AutoPilot:</strong> Pega os produtos mais clicados e posta periodicamente nos stories. Ã‰ a mÃ¡quina de fazer dinheiro no automÃ¡tico.</li>
+      <li><strong>AutoPilot:</strong> Pega os produtos mais clicados e posta periodicamente nos stories. É a máquina de fazer dinheiro no automático.</li>
     </ul>`,
   'bio-growth': `
     <h3>Hub de Bio (Links)</h3>
     <ul>
-      <li>Uma central Ãºnica de agrupamento de links. Todos os botÃµes postados no Insta apontarÃ£o pra cÃ¡.</li>
+      <li>Uma central única de agrupamento de links. Todos os botões postados no Insta apontarão pra cá.</li>
     </ul>`,
   'autoreplies': `
-    <h3>Respostas AutomÃ¡ticas ClÃ¡ssicas</h3>
+    <h3>Respostas Automáticas Clássicas</h3>
     <ul>
-      <li>Regras simples padrÃ£o chave => valor.</li>
+      <li>Regras simples padrão chave => valor.</li>
     </ul>`,
   'logs': `
     <h3>Logs e Monitoramento</h3>
     <ul>
-      <li>Acompanhe em tempo real quem clicou no quÃª, onde o bot falhou em ler mÃ­dia ou se a API caiu.</li>
+      <li>Acompanhe em tempo real quem clicou no quê, onde o bot falhou em ler mídia ou se a API caiu.</li>
     </ul>`,
   'playground': `
     <h3>Playground</h3>
     <ul>
-      <li>Cole um texto cru e teste se o regex de encurtamento do backend estÃ¡ detectando o link afiliado.</li>
+      <li>Cole um texto cru e teste se o regex de encurtamento do backend está detectando o link afiliado.</li>
     </ul>`,
   'debug': `
     <h3>Debug JSON</h3>
     <ul>
-      <li>A visÃ£o raio-X de todas as variÃ¡veis ativas no sistema neste exato milissegundo.</li>
+      <li>A visão raio-X de todas as variáveis ativas no sistema neste exato milissegundo.</li>
     </ul>`,
   'analytics': `
     <h3>Analytics Dashboard</h3>
     <ul>
-      <li><strong>Visão Geral:</strong> Veja o total de cliques capturados nas últimas 24h em cada parte do sistema (Bio, Catálogo, Conversor).</li>
+      <li><strong>Vis�o Geral:</strong> Veja o total de cliques capturados nas �ltimas 24h em cada parte do sistema (Bio, Cat�logo, Conversor).</li>
       <li><strong>Origens e Campanhas:</strong> Identifique de onde vem seus cliques mais quentes para otimizar suas ofertas.</li>
-      <li><strong>Logs em Tempo Real:</strong> Monitore cada clique individualmente para garantir que o rastreamento está funcionando perfeitamente.</li>
+      <li><strong>Logs em Tempo Real:</strong> Monitore cada clique individualmente para garantir que o rastreamento est� funcionando perfeitamente.</li>
     </ul>`
 };
 
@@ -3238,7 +4429,7 @@ function openDoc(tab) {
   if (btn) name = btn.textContent.replace('0', '').trim();
 
   title.innerHTML = 'Guia: ' + name;
-  body.innerHTML = sectionGuides[tab] || '<p>Guia em construÃ§Ã£o para esta aba.</p>';
+  body.innerHTML = sectionGuides[tab] || '<p>Guia em construção para esta aba.</p>';
   modal.classList.add('show');
 }
 
@@ -3277,13 +4468,14 @@ Object.defineProperty(Node.prototype, 'textContent', {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
+  hydrateAgentUiState().then(() => restoreAgentUiState());
   document.querySelectorAll('section[id^="section-"]').forEach(section => {
     const firstH2 = section.querySelector('.card:first-child h2:first-of-type, div:first-child > .card:first-child h2:first-of-type');
     if (firstH2 && !firstH2.querySelector('.icon-btn')) {
       const tabId = section.id.replace('section-', '');
       const btn = document.createElement('button');
       btn.className = 'icon-btn';
-      btn.innerHTML = 'â” Ajuda';
+      btn.innerHTML = '❔ Ajuda';
       btn.onclick = (e) => { e.preventDefault(); openDoc(tabId); };
 
       if (firstH2.style.display !== 'flex') {
@@ -3304,4 +4496,7 @@ document.addEventListener('DOMContentLoaded', () => {
 setTimeout(() => {
   document.dispatchEvent(new Event('DOMContentLoaded'));
 }, 500);
+
+
+
 

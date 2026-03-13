@@ -290,6 +290,27 @@ button.danger {
   flex: 1 1 auto;
 }
 
+.subtabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.subtabs button {
+  margin-top: 0;
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: none;
+  border: 1px solid var(--border);
+}
+
+.subtabs button.active {
+  background: var(--accent-grad);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 4px 12px var(--accent-shadow);
+}
+
 .status {
   font-size: 14px;
   font-weight: 500;

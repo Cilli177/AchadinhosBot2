@@ -54,8 +54,17 @@ public sealed class BotConversorWebhookConsumer : IConsumer<ProcessBotConversorW
                     continue;
                 }
 
-                request.Headers.Remove(header.Key);
-                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase))
+                {
+                    // StringContent already defines the content type for this internal relay.
+                    continue;
+                }
+
+                if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value))
+                {
+                    request.Content?.Headers.Remove(header.Key);
+                    request.Content?.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(_webhookOptions.ApiKey))

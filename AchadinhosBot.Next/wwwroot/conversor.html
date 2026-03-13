@@ -429,13 +429,14 @@
 
             // Add telemetry to history links
             grid.querySelectorAll('a').forEach(a => {
-                a.onclick = () => trackClick(a.href, 'Converter_History_Click');
+                a.onclick = () => trackClick(a.href, 'Converter_History_Click', null, 'history_click');
             });
 
             document.querySelectorAll('#historyGrid .tilt-card').forEach(applyTilt);
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            trackPageView();
             renderHistory();
             updateCounter();
             const card = document.getElementById('vipResultCard');
@@ -443,18 +444,106 @@
         });
 
         // --- Telemetry ---
-        async function trackClick(targetUrl, source = 'Converter', campaign = null) {
+        function getAnalyticsId(key, prefix) {
+            try {
+                const existing = localStorage.getItem(key);
+                if (existing) return existing;
+                const created = `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+                localStorage.setItem(key, created);
+                return created;
+            } catch {
+                return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+            }
+        }
+
+        function getSessionId() {
+            try {
+                const existing = sessionStorage.getItem('ard_session_id');
+                if (existing) return existing;
+                const created = `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+                sessionStorage.setItem('ard_session_id', created);
+                return created;
+            } catch {
+                return `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+            }
+        }
+
+        function getScrollDepth() {
+            const doc = document.documentElement;
+            const scrollTop = window.scrollY || doc.scrollTop || 0;
+            const height = Math.max((doc.scrollHeight || 0) - window.innerHeight, 1);
+            return Math.max(0, Math.min(100, Math.round((scrollTop / height) * 100)));
+        }
+
+        function getDeviceType() {
+            const ua = navigator.userAgent.toLowerCase();
+            if (ua.includes('ipad') || ua.includes('tablet')) return 'tablet';
+            if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) return 'mobile';
+            return 'desktop';
+        }
+
+        function getUtmContext() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                utmSource: params.get('utm_source'),
+                utmMedium: params.get('utm_medium'),
+                utmCampaign: params.get('utm_campaign'),
+                utmContent: params.get('utm_content'),
+                utmTerm: params.get('utm_term')
+            };
+        }
+
+        function buildTelemetryPayload(targetUrl, source, campaign = null, eventType = null) {
+            const utm = getUtmContext();
+            return {
+                targetUrl,
+                source,
+                campaign: campaign || utm.utmCampaign,
+                category: 'converter',
+                trackingId: 'conv_' + Math.random().toString(36).substring(2, 9),
+                visitorId: getAnalyticsId('ard_visitor_id', 'visitor'),
+                sessionId: getSessionId(),
+                eventType,
+                pageType: 'converter',
+                pageUrl: window.location.href,
+                sourceComponent: source,
+                language: navigator.language || null,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+                screenWidth: window.screen?.width || null,
+                screenHeight: window.screen?.height || null,
+                viewportWidth: window.innerWidth || null,
+                viewportHeight: window.innerHeight || null,
+                scrollDepth: getScrollDepth(),
+                timeOnPageMs: Math.max(0, Math.round(performance.now())),
+                utmSource: utm.utmSource,
+                utmMedium: utm.utmMedium,
+                utmCampaign: utm.utmCampaign,
+                utmContent: utm.utmContent,
+                utmTerm: utm.utmTerm,
+                deviceType: getDeviceType()
+            };
+        }
+
+        async function trackPageView() {
             try {
                 await fetch('/api/analytics/click', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        targetUrl,
-                        source,
-                        campaign,
-                        category: 'converter',
-                        trackingId: 'conv_' + Math.random().toString(36).substring(2, 9)
-                    })
+                    body: JSON.stringify(buildTelemetryPayload(window.location.href, 'Converter_View', null, 'page_view')),
+                    keepalive: true
+                });
+            } catch (e) {
+                console.error('Telemetry failed', e);
+            }
+        }
+
+        async function trackClick(targetUrl, source = 'Converter', campaign = null, eventType = null) {
+            try {
+                await fetch('/api/analytics/click', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(buildTelemetryPayload(targetUrl, source, campaign, eventType)),
+                    keepalive: true
                 });
             } catch (e) {
                 console.error('Telemetry failed', e);
@@ -466,7 +555,7 @@
             const urlInput = document.getElementById('urlInput').value.trim();
             if (!urlInput) { showError('Cole um link para converter.'); return; }
 
-            trackClick(urlInput, 'Converter_Request');
+            trackClick(urlInput, 'Converter_Request', null, 'convert_request');
 
             const btn = document.getElementById('submitBtn');
             const btnText = btn.querySelector('.btn-text');
@@ -558,7 +647,7 @@
 
         function copyResult() {
             if (!currentConvertedUrl) return;
-            trackClick(currentConvertedUrl, 'Converter_Copy_Link');
+            trackClick(currentConvertedUrl, 'Converter_Copy_Link', null, 'copy_action');
             navigator.clipboard.writeText(currentConvertedUrl)
                 .then(() => showToast('🔗 Link copiado!'))
                 .catch(() => showToast('Erro ao copiar.'));
@@ -566,7 +655,7 @@
 
         function copyFormattedOffer() {
             if (!currentShareText) return;
-            trackClick(currentConvertedUrl, 'Converter_Copy_Offer');
+            trackClick(currentConvertedUrl, 'Converter_Copy_Offer', null, 'copy_action');
             navigator.clipboard.writeText(currentShareText)
                 .then(() => showToast('📋 Oferta copiada com formatação!'))
                 .catch(() => showToast('Erro ao copiar.'));
@@ -574,14 +663,14 @@
 
         function openLink() {
             if (currentConvertedUrl) {
-                trackClick(currentConvertedUrl, 'Converter_Open_Link');
+                trackClick(currentConvertedUrl, 'Converter_Open_Link', null, 'checkout_intent');
                 window.open(currentConvertedUrl, '_blank', 'noopener,noreferrer');
             }
         }
 
         function shareWhatsApp() {
             if (!currentShareText) return;
-            trackClick(currentConvertedUrl, 'Converter_WhatsApp_Share');
+            trackClick(currentConvertedUrl, 'Converter_WhatsApp_Share', null, 'share_action');
             window.open(`https://wa.me/?text=${encodeURIComponent(currentShareText)}`, '_blank');
         }
 

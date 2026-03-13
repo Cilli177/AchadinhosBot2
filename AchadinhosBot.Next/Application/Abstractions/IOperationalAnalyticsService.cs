@@ -46,10 +46,17 @@ public sealed class ConversionAnalyticsSummary
 
 public sealed class ClickAnalyticsSummary
 {
+    public string? Category { get; set; }
     public int Total { get; set; }
     public int UniqueTrackingIds { get; set; }
+    public int UniqueVisitors { get; set; }
+    public int UniqueSessions { get; set; }
     public List<OperationalBreakdownItem> TopSources { get; set; } = new();
     public List<OperationalBreakdownItem> TopCampaigns { get; set; } = new();
+    public List<OperationalBreakdownItem> TopEventTypes { get; set; } = new();
+    public List<OperationalBreakdownItem> TopPageTypes { get; set; } = new();
+    public List<OperationalBreakdownItem> TopDevices { get; set; } = new();
+    public List<OperationalBreakdownItem> TopBrowsers { get; set; } = new();
 }
 
 public sealed class InstagramPublishAnalyticsSummary

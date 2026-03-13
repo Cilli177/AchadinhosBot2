@@ -146,6 +146,71 @@ public sealed class GeminiInstagramPostGenerator
         }
     }
 
+    public async Task<string?> GenerateFreeformAsync(string prompt, GeminiSettings geminiSettings, CancellationToken cancellationToken)
+    {
+        var apiKeys = GetGeminiApiKeys(geminiSettings);
+        if (apiKeys.Count == 0 || string.IsNullOrWhiteSpace(prompt))
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
+        var payload = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[] { new { text = prompt.Trim() } }
+                }
+            },
+            generationConfig = new
+            {
+                maxOutputTokens = Math.Clamp(geminiSettings.MaxOutputTokens <= 0 ? 1200 : geminiSettings.MaxOutputTokens, 200, 4096)
+            }
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("gemini");
+            var startIndex = unchecked((int)((uint)Interlocked.Increment(ref _currentKeyIndex) % (uint)apiKeys.Count));
+            string? lastErrorBody = null;
+
+            for (var i = 0; i < apiKeys.Count; i++)
+            {
+                var keyIndex = (startIndex + i) % apiKeys.Count;
+                var apiKey = apiKeys[keyIndex];
+                var url = $"{baseUrl.TrimEnd('/')}/models/{model}:generateContent?key={Uri.EscapeDataString(apiKey)}";
+                using var response = await client.PostAsync(url, new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"), cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastErrorBody = body;
+                    if (i < apiKeys.Count - 1 && ShouldTryNextGeminiKey(response.StatusCode, body))
+                    {
+                        continue;
+                    }
+
+                    _logger.LogWarning("Gemini livre respondeu erro {Status}: {Body}", response.StatusCode, body);
+                    return null;
+                }
+
+                return ExtractOutputText(body)?.Trim();
+            }
+
+            _logger.LogWarning("Gemini livre falhou em todas as chaves: {Body}", lastErrorBody);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao gerar resposta livre via Gemini");
+            return null;
+        }
+    }
+
     private static List<string> GetGeminiApiKeys(GeminiSettings settings)
     {
         var keys = new List<string>();

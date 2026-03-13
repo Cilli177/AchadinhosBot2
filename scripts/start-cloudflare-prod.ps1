@@ -11,12 +11,8 @@ $ErrorActionPreference = "Stop"
 & (Join-Path $PSScriptRoot "start-cloudflare-tunnel.ps1") `
     -TunnelName $TunnelName `
     -Hostname $Hostname `
+    -AdditionalHostnames @($BioHostname) `
     -AppUrl $AppUrl `
     -ConfigFileName "config.prod.yml" `
     -LogPrefix "prod" `
     -ConfigUpdateScope "Production"
-
-if (-not [string]::IsNullOrWhiteSpace($BioHostname)) {
-    $cloudflared = (Get-Command "cloudflared" -ErrorAction Stop).Source
-    & $cloudflared tunnel route dns $TunnelName $BioHostname 2>$null
-}

@@ -98,14 +98,7 @@ public sealed class WebhookServerService : BackgroundService
             if (path == "/api/settings" && method == HttpMethod.Get.Method)
             {
                 var settings = await _settingsStore.GetAsync(ct);
-                if (!string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
-                {
-                    settings.OpenAI.ApiKey = "********";
-                }
-                if (!string.IsNullOrWhiteSpace(settings.Gemini?.ApiKey))
-                {
-                    settings.Gemini.ApiKey = "********";
-                }
+                MaskProviderKeys(settings);
                 await WriteJsonAsync(context.Response, settings, ct);
                 return;
             }
@@ -127,11 +120,8 @@ public sealed class WebhookServerService : BackgroundService
                 }
                 else
                 {
-                    var key = payload.OpenAI.ApiKey;
-                    if (string.IsNullOrWhiteSpace(key) || key == "********")
-                    {
-                        payload.OpenAI.ApiKey = current.OpenAI?.ApiKey;
-                    }
+                    payload.OpenAI.ApiKey = MergeMaskedValue(payload.OpenAI.ApiKey, current.OpenAI?.ApiKey);
+                    payload.OpenAI.ApiKeys = MergeMaskedList(payload.OpenAI.ApiKeys, current.OpenAI?.ApiKeys);
                 }
 
                 if (payload.Gemini is null)
@@ -140,11 +130,38 @@ public sealed class WebhookServerService : BackgroundService
                 }
                 else
                 {
-                    var key = payload.Gemini.ApiKey;
-                    if (string.IsNullOrWhiteSpace(key) || key == "********")
-                    {
-                        payload.Gemini.ApiKey = current.Gemini?.ApiKey;
-                    }
+                    payload.Gemini.ApiKey = MergeMaskedValue(payload.Gemini.ApiKey, current.Gemini?.ApiKey);
+                    payload.Gemini.ApiKeys = MergeMaskedList(payload.Gemini.ApiKeys, current.Gemini?.ApiKeys);
+                }
+
+                if (payload.DeepSeek is null)
+                {
+                    payload.DeepSeek = current.DeepSeek ?? new DeepSeekSettings();
+                }
+                else
+                {
+                    payload.DeepSeek.ApiKey = MergeMaskedValue(payload.DeepSeek.ApiKey, current.DeepSeek?.ApiKey);
+                    payload.DeepSeek.ApiKeys = MergeMaskedList(payload.DeepSeek.ApiKeys, current.DeepSeek?.ApiKeys);
+                }
+
+                if (payload.Nemotron is null)
+                {
+                    payload.Nemotron = current.Nemotron ?? new NemotronSettings();
+                }
+                else
+                {
+                    payload.Nemotron.ApiKey = MergeMaskedValue(payload.Nemotron.ApiKey, current.Nemotron?.ApiKey);
+                    payload.Nemotron.ApiKeys = MergeMaskedList(payload.Nemotron.ApiKeys, current.Nemotron?.ApiKeys);
+                }
+
+                if (payload.Qwen is null)
+                {
+                    payload.Qwen = current.Qwen ?? new QwenSettings();
+                }
+                else
+                {
+                    payload.Qwen.ApiKey = MergeMaskedValue(payload.Qwen.ApiKey, current.Qwen?.ApiKey);
+                    payload.Qwen.ApiKeys = MergeMaskedList(payload.Qwen.ApiKeys, current.Qwen?.ApiKeys);
                 }
 
                 await _settingsStore.SaveAsync(payload, ct);
@@ -238,6 +255,78 @@ public sealed class WebhookServerService : BackgroundService
         response.ContentType = "application/json";
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(data));
         await response.OutputStream.WriteAsync(bytes, ct);
+    }
+
+    private static string? MergeMaskedValue(string? incomingValue, string? currentValue)
+    {
+        if (string.IsNullOrWhiteSpace(incomingValue) || incomingValue == "********")
+        {
+            return currentValue;
+        }
+
+        return incomingValue.Trim();
+    }
+
+    private static List<string> MergeMaskedList(IEnumerable<string>? incomingValues, IEnumerable<string>? currentValues)
+    {
+        var source = (incomingValues ?? Array.Empty<string>())
+            .Select(x => x?.Trim() ?? string.Empty)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+
+        if (source.Count == 1 && source[0] == "********")
+        {
+            return (currentValues ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+
+        return source
+            .Where(x => x != "********")
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static void MaskProviderKeys(AutomationSettings settings)
+    {
+        static List<string> MaskList(IEnumerable<string>? values)
+        {
+            return (values ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(_ => "********")
+                .ToList();
+        }
+
+        if (settings.OpenAI is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(settings.OpenAI.ApiKey)) settings.OpenAI.ApiKey = "********";
+            settings.OpenAI.ApiKeys = MaskList(settings.OpenAI.ApiKeys);
+        }
+
+        if (settings.Gemini is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(settings.Gemini.ApiKey)) settings.Gemini.ApiKey = "********";
+            settings.Gemini.ApiKeys = MaskList(settings.Gemini.ApiKeys);
+        }
+
+        if (settings.DeepSeek is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(settings.DeepSeek.ApiKey)) settings.DeepSeek.ApiKey = "********";
+            settings.DeepSeek.ApiKeys = MaskList(settings.DeepSeek.ApiKeys);
+        }
+
+        if (settings.Nemotron is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(settings.Nemotron.ApiKey)) settings.Nemotron.ApiKey = "********";
+            settings.Nemotron.ApiKeys = MaskList(settings.Nemotron.ApiKeys);
+        }
+
+        if (settings.Qwen is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(settings.Qwen.ApiKey)) settings.Qwen.ApiKey = "********";
+            settings.Qwen.ApiKeys = MaskList(settings.Qwen.ApiKeys);
+        }
     }
 
     private sealed record ConvertRequest(string Text, string? Source);

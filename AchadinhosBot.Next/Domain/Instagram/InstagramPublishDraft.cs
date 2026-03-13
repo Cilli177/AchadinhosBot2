@@ -7,6 +7,7 @@ public sealed class InstagramPublishDraft
     public string PostType { get; set; } = "feed";
     public string ProductName { get; set; } = string.Empty;
     public string Caption { get; set; } = string.Empty;
+    public string? OfferUrl { get; set; }
     public List<string> CaptionOptions { get; set; } = new();
     public int SelectedCaptionIndex { get; set; } = 1;
     public string Hashtags { get; set; } = string.Empty;
@@ -28,10 +29,24 @@ public sealed class InstagramPublishDraft
     public string? AutoReplyKeyword { get; set; }
     public string? AutoReplyMessage { get; set; }
     public string? AutoReplyLink { get; set; }
+    public string? Store { get; set; }
+    public string? CurrentPrice { get; set; }
+    public string? PreviousPrice { get; set; }
+    public int? DiscountPercent { get; set; }
+    public string? EstimatedDelivery { get; set; }
+    public bool IsLightningDeal { get; set; }
+    public DateTimeOffset? LightningDealExpiry { get; set; }
+    public string? CouponCode { get; set; }
+    public string? CouponDescription { get; set; }
+    public string? SourceDataOrigin { get; set; }
+    public List<string> SuggestedImageUrls { get; set; } = new();
+    public List<string> SuggestedVideoUrls { get; set; } = new();
     public DateTimeOffset? ScheduledFor { get; set; }
     public bool SendToCatalog { get; set; }
     public string CatalogTarget { get; set; } = "none";
     public bool CatalogIntentLocked { get; set; }
+    public bool IsBioHighlighted { get; set; }
+    public DateTimeOffset? BioHighlightedAt { get; set; }
     public string Status { get; set; } = "draft";
     public string? MediaId { get; set; }
     public string? Error { get; set; }

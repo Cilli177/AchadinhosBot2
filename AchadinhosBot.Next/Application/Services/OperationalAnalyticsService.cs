@@ -72,8 +72,14 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
             {
                 Total = clickWindow.Count,
                 UniqueTrackingIds = clickWindow.Select(x => x.TrackingId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                UniqueVisitors = clickWindow.Select(x => x.VisitorId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                UniqueSessions = clickWindow.Select(x => x.SessionId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                 TopSources = BuildBreakdown(clickWindow, x => x.Source, 5),
-                TopCampaigns = BuildBreakdown(clickWindow, x => x.Campaign, 5)
+                TopCampaigns = BuildBreakdown(clickWindow, x => x.Campaign, 5),
+                TopEventTypes = BuildBreakdown(clickWindow, x => x.EventType, 5),
+                TopPageTypes = BuildBreakdown(clickWindow, x => x.PageType, 5),
+                TopDevices = BuildBreakdown(clickWindow, x => x.DeviceType, 5),
+                TopBrowsers = BuildBreakdown(clickWindow, x => x.Browser, 5)
             },
             InstagramPublish = new InstagramPublishAnalyticsSummary
             {
@@ -202,10 +208,17 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
             
             result.Add(new ClickAnalyticsSummary
             {
+                Category = cat ?? "default",
                 Total = window.Count,
                 UniqueTrackingIds = window.Select(x => x.TrackingId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                UniqueVisitors = window.Select(x => x.VisitorId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                UniqueSessions = window.Select(x => x.SessionId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                 TopSources = BuildBreakdown(window, x => x.Source, 5),
-                TopCampaigns = BuildBreakdown(window, x => x.Campaign, 5)
+                TopCampaigns = BuildBreakdown(window, x => x.Campaign, 5),
+                TopEventTypes = BuildBreakdown(window, x => x.EventType, 5),
+                TopPageTypes = BuildBreakdown(window, x => x.PageType, 5),
+                TopDevices = BuildBreakdown(window, x => x.DeviceType, 5),
+                TopBrowsers = BuildBreakdown(window, x => x.Browser, 5)
             });
         }
 

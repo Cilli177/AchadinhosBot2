@@ -39,7 +39,10 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             foreach (var target in new[] { CatalogTargets.Dev, CatalogTargets.Prod })
             {
                 var db = await ReadAsync(target, cancellationToken);
-                var targetDrafts = published
+                var sourceDrafts = string.Equals(target, CatalogTargets.Dev, StringComparison.OrdinalIgnoreCase)
+                    ? providedDrafts
+                    : published;
+                var targetDrafts = sourceDrafts
                     .Where(d => CatalogTargets.Expand(d.CatalogTarget, d.SendToCatalog).Contains(target, StringComparer.OrdinalIgnoreCase))
                     .ToList();
                 var result = await SyncTargetDatabaseAsync(db, targetDrafts, processedDraftIds, target, now, cancellationToken);
@@ -273,22 +276,29 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
 
     private async Task<CatalogDatabase> ReadAsync(string target, CancellationToken cancellationToken)
     {
-        var path = ResolvePath(target);
-        if (!File.Exists(path))
+        var path = ResolveReadPath(target);
+        if (string.IsNullOrWhiteSpace(path))
         {
-            var legacyPath = ResolveLegacyPath();
-            if (string.Equals(target, CatalogTargets.Prod, StringComparison.OrdinalIgnoreCase) && File.Exists(legacyPath))
-            {
-                path = legacyPath;
-            }
-            else
-            {
-                return new CatalogDatabase();
-            }
+            return new CatalogDatabase();
         }
 
-        await using var stream = File.OpenRead(path);
-        var db = await JsonSerializer.DeserializeAsync<CatalogDatabase>(stream, cancellationToken: cancellationToken);
+        var fileInfo = new FileInfo(path);
+        if (fileInfo.Length == 0)
+        {
+            return new CatalogDatabase();
+        }
+
+        CatalogDatabase? db;
+        try
+        {
+            await using var stream = File.OpenRead(path);
+            db = await JsonSerializer.DeserializeAsync<CatalogDatabase>(stream, cancellationToken: cancellationToken);
+        }
+        catch (JsonException)
+        {
+            return new CatalogDatabase();
+        }
+
         db ??= new CatalogDatabase();
         foreach (var item in db.Items)
         {
@@ -296,6 +306,39 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
 
         return db;
+    }
+
+    private string? ResolveReadPath(string target)
+    {
+        var normalizedTarget = CatalogTargets.Normalize(target, CatalogTargets.Prod);
+        var primaryPath = ResolvePath(normalizedTarget);
+        var legacyPath = ResolveLegacyPath();
+
+        if (File.Exists(primaryPath))
+        {
+            var primaryInfo = new FileInfo(primaryPath);
+            if (primaryInfo.Length > 0)
+            {
+                return primaryPath;
+            }
+
+            if (string.Equals(normalizedTarget, CatalogTargets.Prod, StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(legacyPath) &&
+                new FileInfo(legacyPath).Length > 0)
+            {
+                return legacyPath;
+            }
+
+            return primaryPath;
+        }
+
+        if (string.Equals(normalizedTarget, CatalogTargets.Prod, StringComparison.OrdinalIgnoreCase) &&
+            File.Exists(legacyPath))
+        {
+            return legacyPath;
+        }
+
+        return null;
     }
 
     private async Task WriteAsync(string target, CatalogDatabase db, CancellationToken cancellationToken)

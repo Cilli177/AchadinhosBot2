@@ -13,6 +13,7 @@ using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Endpoints;
+using AchadinhosBot.Next.Domain.Agents;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Content;
@@ -200,6 +201,8 @@ builder.Services.AddHttpClient("evolution-groups", c => c.Timeout = TimeSpan.Fro
 builder.Services.AddHttpClient("openai", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
 builder.Services.AddHttpClient("gemini", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
 builder.Services.AddHttpClient("deepseek", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
+builder.Services.AddHttpClient("nemotron", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
+builder.Services.AddHttpClient("qwen", c => c.Timeout = TimeSpan.FromSeconds(60)).AddPolicyHandler(ResiliencyPolicies.GetRetryPolicy());
 
 builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
 builder.Services.AddSingleton<AmazonCreatorApiClient>();
@@ -229,14 +232,27 @@ builder.Services.AddSingleton<IInstagramPublishService, InstagramPublishService>
 builder.Services.AddSingleton<IVideoProcessingService, FfmpegVideoProcessingService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<IOperationalAnalyticsService, OperationalAnalyticsService>();
+builder.Services.AddSingleton<IOfferCurationAgentService, OfferCurationAgentService>();
+builder.Services.AddSingleton<IWhatsAppOfferScoutAgentService, WhatsAppOfferScoutAgentService>();
+builder.Services.AddSingleton<IChannelOfferDeepAnalysisService, ChannelOfferDeepAnalysisService>();
+builder.Services.AddSingleton<IWhatsAppOfferReasoner, WhatsAppOfferReasoner>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
 builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
 builder.Services.AddSingleton<DeepSeekInstagramPostGenerator>();
+builder.Services.AddSingleton<NemotronInstagramPostGenerator>();
+builder.Services.AddSingleton<QwenInstagramPostGenerator>();
+builder.Services.AddSingleton<VilaNvidiaGenerator>();
 builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
 builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
 builder.Services.AddSingleton<ContentCalendarAutomationService>();
 builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
+builder.Services.AddSingleton<IWhatsAppOutboundLogStore, WhatsAppOutboundLogStore>();
+builder.Services.AddSingleton<ITelegramOutboundLogStore, TelegramOutboundLogStore>();
+builder.Services.AddSingleton<IWhatsAppAgentMemoryStore, WhatsAppAgentMemoryStore>();
+builder.Services.AddSingleton<IChannelMonitorSelectionStore, ChannelMonitorSelectionStore>();
+builder.Services.AddSingleton<IChannelMonitorUiStateStore, ChannelMonitorUiStateStore>();
+builder.Services.AddSingleton<IChannelOfferCandidateStore, ChannelOfferCandidateStore>();
 builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalStore>();
 builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 builder.Services.AddSingleton<EvolutionWhatsAppGateway>();
@@ -432,6 +448,7 @@ app.MapGet("/auth/me", (HttpContext context) =>
 
 app.MapConverterEndpoint();
 app.MapAdminEndpoints();
+app.MapChannelAgentAdminEndpoints();
 app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 
 app.MapGet("/", (HttpContext context, IWebHostEnvironment env) =>
@@ -932,6 +949,7 @@ app.MapGet("/bio", async (
     HttpContext context,
     IInstagramPublishStore publishStore,
     ICatalogOfferStore catalogOfferStore,
+    IConversionLogStore conversionLogStore,
     ILinkTrackingStore trackingStore,
     ISettingsStore settingsStore,
     IOptions<WebhookOptions> webhookOptions,
@@ -954,36 +972,53 @@ app.MapGet("/bio", async (
     var medium = NormalizeTrackingToken(request.Query["medium"].ToString(), "instagram") ?? "instagram";
     var maxItems = Math.Clamp(bioSettings.MaxItems, 5, 80);
     var catalogTarget = ResolveCatalogTargetForRequest(request);
+    var recentConversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 500 }, ct);
 
     var drafts = await publishStore.ListAsync(ct);
-    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    var draftsById = drafts
+        .Where(d => !string.IsNullOrWhiteSpace(d.Id))
+        .ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
     var catalogByDraftId = await catalogOfferStore.GetByDraftIdAsync(ct, catalogTarget);
+    if (catalogByDraftId.Count == 0)
+    {
+        catalogByDraftId = BuildCatalogFallbackItemsFromDrafts(drafts, recentConversions, catalogTarget)
+            .Where(x => !string.IsNullOrWhiteSpace(x.DraftId))
+            .GroupBy(x => x.DraftId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(x => x.UpdatedAt).First(),
+                StringComparer.OrdinalIgnoreCase);
+    }
 
     var baseItems = drafts
         .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
         .Select(d =>
         {
             catalogByDraftId.TryGetValue(d.Id, out var catalogItem);
-            var cta = d.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Link));
-            var link = cta?.Link ?? ExtractFirstUrl(d.Caption);
+            var effectiveOfferUrl = ResolveEffectiveCatalogOfferUrl(catalogItem, d, recentConversions);
             var title = !string.IsNullOrWhiteSpace(d.ProductName) ? d.ProductName : "Oferta";
             return new BioLinkItem
             {
                 CreatedAt = d.CreatedAt,
                 Title = title.Trim(),
-                Link = link?.Trim() ?? string.Empty,
-                OriginalLink = link?.Trim() ?? string.Empty,
-                Store = ResolveStoreNameFromUrl(link),
+                Link = effectiveOfferUrl,
+                OriginalLink = effectiveOfferUrl,
+                Store = ResolveStoreNameFromUrl(FirstNonEmpty(effectiveOfferUrl, catalogItem?.Store)),
                 ItemNumber = catalogItem?.ItemNumber,
-                Keyword = FirstNonEmpty(catalogItem?.Keyword, cta?.Keyword?.Trim()),
+                IsHighlightedOnBio = d.IsBioHighlighted,
+                BioHighlightedAt = d.BioHighlightedAt,
+                Keyword = FirstNonEmpty(catalogItem?.Keyword, d.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Keyword))?.Keyword?.Trim()),
                 IsLightningDeal = catalogItem?.IsLightningDeal ?? false,
                 LightningDealExpiry = catalogItem?.LightningDealExpiry,
                 CouponCode = catalogItem?.CouponCode,
-                CouponDescription = catalogItem?.CouponDescription
+                CouponDescription = catalogItem?.CouponDescription,
+                ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(catalogItem?.ImageUrl, ResolveBioImageUrl(d)))
             };
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Link))
-        .OrderByDescending(x => x.CreatedAt)
+        .OrderByDescending(x => x.IsHighlightedOnBio)
+        .ThenByDescending(x => x.BioHighlightedAt ?? DateTimeOffset.MinValue)
+        .ThenByDescending(x => x.CreatedAt)
         .GroupBy(x => x.Link, StringComparer.OrdinalIgnoreCase)
         .Select(g => g.First())
         .Take(maxItems)
@@ -994,7 +1029,7 @@ app.MapGet("/bio", async (
         webhookOptions.Value.PublicBaseUrl,
         request.Scheme,
         request.Host.ToString());
-    var trackedItems = new List<BioLinkItem>(baseItems.Count);
+    var trackedItems = new List<BioLinkItem>();
     foreach (var item in baseItems)
     {
         var targetUrl = AppendBioCampaignParameters(item.OriginalLink, source, medium, campaign, item.Title);
@@ -1015,20 +1050,45 @@ app.MapGet("/catalogo", async (
     HttpContext context,
     IInstagramPublishStore publishStore,
     ICatalogOfferStore catalogOfferStore,
+    IConversionLogStore conversionLogStore,
     CancellationToken ct) =>
 {
     var q = context.Request.Query["q"].ToString();
     var catalogTarget = ResolveCatalogTargetForRequest(context.Request);
-    var drafts = await publishStore.ListAsync(ct);
-    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
 
     var items = await catalogOfferStore.ListAsync(q, 120, ct, catalogTarget);
+    var drafts = await publishStore.ListAsync(ct);
+    var draftsById = drafts
+        .Where(d => !string.IsNullOrWhiteSpace(d.Id))
+        .ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
+    var recentConversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 500 }, ct);
+    if (items.Count == 0)
+    {
+        items = BuildCatalogFallbackItemsFromDrafts(drafts, recentConversions, catalogTarget, q)
+            .Take(120)
+            .ToArray();
+    }
     var request = context.Request;
     var currentUrl = $"{request.Scheme}://{request.Host}/catalogo";
     if (!string.IsNullOrWhiteSpace(q))
     {
         currentUrl += $"?q={Uri.EscapeDataString(q)}";
     }
+
+    items = items
+        .Select(item =>
+        {
+            var draft = FindRelatedDraftForCatalogItem(item, draftsById, drafts);
+            item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, draft, recentConversions);
+            item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(item.ImageUrl, draft is null ? null : ResolveBioImageUrl(draft)));
+            if (string.IsNullOrWhiteSpace(item.Store))
+            {
+                item.Store = ResolveStoreNameFromUrl(item.OfferUrl);
+            }
+
+            return item;
+        })
+        .ToArray();
 
     var html = BuildCatalogPageHtml(items, q, currentUrl);
     return Results.Content(html, "text/html; charset=utf-8");
@@ -1039,20 +1099,78 @@ app.MapGet("/item/{query}", async (
     HttpContext context,
     IInstagramPublishStore publishStore,
     ICatalogOfferStore catalogOfferStore,
+    IConversionLogStore conversionLogStore,
     CancellationToken ct) =>
 {
     var catalogTarget = ResolveCatalogTargetForRequest(context.Request);
     var drafts = await publishStore.ListAsync(ct);
-    await catalogOfferStore.SyncFromPublishedDraftsAsync(drafts, ct);
+    var draftsById = drafts
+        .Where(d => !string.IsNullOrWhiteSpace(d.Id))
+        .ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
+    var recentConversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 500 }, ct);
     var item = await catalogOfferStore.FindByCodeAsync(query, ct, catalogTarget);
     if (item is null)
     {
-        return Results.NotFound($"Item '{query}' nao encontrado.");
+        item = BuildCatalogFallbackItemsFromDrafts(drafts, recentConversions, catalogTarget)
+            .FirstOrDefault(x =>
+                x.ItemNumber.ToString(CultureInfo.InvariantCulture).Equals(query, StringComparison.OrdinalIgnoreCase) ||
+                x.Keyword.Equals(query, StringComparison.OrdinalIgnoreCase) ||
+                x.Keyword.Contains(query, StringComparison.OrdinalIgnoreCase));
+        if (item is null)
+        {
+            return Results.NotFound($"Item '{query}' nao encontrado.");
+        }
+    }
+    else if (!string.IsNullOrWhiteSpace(item.DraftId) && draftsById.TryGetValue(item.DraftId, out var storedDraft))
+    {
+        item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, storedDraft, recentConversions);
+        item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, context.Request, FirstNonEmpty(item.ImageUrl, ResolveBioImageUrl(storedDraft)));
+    }
+    else
+    {
+        var relatedDraft = FindRelatedDraftForCatalogItem(item, draftsById, drafts);
+        item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, relatedDraft, recentConversions);
+        item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, context.Request, FirstNonEmpty(item.ImageUrl, relatedDraft is null ? null : ResolveBioImageUrl(relatedDraft)));
     }
 
     var baseCatalogUrl = $"{context.Request.Scheme}://{context.Request.Host}/catalogo";
     var html = BuildCatalogItemPageHtml(item, baseCatalogUrl);
     return Results.Content(html, "text/html; charset=utf-8");
+});
+
+app.MapGet("/media/remote", async (
+    string url,
+    IHttpClientFactory httpClientFactory,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(url) ||
+        !Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+        (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+    {
+        return Results.BadRequest("URL invalida.");
+    }
+
+    using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+    request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; ReiDasOfertasBot/1.0)");
+    request.Headers.Referrer = new Uri($"{context.Request.Scheme}://{context.Request.Host}");
+
+    var client = httpClientFactory.CreateClient();
+    using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+    if (!response.IsSuccessStatusCode)
+    {
+        return Results.StatusCode((int)response.StatusCode);
+    }
+
+    var contentType = response.Content.Headers.ContentType?.MediaType;
+    if (string.IsNullOrWhiteSpace(contentType) || !contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest("Midia remota invalida.");
+    }
+
+    var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+    context.Response.Headers.CacheControl = "public,max-age=1800";
+    return Results.File(bytes, contentType);
 });
 
 app.MapPost("/webhooks/evolution", async (
@@ -2077,6 +2195,13 @@ api.MapGet("/settings", async (
     {
         settings.OpenAI.ApiKey = "********";
     }
+    if (settings.OpenAI?.ApiKeys?.Count > 0)
+    {
+        settings.OpenAI.ApiKeys = settings.OpenAI.ApiKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(_ => "********")
+            .ToList();
+    }
     if (!string.IsNullOrWhiteSpace(settings.Gemini?.ApiKey))
     {
         settings.Gemini.ApiKey = "********";
@@ -2084,6 +2209,50 @@ api.MapGet("/settings", async (
     if (settings.Gemini?.ApiKeys?.Count > 0)
     {
         settings.Gemini.ApiKeys = settings.Gemini.ApiKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(_ => "********")
+            .ToList();
+    }
+    if (!string.IsNullOrWhiteSpace(settings.DeepSeek?.ApiKey))
+    {
+        settings.DeepSeek.ApiKey = "********";
+    }
+    if (settings.DeepSeek?.ApiKeys?.Count > 0)
+    {
+        settings.DeepSeek.ApiKeys = settings.DeepSeek.ApiKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(_ => "********")
+            .ToList();
+    }
+    if (!string.IsNullOrWhiteSpace(settings.Nemotron?.ApiKey))
+    {
+        settings.Nemotron.ApiKey = "********";
+    }
+    if (settings.Nemotron?.ApiKeys?.Count > 0)
+    {
+        settings.Nemotron.ApiKeys = settings.Nemotron.ApiKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(_ => "********")
+            .ToList();
+    }
+    if (!string.IsNullOrWhiteSpace(settings.Qwen?.ApiKey))
+    {
+        settings.Qwen.ApiKey = "********";
+    }
+    if (settings.Qwen?.ApiKeys?.Count > 0)
+    {
+        settings.Qwen.ApiKeys = settings.Qwen.ApiKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(_ => "********")
+            .ToList();
+    }
+    if (!string.IsNullOrWhiteSpace(settings.VilaNvidia?.ApiKey))
+    {
+        settings.VilaNvidia.ApiKey = "********";
+    }
+    if (settings.VilaNvidia?.ApiKeys?.Count > 0)
+    {
+        settings.VilaNvidia.ApiKeys = settings.VilaNvidia.ApiKeys
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .Select(_ => "********")
             .ToList();
@@ -2111,6 +2280,186 @@ api.MapGet("/settings", async (
     return Results.Json(payload);
 });
 
+api.MapPost("/agents/offers/curate", async (
+    OfferCurationRequest request,
+    IOfferCurationAgentService offerCurationAgent,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await offerCurationAgent.CurateAsync(request, ct);
+    await audit.WriteAsync("agents.offer_curator.preview", context.User.Identity?.Name ?? "unknown", new
+    {
+        request.HoursWindow,
+        request.MaxItems,
+        request.IncludeDrafts,
+        request.IncludeScheduled,
+        request.IncludePublished,
+        result.EvaluatedDrafts,
+        result.SuggestedActions
+    }, ct);
+    return Results.Ok(result);
+});
+
+api.MapPost("/agents/whatsapp/offers/scout", async (
+    WhatsAppOfferScoutRequest request,
+    IWhatsAppOfferScoutAgentService whatsAppOfferScoutAgent,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await whatsAppOfferScoutAgent.AnalyzeAsync(request, ct);
+    await audit.WriteAsync("agents.whatsapp_offer_scout.preview", context.User.Identity?.Name ?? "unknown", new
+    {
+        request.SourceChannel,
+        request.TargetSelectionMode,
+        request.TargetChatIds,
+        request.HoursWindow,
+        request.MaxItems,
+        request.UseAiDecision,
+        request.IncludeAiReasoning,
+        result.EvaluatedMessages,
+        result.SuggestedActions
+    }, ct);
+    return Results.Ok(result);
+});
+
+api.MapGet("/agents/channel-monitor-selections", async (
+    string? sourceChannel,
+    IChannelMonitorSelectionStore selectionStore,
+    CancellationToken ct) =>
+{
+    var normalizedSource = string.Equals(sourceChannel, "whatsapp", StringComparison.OrdinalIgnoreCase) ? "whatsapp" : "telegram";
+    var items = await selectionStore.ListBySourceAsync(normalizedSource, ct);
+    return Results.Ok(new ChannelMonitorSelectionResponse
+    {
+        SourceChannel = normalizedSource,
+        Count = items.Count,
+        Items = items.ToList()
+    });
+});
+
+api.MapPost("/agents/channel-monitor-selections", async (
+    ChannelMonitorSelectionUpsertRequest request,
+    IChannelMonitorSelectionStore selectionStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var normalizedSource = string.Equals(request.SourceChannel, "whatsapp", StringComparison.OrdinalIgnoreCase) ? "whatsapp" : "telegram";
+    var selections = request.Selections ?? new List<ChannelMonitorSelectionEntry>();
+    var items = await selectionStore.ReplaceSelectionsAsync(normalizedSource, selections, ct);
+    await audit.WriteAsync("agents.channel_monitor_selections.update", context.User.Identity?.Name ?? "unknown", new
+    {
+        SourceChannel = normalizedSource,
+        Count = items.Count,
+        ChatIds = items.Select(x => x.ChatId).ToArray()
+    }, ct);
+
+    return Results.Ok(new ChannelMonitorSelectionResponse
+    {
+        SourceChannel = normalizedSource,
+        Count = items.Count,
+        Items = items.ToList()
+    });
+});
+
+api.MapPost("/agents/channel-monitor-seed-log", async (
+    ChannelMonitorSeedLogRequest request,
+    IWhatsAppOutboundLogStore whatsAppOutboundLogStore,
+    ITelegramOutboundLogStore telegramOutboundLogStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var sourceChannel = string.Equals(request.SourceChannel, "whatsapp", StringComparison.OrdinalIgnoreCase) ? "whatsapp" : "telegram";
+    var rawChatId = (request.ChatId ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(rawChatId))
+    {
+        return Results.BadRequest(new { error = "ChatId obrigatorio." });
+    }
+
+    if (sourceChannel == "telegram")
+    {
+        var normalizedTelegramId = rawChatId.StartsWith("-100", StringComparison.Ordinal) ? rawChatId : $"-100{rawChatId.TrimStart('-')}";
+        if (!long.TryParse(normalizedTelegramId, out var telegramChatId))
+        {
+            return Results.BadRequest(new { error = "ChatId de Telegram invalido." });
+        }
+
+        var messageId = $"seed-tg-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        await telegramOutboundLogStore.AppendAsync(new TelegramOutboundLogEntry
+        {
+            MessageId = messageId,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ChatId = telegramChatId,
+            Text = $"[TESTE AGENTE] {request.Title ?? "Oferta de teste"} https://example.com/oferta/{Math.Abs(telegramChatId)}",
+            ImageUrl = "https://picsum.photos/seed/achadinhos-agent/1200/1200"
+        }, ct);
+
+        await audit.WriteAsync("agents.channel_monitor.seed_log", context.User.Identity?.Name ?? "unknown", new
+        {
+            SourceChannel = sourceChannel,
+            ChatId = telegramChatId,
+            MessageId = messageId
+        }, ct);
+
+        return Results.Ok(new { success = true, sourceChannel, chatId = telegramChatId.ToString(), messageId });
+    }
+
+    var normalizedWhatsAppId = rawChatId;
+    var waMessageId = $"seed-wa-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+    await whatsAppOutboundLogStore.AppendAsync(new WhatsAppOutboundLogEntry
+    {
+        MessageId = waMessageId,
+        CreatedAtUtc = DateTimeOffset.UtcNow,
+        Kind = "image-url",
+        InstanceName = "seed",
+        To = normalizedWhatsAppId,
+        Text = $"[TESTE AGENTE] {request.Title ?? "Oferta de teste"} https://example.com/oferta/{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
+        MediaUrl = "https://picsum.photos/seed/achadinhos-agent-wa/1200/1200",
+        MimeType = "image/jpeg",
+        FileName = "seed-agent.jpg"
+    }, ct);
+
+    await audit.WriteAsync("agents.channel_monitor.seed_log", context.User.Identity?.Name ?? "unknown", new
+    {
+        SourceChannel = sourceChannel,
+        ChatId = normalizedWhatsAppId,
+        MessageId = waMessageId
+    }, ct);
+
+    return Results.Ok(new { success = true, sourceChannel, chatId = normalizedWhatsAppId, messageId = waMessageId });
+});
+
+api.MapGet("/agents/channel-monitor-ui-state", async (
+    IChannelMonitorUiStateStore uiStateStore,
+    CancellationToken ct) =>
+{
+    var state = await uiStateStore.GetAsync(ct);
+    return Results.Ok(state);
+});
+
+api.MapPost("/agents/channel-monitor-ui-state", async (
+    ChannelMonitorUiState state,
+    IChannelMonitorUiStateStore uiStateStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var saved = await uiStateStore.SaveAsync(state, ct);
+    await audit.WriteAsync("agents.channel_monitor_ui_state.save", context.User.Identity?.Name ?? "unknown", new
+    {
+        saved.SourceChannel,
+        saved.SelectionMode,
+        saved.HoursWindow,
+        saved.MaxItems,
+        saved.IncludeAiReasoning,
+        saved.UseAiDecision
+    }, ct);
+    return Results.Ok(saved);
+});
+
 api.MapGet("/diagnostics/apis", async (
     ISettingsStore store,
     IOptions<AffiliateOptions> affiliateOptions,
@@ -2135,6 +2484,36 @@ api.MapGet("/diagnostics/apis", async (
     }
 
     var openAiConfigured = !string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey) && settings.OpenAI.ApiKey != "********";
+    var openAiKeys = NormalizeSecretList(settings.OpenAI?.ApiKeys);
+    if (openAiConfigured && !string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
+    {
+        openAiKeys.Add(settings.OpenAI.ApiKey.Trim());
+    }
+    openAiKeys = openAiKeys.Distinct(StringComparer.Ordinal).ToList();
+    var deepSeekKeys = NormalizeSecretList(settings.DeepSeek?.ApiKeys);
+    if (!string.IsNullOrWhiteSpace(settings.DeepSeek?.ApiKey) && settings.DeepSeek.ApiKey != "********")
+    {
+        deepSeekKeys.Add(settings.DeepSeek.ApiKey.Trim());
+    }
+    deepSeekKeys = deepSeekKeys.Distinct(StringComparer.Ordinal).ToList();
+    var nemotronKeys = NormalizeSecretList(settings.Nemotron?.ApiKeys);
+    if (!string.IsNullOrWhiteSpace(settings.Nemotron?.ApiKey) && settings.Nemotron.ApiKey != "********")
+    {
+        nemotronKeys.Add(settings.Nemotron.ApiKey.Trim());
+    }
+    nemotronKeys = nemotronKeys.Distinct(StringComparer.Ordinal).ToList();
+    var qwenKeys = NormalizeSecretList(settings.Qwen?.ApiKeys);
+    if (!string.IsNullOrWhiteSpace(settings.Qwen?.ApiKey) && settings.Qwen.ApiKey != "********")
+    {
+        qwenKeys.Add(settings.Qwen.ApiKey.Trim());
+    }
+    qwenKeys = qwenKeys.Distinct(StringComparer.Ordinal).ToList();
+    var vilaKeys = NormalizeSecretList(settings.VilaNvidia?.ApiKeys);
+    if (!string.IsNullOrWhiteSpace(settings.VilaNvidia?.ApiKey) && settings.VilaNvidia.ApiKey != "********")
+    {
+        vilaKeys.Add(settings.VilaNvidia.ApiKey.Trim());
+    }
+    vilaKeys = vilaKeys.Distinct(StringComparer.Ordinal).ToList();
     var amazonApi = affiliate.AmazonProductApi ?? new AmazonProductApiOptions();
     var amazonCreatorApi = affiliate.AmazonCreatorApi ?? new AmazonCreatorApiOptions();
     var amazonPaConfigured = !string.IsNullOrWhiteSpace(amazonApi.AccessKey)
@@ -2175,8 +2554,13 @@ api.MapGet("/diagnostics/apis", async (
         },
         ai = new
         {
-            openAiConfigured,
-            geminiKeysConfigured = geminiKeys.Distinct(StringComparer.Ordinal).Count()
+            openAiConfigured = openAiKeys.Count > 0,
+            openAiKeysConfigured = openAiKeys.Count,
+            geminiKeysConfigured = geminiKeys.Distinct(StringComparer.Ordinal).Count(),
+            deepSeekKeysConfigured = deepSeekKeys.Count,
+            nemotronKeysConfigured = nemotronKeys.Count,
+            qwenKeysConfigured = qwenKeys.Count,
+            vilaKeysConfigured = vilaKeys.Count
         },
         officialProductApis = new
         {
@@ -2239,11 +2623,13 @@ api.MapPut("/settings", async (
     }
     else
     {
-        var key = payload.OpenAI.ApiKey;
-        if (string.IsNullOrWhiteSpace(key) || key == "********")
-        {
-            payload.OpenAI.ApiKey = current.OpenAI?.ApiKey;
-        }
+        var incomingOpenAiApiKey = payload.OpenAI.ApiKey;
+        payload.OpenAI.ApiKey = ResolveSecretWithMask(incomingOpenAiApiKey, current.OpenAI?.ApiKey);
+        payload.OpenAI.ApiKeys = MergeSecretListWithMask(
+            current.OpenAI?.ApiKeys,
+            payload.OpenAI.ApiKeys,
+            incomingOpenAiApiKey,
+            current.OpenAI?.ApiKey);
     }
 
     if (payload.Gemini is null)
@@ -2259,6 +2645,66 @@ api.MapPut("/settings", async (
             payload.Gemini.ApiKeys,
             incomingGeminiApiKey,
             current.Gemini?.ApiKey);
+    }
+
+    if (payload.DeepSeek is null)
+    {
+        payload.DeepSeek = current.DeepSeek ?? new DeepSeekSettings();
+    }
+    else
+    {
+        var incomingDeepSeekApiKey = payload.DeepSeek.ApiKey;
+        payload.DeepSeek.ApiKey = ResolveSecretWithMask(incomingDeepSeekApiKey, current.DeepSeek?.ApiKey);
+        payload.DeepSeek.ApiKeys = MergeSecretListWithMask(
+            current.DeepSeek?.ApiKeys,
+            payload.DeepSeek.ApiKeys,
+            incomingDeepSeekApiKey,
+            current.DeepSeek?.ApiKey);
+    }
+
+    if (payload.Nemotron is null)
+    {
+        payload.Nemotron = current.Nemotron ?? new NemotronSettings();
+    }
+    else
+    {
+        var incomingNemotronApiKey = payload.Nemotron.ApiKey;
+        payload.Nemotron.ApiKey = ResolveSecretWithMask(incomingNemotronApiKey, current.Nemotron?.ApiKey);
+        payload.Nemotron.ApiKeys = MergeSecretListWithMask(
+            current.Nemotron?.ApiKeys,
+            payload.Nemotron.ApiKeys,
+            incomingNemotronApiKey,
+            current.Nemotron?.ApiKey);
+    }
+
+    if (payload.Qwen is null)
+    {
+        payload.Qwen = current.Qwen ?? new QwenSettings();
+    }
+    else
+    {
+        var incomingQwenApiKey = payload.Qwen.ApiKey;
+        payload.Qwen.ApiKey = ResolveSecretWithMask(incomingQwenApiKey, current.Qwen?.ApiKey);
+        payload.Qwen.ApiKeys = MergeSecretListWithMask(
+            current.Qwen?.ApiKeys,
+            payload.Qwen.ApiKeys,
+            incomingQwenApiKey,
+            current.Qwen?.ApiKey);
+    }
+
+    if (payload.VilaNvidia is null)
+    {
+        payload.VilaNvidia = current.VilaNvidia ?? new VilaNvidiaSettings();
+    }
+    else
+    {
+        var incomingVilaApiKey = payload.VilaNvidia.ApiKey;
+        payload.VilaNvidia.ApiKey = ResolveSecretWithMask(incomingVilaApiKey, current.VilaNvidia?.ApiKey);
+        payload.VilaNvidia.ApiKeys = MergeSecretListWithMask(
+            current.VilaNvidia?.ApiKeys,
+            payload.VilaNvidia.ApiKeys,
+            incomingVilaApiKey,
+            current.VilaNvidia?.ApiKey);
     }
 
     if (payload.InstagramPublish is null)
@@ -2661,6 +3107,12 @@ api.MapPost("/instagram/test", async (
     InstagramTestRequest payload,
     ISettingsStore store,
     IInstagramPostComposer composer,
+    OpenAiInstagramPostGenerator openAiGenerator,
+    GeminiInstagramPostGenerator geminiGenerator,
+    DeepSeekInstagramPostGenerator deepSeekGenerator,
+    NemotronInstagramPostGenerator nemotronGenerator,
+    QwenInstagramPostGenerator qwenGenerator,
+    VilaNvidiaGenerator vilaGenerator,
     CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(payload.Input))
@@ -2670,8 +3122,103 @@ api.MapPost("/instagram/test", async (
 
     var settings = await store.GetAsync(ct);
     var insta = settings.InstagramPosts ?? new InstagramPostSettings();
-    var text = await composer.BuildAsync(payload.Input, payload.Context, insta, ct);
-    return Results.Ok(new { text });
+    if (!string.IsNullOrWhiteSpace(payload.Provider))
+    {
+        insta = JsonSerializer.Deserialize<InstagramPostSettings>(JsonSerializer.Serialize(insta)) ?? new InstagramPostSettings();
+        insta.AiProvider = payload.Provider.Trim().ToLowerInvariant();
+    }
+
+    var mode = string.IsNullOrWhiteSpace(payload.Mode) ? "structured" : payload.Mode.Trim().ToLowerInvariant();
+    string text;
+    if (mode == "raw")
+    {
+        text = (insta.AiProvider ?? "openai") switch
+        {
+            "gemini" => await geminiGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.Gemini ?? new GeminiSettings(), ct) ?? "Sem resposta.",
+            "deepseek" => await deepSeekGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.DeepSeek ?? new DeepSeekSettings(), ct) ?? "Sem resposta.",
+            "nemotron" => await nemotronGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.Nemotron ?? new NemotronSettings(), ct) ?? "Sem resposta.",
+            "qwen" => await qwenGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.Qwen ?? new QwenSettings(), ct) ?? "Sem resposta.",
+            "vila" => await vilaGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.VilaNvidia ?? new VilaNvidiaSettings(), ct) ?? "Sem resposta.",
+            _ => await openAiGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.OpenAI ?? new OpenAISettings(), ct) ?? "Sem resposta."
+        };
+    }
+    else
+    {
+        text = await composer.BuildAsync(payload.Input, payload.Context, insta, ct);
+    }
+
+    return Results.Ok(new { text, provider = insta.AiProvider });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/ai-lab/compare", async (
+    InstagramTestRequest payload,
+    ISettingsStore store,
+    IInstagramPostComposer composer,
+    OpenAiInstagramPostGenerator openAiGenerator,
+    GeminiInstagramPostGenerator geminiGenerator,
+    DeepSeekInstagramPostGenerator deepSeekGenerator,
+    NemotronInstagramPostGenerator nemotronGenerator,
+    QwenInstagramPostGenerator qwenGenerator,
+    VilaNvidiaGenerator vilaGenerator,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(payload.Input))
+    {
+        return Results.BadRequest(new { error = "Informe o texto para teste." });
+    }
+
+    var requestedProviders = (payload.Providers ?? new List<string> { "openai", "gemini", "deepseek", "nemotron", "qwen", "vila" })
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim().ToLowerInvariant())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    var allowedProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "openai", "gemini", "deepseek", "nemotron", "qwen", "vila" };
+    var providers = requestedProviders.Where(allowedProviders.Contains).ToList();
+    if (providers.Count == 0)
+    {
+        return Results.BadRequest(new { error = "Selecione ao menos um provedor valido." });
+    }
+
+    var settings = await store.GetAsync(ct);
+    var instaBase = settings.InstagramPosts ?? new InstagramPostSettings();
+    var results = new List<object>();
+    var mode = string.IsNullOrWhiteSpace(payload.Mode) ? "raw" : payload.Mode.Trim().ToLowerInvariant();
+    var freeformPrompt = string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x)));
+
+    foreach (var provider in providers)
+    {
+        var started = DateTimeOffset.UtcNow;
+        string text;
+        if (mode == "structured")
+        {
+            var insta = JsonSerializer.Deserialize<InstagramPostSettings>(JsonSerializer.Serialize(instaBase)) ?? new InstagramPostSettings();
+            insta.AiProvider = provider;
+            text = await composer.BuildAsync(payload.Input, payload.Context, insta, ct);
+        }
+        else
+        {
+            text = provider switch
+            {
+                "gemini" => await geminiGenerator.GenerateFreeformAsync(freeformPrompt, settings.Gemini ?? new GeminiSettings(), ct) ?? "Sem resposta.",
+                "deepseek" => await deepSeekGenerator.GenerateFreeformAsync(freeformPrompt, settings.DeepSeek ?? new DeepSeekSettings(), ct) ?? "Sem resposta.",
+                "nemotron" => await nemotronGenerator.GenerateFreeformAsync(freeformPrompt, settings.Nemotron ?? new NemotronSettings(), ct) ?? "Sem resposta.",
+                "qwen" => await qwenGenerator.GenerateFreeformAsync(freeformPrompt, settings.Qwen ?? new QwenSettings(), ct) ?? "Sem resposta.",
+                "vila" => await vilaGenerator.GenerateFreeformAsync(freeformPrompt, settings.VilaNvidia ?? new VilaNvidiaSettings(), ct) ?? "Sem resposta.",
+                _ => await openAiGenerator.GenerateFreeformAsync(freeformPrompt, settings.OpenAI ?? new OpenAISettings(), ct) ?? "Sem resposta."
+            };
+        }
+
+        results.Add(new
+        {
+            provider,
+            mode,
+            durationMs = (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds,
+            text
+        });
+    }
+
+    return Results.Ok(new { success = true, results });
 }).RequireAuthorization("AdminOnly");
 
 api.MapGet("/content-calendar/items", async (
@@ -2841,6 +3388,7 @@ api.MapPost("/instagram/publish/drafts/{id}/publish", async (
     var publishResult = await PublishInstagramDraftAsync(
         id,
         settings.InstagramPublish ?? new InstagramPublishSettings(),
+        settings.VilaNvidia ?? new VilaNvidiaSettings(),
         settings.Gemini ?? new GeminiSettings(),
         publishStore,
         publishLogStore,
@@ -3829,6 +4377,42 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     if (gemini.MaxOutputTokens is < 200 or > 4096)
     {
         yield return "Gemini.MaxOutputTokens deve estar entre 200 e 4096.";
+    }
+
+    var deepSeek = settings.DeepSeek ?? new DeepSeekSettings();
+    if (deepSeek.MaxOutputTokens is < 200 or > 4096)
+    {
+        yield return "DeepSeek.MaxOutputTokens deve estar entre 200 e 4096.";
+    }
+
+    var nemotron = settings.Nemotron ?? new NemotronSettings();
+    if (nemotron.MaxOutputTokens is < 200 or > 16384)
+    {
+        yield return "Nemotron.MaxOutputTokens deve estar entre 200 e 16384.";
+    }
+    if (nemotron.ReasoningBudget is < 0 or > 16384)
+    {
+        yield return "Nemotron.ReasoningBudget deve estar entre 0 e 16384.";
+    }
+    if (nemotron.TopP is <= 0 or > 1.0)
+    {
+        yield return "Nemotron.TopP deve estar entre 0 e 1.";
+    }
+
+    var qwen = settings.Qwen ?? new QwenSettings();
+    if (qwen.MaxOutputTokens is < 200 or > 8192)
+    {
+        yield return "Qwen.MaxOutputTokens deve estar entre 200 e 8192.";
+    }
+
+    var vila = settings.VilaNvidia ?? new VilaNvidiaSettings();
+    if (vila.MaxOutputTokens is < 200 or > 16384)
+    {
+        yield return "VilaNvidia.MaxOutputTokens deve estar entre 200 e 16384.";
+    }
+    if (vila.TopP is <= 0 or > 1.0)
+    {
+        yield return "VilaNvidia.TopP deve estar entre 0 e 1.";
     }
 
     var instaPublish = settings.InstagramPublish ?? new InstagramPublishSettings();
@@ -5775,6 +6359,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var publishResult = await PublishInstagramDraftAsync(
                 draft.Id,
                 settings.InstagramPublish ?? new InstagramPublishSettings(),
+                settings.VilaNvidia ?? new VilaNvidiaSettings(),
                 settings.Gemini ?? new GeminiSettings(),
                 publishStore,
                 publishLogStore,
@@ -6207,6 +6792,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
             var publishResult = await PublishInstagramDraftAsync(
                 draft.Id,
                 settings.InstagramPublish ?? new InstagramPublishSettings(),
+                settings.VilaNvidia ?? new VilaNvidiaSettings(),
                 settings.Gemini ?? new GeminiSettings(),
                 publishStore,
                 publishLogStore,
@@ -7168,11 +7754,35 @@ static string BuildBioLinksPageHtml(
     string? campaign)
 {
     var sb = new StringBuilder();
+    const string instagramUrl = "https://www.instagram.com/reidasofertasvip/";
+    const string telegramUrl = "https://t.me/ReiDasOfertasVIP";
+    const string whatsappUrl = "https://chat.whatsapp.com/CYy5lP0VOjTDlefARsexXi";
     var brandName = string.IsNullOrWhiteSpace(settings.BrandName) ? "Rei das Ofertas" : settings.BrandName.Trim();
     var headline = string.IsNullOrWhiteSpace(settings.Headline) ? "Achadinhos em destaque" : settings.Headline.Trim();
     var subheadline = string.IsNullOrWhiteSpace(settings.Subheadline) ? "Toque no botao para abrir a oferta." : settings.Subheadline.Trim();
     var buttonLabel = string.IsNullOrWhiteSpace(settings.ButtonLabel) ? "Abrir oferta" : settings.ButtonLabel.Trim();
-    var campaignLabel = string.IsNullOrWhiteSpace(campaign) ? "sem campanha" : campaign;
+    var whatsAppSymbol = GetBioChannelBadgeHtml("whatsapp");
+    var telegramSymbol = GetBioChannelBadgeHtml("telegram");
+    var instagramSymbol = GetBioChannelBadgeHtml("instagram");
+    var catalogSymbol = GetBioChannelBadgeHtml("catalogo");
+    var catalogUrl = currentUrl;
+    var converterUrl = currentUrl;
+    if (Uri.TryCreate(currentUrl, UriKind.Absolute, out var currentUri))
+    {
+        catalogUrl = $"{currentUri.GetLeftPart(UriPartial.Authority)}/catalogo";
+        var primaryHost = currentUri.Host.StartsWith("bio.", StringComparison.OrdinalIgnoreCase)
+            ? currentUri.Host["bio.".Length..]
+            : currentUri.Host;
+        converterUrl = $"{currentUri.Scheme}://{primaryHost}/conversor";
+    }
+    var converterSymbol = GetBioChannelBadgeHtml("conversor");
+    var detailBaseUrl = converterUrl;
+    if (detailBaseUrl.EndsWith("/conversor", StringComparison.OrdinalIgnoreCase))
+    {
+        detailBaseUrl = detailBaseUrl[..^"/conversor".Length];
+    }
+    var featuredItems = items.Take(3).ToList();
+    var additionalItems = items.Skip(3).ToList();
     sb.AppendLine("<!doctype html>");
     sb.AppendLine("<html lang=\"pt-BR\">");
     sb.AppendLine("<head>");
@@ -7197,12 +7807,32 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("    .logo { width: 100px; height: 100px; margin: 0 auto 20px; border-radius: 50%; border: 2px solid var(--gold); padding: 5px; box-shadow: 0 0 20px rgba(196,164,104,0.3); }");
     sb.AppendLine("    h1 { margin: 0 0 8px; font-size: 1.6rem; color: var(--gold); letter-spacing: 1px; text-transform: uppercase; font-weight: 800; }");
     sb.AppendLine("    p { margin: 0; color: var(--muted); font-size: 0.95rem; }");
+    sb.AppendLine("    .hero-sub { margin-top: 10px; max-width: 440px; margin-left: auto; margin-right: auto; line-height: 1.5; }");
+    sb.AppendLine("    .quick-links { display: grid; gap: 12px; margin: 24px 0 32px; }");
+    sb.AppendLine("    .quick-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.75)); padding: 16px 18px; text-decoration: none; color: inherit; transition: all .3s ease; }");
+    sb.AppendLine("    .quick-link:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: 0 14px 28px rgba(0,0,0,.28); }");
+    sb.AppendLine("    .quick-link strong { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 1rem; margin-bottom: 4px; }");
+    sb.AppendLine("    .quick-link span { color: var(--muted); font-size: .88rem; }");
+    sb.AppendLine("    .quick-link em { color: var(--gold); font-style: normal; font-weight: 800; font-size: .85rem; text-transform: uppercase; letter-spacing: .08em; }");
+    sb.AppendLine("    .section-title { margin: 26px 0 14px; color: var(--gold); font-size: 1rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }");
     sb.AppendLine("    .card { position: relative; border: 1px solid var(--line); border-radius: 18px; background: var(--card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 16px; margin-bottom: 16px; transition: all 0.3s ease; display: block; text-decoration: none; color: inherit; }");
     sb.AppendLine("    .card:hover { border-color: var(--gold); transform: translateY(-3px); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(196,164,104,0.1); }");
-    sb.AppendLine("    .title { font-weight: 700; font-size: 1.1rem; line-height: 1.4; color: var(--gold); margin-bottom: 4px; }");
+    sb.AppendLine("    .card-media { width: 100%; aspect-ratio: 16 / 10; border-radius: 14px; overflow: hidden; background: linear-gradient(135deg, rgba(15,23,42,.95), rgba(30,41,59,.75)); border: 1px solid rgba(255,255,255,.06); margin-bottom: 14px; display:flex; align-items:center; justify-content:center; }");
+    sb.AppendLine("    .card-media img { width: 100%; height: 100%; object-fit: contain; display:block; background: rgba(2,6,23,.92); }");
+    sb.AppendLine("    .title { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; line-height: 1.4; color: var(--gold); margin-bottom: 4px; }");
+    sb.AppendLine("    .label-badge { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 999px; border: 1px solid rgba(255,255,255,.12); font-size: 1rem; font-weight: 900; line-height: 1; box-shadow: inset 0 1px 0 rgba(255,255,255,.08); flex: 0 0 auto; }");
+    sb.AppendLine("    .badge-whatsapp { background: linear-gradient(135deg, rgba(34,197,94,.28), rgba(21,128,61,.18)); color: #86efac; border-color: rgba(34,197,94,.35); }");
+    sb.AppendLine("    .badge-telegram { background: linear-gradient(135deg, rgba(56,189,248,.28), rgba(14,116,144,.18)); color: #7dd3fc; border-color: rgba(56,189,248,.35); }");
+    sb.AppendLine("    .badge-instagram { background: linear-gradient(135deg, rgba(244,114,182,.24), rgba(168,85,247,.18)); color: #f9a8d4; border-color: rgba(244,114,182,.35); }");
+    sb.AppendLine("    .badge-catalogo { background: linear-gradient(135deg, rgba(196,164,104,.28), rgba(133,77,14,.2)); color: #f5deb3; border-color: rgba(196,164,104,.38); }");
+    sb.AppendLine("    .badge-lightning { display: inline-block; background: #e11d48; color: white; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 900; text-transform: uppercase; margin-bottom: 10px; animation: pulse-red 2s infinite; }");
+    sb.AppendLine("    .badge-offer-amazon { background: linear-gradient(135deg, rgba(251,191,36,.24), rgba(180,83,9,.18)); color: #fde68a; border-color: rgba(251,191,36,.35); }");
+    sb.AppendLine("    .badge-offer-shopee { background: linear-gradient(135deg, rgba(249,115,22,.24), rgba(194,65,12,.18)); color: #fdba74; border-color: rgba(249,115,22,.35); }");
+    sb.AppendLine("    .badge-offer-ml { background: linear-gradient(135deg, rgba(250,204,21,.22), rgba(59,130,246,.16)); color: #fde68a; border-color: rgba(250,204,21,.32); }");
+    sb.AppendLine("    .badge-offer-magalu { background: linear-gradient(135deg, rgba(59,130,246,.24), rgba(29,78,216,.18)); color: #93c5fd; border-color: rgba(59,130,246,.35); }");
+    sb.AppendLine("    .badge-offer-default { background: linear-gradient(135deg, rgba(148,163,184,.22), rgba(71,85,105,.18)); color: #cbd5e1; border-color: rgba(148,163,184,.30); }");
     sb.AppendLine("    .meta { color: var(--muted); font-size: 0.85rem; display: flex; gap: 10px; align-items: center; }");
     sb.AppendLine("    .btn { display: block; width: 100%; text-align: center; margin-top: 14px; background: var(--btn); color: var(--btnText); text-decoration: none; padding: 12px; border-radius: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }");
-    sb.AppendLine("    .badge-lightning { display: inline-block; background: #e11d48; color: white; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 900; text-transform: uppercase; margin-bottom: 10px; animation: pulse-red 2s infinite; }");
     sb.AppendLine("    @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(225, 29, 72, 0); } 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); } }");
     sb.AppendLine("    .coupon-tag { display: inline-flex; align-items: center; gap: 4px; background: rgba(196, 164, 104, 0.15); color: var(--gold); padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 800; margin-top: 8px; border: 1px solid rgba(196, 164, 104, 0.3); }");
     sb.AppendLine("    .empty { padding: 30px; border: 1px dashed var(--line); border-radius: 20px; color: var(--muted); text-align: center; }");
@@ -7227,8 +7857,45 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("            el.innerHTML = `⚡ ${h}h ${m}m ${s}s`;");
     sb.AppendLine("        });");
     sb.AppendLine("    }");
+    sb.AppendLine("    function localizePublishedAt() {");
+    sb.AppendLine("        document.querySelectorAll('[data-published-at]').forEach(el => {");
+    sb.AppendLine("            const iso = el.getAttribute('data-published-at');");
+    sb.AppendLine("            if (!iso) return;");
+    sb.AppendLine("            const dt = new Date(iso);");
+    sb.AppendLine("            if (Number.isNaN(dt.getTime())) return;");
+    sb.AppendLine("            const formatted = dt.toLocaleString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });");
+    sb.AppendLine("            el.textContent = `Publicado em ${formatted}`;");
+    sb.AppendLine("        });");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function getAnalyticsId(key, prefix) {");
+    sb.AppendLine("        try { const existing = localStorage.getItem(key); if (existing) return existing; const created = `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; localStorage.setItem(key, created); return created; } catch { return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; }");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function getSessionId() {");
+    sb.AppendLine("        try { const existing = sessionStorage.getItem('ard_session_id'); if (existing) return existing; const created = `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; sessionStorage.setItem('ard_session_id', created); return created; } catch { return `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; }");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function getScrollDepth() { const doc = document.documentElement; const scrollTop = window.scrollY || doc.scrollTop || 0; const height = Math.max((doc.scrollHeight || 0) - window.innerHeight, 1); return Math.max(0, Math.min(100, Math.round((scrollTop / height) * 100))); }");
+    sb.AppendLine("    function getUtmContext() { const params = new URLSearchParams(window.location.search); return { utmSource: params.get('utm_source'), utmMedium: params.get('utm_medium'), utmCampaign: params.get('utm_campaign'), utmContent: params.get('utm_content'), utmTerm: params.get('utm_term') }; }");
+    sb.AppendLine("    function buildBioPayload(targetUrl, source, eventType) {");
+    sb.AppendLine("        const utm = getUtmContext();");
+    sb.AppendLine("        return { TargetUrl: targetUrl, Source: source || 'bio', Category: 'bio', VisitorId: getAnalyticsId('ard_visitor_id', 'visitor'), SessionId: getSessionId(), EventType: eventType, PageType: 'bio', PageUrl: window.location.href, SourceComponent: source || 'bio', Language: navigator.language || null, Timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null, ScreenWidth: window.screen?.width || null, ScreenHeight: window.screen?.height || null, ViewportWidth: window.innerWidth || null, ViewportHeight: window.innerHeight || null, ScrollDepth: getScrollDepth(), TimeOnPageMs: Math.max(0, Math.round(performance.now())), UtmSource: utm.utmSource, UtmMedium: utm.utmMedium, UtmCampaign: utm.utmCampaign, UtmContent: utm.utmContent, UtmTerm: utm.utmTerm };");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function trackBioClick(targetUrl, source, eventType) {");
+    sb.AppendLine("        if (!targetUrl) return;");
+    sb.AppendLine("        const payload = JSON.stringify(buildBioPayload(targetUrl, source, eventType));");
+    sb.AppendLine("        if (navigator.sendBeacon) { const blob = new Blob([payload], { type: 'application/json' }); navigator.sendBeacon('/api/analytics/click', blob); return; }");
+    sb.AppendLine("        fetch('/api/analytics/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});");
+    sb.AppendLine("    }");
+    sb.AppendLine("    function trackBioView() { trackBioClick(window.location.href, 'bio_view', 'page_view'); }");
+    sb.AppendLine("    document.addEventListener('click', function(e) {");
+    sb.AppendLine("        const tracked = e.target.closest('[data-analytics-source]');");
+    sb.AppendLine("        if (!tracked) return;");
+    sb.AppendLine("        const source = tracked.getAttribute('data-analytics-source') || 'bio';");
+    sb.AppendLine("        const target = tracked.getAttribute('data-analytics-target') || tracked.getAttribute('href') || window.location.href;");
+    sb.AppendLine("        const eventType = tracked.getAttribute('data-analytics-event') || 'click';");
+    sb.AppendLine("        trackBioClick(target, source, eventType);");
+    sb.AppendLine("    });");
     sb.AppendLine("    setInterval(updateCountdowns, 1000);");
-    sb.AppendLine("    window.onload = updateCountdowns;");
+    sb.AppendLine("    window.onload = function() { updateCountdowns(); localizePublishedAt(); trackBioView(); };");
     sb.AppendLine("  </script>");
     sb.AppendLine("</head>");
     sb.AppendLine("<body><main class=\"wrap\">");
@@ -7236,25 +7903,39 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("    <div class=\"logo\" aria-hidden=\"true\" style=\"display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.8rem;color:var(--gold);\">VIP</div>");
     sb.AppendLine($"    <h1>{System.Net.WebUtility.HtmlEncode(brandName)}</h1>");
     sb.AppendLine($"    <p>{System.Net.WebUtility.HtmlEncode(headline)}</p>");
+    sb.AppendLine($"    <p class=\"hero-sub\">{System.Net.WebUtility.HtmlEncode(subheadline)}</p>");
     sb.AppendLine($"    <p style=\"margin-top:12px; font-size:0.8rem; opacity:0.7;\">Origem: {System.Net.WebUtility.HtmlEncode(source)}</p>");
     sb.AppendLine("  </section>");
+    sb.AppendLine("  <section class=\"quick-links\">");
+    sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(whatsappUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_whatsapp\"><div><strong>{whatsAppSymbol} Entrar no WhatsApp</strong><span>Receba ofertas, alertas e os links primeiro por la.</span></div><em>WhatsApp</em></a>");
+    sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(telegramUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_telegram\"><div><strong>{telegramSymbol} Entrar no Telegram</strong><span>Entre no canal para acompanhar alertas e ofertas em tempo real.</span></div><em>Telegram</em></a>");
+    sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(instagramUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_instagram\"><div><strong>{instagramSymbol} Seguir no Instagram</strong><span>Acompanhe reels, stories e posts com os melhores achadinhos.</span></div><em>Instagram</em></a>");
+    sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(catalogUrl)}\" data-analytics-source=\"bio_catalog\"><div><strong>{catalogSymbol} Abrir Catalogo VIP</strong><span>Veja todas as ofertas publicadas e acesse os links atualizados.</span></div><em>Catalogo</em></a>");
+    sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(converterUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_converter\"><div><strong>{converterSymbol} Abrir Conversor de Links</strong><span>Converta links rapidamente e encontre ofertas prontas para comprar.</span></div><em>Conversor</em></a>");
+    sb.AppendLine("  </section>");
 
-    if (items.Count == 0)
+    if (featuredItems.Count == 0)
     {
         sb.AppendLine("  <section class=\"empty\">Nenhuma oferta publicada ainda.</section>");
     }
     else
     {
-        foreach (var item in items)
+        sb.AppendLine("  <h2 class=\"section-title\">Top 3 ofertas em destaque</h2>");
+        foreach (var item in featuredItems)
         {
             var title = System.Net.WebUtility.HtmlEncode(item.Title);
             var link = System.Net.WebUtility.HtmlEncode(item.Link);
+            var detailLink = BuildBioDetailLink(detailBaseUrl, item);
             var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
             var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
             var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
-            var createdAt = item.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
+            var createdAtIso = item.CreatedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+            var imageUrl = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
 
-            sb.AppendLine("  <article class=\"card\">");
+            var clickAttr = string.IsNullOrWhiteSpace(detailLink)
+                ? string.Empty
+                : $" onclick=\"window.location.href='{System.Net.WebUtility.HtmlEncode(detailLink)}'\" style=\"cursor:pointer;\" data-analytics-source=\"bio_top3_card\" data-analytics-target=\"{System.Net.WebUtility.HtmlEncode(detailLink)}\"";
+            sb.AppendLine($"  <article class=\"card\"{clickAttr}>");
             if (item.IsLightningDeal)
             {
                 var expiryAttr = item.LightningDealExpiry.HasValue 
@@ -7262,7 +7943,11 @@ static string BuildBioLinksPageHtml(
                     : "";
                 sb.AppendLine($"    <div class=\"badge-lightning\"{expiryAttr}>Oferta Relâmpago</div>");
             }
-            sb.AppendLine($"    <div class=\"title\">{title}</div>");
+            if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+            {
+                sb.AppendLine($"    <div class=\"card-media\"><img src=\"{imageUrl}\" alt=\"{title}\" loading=\"lazy\" /></div>");
+            }
+            sb.AppendLine($"    <div class=\"title\">{GetBioOfferBadgeHtml(item)} <span>{title}</span></div>");
             if (!string.IsNullOrWhiteSpace(item.CouponCode))
             {
                 sb.AppendLine($"    <div class=\"coupon-tag\">🎟️ Cupom: <strong>{System.Net.WebUtility.HtmlEncode(item.CouponCode)}</strong></div>");
@@ -7272,16 +7957,441 @@ static string BuildBioLinksPageHtml(
                 sb.AppendLine($"    <div class=\"meta\">Item: <strong>{item.ItemNumber.Value}</strong></div>");
             }
             sb.AppendLine($"    <div class=\"meta\">Loja: <strong>{store}</strong></div>");
-            sb.AppendLine($"    <div class=\"meta\">Publicado em {createdAt}" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" | Palavra: <strong>{keyword}</strong>") + "</div>");
-            sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">{System.Net.WebUtility.HtmlEncode(buttonLabel)}</a>");
+            sb.AppendLine($"    <div class=\"meta\"><span data-published-at=\"{createdAtIso}\">Publicado em {createdAtIso}</span>" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" | Palavra: <strong>{keyword}</strong>") + "</div>");
+            sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_top3_buy\" onclick=\"event.stopPropagation();\">{System.Net.WebUtility.HtmlEncode(buttonLabel)}</a>");
             sb.AppendLine($"    <div class=\"meta\" style=\"margin-top:8px;font-size:.8rem;\">Destino: {host}</div>");
             sb.AppendLine("  </article>");
+        }
+
+        if (additionalItems.Count > 0)
+        {
+            sb.AppendLine("  <h2 class=\"section-title\">Mais ofertas publicadas</h2>");
+            foreach (var item in additionalItems)
+            {
+                var title = System.Net.WebUtility.HtmlEncode(item.Title);
+                var link = System.Net.WebUtility.HtmlEncode(item.Link);
+                var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
+                var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
+                var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
+                var createdAtIso = item.CreatedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+                var imageUrl = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
+
+                sb.AppendLine("  <article class=\"card\" data-analytics-source=\"bio_more_offer\">");
+                if (item.IsLightningDeal)
+                {
+                    var expiryAttr = item.LightningDealExpiry.HasValue
+                        ? $" data-expiry=\"{item.LightningDealExpiry.Value:yyyy-MM-ddTHH:mm:ssZ}\""
+                        : "";
+                    sb.AppendLine($"    <div class=\"badge-lightning\"{expiryAttr}>Oferta Relampago</div>");
+                }
+                if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+                {
+                    sb.AppendLine($"    <div class=\"card-media\"><img src=\"{imageUrl}\" alt=\"{title}\" loading=\"lazy\" /></div>");
+                }
+                sb.AppendLine($"    <div class=\"title\">{GetBioOfferBadgeHtml(item)} <span>{title}</span></div>");
+                if (!string.IsNullOrWhiteSpace(item.CouponCode))
+                {
+                    sb.AppendLine($"    <div class=\"coupon-tag\">Cupom: <strong>{System.Net.WebUtility.HtmlEncode(item.CouponCode)}</strong></div>");
+                }
+                if (item.ItemNumber.HasValue)
+                {
+                    sb.AppendLine($"    <div class=\"meta\">Item: <strong>{item.ItemNumber.Value}</strong></div>");
+                }
+                sb.AppendLine($"    <div class=\"meta\">Loja: <strong>{store}</strong></div>");
+                sb.AppendLine($"    <div class=\"meta\"><span data-published-at=\"{createdAtIso}\">Publicado em {createdAtIso}</span>" + (string.IsNullOrWhiteSpace(keyword) ? string.Empty : $" | Palavra: <strong>{keyword}</strong>") + "</div>");
+                sb.AppendLine($"    <a class=\"btn\" href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_more_buy\">{System.Net.WebUtility.HtmlEncode(buttonLabel)}</a>");
+                sb.AppendLine($"    <div class=\"meta\" style=\"margin-top:8px;font-size:.8rem;\">Destino: {host}</div>");
+                sb.AppendLine("  </article>");
+            }
         }
     }
 
     sb.AppendLine($"  <div class=\"foot\">Link desta pagina: {System.Net.WebUtility.HtmlEncode(currentUrl)}</div>");
     sb.AppendLine("</main></body></html>");
     return sb.ToString();
+}
+
+static string GetBioChannelBadgeHtml(string kind)
+{
+    var normalized = kind.ToLowerInvariant();
+    var cssClass = normalized switch
+    {
+        "whatsapp" => "badge-whatsapp",
+        "telegram" => "badge-telegram",
+        "instagram" => "badge-instagram",
+        "catalogo" => "badge-catalogo",
+        "conversor" => "badge-catalogo",
+        _ => "badge-offer-default"
+    };
+
+    var symbol = normalized switch
+    {
+        "whatsapp" => "&#128172;",
+        "telegram" => "&#9992;&#65039;",
+        "instagram" => "&#128247;",
+        "catalogo" => "&#128722;",
+        "conversor" => "&#128279;",
+        _ => "&#10022;"
+    };
+
+    return $"<span class=\"label-badge {cssClass}\">{symbol}</span>";
+}
+
+static string GetBioOfferBadgeHtml(BioLinkItem item)
+{
+    if (item.IsLightningDeal)
+    {
+        return "<span class=\"label-badge badge-lightning\">&#9889;</span>";
+    }
+
+    var store = (item.Store ?? string.Empty).Trim().ToLowerInvariant();
+    if (store.Contains("amazon", StringComparison.Ordinal))
+    {
+        return "<span class=\"label-badge badge-offer-amazon\">&#128230;</span>";
+    }
+
+    if (store.Contains("shopee", StringComparison.Ordinal))
+    {
+        return "<span class=\"label-badge badge-offer-shopee\">&#128717;&#65039;</span>";
+    }
+
+    if (store.Contains("mercado livre", StringComparison.Ordinal) || store.Contains("mercadolivre", StringComparison.Ordinal))
+    {
+        return "<span class=\"label-badge badge-offer-ml\">&#128176;</span>";
+    }
+
+    if (store.Contains("magalu", StringComparison.Ordinal) || store.Contains("magazine luiza", StringComparison.Ordinal))
+    {
+        return "<span class=\"label-badge badge-offer-magalu\">&#127970;</span>";
+    }
+
+    return "<span class=\"label-badge badge-offer-default\">&#127873;</span>";
+}
+
+static string? BuildBioDetailLink(string baseUrl, BioLinkItem item)
+{
+    var token = item.ItemNumber?.ToString(CultureInfo.InvariantCulture);
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        token = string.IsNullOrWhiteSpace(item.Keyword) ? null : item.Keyword.Trim();
+    }
+
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        return null;
+    }
+
+    return $"{baseUrl}/item/{Uri.EscapeDataString(token)}";
+}
+
+IReadOnlyList<CatalogOfferItem> BuildCatalogFallbackItemsFromDrafts(
+    IReadOnlyList<InstagramPublishDraft> drafts,
+    IReadOnlyList<ConversionLogEntry> recentConversions,
+    string catalogTarget,
+    string? search = null)
+{
+    var normalizedTarget = CatalogTargets.Normalize(catalogTarget, CatalogTargets.Prod);
+    var published = (drafts ?? Array.Empty<InstagramPublishDraft>())
+        .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
+        .Where(d => CatalogTargets.Expand(d.CatalogTarget, d.SendToCatalog).Contains(normalizedTarget, StringComparer.OrdinalIgnoreCase))
+        .OrderBy(d => d.CreatedAt)
+        .ToList();
+
+    var items = new List<CatalogOfferItem>(published.Count);
+    var nextItemNumber = 1;
+    foreach (var draft in published)
+    {
+        var offerUrl = ResolveCatalogOfferUrlForFallback(draft, recentConversions);
+        if (string.IsNullOrWhiteSpace(offerUrl))
+        {
+            continue;
+        }
+
+        items.Add(new CatalogOfferItem
+        {
+            ItemNumber = nextItemNumber++,
+            DraftId = draft.Id,
+            Keyword = BuildKeywordFromDraft(draft, nextItemNumber - 1),
+            ProductName = string.IsNullOrWhiteSpace(draft.ProductName) ? $"Item {nextItemNumber - 1}" : draft.ProductName.Trim(),
+            Store = ResolveStoreNameFromUrl(offerUrl),
+            OfferUrl = offerUrl.Trim(),
+            ImageUrl = ResolveBioImageUrl(draft),
+            PriceText = ExtractPriceFromText(draft.Caption),
+            PostType = NormalizeCatalogPostType(draft.PostType),
+            CatalogTarget = normalizedTarget,
+            Active = true,
+            PublishedAt = draft.CreatedAt,
+            UpdatedAt = draft.CreatedAt
+        });
+    }
+
+    var query = (search ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return items.OrderByDescending(x => x.ItemNumber).ToArray();
+    }
+
+    IEnumerable<CatalogOfferItem> filtered = items;
+    if (int.TryParse(query, out var number))
+    {
+        filtered = filtered.Where(x => x.ItemNumber == number || x.Keyword.Contains(query, StringComparison.OrdinalIgnoreCase));
+    }
+    else
+    {
+        filtered = filtered.Where(x =>
+            x.Keyword.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            x.ProductName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            x.Store.Contains(query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    return filtered
+        .OrderByDescending(x => x.ItemNumber)
+        .ToArray();
+}
+
+string BuildKeywordFromDraft(InstagramPublishDraft draft, int itemNumber)
+{
+    var ctaKeyword = draft.Ctas
+        .Select(x => (x.Keyword ?? string.Empty).Trim())
+        .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    if (!string.IsNullOrWhiteSpace(ctaKeyword))
+    {
+        return ctaKeyword.ToUpperInvariant();
+    }
+
+    return $"ITEM{itemNumber}";
+}
+
+string? ResolveBioImageUrl(InstagramPublishDraft draft)
+{
+    var selected = draft.SelectedImageIndexes ?? new List<int>();
+    if (selected.Count > 0)
+    {
+        var first = selected[0] - 1;
+        if (first >= 0 && first < draft.ImageUrls.Count)
+        {
+            return draft.ImageUrls[first];
+        }
+    }
+
+    var firstImage = draft.ImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    if (!string.IsNullOrWhiteSpace(firstImage))
+    {
+        return firstImage;
+    }
+
+    if (!string.IsNullOrWhiteSpace(draft.VideoCoverUrl))
+    {
+        return draft.VideoCoverUrl.Trim();
+    }
+
+    return null;
+}
+
+string ResolveCatalogOfferUrlForFallback(InstagramPublishDraft draft, IReadOnlyList<ConversionLogEntry> recentConversions)
+{
+    if (!string.IsNullOrWhiteSpace(draft.OfferUrl) && !IsInternalCatalogUrl(draft.OfferUrl))
+    {
+        return draft.OfferUrl.Trim();
+    }
+
+    var cta = draft.Ctas?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.Link))?.Link;
+    if (!string.IsNullOrWhiteSpace(cta) && !IsInternalCatalogUrl(cta))
+    {
+        return cta.Trim();
+    }
+
+    if (!string.IsNullOrWhiteSpace(draft.Caption))
+    {
+        var match = Regex.Match(draft.Caption, @"https?://\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (match.Success && !IsInternalCatalogUrl(match.Value))
+        {
+            return match.Value.Trim();
+        }
+    }
+
+    var candidates = (recentConversions ?? Array.Empty<ConversionLogEntry>())
+        .Where(x => x.Success)
+        .Where(x => !string.IsNullOrWhiteSpace(x.ConvertedUrl))
+        .Where(x => Math.Abs((x.Timestamp - draft.CreatedAt).TotalMinutes) <= 10)
+        .OrderBy(x => Math.Abs((x.Timestamp - draft.CreatedAt).TotalSeconds))
+        .ToList();
+
+    if (candidates.Count == 0)
+    {
+        return string.Empty;
+    }
+
+    var preferredStore = ResolveDraftMarketplace(draft);
+    var candidate = candidates.FirstOrDefault(x =>
+        !string.IsNullOrWhiteSpace(preferredStore) &&
+        string.Equals(x.Store, preferredStore, StringComparison.OrdinalIgnoreCase));
+
+    candidate ??= candidates.FirstOrDefault(x =>
+        !string.IsNullOrWhiteSpace(draft.ProductName) &&
+        x.OriginalUrl.Contains(draft.ProductName, StringComparison.OrdinalIgnoreCase));
+
+    candidate ??= candidates.FirstOrDefault();
+
+    if (candidate is not null)
+    {
+        return candidate.ConvertedUrl.Trim();
+    }
+
+    return string.Empty;
+}
+
+string? ResolveDraftMarketplace(InstagramPublishDraft draft)
+{
+    var urls = new List<string>();
+    if (!string.IsNullOrWhiteSpace(draft.OfferUrl))
+    {
+        urls.Add(draft.OfferUrl);
+    }
+
+    urls.AddRange(draft.Ctas?.Select(x => x.Link ?? string.Empty) ?? Enumerable.Empty<string>());
+    urls.AddRange(draft.ImageUrls ?? new List<string>());
+    if (!string.IsNullOrWhiteSpace(draft.Caption))
+    {
+        urls.Add(draft.Caption);
+    }
+
+    foreach (var raw in urls)
+    {
+        var value = raw?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            continue;
+        }
+
+        if (value.Contains("shopee", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Shopee";
+        }
+
+        if (value.Contains("amazon", StringComparison.OrdinalIgnoreCase) || value.Contains("amzn.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Amazon";
+        }
+
+        if (value.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) || value.Contains("meli.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Mercado Livre";
+        }
+
+        if (value.Contains("magalu", StringComparison.OrdinalIgnoreCase) || value.Contains("magazineluiza", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Magalu";
+        }
+    }
+
+    return null;
+}
+
+string ResolveEffectiveCatalogOfferUrl(
+    CatalogOfferItem? catalogItem,
+    InstagramPublishDraft? draft,
+    IReadOnlyList<ConversionLogEntry> recentConversions)
+{
+    var stored = catalogItem?.OfferUrl?.Trim();
+    if (!IsInternalCatalogUrl(stored))
+    {
+        return stored ?? string.Empty;
+    }
+
+    if (draft is not null)
+    {
+        var fallback = ResolveCatalogOfferUrlForFallback(draft, recentConversions);
+        if (!string.IsNullOrWhiteSpace(fallback) && !IsInternalCatalogUrl(fallback))
+        {
+            return fallback.Trim();
+        }
+    }
+
+    return stored ?? string.Empty;
+}
+
+InstagramPublishDraft? FindRelatedDraftForCatalogItem(
+    CatalogOfferItem item,
+    IReadOnlyDictionary<string, InstagramPublishDraft> draftsById,
+    IReadOnlyList<InstagramPublishDraft> drafts)
+{
+    if (!string.IsNullOrWhiteSpace(item.DraftId) &&
+        draftsById.TryGetValue(item.DraftId, out var byId))
+    {
+        return byId;
+    }
+
+    return (drafts ?? Array.Empty<InstagramPublishDraft>())
+        .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
+        .Where(d => !string.IsNullOrWhiteSpace(d.ProductName))
+        .Where(d => string.Equals(d.ProductName.Trim(), item.ProductName.Trim(), StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(d => d.CreatedAt)
+        .FirstOrDefault();
+}
+
+bool IsInternalCatalogUrl(string? url)
+{
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return true;
+    }
+
+    var value = url.Trim();
+    if (value.StartsWith("/catalogo", StringComparison.OrdinalIgnoreCase) ||
+        value.StartsWith("/item/", StringComparison.OrdinalIgnoreCase) ||
+        value.StartsWith("/bio", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    var host = uri.Host.ToLowerInvariant();
+    if (!host.Contains("reidasofertas.ia.br", StringComparison.Ordinal))
+    {
+        return false;
+    }
+
+    var path = uri.AbsolutePath;
+    return path.StartsWith("/catalogo", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/item/", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/bio", StringComparison.OrdinalIgnoreCase);
+}
+
+string? BuildPublicImageProxyUrl(string? publicBaseUrl, HttpRequest request, string? imageUrl)
+{
+    if (string.IsNullOrWhiteSpace(imageUrl))
+    {
+        return null;
+    }
+
+    var trimmed = imageUrl.Trim();
+    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+    {
+        return trimmed;
+    }
+
+    if (string.Equals(uri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase))
+    {
+        return trimmed;
+    }
+
+    var baseUrl = ResolvePublicBaseUrl(publicBaseUrl, null, request.Scheme, request.Host.ToString()).TrimEnd('/');
+    return $"{baseUrl}/media/remote?url={Uri.EscapeDataString(trimmed)}";
+}
+
+string NormalizeCatalogPostType(string? postType)
+{
+    return (postType ?? string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "reel" or "reels" => "reel",
+        "story" => "story",
+        _ => "feed"
+    };
 }
 
 static string BuildBioCurrentUrl(string publicBaseUrl, string source, string? campaign)
@@ -7631,17 +8741,65 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
     </style>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            function getAnalyticsId(key, prefix) {
+                try { const existing = localStorage.getItem(key); if (existing) return existing; const created = `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; localStorage.setItem(key, created); return created; } catch { return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; }
+            }
+
+            function getSessionId() {
+                try { const existing = sessionStorage.getItem('ard_session_id'); if (existing) return existing; const created = `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; sessionStorage.setItem('ard_session_id', created); return created; } catch { return `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; }
+            }
+
+            function getScrollDepth() {
+                const doc = document.documentElement;
+                const scrollTop = window.scrollY || doc.scrollTop || 0;
+                const height = Math.max((doc.scrollHeight || 0) - window.innerHeight, 1);
+                return Math.max(0, Math.min(100, Math.round((scrollTop / height) * 100)));
+            }
+
+            function buildCatalogPayload(targetUrl, source, eventType) {
+                const params = new URLSearchParams(window.location.search);
+                return {
+                    TargetUrl: targetUrl,
+                    Source: source,
+                    Category: 'catalog',
+                    VisitorId: getAnalyticsId('ard_visitor_id', 'visitor'),
+                    SessionId: getSessionId(),
+                    EventType: eventType,
+                    PageType: window.location.pathname.includes('/item/') ? 'item' : 'catalog',
+                    PageUrl: window.location.href,
+                    SourceComponent: source,
+                    Language: navigator.language || null,
+                    Timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+                    ScreenWidth: window.screen?.width || null,
+                    ScreenHeight: window.screen?.height || null,
+                    ViewportWidth: window.innerWidth || null,
+                    ViewportHeight: window.innerHeight || null,
+                    ScrollDepth: getScrollDepth(),
+                    TimeOnPageMs: Math.max(0, Math.round(performance.now())),
+                    UtmSource: params.get('utm_source'),
+                    UtmMedium: params.get('utm_medium'),
+                    UtmCampaign: params.get('utm_campaign'),
+                    UtmContent: params.get('utm_content'),
+                    UtmTerm: params.get('utm_term')
+                };
+            }
+
+            fetch('/api/analytics/click', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildCatalogPayload(window.location.href, 'catalog_view', 'page_view')),
+                keepalive: true
+            }).catch(() => {});
+
             document.addEventListener('click', function(e) {
                 const link = e.target.closest('a');
                 if (link && link.href) {
+                    const eventType = link.href.includes('/item/') ? 'offer_detail_click' : (link.target === '_blank' ? 'checkout_intent' : 'catalog_navigation');
                     fetch('/api/analytics/click', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            TargetUrl: link.href,
-                            Source: 'catalog_web',
-                            Category: 'catalog'
-                        })
+                        body: JSON.stringify(buildCatalogPayload(link.href, 'catalog_web', eventType)),
+                        keepalive: true
                     }).catch(() => {});
                 }
             });
@@ -7918,17 +9076,65 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
     </style>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            function getAnalyticsId(key, prefix) {
+                try { const existing = localStorage.getItem(key); if (existing) return existing; const created = `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; localStorage.setItem(key, created); return created; } catch { return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; }
+            }
+
+            function getSessionId() {
+                try { const existing = sessionStorage.getItem('ard_session_id'); if (existing) return existing; const created = `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; sessionStorage.setItem('ard_session_id', created); return created; } catch { return `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`; }
+            }
+
+            function getScrollDepth() {
+                const doc = document.documentElement;
+                const scrollTop = window.scrollY || doc.scrollTop || 0;
+                const height = Math.max((doc.scrollHeight || 0) - window.innerHeight, 1);
+                return Math.max(0, Math.min(100, Math.round((scrollTop / height) * 100)));
+            }
+
+            function buildCatalogPayload(targetUrl, source, eventType) {
+                const params = new URLSearchParams(window.location.search);
+                return {
+                    TargetUrl: targetUrl,
+                    Source: source,
+                    Category: 'catalog',
+                    VisitorId: getAnalyticsId('ard_visitor_id', 'visitor'),
+                    SessionId: getSessionId(),
+                    EventType: eventType,
+                    PageType: window.location.pathname.includes('/item/') ? 'item' : 'catalog',
+                    PageUrl: window.location.href,
+                    SourceComponent: source,
+                    Language: navigator.language || null,
+                    Timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+                    ScreenWidth: window.screen?.width || null,
+                    ScreenHeight: window.screen?.height || null,
+                    ViewportWidth: window.innerWidth || null,
+                    ViewportHeight: window.innerHeight || null,
+                    ScrollDepth: getScrollDepth(),
+                    TimeOnPageMs: Math.max(0, Math.round(performance.now())),
+                    UtmSource: params.get('utm_source'),
+                    UtmMedium: params.get('utm_medium'),
+                    UtmCampaign: params.get('utm_campaign'),
+                    UtmContent: params.get('utm_content'),
+                    UtmTerm: params.get('utm_term')
+                };
+            }
+
+            fetch('/api/analytics/click', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildCatalogPayload(window.location.href, 'catalog_view', 'page_view')),
+                keepalive: true
+            }).catch(() => {});
+
             document.addEventListener('click', function(e) {
                 const link = e.target.closest('a');
                 if (link && link.href) {
+                    const eventType = link.href.includes('/item/') ? 'offer_detail_click' : (link.target === '_blank' ? 'checkout_intent' : 'catalog_navigation');
                     fetch('/api/analytics/click', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            TargetUrl: link.href,
-                            Source: 'catalog_web',
-                            Category: 'catalog'
-                        })
+                        body: JSON.stringify(buildCatalogPayload(link.href, 'catalog_web', eventType)),
+                        keepalive: true
                     }).catch(() => {});
                 }
             });
@@ -9574,6 +10780,7 @@ static bool GetBool(JsonElement node, string name)
 static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
     string id,
     InstagramPublishSettings publishSettings,
+    VilaNvidiaSettings vilaSettings,
     GeminiSettings geminiSettings,
     IInstagramPublishStore publishStore,
     IInstagramPublishLogStore publishLogStore,
@@ -9656,6 +10863,7 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
         draft,
         effectiveCaption,
         publishImageUrls,
+        vilaSettings,
         geminiSettings,
         httpClientFactory,
         ct);
@@ -9730,6 +10938,7 @@ static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagr
     InstagramPublishDraft draft,
     string? effectiveCaption,
     IReadOnlyList<string> publishImageUrls,
+    VilaNvidiaSettings vilaSettings,
     GeminiSettings geminiSettings,
     IHttpClientFactory httpClientFactory,
     CancellationToken ct)
@@ -9750,9 +10959,9 @@ static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagr
         return (false, "Legenda nao condiz com o produto informado. Revise o texto antes de publicar.", $"quality=caption_mismatch;{captionDetails}");
     }
 
-    if (!IsGeminiConfiguredForImageValidation(geminiSettings))
+    if (!IsVisionValidationConfigured(vilaSettings, geminiSettings))
     {
-        return (false, "Validacao de imagem/produto exige Gemini configurado.", "quality=gemini_not_configured");
+        return (false, "Validacao de imagem/produto exige VILA ou Gemini configurado.", "quality=vision_not_configured");
     }
 
     var firstMedia = publishImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
@@ -9767,16 +10976,17 @@ static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagr
         return (true, null, "quality=ok;video_validation_skipped=true");
     }
 
-    var imageValidation = await EvaluateImageProductMatchWithGeminiAsync(
+    var imageValidation = await EvaluateImageProductMatchWithVisionAsync(
         productName,
         effectiveCaption ?? string.Empty,
         firstMedia,
+        vilaSettings,
         geminiSettings,
         httpClientFactory,
         ct);
     if (imageValidation is null)
     {
-        return (false, "Nao foi possivel validar a imagem com IA. Tente outra imagem.", "quality=gemini_validation_failed");
+        return (false, "Nao foi possivel validar a imagem com IA. Tente outra imagem.", "quality=vision_validation_failed");
     }
 
     const int minimumMatchScore = 65;
@@ -9789,8 +10999,8 @@ static async Task<(bool IsValid, string? Error, string Details)> ValidateInstagr
     return (true, null, $"quality=ok;image_score={imageValidation.Value.Score}");
 }
 
-static bool IsGeminiConfiguredForImageValidation(GeminiSettings settings)
-    => GetGeminiApiKeys(settings).Count > 0;
+static bool IsVisionValidationConfigured(VilaNvidiaSettings vilaSettings, GeminiSettings geminiSettings)
+    => GetVilaApiKeys(vilaSettings).Count > 0 || GetGeminiApiKeys(geminiSettings).Count > 0;
 
 static bool IsCaptionAlignedWithProduct(string productName, string? caption, out string details)
 {
@@ -9864,6 +11074,153 @@ static bool IsInstagramConsistencyStopWord(string token)
         "desconto" or "imperdivel" or "reidasofertas" or "achadinho" or
         "achadinhos" or "hoje" or "agora" or "novo" or "nova" or "top" or
         "kit" or "item" or "loja" or "oficial";
+
+static async Task<(int Score, bool IsMatch, string Reason)?> EvaluateImageProductMatchWithVisionAsync(
+    string productName,
+    string caption,
+    string imageUrl,
+    VilaNvidiaSettings vilaSettings,
+    GeminiSettings geminiSettings,
+    IHttpClientFactory httpClientFactory,
+    CancellationToken ct)
+{
+    var vilaResult = await EvaluateImageProductMatchWithVilaAsync(
+        productName,
+        caption,
+        imageUrl,
+        vilaSettings,
+        httpClientFactory,
+        ct);
+    if (vilaResult is not null)
+    {
+        return vilaResult;
+    }
+
+    return await EvaluateImageProductMatchWithGeminiAsync(
+        productName,
+        caption,
+        imageUrl,
+        geminiSettings,
+        httpClientFactory,
+        ct);
+}
+
+static async Task<(int Score, bool IsMatch, string Reason)?> EvaluateImageProductMatchWithVilaAsync(
+    string productName,
+    string caption,
+    string imageUrl,
+    VilaNvidiaSettings vilaSettings,
+    IHttpClientFactory httpClientFactory,
+    CancellationToken ct)
+{
+    try
+    {
+        var apiKeys = GetVilaApiKeys(vilaSettings);
+        if (apiKeys.Count == 0)
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(vilaSettings.Model) ? "nvidia/vila" : vilaSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(vilaSettings.BaseUrl) ? "https://integrate.api.nvidia.com/v1" : vilaSettings.BaseUrl.Trim();
+        var shortCaption = (caption ?? string.Empty).Trim();
+        if (shortCaption.Length > 280)
+        {
+            shortCaption = shortCaption[..280];
+        }
+
+        var prompt =
+            "Valide se a imagem representa exatamente o produto informado. " +
+            $"Produto: {productName}. " +
+            $"Legenda resumida: {shortCaption}. " +
+            "Responda somente JSON valido no formato: " +
+            "{\"score\":0-100,\"isMatch\":true|false,\"reason\":\"texto curto\",\"styleNotes\":\"texto curto opcional\"}.";
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["role"] = "system",
+                    ["content"] = "Voce analisa imagens de ofertas e responde em portugues do Brasil."
+                },
+                new Dictionary<string, object?>
+                {
+                    ["role"] = "user",
+                    ["content"] = new object[]
+                    {
+                        new Dictionary<string, object?> { ["type"] = "text", ["text"] = prompt },
+                        new Dictionary<string, object?>
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new Dictionary<string, object?> { ["url"] = imageUrl }
+                        }
+                    }
+                }
+            },
+            ["temperature"] = vilaSettings.Temperature,
+            ["top_p"] = vilaSettings.TopP,
+            ["max_tokens"] = Math.Clamp(vilaSettings.MaxOutputTokens <= 0 ? 4096 : vilaSettings.MaxOutputTokens, 200, 16384),
+            ["stream"] = false,
+            ["chat_template_kwargs"] = new Dictionary<string, object?> { ["enable_thinking"] = vilaSettings.EnableThinking }
+        };
+
+        var client = httpClientFactory.CreateClient("default");
+        foreach (var apiKey in apiKeys)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl.TrimEnd('/')}/chat/completions");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+            request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            using var response = await client.SendAsync(request, ct);
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                if (ShouldTryNextGeminiKey(response.StatusCode, raw))
+                {
+                    continue;
+                }
+
+                return null;
+            }
+
+            var output = ExtractNvidiaChatOutputText(raw);
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                continue;
+            }
+
+            var json = ExtractFirstJsonObjectForImageValidation(output) ?? output.Trim();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var score = root.TryGetProperty("score", out var scoreNode) && scoreNode.TryGetInt32(out var parsedScore)
+                ? parsedScore
+                : 0;
+            score = Math.Clamp(score, 0, 100);
+
+            var isMatch = root.TryGetProperty("isMatch", out var matchNode) && matchNode.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? matchNode.GetBoolean()
+                : score >= 55;
+
+            var reason = root.TryGetProperty("reason", out var reasonNode) ? reasonNode.GetString() : null;
+            var styleNotes = root.TryGetProperty("styleNotes", out var styleNode) ? styleNode.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(styleNotes))
+            {
+                reason = string.IsNullOrWhiteSpace(reason) ? styleNotes : $"{reason} | estilo: {styleNotes}";
+            }
+
+            reason = string.IsNullOrWhiteSpace(reason) ? $"vila_match={isMatch}" : reason.Trim();
+            return (score, isMatch, reason);
+        }
+
+        return null;
+    }
+    catch
+    {
+        return null;
+    }
+}
 
 static async Task<(int Score, bool IsMatch, string Reason)?> EvaluateImageProductMatchWithGeminiAsync(
     string productName,
@@ -10029,6 +11386,95 @@ static List<string> GetGeminiApiKeys(GeminiSettings settings)
     return keys
         .Distinct(StringComparer.Ordinal)
         .ToList();
+}
+
+static List<string> GetVilaApiKeys(VilaNvidiaSettings settings)
+{
+    var keys = new List<string>();
+    if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+    {
+        keys.Add(settings.ApiKey.Trim());
+    }
+
+    if (settings.ApiKeys is not null)
+    {
+        foreach (var key in settings.ApiKeys)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            var trimmed = key.Trim();
+            if (trimmed == "********")
+            {
+                continue;
+            }
+
+            keys.Add(trimmed);
+        }
+    }
+
+    return keys
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+}
+
+static string? ExtractNvidiaChatOutputText(string json)
+{
+    using var doc = JsonDocument.Parse(json);
+    if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array)
+    {
+        return null;
+    }
+
+    foreach (var choice in choices.EnumerateArray())
+    {
+        if (!choice.TryGetProperty("message", out var message))
+        {
+            continue;
+        }
+
+        if (!message.TryGetProperty("content", out var content))
+        {
+            continue;
+        }
+
+        if (content.ValueKind == JsonValueKind.String)
+        {
+            return content.GetString();
+        }
+
+        if (content.ValueKind != JsonValueKind.Array)
+        {
+            continue;
+        }
+
+        var parts = content.EnumerateArray()
+            .Select(part =>
+            {
+                if (part.ValueKind == JsonValueKind.String)
+                {
+                    return part.GetString();
+                }
+
+                if (part.TryGetProperty("text", out var textNode))
+                {
+                    return textNode.GetString();
+                }
+
+                return null;
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x));
+
+        var joined = string.Join("\n", parts!);
+        if (!string.IsNullOrWhiteSpace(joined))
+        {
+            return joined;
+        }
+    }
+
+    return null;
 }
 
 static bool ShouldTryNextGeminiKey(System.Net.HttpStatusCode statusCode, string? body)
@@ -11879,11 +13325,14 @@ internal sealed record BioLinkItem
     public string OriginalLink { get; init; } = string.Empty;
     public string Store { get; init; } = "Loja";
     public int? ItemNumber { get; init; }
+    public bool IsHighlightedOnBio { get; init; }
+    public DateTimeOffset? BioHighlightedAt { get; init; }
     public string? Keyword { get; init; }
     public bool IsLightningDeal { get; init; }
     public DateTimeOffset? LightningDealExpiry { get; init; }
     public string? CouponCode { get; init; }
     public string? CouponDescription { get; init; }
+    public string? ImageUrl { get; init; }
 }
 internal sealed record PublicLinkConverterViewModel
 {
@@ -11931,3 +13380,5 @@ internal sealed record InstagramApproveRequest(string Message);
 
 public record ConversorWebRequest(string Url, string? Source = null);
 public partial class Program { } 
+
+

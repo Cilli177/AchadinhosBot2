@@ -11,6 +11,7 @@ namespace AchadinhosBot.Next.Infrastructure.Instagram;
 
 public sealed class OpenAiInstagramPostGenerator
 {
+    private static int _currentKeyIndex = -1;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<OpenAiInstagramPostGenerator> _logger;
     private readonly IInstagramAiLogStore _logStore;
@@ -36,7 +37,8 @@ public sealed class OpenAiInstagramPostGenerator
 
     public async Task<string?> GenerateAsync(string productInput, string? offerContext, string? affiliateLink, InstagramPostSettings instaSettings, OpenAISettings aiSettings, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey) || aiSettings.ApiKey == "********")
+        var apiKeys = GetApiKeys(aiSettings);
+        if (apiKeys.Count == 0)
         {
             return null;
         }
@@ -93,17 +95,9 @@ public sealed class OpenAiInstagramPostGenerator
         var started = DateTimeOffset.UtcNow;
         try
         {
-            var client = _httpClientFactory.CreateClient("openai");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", aiSettings.ApiKey);
-            using var response = await client.PostAsync(
-                $"{baseUrl.TrimEnd('/')}/responses",
-                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
-                cancellationToken);
-
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            var body = await PostWithKeyRotationAsync(apiKeys, $"{baseUrl.TrimEnd('/')}/responses", payload, cancellationToken);
+            if (string.IsNullOrWhiteSpace(body))
             {
-                _logger.LogWarning("OpenAI respondeu erro {Status}: {Body}", response.StatusCode, body);
                 return null;
             }
 
@@ -121,9 +115,49 @@ public sealed class OpenAiInstagramPostGenerator
         }
     }
 
+    public async Task<string?> GenerateFreeformAsync(string prompt, OpenAISettings aiSettings, CancellationToken cancellationToken)
+    {
+        var apiKeys = GetApiKeys(aiSettings);
+        if (apiKeys.Count == 0 || string.IsNullOrWhiteSpace(prompt))
+        {
+            return null;
+        }
+
+        var model = string.IsNullOrWhiteSpace(aiSettings.Model) ? "gpt-4o-mini" : aiSettings.Model.Trim();
+        var baseUrl = string.IsNullOrWhiteSpace(aiSettings.BaseUrl) ? "https://api.openai.com/v1" : aiSettings.BaseUrl.Trim();
+        var payload = new
+        {
+            model,
+            input = new[]
+            {
+                new { role = "system", content = "Responda em portugues do Brasil com clareza e sem formatacao extra desnecessaria." },
+                new { role = "user", content = prompt.Trim() }
+            },
+            temperature = aiSettings.Temperature,
+            max_output_tokens = aiSettings.MaxOutputTokens
+        };
+
+        try
+        {
+            var body = await PostWithKeyRotationAsync(apiKeys, $"{baseUrl.TrimEnd('/')}/responses", payload, cancellationToken);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return null;
+            }
+
+            return ExtractOutputText(body)?.Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao gerar resposta livre via OpenAI");
+            return null;
+        }
+    }
+
     public async Task<string?> GenerateHashtagsAsync(string productInput, OpenAISettings aiSettings, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(aiSettings.ApiKey) || aiSettings.ApiKey == "********")
+        var apiKeys = GetApiKeys(aiSettings);
+        if (apiKeys.Count == 0)
         {
             return null;
         }
@@ -145,15 +179,8 @@ public sealed class OpenAiInstagramPostGenerator
 
         try
         {
-            var client = _httpClientFactory.CreateClient("openai");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", aiSettings.ApiKey);
-            using var response = await client.PostAsync(
-                $"{baseUrl.TrimEnd('/')}/chat/completions",
-                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
-                cancellationToken);
-
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode) return null;
+            var body = await PostWithKeyRotationAsync(apiKeys, $"{baseUrl.TrimEnd('/')}/chat/completions", payload, cancellationToken);
+            if (string.IsNullOrWhiteSpace(body)) return null;
 
             using var doc = JsonDocument.Parse(body);
             if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
@@ -167,6 +194,73 @@ public sealed class OpenAiInstagramPostGenerator
         {
             return null;
         }
+    }
+
+    private async Task<string?> PostWithKeyRotationAsync(IReadOnlyList<string> apiKeys, string url, object payload, CancellationToken cancellationToken)
+    {
+        var client = _httpClientFactory.CreateClient("openai");
+        var startIndex = unchecked((int)((uint)Interlocked.Increment(ref _currentKeyIndex) % (uint)apiKeys.Count));
+        string? lastBody = null;
+
+        for (var i = 0; i < apiKeys.Count; i++)
+        {
+            var keyIndex = (startIndex + i) % apiKeys.Count;
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKeys[keyIndex]);
+            request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+            using var response = await client.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                lastBody = body;
+                if (i < apiKeys.Count - 1 && ShouldTryNextKey(response.StatusCode, body))
+                {
+                    continue;
+                }
+
+                _logger.LogWarning("OpenAI respondeu erro {Status}: {Body}", response.StatusCode, body);
+                return null;
+            }
+
+            return body;
+        }
+
+        _logger.LogWarning("OpenAI falhou em todas as chaves: {Body}", lastBody);
+        return null;
+    }
+
+    private static List<string> GetApiKeys(OpenAISettings settings)
+    {
+        var keys = new List<string>();
+        if (!string.IsNullOrWhiteSpace(settings.ApiKey) && settings.ApiKey != "********")
+        {
+            keys.Add(settings.ApiKey.Trim());
+        }
+
+        if (settings.ApiKeys is not null)
+        {
+            keys.AddRange(settings.ApiKeys
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Where(x => x != "********"));
+        }
+
+        return keys.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    private static bool ShouldTryNextKey(System.Net.HttpStatusCode statusCode, string? body)
+    {
+        var status = (int)statusCode;
+        if (status is 401 or 403 or 429 or 500 or 502 or 503 or 504)
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(body) &&
+               (body.Contains("quota", StringComparison.OrdinalIgnoreCase) ||
+                body.Contains("rate limit", StringComparison.OrdinalIgnoreCase) ||
+                body.Contains("exhaust", StringComparison.OrdinalIgnoreCase));
     }
 
     internal static string BuildPrompt(string productInput, string? offerContext, string? affiliateLink, List<string> images, string? title, string? description, InstagramPostSettings instaSettings)
@@ -231,7 +325,7 @@ public sealed class OpenAiInstagramPostGenerator
         }
 
         var template = string.IsNullOrWhiteSpace(instaSettings.PromptTemplate)
-            ? "{{format}}\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\nRodape: {{footer}}\n"
+            ? "{{format}}\n\nDiretrizes obrigatorias:\n- Escreva como um copywriter premium de ofertas no Brasil.\n- Entregue na area de legenda apenas copy publicavel. Nao inclua titulos como \"POST PARA INSTAGRAM\", \"Legenda 1\", \"Hashtags sugeridas\", \"Sugestoes de imagem\", observacoes internas ou explicacoes.\n- Gere legendas mais profissionais, com gancho forte na abertura e CTA claro no final.\n- Use beneficios concretos, preco, desconto, cupom e prazo somente quando estiverem no contexto.\n- Nao invente urgencia, estoque, frete gratis, parcelamento ou condicoes nao informadas.\n- Cada legenda deve ter angulo diferente: autoridade, oportunidade, desejo, praticidade ou comparacao.\n- Evite texto generico. Nada de introducoes vazias como \"olha isso\" ou \"imperdivel\" sem contexto.\n- Evite excesso de emojis. No maximo 3 bem colocados.\n- Deixe a leitura pronta para Instagram, com blocos curtos e escaneaveis.\n- Inclua CTA de comentario ou direct de forma natural.\n- Se precisar registrar comentarios, riscos ou sugestoes, deixe isso fora da legenda.\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\nRodape: {{footer}}\n"
             : instaSettings.PromptTemplate;
 
         var prompt = template
@@ -247,10 +341,13 @@ public sealed class OpenAiInstagramPostGenerator
         if (instaSettings.UseUltraPrompt)
         {
             prompt = "Voc\u00ea \u00e9 um expert em growth e copywriter premium de afiliados no Brasil, n\u00edvel autoridade.\n" +
-                     "Crie um post de alt\u00edssima qualidade, elegante e altamente persuasivo para atrair novos usu\u00e1rios e gerar visualiza\u00e7\u00f5es.\n" +
+                     "Crie um post de alt\u00edssima qualidade, elegante, comercialmente forte e pronto para conversao.\n" +
                      "Nas hashtags, inclua obrigatoriamente padr\u00f5es de alto n\u00edvel como #achadinhos #ofertas #promo\u00e7\u00e3o #compras #dicas e varia\u00e7\u00f5es virais.\n" +
-                     "Evite genericidade e use um tom que gere desejo imediato. Linguagem humana e engajadora.\n" +
-                     "Crie legendas CLARAMENTE diferentes entre si.\n" +
+                     "Evite genericidade e use um tom que gere desejo imediato sem parecer spam. Linguagem humana, comercial e engajadora.\n" +
+                     "Crie legendas CLARAMENTE diferentes entre si, cada uma com angulo proprio e CTA forte.\n" +
+                     "Priorize: gancho inicial forte, beneficio real, prova de valor, fechamento com CTA.\n" +
+                     "Se houver preco, desconto, cupom ou entrega no contexto, incorpore esses dados com naturalidade.\n" +
+                     "Retorne apenas as legendas publicaveis. Nao inclua notas do agente, cabecalhos, listas de hashtags avulsas ou sugestoes de imagem misturadas com a copy.\n" +
                      "N\u00e3o invente dados que n\u00e3o foram fornecidos.\n\n" +
                      prompt;
         }
