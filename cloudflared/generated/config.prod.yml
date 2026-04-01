@@ -1,0 +1,8 @@
+tunnel: 97a029fe-3c66-446c-b727-d016928cbcb8
+credentials-file: /etc/cloudflared/creds/97a029fe-3c66-446c-b727-d016928cbcb8.json
+ingress:
+  - hostname: achadinhos.reidasofertas.ia.br
+    service: http://host.docker.internal:5005
+  - hostname: bio.reidasofertas.ia.br
+    service: http://host.docker.internal:5005
+  - service: http_status:404

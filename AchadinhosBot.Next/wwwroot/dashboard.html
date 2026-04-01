@@ -44,6 +44,7 @@
           <button data-tab="bio-growth" onclick="showSection('bio-growth')">Bio & Growth</button>
           <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>
           <button data-tab="engagement-plan" onclick="showSection('engagement-plan')">Plano de Engajamento</button>
+          <button data-tab="offers" onclick="showSection('offers')">Ofertas</button>
           <button data-tab="agents" onclick="showSection('agents')">Agentes</button>
           <button data-tab="ai-lab" onclick="showSection('ai-lab')">IA Lab</button>
         </div>
@@ -1535,6 +1536,198 @@
               <h2>Debug (JSON)</h2>
               <pre id="debug"></pre>
             </section>
+          </div>
+          <div id="section-offers" class="hidden">
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Ofertas</p>
+                    <h2>Central de normalização de ofertas</h2>
+                    <p class="section-copy">Cole JSON, CSV, tabela simples ou payload bruto e normalize tudo para o contrato canônico antes de seguir para revisão, catálogo ou fila de automação.</p>
+                  </div>
+                  <div class="section-actions">
+                    <button class="secondary" onclick="loadOfferNormalizationRuns()">Atualizar histórico</button>
+                    <button class="secondary" onclick="clearOfferNormalizationComposer()">Limpar entrada</button>
+                  </div>
+                </div>
+                <div class="ops-summary-grid">
+                  <article class="metric-card">
+                    <span>Run atual</span>
+                    <strong id="offerNormalizeRunId">Nenhum</strong>
+                    <small id="offerNormalizeStatusText">Aguardando entrada</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Ofertas</span>
+                    <strong id="offerNormalizeOffersCount">0</strong>
+                    <small id="offerNormalizeSourceType">Sem origem processada</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Issues</span>
+                    <strong id="offerNormalizeIssuesCount">0</strong>
+                    <small>Gaps e linhas inválidas</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Destino</span>
+                    <strong id="offerNormalizeCurrentTarget">Review</strong>
+                    <small id="offerNormalizeNextStep">Revise a entrada e normalize.</small>
+                  </article>
+                </div>
+              </section>
+
+              <div class="ops-grid">
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Entrada</h3>
+                      <p class="section-copy">Use autodetect como padrão. A normalização só transforma e audita; não publica nada automaticamente.</p>
+                    </div>
+                    <span class="badge muted">affiliate-data-loader</span>
+                  </div>
+                  <div class="filter-grid">
+                    <div>
+                      <label>Tipo de entrada</label>
+                      <select id="offerNormalizeInputType">
+                        <option value="autodetect" selected>Autodetectar</option>
+                        <option value="json">JSON</option>
+                        <option value="csv">CSV</option>
+                        <option value="tsv">TSV</option>
+                        <option value="table">Tabela simples</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Destino inicial</label>
+                      <select id="offerNormalizeTarget">
+                        <option value="review" selected>Preview + revisão</option>
+                        <option value="catalog">Catálogo</option>
+                        <option value="queue">Fila de automação</option>
+                      </select>
+                    </div>
+                    <div style="grid-column: span 2;">
+                      <label>Notas operacionais</label>
+                      <input id="offerNormalizeNotes" placeholder="Ex.: export da Shopee da campanha da tarde" />
+                    </div>
+                  </div>
+                  <label>Conteúdo bruto</label>
+                  <textarea id="offerNormalizeInput" rows="12" placeholder='Cole aqui JSON, CSV, TSV, tabela simples ou payload bruto de API/webhook'></textarea>
+                  <div class="section-actions" style="margin-top:16px;">
+                    <button onclick="normalizeOffersInput()">Normalizar ofertas</button>
+                    <button class="secondary" onclick="clearOfferNormalizationComposer()">Limpar</button>
+                    <span id="offerNormalizeActionStatus" class="status muted"></span>
+                  </div>
+                </section>
+
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Encaminhamento</h3>
+                      <p class="section-copy">Após revisar o preview, atualize o destino da execução auditável sem disparar publicação silenciosa.</p>
+                    </div>
+                    <span class="badge muted">Fluxo auditável</span>
+                  </div>
+                  <div class="surface-note">
+                    <strong id="offerNormalizeSummaryTitle">Nenhuma execução carregada.</strong>
+                    <div id="offerNormalizeSummary" class="muted" style="margin-top:8px;">Normalize uma entrada para gerar preview, issues e histórico.</div>
+                  </div>
+                  <div class="section-actions offer-route-actions" style="margin-top:16px;">
+                    <button class="secondary" onclick="routeOfferNormalizationRun('review')">Mandar para revisão</button>
+                    <button class="secondary" onclick="routeOfferNormalizationRun('catalog')">Mandar para catálogo</button>
+                    <button class="secondary" onclick="routeOfferNormalizationRun('queue')">Mandar para fila</button>
+                  </div>
+                  <div class="surface-note" style="margin-top:16px;">
+                    <strong>Skill conceitual</strong>
+                    <div class="muted" style="margin-top:8px;">`affiliate-data-loader` é o padrão desta tela. `affiliate-api-fetcher` só entra quando o payload remoto já vier configurado e colado aqui pelo operador.</div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="ops-grid">
+                <section class="card ops-card-wide">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Preview normalizado</h3>
+                      <p class="section-copy">Veja o contrato final antes de decidir o destino da execução.</p>
+                    </div>
+                    <span id="offerNormalizeStatusBadge" class="badge muted">Sem execução</span>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Produto</th>
+                          <th>URL</th>
+                          <th>Preço original</th>
+                          <th>Preço promo</th>
+                          <th>Desconto</th>
+                          <th>Loja</th>
+                          <th>Categoria</th>
+                          <th>Comissão</th>
+                        </tr>
+                      </thead>
+                      <tbody id="offerNormalizePreviewBody">
+                        <tr><td colspan="8" class="muted">Nenhuma oferta normalizada nesta sessão.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Issues de validação</h3>
+                      <p class="section-copy">Gaps e linhas descartadas aparecem aqui para revisão rápida.</p>
+                    </div>
+                  </div>
+                  <div id="offerNormalizeIssuesList" class="overview-list">
+                    <div class="overview-list-empty">Nenhuma issue carregada.</div>
+                  </div>
+                </section>
+              </div>
+
+              <section class="card">
+                <div class="ops-card-topbar">
+                  <div>
+                    <h3>Histórico auditável</h3>
+                    <p class="section-copy">Reabra execuções, filtre por destino/status e reaplique o encaminhamento quando necessário.</p>
+                  </div>
+                  <div class="section-actions">
+                    <select id="offerNormalizeHistoryStatus" onchange="loadOfferNormalizationRuns()">
+                      <option value="">Todos os status</option>
+                      <option value="normalized">Normalized</option>
+                      <option value="review_required">Review required</option>
+                      <option value="sent_to_catalog">Sent to catalog</option>
+                      <option value="queued_for_automation">Queued for automation</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                    <select id="offerNormalizeHistoryTarget" onchange="loadOfferNormalizationRuns()">
+                      <option value="">Todos os destinos</option>
+                      <option value="review">Preview + revisão</option>
+                      <option value="catalog">Catálogo</option>
+                      <option value="queue">Fila</option>
+                    </select>
+                    <button class="secondary" onclick="loadOfferNormalizationRuns()">Atualizar</button>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Quando</th>
+                        <th>Origem</th>
+                        <th>Resumo</th>
+                        <th>Destino</th>
+                        <th>Status</th>
+                        <th>Operador</th>
+                        <th>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody id="offerNormalizeHistoryBody">
+                      <tr><td colspan="7" class="muted">Nenhuma execução carregada.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
           </div>
           <div id="section-agents" class="hidden">
             <section class="card" style="margin-top:16px;">

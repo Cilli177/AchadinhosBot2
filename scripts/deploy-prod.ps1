@@ -37,6 +37,38 @@ function Assert-VolumeExists {
     }
 }
 
+function Get-EnvValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    $line = Get-Content $FilePath | Where-Object { $_.StartsWith("$Key=") } | Select-Object -First 1
+    if (-not $line) {
+        return $null
+    }
+
+    return ($line -split "=", 2)[1].Trim()
+}
+
+function Assert-ProdTunnelCredentials {
+    param([Parameter(Mandatory = $true)][string]$EnvFilePath)
+
+    $credDir = Get-EnvValue -FilePath $EnvFilePath -Key "CLOUDFLARED_CRED_DIR"
+    if ([string]::IsNullOrWhiteSpace($credDir)) {
+        throw "CLOUDFLARED_CRED_DIR nao definido em .env.prod"
+    }
+
+    if (-not (Test-Path $credDir)) {
+        throw "Diretorio de credenciais do tunnel nao encontrado: $credDir"
+    }
+
+    $expectedCred = Join-Path $credDir "97a029fe-3c66-446c-b727-d016928cbcb8.json"
+    if (-not (Test-Path $expectedCred)) {
+        throw "Credencial do tunnel PROD nao encontrada: $expectedCred"
+    }
+}
+
 function Backup-Volume {
     param(
         [Parameter(Mandatory = $true)][string]$SourceVolume,
@@ -53,6 +85,7 @@ function Backup-Volume {
 Assert-CommandExists -Name "docker"
 Assert-PathExists -PathValue $composeFile
 Assert-PathExists -PathValue $envFile
+Assert-ProdTunnelCredentials -EnvFilePath $envFile
 
 Assert-VolumeExists -VolumeName $dataVolume
 Assert-VolumeExists -VolumeName $rabbitMqVolume
