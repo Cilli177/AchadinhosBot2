@@ -1,12 +1,17 @@
-param(
-    [switch]$NoBuild
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $envFile = Join-Path $repoRoot ".env.prod"
+$composeFile = Join-Path $repoRoot "docker-compose.tunnels.yml"
+$expectedTunnelId = "97a029fe-3c66-446c-b727-d016928cbcb8"
+
+function Assert-PathExists {
+    param([Parameter(Mandatory = $true)][string]$PathValue)
+    if (-not (Test-Path $PathValue)) {
+        throw "Arquivo nao encontrado: $PathValue"
+    }
+}
 
 function Get-EnvValue {
     param(
@@ -22,9 +27,8 @@ function Get-EnvValue {
     return ($line -split "=", 2)[1].Trim()
 }
 
-if (-not (Test-Path $envFile)) {
-    throw "Arquivo nao encontrado: $envFile"
-}
+Assert-PathExists -PathValue $envFile
+Assert-PathExists -PathValue $composeFile
 
 $credDir = Get-EnvValue -FilePath $envFile -Key "CLOUDFLARED_CRED_DIR"
 if ([string]::IsNullOrWhiteSpace($credDir)) {
@@ -32,26 +36,24 @@ if ([string]::IsNullOrWhiteSpace($credDir)) {
 }
 
 if (-not (Test-Path $credDir)) {
-    throw "Diretorio de credenciais do tunnel nao encontrado: $credDir"
+    throw "Diretorio de credenciais nao encontrado: $credDir"
 }
 
-$expectedCred = Join-Path $credDir "97a029fe-3c66-446c-b727-d016928cbcb8.json"
-if (-not (Test-Path $expectedCred)) {
-    throw "Credencial do tunnel PROD nao encontrada: $expectedCred"
+$expectedCredFile = Join-Path $credDir "$expectedTunnelId.json"
+if (-not (Test-Path $expectedCredFile)) {
+    throw "Credencial do tunnel nao encontrada: $expectedCredFile"
 }
 
 $composeArgs = @(
     "compose",
     "--env-file", $envFile,
-    "-p", "achadinhos-prod",
-    "-f", "docker-compose.prod.yml",
+    "-p", "achadinhos-tunnels",
+    "-f", $composeFile,
     "up",
-    "-d"
+    "-d",
+    "--force-recreate",
+    "cloudflared-prod"
 )
-
-if ($NoBuild) {
-    $composeArgs += "--no-build"
-}
 
 Push-Location $repoRoot
 try {

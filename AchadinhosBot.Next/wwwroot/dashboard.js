@@ -11,6 +11,7 @@ let waScheduleEditState = null;
 let waQrPollTimer = null;
 let waQrPollInstanceName = null;
 let opsOverviewTimer = null;
+let currentOfferNormalizationRunId = null;
 const WA_MANUAL_COPY_MAX_PARTICIPANTS = 50;
 let waOutreachLogsTimer = null;
 let waOutreachLastOperationId = null;
@@ -366,7 +367,7 @@ function showAuthState(authenticated, username = '', role = '') {
 }
 
 function showSection(name) {
-  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'ai-lab', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'analytics', 'wa-monitoring', 'engagement-plan', 'wa-outreach'];
+  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'analytics', 'wa-monitoring', 'engagement-plan', 'wa-outreach'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -406,6 +407,12 @@ function showSection(name) {
       loadOfferCuration();
       loadAgentChannelTargets().then(() => loadWhatsAppOfferScout());
     });
+  }
+  if (name === 'offers') {
+    loadOfferNormalizationRuns();
+    if (currentOfferNormalizationRunId) {
+      loadOfferNormalizationRun(currentOfferNormalizationRunId);
+    }
   }
   if (name === 'ai-lab') {
     document.getElementById('aiLabResults').innerHTML = '';
@@ -1469,6 +1476,319 @@ function renderPillList(targetId, values, emptyText = '') {
     return;
   }
   target.innerHTML = items.map(value => `<span class="pill selection-chip">${escapeHtml(String(value))}</span>`).join('');
+}
+
+function offerNormalizationTargetLabel(target) {
+  switch (String(target || '').toLowerCase()) {
+    case 'catalog':
+      return 'Catálogo';
+    case 'queue':
+      return 'Fila de automação';
+    default:
+      return 'Preview + revisão';
+  }
+}
+
+function offerNormalizationStatusMeta(status) {
+  switch (String(status || '').toLowerCase()) {
+    case 'normalized':
+      return { label: 'Normalizado', badge: 'ok' };
+    case 'review_required':
+      return { label: 'Revisão obrigatória', badge: 'warn' };
+    case 'sent_to_catalog':
+      return { label: 'Enviado ao catálogo', badge: 'ok' };
+    case 'queued_for_automation':
+      return { label: 'Na fila de automação', badge: 'warn' };
+    case 'failed':
+      return { label: 'Falhou', badge: 'bad' };
+    default:
+      return { label: 'Sem execução', badge: 'muted' };
+  }
+}
+
+function offerNormalizationSourceLabel(sourceType) {
+  switch (String(sourceType || '').toLowerCase()) {
+    case 'json':
+      return 'JSON';
+    case 'csv':
+      return 'CSV';
+    case 'tsv':
+      return 'TSV';
+    case 'table':
+      return 'Tabela simples';
+    default:
+      return 'Autodetectar';
+  }
+}
+
+function formatOfferNormalizationMoney(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return numeric.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function formatOfferNormalizationDiscount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return `${numeric.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
+}
+
+function setOfferNormalizationActionStatus(message = '', type = 'muted') {
+  const el = document.getElementById('offerNormalizeActionStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `status ${type}`;
+}
+
+function escapeOfferNormalizationCell(value, fallback = '-') {
+  const text = value === null || value === undefined || value === '' ? fallback : String(value);
+  return escapeHtml(text);
+}
+
+function renderOfferNormalizationIssues(issues) {
+  const container = document.getElementById('offerNormalizeIssuesList');
+  if (!container) return;
+
+  const items = Array.isArray(issues) ? issues : [];
+  if (!items.length) {
+    container.innerHTML = '<div class="overview-list-empty">Nenhuma issue carregada.</div>';
+    return;
+  }
+
+  container.innerHTML = items.map(issue => {
+    const level = String(issue?.level || 'warn').toLowerCase();
+    const badgeClass = level === 'error' ? 'bad' : level === 'info' ? 'muted' : 'warn';
+    const row = issue?.rowNumber ? `Linha ${issue.rowNumber}` : 'Geral';
+    const field = issue?.field ? ` • ${escapeHtml(issue.field)}` : '';
+    return `
+      <div class="overview-list-item">
+        <div>
+          <strong>${escapeHtml(issue?.message || 'Issue sem descrição')}</strong>
+          <small class="muted">${escapeHtml(row)}${field}</small>
+        </div>
+        <span class="badge ${badgeClass}">${escapeHtml(level)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderOfferNormalizationPreview(offers) {
+  const body = document.getElementById('offerNormalizePreviewBody');
+  if (!body) return;
+
+  const items = Array.isArray(offers) ? offers : [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="8" class="muted">Nenhuma oferta normalizada nesta sessão.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = items.map(item => {
+    const issues = [];
+    if (!item?.productName) issues.push('Sem nome');
+    if (!item?.productUrl) issues.push('Sem URL');
+    if (item?.promoPrice === null || item?.promoPrice === undefined) issues.push('Sem preço promo');
+    const issueBadges = issues.length
+      ? issues.map(issue => `<span class="badge warn">${escapeHtml(issue)}</span>`).join(' ')
+      : '<span class="badge ok">Pronta</span>';
+    const safeUrl = item?.productUrl && /^https?:\/\//i.test(item.productUrl)
+      ? `<a href="${escapeHtml(item.productUrl)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
+      : '<span class="muted">Sem URL</span>';
+
+    return `
+      <tr>
+        <td><strong>${escapeOfferNormalizationCell(item?.productName, 'Sem nome')}</strong></td>
+        <td><small class="muted">${safeUrl}</small></td>
+        <td>${formatOfferNormalizationMoney(item?.originalPrice)}</td>
+        <td>${formatOfferNormalizationMoney(item?.promoPrice)}</td>
+        <td>${formatOfferNormalizationDiscount(item?.discountPercent)}</td>
+        <td>${escapeOfferNormalizationCell(item?.storeName)}</td>
+        <td>${escapeOfferNormalizationCell(item?.category)}</td>
+        <td>${item?.commissionRaw ? escapeHtml(String(item.commissionRaw)) : issueBadges}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderOfferNormalizationRun(run) {
+  const statusMeta = offerNormalizationStatusMeta(run?.status);
+  const targetLabel = offerNormalizationTargetLabel(run?.selectedTarget);
+  const sourceLabel = offerNormalizationSourceLabel(run?.sourceType);
+  const offersCount = Array.isArray(run?.normalizedOffers) ? run.normalizedOffers.length : 0;
+  const issuesCount = Array.isArray(run?.validationIssues) ? run.validationIssues.length : 0;
+  const assistedSummary = run?.assistedDelivery?.summary ? ` ${run.assistedDelivery.summary}` : '';
+
+  setSafeText('offerNormalizeRunId', run?.id ? shortId(run.id) : 'Nenhum');
+  setSafeText('offerNormalizeStatusText', statusMeta.label);
+  setSafeText('offerNormalizeOffersCount', String(offersCount));
+  setSafeText('offerNormalizeSourceType', run ? sourceLabel : 'Sem origem processada');
+  setSafeText('offerNormalizeIssuesCount', String(issuesCount));
+  setSafeText('offerNormalizeCurrentTarget', targetLabel);
+  setSafeText('offerNormalizeNextStep', run?.nextStepHint || 'Revise a entrada e normalize.');
+  setSafeText('offerNormalizeSummaryTitle', run ? `Execução ${shortId(run.id)} • ${formatTs(run.createdAtUtc)}` : 'Nenhuma execução carregada.');
+  setSafeText('offerNormalizeSummary', run ? `${run.summary || ''}${assistedSummary}`.trim() || 'Normalize uma entrada para gerar preview, issues e histórico.' : 'Normalize uma entrada para gerar preview, issues e histórico.');
+
+  const badge = document.getElementById('offerNormalizeStatusBadge');
+  if (badge) {
+    badge.textContent = statusMeta.label;
+    badge.className = `badge ${statusMeta.badge}`;
+  }
+
+  const targetSelect = document.getElementById('offerNormalizeTarget');
+  if (targetSelect && run?.selectedTarget) {
+    targetSelect.value = run.selectedTarget;
+  }
+
+  const notesInput = document.getElementById('offerNormalizeNotes');
+  if (notesInput && run?.notes !== undefined && run?.notes !== null) {
+    notesInput.value = run.notes;
+  }
+
+  renderOfferNormalizationPreview(run?.normalizedOffers || []);
+  renderOfferNormalizationIssues(run?.validationIssues || []);
+}
+
+function renderOfferNormalizationHistory(runs) {
+  const body = document.getElementById('offerNormalizeHistoryBody');
+  if (!body) return;
+
+  const items = Array.isArray(runs) ? runs : [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="7" class="muted">Nenhuma execução carregada.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = items.map(run => {
+    const statusMeta = offerNormalizationStatusMeta(run?.status);
+    const offersCount = Array.isArray(run?.normalizedOffers) ? run.normalizedOffers.length : 0;
+    const issuesCount = Array.isArray(run?.validationIssues) ? run.validationIssues.length : 0;
+    const summary = run?.summary || `${offersCount} oferta(s) / ${issuesCount} issue(s)`;
+    return `
+      <tr>
+        <td>${escapeHtml(formatTs(run?.createdAtUtc))}</td>
+        <td>${escapeHtml(offerNormalizationSourceLabel(run?.sourceType))}</td>
+        <td>${escapeHtml(summary)}</td>
+        <td>${escapeHtml(offerNormalizationTargetLabel(run?.selectedTarget))}</td>
+        <td><span class="badge ${statusMeta.badge}">${escapeHtml(statusMeta.label)}</span></td>
+        <td>${escapeHtml(run?.operator || '-')}</td>
+        <td>
+          <div class="section-actions">
+            <button class="secondary" onclick="loadOfferNormalizationRun('${escapeHtml(run?.id || '')}')">Abrir</button>
+            <button class="secondary" onclick="routeOfferNormalizationRun('review', '${escapeHtml(run?.id || '')}')">Revisão</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function loadOfferNormalizationRuns() {
+  const status = document.getElementById('offerNormalizeHistoryStatus')?.value || '';
+  const target = document.getElementById('offerNormalizeHistoryTarget')?.value || '';
+  const body = document.getElementById('offerNormalizeHistoryBody');
+
+  if (body) {
+    body.innerHTML = '<tr><td colspan="7" class="muted">Carregando execuções...</td></tr>';
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (target) params.set('target', target);
+    params.set('limit', '20');
+    const response = await api(`/api/admin/offers/normalization-runs?${params.toString()}`);
+    renderOfferNormalizationHistory(response?.items || response?.runs || []);
+  } catch (e) {
+    if (body) {
+      body.innerHTML = `<tr><td colspan="7" class="muted">Falha ao carregar histórico: ${escapeHtml(e?.data?.error || e?.message || 'erro desconhecido')}</td></tr>`;
+    }
+  }
+}
+
+async function loadOfferNormalizationRun(id) {
+  if (!id) return;
+  try {
+    const response = await api(`/api/admin/offers/normalization-runs/${encodeURIComponent(id)}`);
+    const run = response?.run || response || null;
+    currentOfferNormalizationRunId = run?.id || null;
+    renderOfferNormalizationRun(run);
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao carregar execução.', 'error');
+  }
+}
+
+async function normalizeOffersInput() {
+  const rawInput = document.getElementById('offerNormalizeInput')?.value || '';
+  const inputType = document.getElementById('offerNormalizeInputType')?.value || 'autodetect';
+  const selectedTarget = document.getElementById('offerNormalizeTarget')?.value || 'review';
+  const notes = document.getElementById('offerNormalizeNotes')?.value || '';
+
+  if (!rawInput.trim()) {
+    setOfferNormalizationActionStatus('Cole algum conteúdo antes de normalizar.', 'warn');
+    showToast('Cole JSON, CSV ou tabela antes de normalizar.', 'error');
+    return;
+  }
+
+  setOfferNormalizationActionStatus('Normalizando ofertas...', 'muted');
+  try {
+    const response = await api('/api/admin/offers/normalize', 'POST', {
+      rawInput,
+      inputType,
+      selectedTarget,
+      notes
+    });
+
+    currentOfferNormalizationRunId = response?.runId || null;
+    setOfferNormalizationActionStatus(`Execução ${shortId(response?.runId || '')} criada com sucesso.`, 'ok');
+    showToast(`Normalização concluída: ${response?.offers?.length || 0} oferta(s).`, 'success');
+    if (currentOfferNormalizationRunId) {
+      await loadOfferNormalizationRun(currentOfferNormalizationRunId);
+    }
+    await loadOfferNormalizationRuns();
+  } catch (e) {
+    const message = e?.data?.error || e?.message || 'Falha ao normalizar ofertas.';
+    setOfferNormalizationActionStatus(message, 'bad');
+    showToast(message, 'error');
+  }
+}
+
+async function routeOfferNormalizationRun(targetOverride, runIdOverride = null) {
+  const runId = runIdOverride || currentOfferNormalizationRunId;
+  if (!runId) {
+    showToast('Abra ou normalize uma execução antes de encaminhar.', 'error');
+    return;
+  }
+
+  const selectedTarget = targetOverride || document.getElementById('offerNormalizeTarget')?.value || 'review';
+  const notes = document.getElementById('offerNormalizeNotes')?.value || '';
+  setOfferNormalizationActionStatus(`Atualizando destino para ${offerNormalizationTargetLabel(selectedTarget)}...`, 'muted');
+
+  try {
+    const response = await api(`/api/admin/offers/normalization-runs/${encodeURIComponent(runId)}/route`, 'POST', {
+      selectedTarget,
+      notes
+    });
+
+    const run = response?.run || response || null;
+    currentOfferNormalizationRunId = run?.id || runId;
+    renderOfferNormalizationRun(run);
+    await loadOfferNormalizationRuns();
+    setOfferNormalizationActionStatus(`Execução encaminhada para ${offerNormalizationTargetLabel(selectedTarget)}.`, 'ok');
+    showToast(`Execução enviada para ${offerNormalizationTargetLabel(selectedTarget)}.`, 'success');
+  } catch (e) {
+    const message = e?.data?.error || e?.message || 'Falha ao atualizar destino da execução.';
+    setOfferNormalizationActionStatus(message, 'bad');
+    showToast(message, 'error');
+  }
+}
+
+function clearOfferNormalizationComposer() {
+  currentOfferNormalizationRunId = null;
+  setSafeVal('offerNormalizeInput', '');
+  setSafeVal('offerNormalizeNotes', '');
+  setSafeVal('offerNormalizeInputType', 'autodetect');
+  setSafeVal('offerNormalizeTarget', 'review');
+  setOfferNormalizationActionStatus('', 'muted');
+  renderOfferNormalizationRun(null);
 }
 
 function loadTheme() {

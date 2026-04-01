@@ -19,6 +19,7 @@ using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Content;
 using AchadinhosBot.Next.Domain.Compliance;
 using AchadinhosBot.Next.Domain.Models;
+using AchadinhosBot.Next.Domain.Offers;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Audit;
@@ -253,6 +254,10 @@ builder.Services.AddSingleton<IWhatsAppAgentMemoryStore, WhatsAppAgentMemoryStor
 builder.Services.AddSingleton<IChannelMonitorSelectionStore, ChannelMonitorSelectionStore>();
 builder.Services.AddSingleton<IChannelMonitorUiStateStore, ChannelMonitorUiStateStore>();
 builder.Services.AddSingleton<IChannelOfferCandidateStore, ChannelOfferCandidateStore>();
+builder.Services.AddSingleton<OfferNormalizationService>();
+builder.Services.AddSingleton<OfferNormalizationRoutingService>();
+builder.Services.AddSingleton<IOfferNormalizationRunStore, OfferNormalizationRunStore>();
+builder.Services.AddSingleton<IOfferAutomationIntentStore, OfferAutomationIntentStore>();
 builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalStore>();
 builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
 builder.Services.AddSingleton<EvolutionWhatsAppGateway>();
@@ -4189,6 +4194,121 @@ api.MapGet("/whatsapp/groups", async (
 {
     var groups = await gateway.GetGroupsAsync(instanceName, ct);
     return Results.Ok(new { groups });
+});
+
+api.MapPost("/admin/offers/normalize", async (
+    NormalizeOffersRequest request,
+    OfferNormalizationService normalizationService,
+    IOfferNormalizationRunStore runStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var actor = context.User.Identity?.Name ?? "unknown";
+    var run = normalizationService.Normalize(
+        request.RawInput,
+        request.InputType,
+        request.SelectedTarget,
+        request.Notes,
+        actor);
+
+    var saved = await runStore.SaveAsync(run, ct);
+    await audit.WriteAsync("offers.normalization.create", actor, new
+    {
+        saved.Id,
+        saved.SourceType,
+        saved.SelectedTarget,
+        saved.Status,
+        offers = saved.NormalizedOffers.Count,
+        issues = saved.ValidationIssues.Count
+    }, ct);
+
+    return Results.Ok(new
+    {
+        runId = saved.Id,
+        saved.SourceType,
+        selectedTarget = saved.SelectedTarget,
+        saved.Status,
+        saved.Summary,
+        offers = saved.NormalizedOffers,
+        validationIssues = saved.ValidationIssues,
+        saved.NextStepHint,
+        saved.CreatedAtUtc,
+        saved.UpdatedAtUtc,
+        saved.Notes,
+        saved.Operator
+    });
+});
+
+api.MapGet("/admin/offers/normalization-runs", async (
+    string? status,
+    string? target,
+    int? limit,
+    IOfferNormalizationRunStore runStore,
+    CancellationToken ct) =>
+{
+    var runs = await runStore.ListAsync(status, target, limit ?? 30, ct);
+    return Results.Ok(new
+    {
+        count = runs.Count,
+        items = runs
+    });
+});
+
+api.MapGet("/admin/offers/normalization-runs/{id}", async (
+    string id,
+    IOfferNormalizationRunStore runStore,
+    CancellationToken ct) =>
+{
+    var run = await runStore.GetAsync(id, ct);
+    return run is null
+        ? Results.NotFound(new { error = "Execução de normalização não encontrada." })
+        : Results.Ok(run);
+});
+
+api.MapPost("/admin/offers/normalization-runs/{id}/route", async (
+    string id,
+    RouteOfferNormalizationRunRequest request,
+    OfferNormalizationService normalizationService,
+    OfferNormalizationRoutingService routingService,
+    IOfferNormalizationRunStore runStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var existing = await runStore.GetAsync(id, ct);
+    if (existing is null)
+    {
+        return Results.NotFound(new { error = "Execução de normalização não encontrada." });
+    }
+
+    if (existing.NormalizedOffers.Count == 0)
+    {
+        return Results.BadRequest(new { error = "Esta execução não possui ofertas válidas para encaminhamento." });
+    }
+
+    var actor = context.User.Identity?.Name ?? "unknown";
+    var updated = normalizationService.Route(existing, request.SelectedTarget, request.Notes);
+    updated = await routingService.MaterializeAsync(updated, actor, ct);
+    updated.Operator = actor;
+    var saved = await runStore.SaveAsync(updated, ct);
+
+    await audit.WriteAsync("offers.normalization.route", actor, new
+    {
+        saved.Id,
+        saved.SelectedTarget,
+        saved.Status,
+        offers = saved.NormalizedOffers.Count,
+        delivery = saved.AssistedDelivery is null ? null : new
+        {
+            saved.AssistedDelivery.Kind,
+            saved.AssistedDelivery.Status,
+            saved.AssistedDelivery.TargetScope,
+            saved.AssistedDelivery.ReferenceIds
+        }
+    }, ct);
+
+    return Results.Ok(saved);
 });
 
 app.MapGet("/media/{id}", (string id, IMediaStore store) =>
