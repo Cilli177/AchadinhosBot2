@@ -152,6 +152,86 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
     }
 
+    public async Task<IReadOnlyList<VersionSnapshotInfo>> ListVersionsAsync(string catalogTarget, int limit, CancellationToken cancellationToken)
+    {
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var target = CatalogTargets.Normalize(catalogTarget, CatalogTargets.Prod);
+            var versionsDirectory = Path.Combine(_dataDirectory, "versions");
+            Directory.CreateDirectory(versionsDirectory);
+            var pattern = $"catalog-offers.{target}.*.json.bak";
+            var list = Directory.EnumerateFiles(versionsDirectory, pattern, SearchOption.TopDirectoryOnly)
+                .Select(path => new FileInfo(path))
+                .Select(fi => new VersionSnapshotInfo(
+                    Path.GetFileNameWithoutExtension(fi.Name),
+                    fi.CreationTimeUtc == DateTime.MinValue ? fi.LastWriteTimeUtc : fi.CreationTimeUtc,
+                    fi.Length))
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .Take(Math.Clamp(limit, 1, 500))
+                .ToArray();
+            return list;
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
+    public async Task<VersionSnapshotInfo?> GetCurrentVersionAsync(string catalogTarget, CancellationToken cancellationToken)
+    {
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var target = CatalogTargets.Normalize(catalogTarget, CatalogTargets.Prod);
+            var path = ResolvePath(target);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var fi = new FileInfo(path);
+            var stamp = fi.LastWriteTimeUtc.ToString("yyyyMMdd-HHmmss");
+            return new VersionSnapshotInfo($"catalog-offers.{target}.{stamp}", fi.LastWriteTimeUtc, fi.Length);
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
+    public async Task RestoreVersionAsync(string catalogTarget, string versionId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(versionId))
+        {
+            throw new ArgumentException("versionId é obrigatório.", nameof(versionId));
+        }
+
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var target = CatalogTargets.Normalize(catalogTarget, CatalogTargets.Prod);
+            var versionsDirectory = Path.Combine(_dataDirectory, "versions");
+            Directory.CreateDirectory(versionsDirectory);
+            var sourceName = versionId.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) ? versionId : $"{versionId}.bak";
+            var sourcePath = Path.Combine(versionsDirectory, sourceName);
+            if (!File.Exists(sourcePath))
+            {
+                throw new FileNotFoundException($"Snapshot de catálogo não encontrado: {versionId}", sourcePath);
+            }
+
+            var path = ResolvePath(target);
+            await BackupCurrentFileAsync(path, target, cancellationToken);
+            await using var source = File.OpenRead(sourcePath);
+            await using var destination = File.Create(path);
+            await source.CopyToAsync(destination, cancellationToken);
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
     private async Task<CatalogSyncResult> SyncTargetDatabaseAsync(
         CatalogDatabase db,
         IReadOnlyList<InstagramPublishDraft> drafts,
@@ -345,6 +425,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
     {
         Directory.CreateDirectory(_dataDirectory);
         var path = ResolvePath(target);
+        await BackupCurrentFileAsync(path, target, cancellationToken);
         await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, db, new JsonSerializerOptions { WriteIndented = true }, cancellationToken);
     }
@@ -354,6 +435,29 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
 
     private string ResolveLegacyPath()
         => Path.Combine(_dataDirectory, "catalog-offers.json");
+
+    private async Task BackupCurrentFileAsync(string path, string target, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        var fileInfo = new FileInfo(path);
+        if (fileInfo.Length == 0)
+        {
+            return;
+        }
+
+        var versionsDirectory = Path.Combine(_dataDirectory, "versions");
+        Directory.CreateDirectory(versionsDirectory);
+        var backupName = $"catalog-offers.{CatalogTargets.Normalize(target, CatalogTargets.Prod)}.{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json.bak";
+        var backupPath = Path.Combine(versionsDirectory, backupName);
+
+        await using var source = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        await using var destination = File.Create(backupPath);
+        await source.CopyToAsync(destination, cancellationToken);
+    }
 
     private static IReadOnlyList<string> ResolveReadableTargets(string? catalogTarget)
     {

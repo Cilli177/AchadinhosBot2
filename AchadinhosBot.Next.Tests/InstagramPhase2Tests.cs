@@ -293,6 +293,11 @@ public sealed class InstagramPhase2Tests
         public StubSettingsStore(AutomationSettings settings) => _settings = settings;
         public Task<AutomationSettings> GetAsync(CancellationToken ct) => Task.FromResult(_settings);
         public Task SaveAsync(AutomationSettings settings, CancellationToken ct) => Task.CompletedTask;
+        public Task<IReadOnlyList<VersionSnapshotInfo>> ListVersionsAsync(int limit, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<VersionSnapshotInfo>>(Array.Empty<VersionSnapshotInfo>());
+        public Task<VersionSnapshotInfo?> GetCurrentVersionAsync(CancellationToken cancellationToken)
+            => Task.FromResult<VersionSnapshotInfo?>(null);
+        public Task RestoreVersionAsync(string versionId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class StubPublishStore : IInstagramPublishStore
@@ -427,5 +432,14 @@ public sealed class InstagramPhase2Tests
 
         public Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult<IReadOnlyDictionary<string, CatalogOfferItem>>(new Dictionary<string, CatalogOfferItem>());
+
+        public Task<IReadOnlyList<VersionSnapshotInfo>> ListVersionsAsync(string catalogTarget, int limit, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<VersionSnapshotInfo>>(Array.Empty<VersionSnapshotInfo>());
+
+        public Task<VersionSnapshotInfo?> GetCurrentVersionAsync(string catalogTarget, CancellationToken cancellationToken)
+            => Task.FromResult<VersionSnapshotInfo?>(null);
+
+        public Task RestoreVersionAsync(string catalogTarget, string versionId, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 }

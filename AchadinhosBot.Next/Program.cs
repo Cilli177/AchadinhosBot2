@@ -27,7 +27,6 @@ using AchadinhosBot.Next.Infrastructure.Amazon;
 using AchadinhosBot.Next.Infrastructure.Idempotency;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Content;
-using AchadinhosBot.Next.Infrastructure.Logs;
 using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.Monitoring;
@@ -38,6 +37,7 @@ using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.WhatsApp;
 using AchadinhosBot.Next.Infrastructure.Resilience;
 using AchadinhosBot.Next.Infrastructure.Safety;
+using AchadinhosBot.Next.Infrastructure.Governance;
 using Serilog;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
 
@@ -143,6 +143,10 @@ builder.Services
     .AddOptions<DeliverySafetyOptions>()
     .Bind(builder.Configuration.GetSection("DeliverySafety"));
 
+builder.Services
+    .AddOptions<GovernanceOptions>()
+    .Bind(builder.Configuration.GetSection("Governance"));
+
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -167,6 +171,7 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddMemoryCache();
+builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -278,6 +283,13 @@ builder.Services.AddSingleton<IInstagramOutboundPublisher, RabbitMqInstagramOutb
 builder.Services.AddSingleton<IInstagramOutboundOutboxStore, FileInstagramOutboundOutboxStore>();
 builder.Services.AddSingleton<IIdempotencyStore, FileIdempotencyStore>();
 builder.Services.AddSingleton<TelegramAlertSender>();
+builder.Services.AddSingleton<WorkerActivityTracker>();
+builder.Services.AddSingleton<IGovernanceEventStore, SqliteGovernanceEventStore>();
+builder.Services.AddSingleton<ICanaryRuleStore, FileCanaryRuleStore>();
+builder.Services.AddSingleton<ITrafficCanaryResolver, TrafficCanaryResolver>();
+builder.Services.AddSingleton<IGovernanceRuleEngine, GovernanceRuleEngine>();
+builder.Services.AddSingleton<IGovernanceActionExecutor, GovernanceActionExecutor>();
+builder.Services.AddSingleton<IAutoTuningService, AutoTuningService>();
 
 if (startTelegramBotWorker)
 {
@@ -291,7 +303,11 @@ if (startTelegramUserbotWorker)
 }
 
 builder.Services.AddHostedService<InstagramOutboundReplayService>();
+builder.Services.AddHostedService<BotConversorOutboxReplayWorker>();
+builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
+builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
 builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
+builder.Services.AddHostedService<GovernanceSchedulerWorker>();
 
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<DeliverySafetyPolicy>();
@@ -365,6 +381,7 @@ app.UseSerilogRequestLogging();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.MapGovernanceAdminEndpoints();
 
 app.MapPost("/auth/login", async (
     LoginRequest request,

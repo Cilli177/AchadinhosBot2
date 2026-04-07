@@ -130,5 +130,14 @@ public sealed class Phase7AnalyticsAndCommandsTests
 
         public Task<IReadOnlyDictionary<string, CatalogOfferItem>> GetByDraftIdAsync(CancellationToken cancellationToken, string? catalogTarget = null)
             => Task.FromResult<IReadOnlyDictionary<string, CatalogOfferItem>>(_items.ToDictionary(x => x.DraftId, x => x));
+
+        public Task<IReadOnlyList<VersionSnapshotInfo>> ListVersionsAsync(string catalogTarget, int limit, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<VersionSnapshotInfo>>(Array.Empty<VersionSnapshotInfo>());
+
+        public Task<VersionSnapshotInfo?> GetCurrentVersionAsync(string catalogTarget, CancellationToken cancellationToken)
+            => Task.FromResult<VersionSnapshotInfo?>(null);
+
+        public Task RestoreVersionAsync(string catalogTarget, string versionId, CancellationToken cancellationToken)
+            => Task.CompletedTask;
     }
 }

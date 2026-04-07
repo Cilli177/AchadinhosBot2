@@ -1,5 +1,6 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Domain.Governance;
 using AchadinhosBot.Next.Domain.Logs;
 using MassTransit;
 using Microsoft.Extensions.Options;
@@ -11,6 +12,8 @@ public sealed class WhatsAppOutboundConsumer : IConsumer<SendWhatsAppMessageComm
     private readonly IWhatsAppTransport _transport;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IWhatsAppOutboundLogStore _outboundLogStore;
+    private readonly ITrafficCanaryResolver _canaryResolver;
+    private readonly IGovernanceEventStore _governanceEventStore;
     private readonly MessagingOptions _messagingOptions;
     private readonly ILogger<WhatsAppOutboundConsumer> _logger;
 
@@ -18,12 +21,16 @@ public sealed class WhatsAppOutboundConsumer : IConsumer<SendWhatsAppMessageComm
         IWhatsAppTransport transport,
         IIdempotencyStore idempotencyStore,
         IWhatsAppOutboundLogStore outboundLogStore,
+        ITrafficCanaryResolver canaryResolver,
+        IGovernanceEventStore governanceEventStore,
         IOptions<MessagingOptions> messagingOptions,
         ILogger<WhatsAppOutboundConsumer> logger)
     {
         _transport = transport;
         _idempotencyStore = idempotencyStore;
         _outboundLogStore = outboundLogStore;
+        _canaryResolver = canaryResolver;
+        _governanceEventStore = governanceEventStore;
         _messagingOptions = messagingOptions.Value;
         _logger = logger;
     }
@@ -31,6 +38,34 @@ public sealed class WhatsAppOutboundConsumer : IConsumer<SendWhatsAppMessageComm
     public async Task Consume(ConsumeContext<SendWhatsAppMessageCommand> context)
     {
         var command = context.Message;
+        var canary = await _canaryResolver.ResolveAsync(new CanaryRoutingContext(
+            "whatsapp_outbound",
+            command.To,
+            command.InstanceName,
+            "whatsapp"), context.CancellationToken);
+
+        await _governanceEventStore.AppendEventAsync(new GovernanceEvent(
+            GovernanceTracks.Observe,
+            "whatsapp.outbound.consume.start",
+            "info",
+            "ok",
+            "auto-healing-orchestrator",
+            "whatsapp_message",
+            command.MessageId,
+            context.CorrelationId?.ToString(),
+            context.ConversationId?.ToString(),
+            null,
+            DateTimeOffset.UtcNow,
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                command.Kind,
+                command.InstanceName,
+                command.To,
+                canary.Variant,
+                canary.RuleId,
+                canary.CanaryPercent
+            })), context.CancellationToken);
+
         var dedupeKey = $"wa-outbound:{command.DeduplicationKey}";
         var ttl = TimeSpan.FromSeconds(Math.Max(30, _messagingOptions.OutboundDeduplicationWindowSeconds));
         if (!_idempotencyStore.TryBegin(dedupeKey, ttl))
@@ -85,6 +120,19 @@ public sealed class WhatsAppOutboundConsumer : IConsumer<SendWhatsAppMessageComm
 
         if (!result.Success)
         {
+            await _governanceEventStore.AppendEventAsync(new GovernanceEvent(
+                GovernanceTracks.Act,
+                "whatsapp.outbound.consume.failed",
+                "warning",
+                "failed",
+                "auto-healing-orchestrator",
+                "whatsapp_message",
+                command.MessageId,
+                context.CorrelationId?.ToString(),
+                context.ConversationId?.ToString(),
+                null,
+                DateTimeOffset.UtcNow,
+                System.Text.Json.JsonSerializer.Serialize(new { result.Message })), context.CancellationToken);
             throw new InvalidOperationException(result.Message ?? "Falha no envio outbound do WhatsApp.");
         }
 
@@ -100,5 +148,19 @@ public sealed class WhatsAppOutboundConsumer : IConsumer<SendWhatsAppMessageComm
             MimeType = command.MimeType,
             FileName = command.FileName
         }, context.CancellationToken);
+
+        await _governanceEventStore.AppendEventAsync(new GovernanceEvent(
+            GovernanceTracks.Act,
+            "whatsapp.outbound.consume.success",
+            "info",
+            "ok",
+            "auto-healing-orchestrator",
+            "whatsapp_message",
+            command.MessageId,
+            context.CorrelationId?.ToString(),
+            context.ConversationId?.ToString(),
+            null,
+            DateTimeOffset.UtcNow,
+            "{}"), context.CancellationToken);
     }
 }
