@@ -16,6 +16,7 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
     private readonly IOfferAnomalyDetector _offerAnomalyDetector;
     private readonly GovernanceOptions _options;
     private readonly ILogger<GovernanceSchedulerWorker> _logger;
+    private readonly SemaphoreSlim _tickLock = new(1, 1);
 
     public GovernanceSchedulerWorker(
         IGovernanceEventStore eventStore,
@@ -64,6 +65,26 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
 
     private async Task RunTickAsync(CancellationToken cancellationToken)
     {
+        if (!await _tickLock.WaitAsync(0, cancellationToken))
+        {
+            await _eventStore.AppendEventAsync(new GovernanceEvent(
+                GovernanceTracks.Observe,
+                "governance.tick.skipped_lock",
+                "warning",
+                "skipped",
+                "scheduler-orchestrator",
+                "scheduler",
+                "governance",
+                null,
+                null,
+                null,
+                DateTimeOffset.UtcNow,
+                "{\"reason\":\"tick-already-running\"}"), cancellationToken);
+            return;
+        }
+
+        try
+        {
         var started = DateTimeOffset.UtcNow;
         await _eventStore.AppendEventAsync(new GovernanceEvent(
             GovernanceTracks.Observe,
@@ -169,6 +190,11 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
             (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds,
             DateTimeOffset.UtcNow,
             JsonSerializer.Serialize(new { decisions = decisions.Count })), cancellationToken);
+        }
+        finally
+        {
+            _tickLock.Release();
+        }
     }
 
     private async Task ProcessOfferAnomaliesAsync(CancellationToken cancellationToken)

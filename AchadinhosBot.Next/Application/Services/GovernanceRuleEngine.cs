@@ -14,6 +14,7 @@ public sealed class GovernanceRuleEngine : IGovernanceRuleEngine
     private readonly IWhatsAppOutboundOutboxStore _whatsAppOutbox;
     private readonly ITelegramOutboundOutboxStore _telegramOutbox;
     private readonly IInstagramOutboundOutboxStore _instagramOutbox;
+    private readonly ICanaryRuleStore _canaryRuleStore;
     private readonly WorkerActivityTracker _workerActivityTracker;
     private readonly GovernanceOptions _options;
 
@@ -23,6 +24,7 @@ public sealed class GovernanceRuleEngine : IGovernanceRuleEngine
         IWhatsAppOutboundOutboxStore whatsAppOutbox,
         ITelegramOutboundOutboxStore telegramOutbox,
         IInstagramOutboundOutboxStore instagramOutbox,
+        ICanaryRuleStore canaryRuleStore,
         WorkerActivityTracker workerActivityTracker,
         IOptions<GovernanceOptions> options)
     {
@@ -31,6 +33,7 @@ public sealed class GovernanceRuleEngine : IGovernanceRuleEngine
         _whatsAppOutbox = whatsAppOutbox;
         _telegramOutbox = telegramOutbox;
         _instagramOutbox = instagramOutbox;
+        _canaryRuleStore = canaryRuleStore;
         _workerActivityTracker = workerActivityTracker;
         _options = options.Value;
     }
@@ -92,6 +95,28 @@ public sealed class GovernanceRuleEngine : IGovernanceRuleEngine
         if (_options.AutoRollbackEnabled)
         {
             var status = await _eventStore.GetStatusSnapshotAsync(cancellationToken);
+            var canaryRules = await _canaryRuleStore.ListAsync(cancellationToken);
+            var hasCanaryEnabled = canaryRules.Any(x => x.Enabled && x.CanaryPercent > 0);
+
+            if (hasCanaryEnabled && (status.CriticalIncidents >= 2 || status.FailedActions24h >= 3))
+            {
+                decisions.Add(new GovernanceDecision(
+                    Guid.NewGuid().ToString("N"),
+                    "canary_rollback",
+                    "critical",
+                    "Threshold de falhas excedido com canario ativo; rollback instantaneo do canario acionado.",
+                    "auto-rollback-orchestrator",
+                    "canary",
+                    "global",
+                    JsonSerializer.Serialize(new
+                    {
+                        status.CriticalIncidents,
+                        status.FailedActions24h,
+                        activeRules = canaryRules.Count(x => x.Enabled && x.CanaryPercent > 0)
+                    }),
+                    now));
+            }
+
             if (status.CriticalIncidents >= 3 || status.FailedActions24h >= 5)
             {
                 decisions.Add(new GovernanceDecision(

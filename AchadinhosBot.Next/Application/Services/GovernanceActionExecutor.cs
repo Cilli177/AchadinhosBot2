@@ -19,6 +19,7 @@ public sealed class GovernanceActionExecutor : IGovernanceActionExecutor
     private readonly ITelegramOutboundPublisher _telegramPublisher;
     private readonly IInstagramOutboundPublisher _instagramPublisher;
     private readonly ISettingsStore _settingsStore;
+    private readonly ICanaryRuleStore _canaryRuleStore;
     private readonly GovernanceOptions _options;
     private readonly ConcurrentQueue<DateTimeOffset> _actionWindow = new();
 
@@ -32,6 +33,7 @@ public sealed class GovernanceActionExecutor : IGovernanceActionExecutor
         ITelegramOutboundPublisher telegramPublisher,
         IInstagramOutboundPublisher instagramPublisher,
         ISettingsStore settingsStore,
+        ICanaryRuleStore canaryRuleStore,
         IOptions<GovernanceOptions> options)
     {
         _botOutbox = botOutbox;
@@ -43,6 +45,7 @@ public sealed class GovernanceActionExecutor : IGovernanceActionExecutor
         _telegramPublisher = telegramPublisher;
         _instagramPublisher = instagramPublisher;
         _settingsStore = settingsStore;
+        _canaryRuleStore = canaryRuleStore;
         _options = options.Value;
     }
 
@@ -71,6 +74,9 @@ public sealed class GovernanceActionExecutor : IGovernanceActionExecutor
 
             case "auto_rollback":
                 return await ExecuteAutoRollbackAsync(decision, cancellationToken);
+
+            case "canary_rollback":
+                return await ExecuteCanaryRollbackAsync(decision, cancellationToken);
 
             default:
                 return new ActionExecution(
@@ -157,6 +163,42 @@ public sealed class GovernanceActionExecutor : IGovernanceActionExecutor
             false,
             $"Rollback automático aplicado para settings versão {candidate.VersionId}.",
             JsonSerializer.Serialize(new { restoredVersion = candidate.VersionId }),
+            DateTimeOffset.UtcNow);
+    }
+
+    private async Task<ActionExecution> ExecuteCanaryRollbackAsync(GovernanceDecision decision, CancellationToken cancellationToken)
+    {
+        var rules = await _canaryRuleStore.ListAsync(cancellationToken);
+        if (rules.Count == 0)
+        {
+            return new ActionExecution(
+                Guid.NewGuid().ToString("N"),
+                decision.DecisionType,
+                decision.Severity,
+                false,
+                false,
+                "Rollback de canario ignorado: nenhuma regra cadastrada.",
+                "{}",
+                DateTimeOffset.UtcNow);
+        }
+
+        var updated = rules
+            .Select(x => x with
+            {
+                Enabled = false,
+                CanaryPercent = 0
+            })
+            .ToArray();
+        await _canaryRuleStore.SaveAsync(updated, cancellationToken);
+        RegisterAction();
+        return new ActionExecution(
+            Guid.NewGuid().ToString("N"),
+            decision.DecisionType,
+            decision.Severity,
+            true,
+            false,
+            "Rollback instantaneo de canario aplicado (todas as regras desativadas).",
+            JsonSerializer.Serialize(new { rulesDisabled = updated.Length }),
             DateTimeOffset.UtcNow);
     }
 
