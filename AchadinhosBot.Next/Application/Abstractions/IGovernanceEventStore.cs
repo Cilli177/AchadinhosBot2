@@ -1,4 +1,5 @@
 using AchadinhosBot.Next.Domain.Governance;
+using AchadinhosBot.Next.Domain.Offers;
 
 namespace AchadinhosBot.Next.Application.Abstractions;
 
@@ -31,6 +32,11 @@ public interface IGovernanceActionExecutor
 public interface IAutoTuningService
 {
     Task<IReadOnlyList<TuningChangeRecord>> RunAsync(CancellationToken cancellationToken);
+}
+
+public interface IOfferAnomalyDetector
+{
+    Task<IReadOnlyList<OfferAnomaly>> DetectAsync(CancellationToken cancellationToken);
 }
 
 public interface ITrafficCanaryResolver

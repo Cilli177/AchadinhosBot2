@@ -68,7 +68,9 @@ public sealed record GovernanceStatusSnapshot(
     int Decisions24h,
     int Actions24h,
     int FailedActions24h,
-    double AutoResolutionRate24h);
+    double AutoResolutionRate24h,
+    double? MttrMinutes24h,
+    double? MttdMinutes24h);
 
 public sealed record TuningChangeRecord(
     string ChangeId,

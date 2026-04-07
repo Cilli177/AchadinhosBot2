@@ -290,6 +290,7 @@ builder.Services.AddSingleton<ITrafficCanaryResolver, TrafficCanaryResolver>();
 builder.Services.AddSingleton<IGovernanceRuleEngine, GovernanceRuleEngine>();
 builder.Services.AddSingleton<IGovernanceActionExecutor, GovernanceActionExecutor>();
 builder.Services.AddSingleton<IAutoTuningService, AutoTuningService>();
+builder.Services.AddSingleton<IOfferAnomalyDetector, OfferAnomalyDetector>();
 
 if (startTelegramBotWorker)
 {

@@ -258,7 +258,22 @@ public sealed class SqliteGovernanceEventStore : IGovernanceEventStore
         var resolved24h = await ScalarIntAsync("SELECT COUNT(*) FROM governance_incidents WHERE resolved_at_utc >= $since;", cancellationToken, ("$since", since));
         var opened24h = await ScalarIntAsync("SELECT COUNT(*) FROM governance_incidents WHERE opened_at_utc >= $since;", cancellationToken, ("$since", since));
         var rate = opened24h == 0 ? 1.0 : Math.Clamp((double)resolved24h / opened24h, 0, 1);
-        return new GovernanceStatusSnapshot(now, open, critical, decisions24h, actions24h, failed24h, rate);
+        var mttrMinutes = await ScalarDoubleAsync("""
+            SELECT AVG((julianday(resolved_at_utc) - julianday(opened_at_utc)) * 24.0 * 60.0)
+            FROM governance_incidents
+            WHERE resolved_at_utc IS NOT NULL AND resolved_at_utc >= $since;
+            """, cancellationToken, ("$since", since));
+
+        var mttdMinutes = await ScalarDoubleAsync("""
+            SELECT AVG((julianday(i.opened_at_utc) - julianday(e.ts_utc)) * 24.0 * 60.0)
+            FROM governance_incidents i
+            JOIN governance_events e
+                ON e.entity_id = i.incident_id
+            WHERE i.opened_at_utc >= $since
+              AND e.track = 'observe';
+            """, cancellationToken, ("$since", since));
+
+        return new GovernanceStatusSnapshot(now, open, critical, decisions24h, actions24h, failed24h, rate, mttrMinutes, mttdMinutes);
     }
 
     public async Task AppendTuningChangeAsync(TuningChangeRecord change, CancellationToken cancellationToken)
@@ -439,6 +454,37 @@ public sealed class SqliteGovernanceEventStore : IGovernanceEventStore
             }
             var result = await cmd.ExecuteScalarAsync(cancellationToken);
             return Convert.ToInt32(result ?? 0);
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
+    private async Task<double?> ScalarDoubleAsync(string sql, CancellationToken cancellationToken, params (string Name, object Value)[] parameters)
+    {
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = OpenConnection();
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = sql;
+            foreach (var (name, value) in parameters)
+            {
+                cmd.Parameters.AddWithValue(name, value);
+            }
+            var result = await cmd.ExecuteScalarAsync(cancellationToken);
+            if (result is null || result is DBNull)
+            {
+                return null;
+            }
+
+            if (double.TryParse(result.ToString(), out var parsed))
+            {
+                return parsed;
+            }
+
+            return null;
         }
         finally
         {

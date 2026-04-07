@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AchadinhosBot.Tests.IntegrationTests;
@@ -11,13 +13,13 @@ public class ConverterTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly HttpClient _client;
     private readonly WebApplicationFactory<Program> _factory;
+    private readonly string _apiKey;
 
     public ConverterTests(WebApplicationFactory<Program> factory)
     {
         _factory = factory;
         _client = factory.CreateClient();
-        // Assume API key from appsettings or default overrides if any.
-        // But for testing the validation first, we might not set it initially.
+        _apiKey = _factory.Services.GetRequiredService<IConfiguration>()["Webhook:ApiKey"] ?? "CHANGE_ME_WEBHOOK_API_KEY";
     }
 
     [Fact]
@@ -25,7 +27,7 @@ public class ConverterTests : IClassFixture<WebApplicationFactory<Program>>
     {
         // Require API Key matching appsettings for Integration Tests
         var request = new HttpRequestMessage(HttpMethod.Post, "/converter");
-        request.Headers.Add("x-api-key", "CHANGE_ME_WEBHOOK_API_KEY");
+        request.Headers.Add("x-api-key", _apiKey);
         
         var payload = new { text = "https://www.amazon.com.br/dp/B08N5M7S6K" };
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
@@ -42,7 +44,7 @@ public class ConverterTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task GivenInvalidDomain_WhenPostConverter_ThenReturnsBadRequest()
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/converter");
-        request.Headers.Add("x-api-key", "CHANGE_ME_WEBHOOK_API_KEY");
+        request.Headers.Add("x-api-key", _apiKey);
         
         var payload = new { text = "https://randomsite.com/product" };
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
@@ -71,7 +73,7 @@ public class ConverterTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var requestMaker = () => {
             var req = new HttpRequestMessage(HttpMethod.Post, "/converter");
-            req.Headers.Add("x-api-key", "CHANGE_ME_WEBHOOK_API_KEY");
+            req.Headers.Add("x-api-key", _apiKey);
             req.Content = new StringContent(JsonSerializer.Serialize(new { text = "https://shopee.com.br/test" }), Encoding.UTF8, "application/json");
             return _client.SendAsync(req);
         };

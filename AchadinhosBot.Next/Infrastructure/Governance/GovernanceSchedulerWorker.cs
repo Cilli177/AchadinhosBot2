@@ -2,6 +2,7 @@ using System.Text.Json;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Governance;
+using AchadinhosBot.Next.Domain.Offers;
 using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Infrastructure.Governance;
@@ -12,6 +13,7 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
     private readonly IGovernanceRuleEngine _ruleEngine;
     private readonly IGovernanceActionExecutor _actionExecutor;
     private readonly IAutoTuningService _autoTuningService;
+    private readonly IOfferAnomalyDetector _offerAnomalyDetector;
     private readonly GovernanceOptions _options;
     private readonly ILogger<GovernanceSchedulerWorker> _logger;
 
@@ -20,6 +22,7 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
         IGovernanceRuleEngine ruleEngine,
         IGovernanceActionExecutor actionExecutor,
         IAutoTuningService autoTuningService,
+        IOfferAnomalyDetector offerAnomalyDetector,
         IOptions<GovernanceOptions> options,
         ILogger<GovernanceSchedulerWorker> logger)
     {
@@ -27,6 +30,7 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
         _ruleEngine = ruleEngine;
         _actionExecutor = actionExecutor;
         _autoTuningService = autoTuningService;
+        _offerAnomalyDetector = offerAnomalyDetector;
         _options = options.Value;
         _logger = logger;
     }
@@ -150,6 +154,8 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
             }
         }
 
+        await ProcessOfferAnomaliesAsync(cancellationToken);
+
         await _eventStore.AppendEventAsync(new GovernanceEvent(
             GovernanceTracks.Audit,
             "governance.tick.finish",
@@ -163,5 +169,38 @@ public sealed class GovernanceSchedulerWorker : BackgroundService
             (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds,
             DateTimeOffset.UtcNow,
             JsonSerializer.Serialize(new { decisions = decisions.Count })), cancellationToken);
+    }
+
+    private async Task ProcessOfferAnomaliesAsync(CancellationToken cancellationToken)
+    {
+        var anomalies = await _offerAnomalyDetector.DetectAsync(cancellationToken);
+        foreach (var anomaly in anomalies)
+        {
+            var incidentId = $"offer-anomaly:{anomaly.OfferId}";
+            var incident = new IncidentState(
+                incidentId,
+                "offer_anomaly",
+                anomaly.Severity,
+                "open",
+                anomaly.Summary,
+                JsonSerializer.Serialize(anomaly),
+                anomaly.DetectedAtUtc,
+                anomaly.DetectedAtUtc,
+                null);
+            await _eventStore.UpsertIncidentAsync(incident, cancellationToken);
+            await _eventStore.AppendEventAsync(new GovernanceEvent(
+                GovernanceTracks.Observe,
+                "offer.anomaly.detected",
+                anomaly.Severity,
+                "flagged",
+                "offer-anomaly-detector",
+                "offer",
+                anomaly.OfferId,
+                null,
+                null,
+                null,
+                anomaly.DetectedAtUtc,
+                JsonSerializer.Serialize(anomaly)), cancellationToken);
+        }
     }
 }
