@@ -37,40 +37,64 @@ public sealed class InstagramDirectMessageConsumer : IConsumer<SendInstagramDire
     public async Task Consume(ConsumeContext<SendInstagramDirectMessageCommand> context)
     {
         var command = context.Message;
+        var dedupeKey = $"ig-dm-out:{command.DeduplicationKey}";
         var ttl = TimeSpan.FromSeconds(Math.Max(30, _messagingOptions.OutboundDeduplicationWindowSeconds));
-        if (!_idempotencyStore.TryBegin($"ig-dm-out:{command.DeduplicationKey}", ttl))
+        if (!_idempotencyStore.TryBegin(dedupeKey, ttl))
         {
             _logger.LogInformation("DM outbound Instagram duplicada ignorada. RecipientId={RecipientId}", command.RecipientId);
             return;
         }
 
-        var settings = await _settingsStore.GetAsync(context.CancellationToken);
-        var publishSettings = settings.InstagramPublish ?? new Domain.Settings.InstagramPublishSettings();
-        var result = await _metaGraphClient.SendDirectMessageAsync(publishSettings, command.RecipientId, command.MessageText, context.CancellationToken);
-
-        if (!string.IsNullOrWhiteSpace(command.CommentStoreId))
+        var releaseDedupeOnFailure = true;
+        try
         {
-            var comment = await _commentStore.GetAsync(command.CommentStoreId, context.CancellationToken);
-            if (comment is not null)
+            var settings = await _settingsStore.GetAsync(context.CancellationToken);
+            var publishSettings = settings.InstagramPublish ?? new Domain.Settings.InstagramPublishSettings();
+            var result = await _metaGraphClient.SendDirectMessageAsync(publishSettings, command.RecipientId, command.MessageText, context.CancellationToken);
+
+            if (!result.Success && !result.IsTransient)
             {
-                comment.DmStatus = result.Success ? "sent" : "failed";
-                comment.DmError = result.Success ? null : result.Error;
-                await _commentStore.UpdateAsync(comment, context.CancellationToken);
+                releaseDedupeOnFailure = false;
+            }
+
+            if (result.Success)
+            {
+                releaseDedupeOnFailure = false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(command.CommentStoreId))
+            {
+                var comment = await _commentStore.GetAsync(command.CommentStoreId, context.CancellationToken);
+                if (comment is not null)
+                {
+                    comment.DmStatus = result.Success ? "sent" : "failed";
+                    comment.DmError = result.Success ? null : result.Error;
+                    await _commentStore.UpdateAsync(comment, context.CancellationToken);
+                }
+            }
+
+            await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+            {
+                Action = "comment_dm_auto",
+                Success = result.Success,
+                MediaId = command.MediaId,
+                Error = result.Success ? null : result.Error,
+                Details = $"RecipientId={command.RecipientId},Keyword={command.Keyword},Provider={command.Provider}"
+            }, context.CancellationToken);
+
+            if (!result.Success && result.IsTransient)
+            {
+                throw new InvalidOperationException(result.Error ?? "Falha transiente ao enviar DM do Instagram.");
             }
         }
-
-        await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        catch
         {
-            Action = "comment_dm_auto",
-            Success = result.Success,
-            MediaId = command.MediaId,
-            Error = result.Success ? null : result.Error,
-            Details = $"RecipientId={command.RecipientId},Keyword={command.Keyword},Provider={command.Provider}"
-        }, context.CancellationToken);
+            if (releaseDedupeOnFailure)
+            {
+                _idempotencyStore.RemoveByPrefix(dedupeKey);
+            }
 
-        if (!result.Success && result.IsTransient)
-        {
-            throw new InvalidOperationException(result.Error ?? "Falha transiente ao enviar DM do Instagram.");
+            throw;
         }
     }
 }

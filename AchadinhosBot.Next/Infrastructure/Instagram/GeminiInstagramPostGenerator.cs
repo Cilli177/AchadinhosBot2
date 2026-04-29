@@ -45,6 +45,7 @@ public sealed class GeminiInstagramPostGenerator
 
         var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
         var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
+        var isGemma = model.Contains("gemma", StringComparison.OrdinalIgnoreCase);
 
         var officialData = await _officialService.TryGetBestAsync(productInput, affiliateLink, cancellationToken);
         var meta = await _metaService.GetMetaAsync(affiliateLink ?? productInput, cancellationToken);
@@ -79,22 +80,19 @@ public sealed class GeminiInstagramPostGenerator
         var description = string.IsNullOrWhiteSpace(officialContext) ? meta.Description : officialContext;
 
         var prompt = OpenAiInstagramPostGenerator.BuildPrompt(effectiveInput, effectiveContext, affiliateLink, images, title, description, instaSettings);
-
-        var payload = new
-        {
-            contents = new[]
+        var maxTokens = Math.Clamp(geminiSettings.MaxOutputTokens <= 0 ? 1200 : geminiSettings.MaxOutputTokens, 200, 4096);
+        object payload = isGemma
+            ? new
             {
-                new
-                {
-                    role = "user",
-                    parts = new[] { new { text = prompt } }
-                }
-            },
-            generationConfig = new
-            {
-                maxOutputTokens = Math.Clamp(geminiSettings.MaxOutputTokens <= 0 ? 1200 : geminiSettings.MaxOutputTokens, 200, 4096)
+                systemInstruction = new { parts = new[] { new { text = "Responda SEMPRE em português do Brasil. Não exiba seu processo de raciocínio interno. Vá diretamente ao resultado final, sem pensamento visível, sem planejamento e sem explicações extras." } } },
+                contents = new[] { new { role = "user", parts = new[] { new { text = prompt } } } },
+                generationConfig = new { maxOutputTokens = maxTokens }
             }
-        };
+            : (object)new
+            {
+                contents = new[] { new { role = "user", parts = new[] { new { text = prompt } } } },
+                generationConfig = new { maxOutputTokens = maxTokens }
+            };
 
         var started = DateTimeOffset.UtcNow;
         try
@@ -124,27 +122,69 @@ public sealed class GeminiInstagramPostGenerator
                     }
 
                     _logger.LogWarning("Gemini respondeu erro {Status}: {Body}", response.StatusCode, body);
-                    await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, null, body, started, 0, "Erro na geracao"), cancellationToken);
+                    await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, isGemma ? "gemma4" : "gemini", productInput, affiliateLink, images.Count, images, null, body, started, 0, "Erro na geracao"), cancellationToken);
                     return null;
                 }
 
-                var text = ExtractOutputText(body);
+                var text = isGemma ? StripGemmaThinkingPreamble(ExtractOutputText(body)) : ExtractOutputText(body);
                 var finalText = AppendImagesIfMissing(text, images);
                 var (score, notes) = EvaluateQuality(finalText);
-                await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, finalText, null, started, score, notes), cancellationToken);
+                await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, isGemma ? "gemma4" : "gemini", productInput, affiliateLink, images.Count, images, finalText, null, started, score, notes), cancellationToken);
                 return finalText;
             }
 
-            await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, images.Count, images, null, lastErrorBody, started, 0, "Erro na geracao"), cancellationToken);
+            await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, isGemma ? "gemma4" : "gemini", productInput, affiliateLink, images.Count, images, null, lastErrorBody, started, 0, "Erro na geracao"), cancellationToken);
             return null;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Falha ao gerar post via Gemini");
-            await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, "gemini", productInput, affiliateLink, 0, Array.Empty<string>(), null, ex.Message, started, 0, "Erro na geracao"), cancellationToken);
+            await _logStore.AppendAsync(BuildLogEntry(instaSettings, geminiSettings.Model, isGemma ? "gemma4" : "gemini", productInput, affiliateLink, 0, Array.Empty<string>(), null, ex.Message, started, 0, "Erro na geracao"), cancellationToken);
             return null;
         }
     }
+
+    public Task<string?> GenerateFreeformAsync(string prompt, Gemma4Settings gemma4Settings, CancellationToken cancellationToken)
+        => GenerateFreeformAsync(prompt, ToGeminiSettings(gemma4Settings), cancellationToken);
+
+    public Task<string?> GenerateAsync(string productInput, string? offerContext, string? affiliateLink, InstagramPostSettings instaSettings, Gemma4Settings gemma4Settings, CancellationToken cancellationToken)
+        => GenerateAsync(productInput, offerContext, affiliateLink, instaSettings, ToGeminiSettings(gemma4Settings), cancellationToken);
+
+    public static Gemma4Settings WithGeminiKeyFallback(Gemma4Settings? gemma4Settings, GeminiSettings? geminiSettings)
+    {
+        var gemma4 = gemma4Settings ?? new Gemma4Settings();
+        if (HasGemma4Keys(gemma4) || geminiSettings is null)
+        {
+            return gemma4;
+        }
+
+        return new Gemma4Settings
+        {
+            ApiKey = geminiSettings.ApiKey,
+            ApiKeys = geminiSettings.ApiKeys?.ToList() ?? new List<string>(),
+            Model = gemma4.Model,
+            ModelAdvanced = gemma4.ModelAdvanced,
+            BaseUrl = string.IsNullOrWhiteSpace(gemma4.BaseUrl) ? geminiSettings.BaseUrl : gemma4.BaseUrl,
+            MaxOutputTokens = gemma4.MaxOutputTokens,
+            MonthlyCallLimit = gemma4.MonthlyCallLimit,
+            EstimatedCostPerCallUsd = gemma4.EstimatedCostPerCallUsd
+        };
+    }
+
+    private static bool HasGemma4Keys(Gemma4Settings settings)
+        => !string.IsNullOrWhiteSpace(settings.ApiKey) ||
+           (settings.ApiKeys?.Any(key => !string.IsNullOrWhiteSpace(key) && key.Trim() != "********") ?? false);
+
+    private static GeminiSettings ToGeminiSettings(Gemma4Settings s) => new()
+    {
+        ApiKey = s.ApiKey,
+        ApiKeys = s.ApiKeys,
+        Model = string.IsNullOrWhiteSpace(s.Model) ? "gemma-4" : s.Model,
+        BaseUrl = string.IsNullOrWhiteSpace(s.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : s.BaseUrl,
+        MaxOutputTokens = s.MaxOutputTokens,
+        MonthlyCallLimit = s.MonthlyCallLimit,
+        EstimatedCostPerCallUsd = s.EstimatedCostPerCallUsd
+    };
 
     public async Task<string?> GenerateFreeformAsync(string prompt, GeminiSettings geminiSettings, CancellationToken cancellationToken)
     {
@@ -156,21 +196,20 @@ public sealed class GeminiInstagramPostGenerator
 
         var model = string.IsNullOrWhiteSpace(geminiSettings.Model) ? "gemini-2.5-flash" : geminiSettings.Model.Trim();
         var baseUrl = string.IsNullOrWhiteSpace(geminiSettings.BaseUrl) ? "https://generativelanguage.googleapis.com/v1beta" : geminiSettings.BaseUrl.Trim();
-        var payload = new
-        {
-            contents = new[]
+        var isGemma = model.Contains("gemma", StringComparison.OrdinalIgnoreCase);
+        var maxTokens = Math.Clamp(geminiSettings.MaxOutputTokens <= 0 ? 1200 : geminiSettings.MaxOutputTokens, 200, 4096);
+        object payload = isGemma
+            ? new
             {
-                new
-                {
-                    role = "user",
-                    parts = new[] { new { text = prompt.Trim() } }
-                }
-            },
-            generationConfig = new
-            {
-                maxOutputTokens = Math.Clamp(geminiSettings.MaxOutputTokens <= 0 ? 1200 : geminiSettings.MaxOutputTokens, 200, 4096)
+                systemInstruction = new { parts = new[] { new { text = "Responda SEMPRE em português do Brasil. Não exiba seu processo de raciocínio interno. Vá diretamente ao resultado final, sem pensamento visível, sem planejamento e sem explicações extras." } } },
+                contents = new[] { new { role = "user", parts = new[] { new { text = prompt.Trim() } } } },
+                generationConfig = new { maxOutputTokens = maxTokens }
             }
-        };
+            : (object)new
+            {
+                contents = new[] { new { role = "user", parts = new[] { new { text = prompt.Trim() } } } },
+                generationConfig = new { maxOutputTokens = maxTokens }
+            };
 
         try
         {
@@ -198,7 +237,7 @@ public sealed class GeminiInstagramPostGenerator
                     return null;
                 }
 
-                return ExtractOutputText(body)?.Trim();
+                return isGemma ? StripGemmaThinkingPreamble(ExtractOutputText(body)?.Trim()) : ExtractOutputText(body)?.Trim();
             }
 
             _logger.LogWarning("Gemini livre falhou em todas as chaves: {Body}", lastErrorBody);
@@ -390,5 +429,50 @@ public sealed class GeminiInstagramPostGenerator
         if (!text.Contains("Hashtags", StringComparison.OrdinalIgnoreCase)) { score -= 10; notes.Add("sem hashtags"); }
         if (!text.Contains("CTA", StringComparison.OrdinalIgnoreCase) && !text.Contains("👉")) { score -= 10; notes.Add("cta fraco"); }
         return (Math.Max(score, 0), string.Join(", ", notes));
+    }
+
+    /// <summary>
+    /// Remove o bloco de raciocínio interno (chain-of-thought) que modelos Gemma tendem
+    /// a emitir antes do resultado final. Detecta separador "---" ou linhas consecutivas
+    /// iniciadas por "* " no início do texto.
+    /// </summary>
+    private static string? StripGemmaThinkingPreamble(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return text;
+
+        // Separator-based extraction: tudo após o primeiro "---" em linha própria
+        var sepIdx = text.IndexOf("\n---", StringComparison.Ordinal);
+        if (sepIdx >= 0)
+        {
+            var after = text[(sepIdx + 4)..].TrimStart('\n', '\r', '-').Trim();
+            if (!string.IsNullOrWhiteSpace(after)) return after;
+        }
+
+        // Strip consecutive leading bullet/planning lines ("* ..." or "** ...")
+        var lines = text.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var trimmed = lines[i].TrimStart();
+            if (!string.IsNullOrWhiteSpace(trimmed) &&
+                !trimmed.StartsWith("* ") &&
+                !trimmed.StartsWith("** "))
+            {
+                return i == 0 ? text : string.Join('\n', lines[i..]).Trim();
+            }
+        }
+
+        var lastBullet = lines
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("* ", StringComparison.Ordinal) || line.StartsWith("** ", StringComparison.Ordinal))
+            .Select(line => line.TrimStart('*').Trim().Trim('"'))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .LastOrDefault(line =>
+                !line.Contains("Requirement", StringComparison.OrdinalIgnoreCase) &&
+                !line.Contains("Constraints", StringComparison.OrdinalIgnoreCase) &&
+                !line.Contains("Input:", StringComparison.OrdinalIgnoreCase) &&
+                !line.Contains("Task:", StringComparison.OrdinalIgnoreCase) &&
+                !line.Contains("Option ", StringComparison.OrdinalIgnoreCase));
+
+        return string.IsNullOrWhiteSpace(lastBullet) ? text : lastBullet;
     }
 }

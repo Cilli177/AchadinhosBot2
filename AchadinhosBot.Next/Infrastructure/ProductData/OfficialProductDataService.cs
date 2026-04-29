@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -8,6 +10,7 @@ using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Infrastructure.Amazon;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 
@@ -15,37 +18,63 @@ namespace AchadinhosBot.Next.Infrastructure.ProductData;
 
 public sealed class OfficialProductDataService
 {
+    private static readonly TimeSpan ResolvedUrlCacheTtl = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan MercadoLivreItemIdCacheTtl = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan MercadoLivreSearchCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan MercadoLivreScrapeMergeWait = TimeSpan.FromMilliseconds(800);
     private readonly AmazonPaApiClient _amazonPaApiClient;
     private readonly AmazonCreatorApiClient _amazonCreatorApiClient;
     private readonly AmazonHtmlScraperService _amazonHtmlScraper;
+    private readonly AmazonPlaywrightScraperClient _amazonPlaywrightScraper;
     private readonly MercadoLivreHtmlScraperService _mercadoLivreHtmlScraper;
     private readonly IMercadoLivreOAuthService _mercadoLivreOAuthService;
     private readonly AffiliateOptions _affiliateOptions;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<OfficialProductDataService> _logger;
+    private readonly IMemoryCache _memoryCache;
 
     public OfficialProductDataService(
         AmazonPaApiClient amazonPaApiClient,
         AmazonCreatorApiClient amazonCreatorApiClient,
         AmazonHtmlScraperService amazonHtmlScraper,
+        AmazonPlaywrightScraperClient amazonPlaywrightScraper,
         MercadoLivreHtmlScraperService mercadoLivreHtmlScraper,
         IMercadoLivreOAuthService mercadoLivreOAuthService,
         IOptions<AffiliateOptions> affiliateOptions,
         IHttpClientFactory httpClientFactory,
+        IMemoryCache memoryCache,
         ILogger<OfficialProductDataService> logger)
     {
         _amazonPaApiClient = amazonPaApiClient;
         _amazonCreatorApiClient = amazonCreatorApiClient;
         _amazonHtmlScraper = amazonHtmlScraper;
+        _amazonPlaywrightScraper = amazonPlaywrightScraper;
         _mercadoLivreHtmlScraper = mercadoLivreHtmlScraper;
         _mercadoLivreOAuthService = mercadoLivreOAuthService;
         _affiliateOptions = affiliateOptions.Value;
         _httpClientFactory = httpClientFactory;
+        _memoryCache = memoryCache;
         _logger = logger;
+
+        if (_affiliateOptions.ShopeeProductApi.Enabled &&
+            (string.IsNullOrWhiteSpace(_affiliateOptions.ShopeeAppId) || string.IsNullOrWhiteSpace(_affiliateOptions.ShopeeSecret)))
+        {
+            _logger.LogWarning("ShopeeProductApi habilitada sem credenciais completas. O runtime vai cair para fallbacks quando necessario.");
+        }
     }
 
     public async Task<OfficialProductDataResult?> TryGetBestAsync(string originalUrl, string? convertedUrl, CancellationToken ct)
     {
+        var cacheKey = $"official-product:{originalUrl?.Trim()}|{convertedUrl?.Trim()}";
+        if (_memoryCache.TryGetValue(cacheKey, out OfficialProductDataResult? cachedResult))
+        {
+            return cachedResult;
+        }
+
+        var logs = new List<string>();
+        logs.Add($"Iniciando conversão: {originalUrl}");
+        var consultedStores = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        
         var urlCandidates = new List<string>();
         AddCandidate(urlCandidates, convertedUrl);
         AddCandidate(urlCandidates, originalUrl);
@@ -57,27 +86,166 @@ public sealed class OfficialProductDataService
             var resolved = await TryResolveFinalUrlAsync(rawUrl, ct);
             if (!string.IsNullOrWhiteSpace(resolved))
             {
+                logs.Add($"URL resolvida: {resolved}");
                 AddCandidate(resolvedCandidates, resolved);
             }
         }
 
         foreach (var candidate in resolvedCandidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            var displayHost = Uri.TryCreate(candidate, UriKind.Absolute, out var cUri) ? cUri.Host : "URL inválida";
+            var storeLabel = Uri.TryCreate(candidate, UriKind.Absolute, out var hostUri)
+                ? GetStoreLabel(hostUri.Host)
+                : "Link";
+            if (!string.Equals(storeLabel, "Link", StringComparison.OrdinalIgnoreCase))
+            {
+                consultedStores.Add(storeLabel);
+            }
+            logs.Add($"Extraindo dados de: {displayHost}");
             var result = await TryGetFromSingleUrlAsync(candidate, ct);
             if (result is not null)
             {
+                consultedStores.Add(result.Store);
+                logs.Add($"Produto encontrado na {result.Store}: {result.Title} ({result.CurrentPrice})");
                 results.Add(result);
+            }
+        }
+
+        // --- NEW: CROSS-STORE SEARCH ---
+        if (results.Count > 0)
+        {
+            var storesRepresented = results.Select(r => r.Store).Distinct().ToList();
+            var bestInitial = results.OrderByDescending(Score).First();
+            var titleToSearch = bestInitial.Title;
+
+            if (!string.IsNullOrWhiteSpace(titleToSearch) && titleToSearch.Length > 10)
+            {
+                logs.Add($"Iniciando busca cross-store para: {titleToSearch}");
+                var queryVariants = BuildSearchQueries(titleToSearch);
+                logs.Add($"Queries geradas para comparação: {string.Join(" | ", queryVariants)}");
+
+                if (!storesRepresented.Contains("Amazon"))
+                {
+                    consultedStores.Add("Amazon");
+                    logs.Add("Pesquisando na Amazon...");
+                    var amazonResult = await SearchSingleStoreWithFallbackAsync(queryVariants, SearchAmazonAsync, "Amazon", logs, ct);
+                    if (amazonResult is not null)
+                    {
+                        logs.Add($"Oferta alternativa encontrada na Amazon: {amazonResult.CurrentPrice}");
+                        results.Add(amazonResult);
+                    }
+                }
+
+                if (!storesRepresented.Contains("Shopee"))
+                {
+                    consultedStores.Add("Shopee");
+                    logs.Add("Pesquisando na Shopee...");
+                    var shopeeResult = await SearchSingleStoreWithFallbackAsync(queryVariants, SearchShopeeAsync, "Shopee", logs, ct);
+                    if (shopeeResult is not null)
+                    {
+                        logs.Add($"Oferta alternativa encontrada na Shopee: {shopeeResult.CurrentPrice}");
+                        results.Add(shopeeResult);
+                    }
+                }
+
+                if (!storesRepresented.Contains("Mercado Livre"))
+                {
+                    consultedStores.Add("Mercado Livre");
+                    logs.Add("Pesquisando no Mercado Livre...");
+                    var mlResults = await SearchMercadoLivreWithFallbackAsync(queryVariants, logs, ct);
+                    foreach (var sr in mlResults)
+                    {
+                        logs.Add($"Oferta alternativa encontrada no Mercado Livre: {sr.CurrentPrice}");
+                        results.Add(sr);
+                    }
+                }
+
+                results = results
+                    .GroupBy(r => $"{r.Store}|{r.SourceUrl}|{r.CurrentPrice}", StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .ToList();
             }
         }
 
         if (results.Count == 0)
         {
-            return null;
+            foreach (var candidate in resolvedCandidates.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var fallback = await TryGetLinkMetaFallbackAsync(candidate, ct);
+                if (fallback is null)
+                {
+                    continue;
+                }
+
+                logs.Add($"Fallback de metadados do link aplicado: {fallback.Store} ({fallback.DataSource})");
+                results.Add(fallback);
+            }
+
+            if (results.Count == 0)
+            {
+                logs.Add("Nenhum produto identificado em nenhuma loja.");
+                _memoryCache.Set<OfficialProductDataResult?>(cacheKey, null, TimeSpan.FromMinutes(5));
+                return null;
+            }
         }
 
-        return results
+        var best = results
             .OrderByDescending(Score)
-            .FirstOrDefault();
+            .First();
+
+        logs.Add($"Melhor oferta selecionada: {best.Store} por {best.CurrentPrice}");
+        if (!string.IsNullOrWhiteSpace(best.CouponCode))
+        {
+            logs.Add($"Cupom identificado: {best.CouponCode} ({best.CouponDescription})");
+        }
+
+        var comparisons = results
+            .Where(r => r != best)
+            .Select(r => new PriceComparisonResult(
+                r.Store, 
+                r.Title ?? "Produto", 
+                r.CurrentPrice ?? "Indisponivel", 
+                r.SourceUrl,
+                r.CouponCode))
+            .ToList();
+
+        // --- NEW: SAVINGS CALCULATION (PRICE PROOF) ---
+        string? savingsDisplay = null;
+        int? savingsPercent = null;
+        if (comparisons.Count > 0)
+        {
+            var bestPrice = ParsePriceNumber(best.CurrentPrice);
+            var others = comparisons
+                .Select(c => ParsePriceNumber(c.Price))
+                .Where(p => p.HasValue)
+                .Select(p => p!.Value)
+                .ToList();
+
+            if (bestPrice.HasValue && others.Count > 0)
+            {
+                var maxOther = others.Max();
+                if (maxOther > bestPrice.Value)
+                {
+                    var diff = maxOther - bestPrice.Value;
+                    savingsDisplay = $"Economia de R$ {diff:N2}";
+                    savingsPercent = (int)Math.Round((diff / maxOther) * 100);
+                    logs.Add($"Economia VIP detectada: {savingsDisplay} ({savingsPercent}% abaixo do maior preço)");
+                }
+            }
+        }
+
+        var finalResult = best with 
+        { 
+            SearchResults = comparisons, 
+            ProcessingLogs = logs,
+            SavingsDisplay = savingsDisplay,
+            SavingsPercent = savingsPercent,
+            StoresConsulted = consultedStores.OrderBy(x => x).ToList(),
+            MatchesFound = comparisons.Count
+        };
+
+        _memoryCache.Set(cacheKey, finalResult, TimeSpan.FromMinutes(15));
+        return finalResult;
     }
 
     private async Task<OfficialProductDataResult?> TryGetFromSingleUrlAsync(string url, CancellationToken ct)
@@ -172,6 +340,31 @@ public sealed class OfficialProductDataService
             }
         }
 
+        // Fallback: Playwright scraper (real browser, bypasses CAPTCHA)
+        if (_amazonPlaywrightScraper is not null)
+        {
+            var pw = await _amazonPlaywrightScraper.ScrapeAsync(asin, ct);
+            if (pw is not null && (!string.IsNullOrWhiteSpace(pw.Title) || pw.Images.Count > 0))
+            {
+                return new OfficialProductDataResult(
+                    Store: "Amazon",
+                    Title: pw.Title,
+                    CurrentPrice: pw.Price,
+                    PreviousPrice: pw.OldPrice,
+                    DiscountPercent: pw.DiscountPercent,
+                    Images: pw.Images,
+                    IsOfficial: false,
+                    DataSource: "amazon_playwright",
+                    SourceUrl: uri.ToString(),
+                    EstimatedDelivery: null,
+                    VideoUrl: null,
+                    IsLightningDeal: pw.IsLightningDeal,
+                    LightningDealExpiry: pw.LightningDealExpiry,
+                    CouponCode: pw.CouponCode,
+                    CouponDescription: pw.CouponDescription);
+            }
+        }
+
         // Fallback: try the fully resolved product URL first, then the canonical ASIN templates.
         {
             AmazonScrapedProduct? scraped = null;
@@ -226,7 +419,10 @@ public sealed class OfficialProductDataService
                     DataSource: "mercadolivre_html_scraper",
                     SourceUrl: resolvedUrl,
                     EstimatedDelivery: scrapedFallback.Delivery,
-                    VideoUrl: null);
+                    VideoUrl: null,
+                    IsLightningDeal: scrapedFallback.IsLightningDeal,
+                    CouponCode: scrapedFallback.CouponCode,
+                    CouponDescription: scrapedFallback.CouponDescription);
             }
             return null;
         }
@@ -262,36 +458,53 @@ public sealed class OfficialProductDataService
                  apiResult = ParseMercadoLivreItemResponse(uri, doc);
             }
 
-            var scraped = await scrapedTask;
-            if (apiResult != null && scraped != null)
+            if (apiResult is not null)
             {
-                 return apiResult with
-                 {
-                     EstimatedDelivery = apiResult.EstimatedDelivery ?? scraped.Delivery,
-                     Title = apiResult.Title ?? scraped.Title,
-                     DataSource = "mercadolivre_api_and_scraper",
-                     PreviousPrice = scraped.IsLightningDeal ? scraped.OldPrice : apiResult.PreviousPrice,
-                     CurrentPrice = scraped.IsLightningDeal ? scraped.Price : apiResult.CurrentPrice,
-                     DiscountPercent = scraped.IsLightningDeal ? scraped.DiscountPercent : apiResult.DiscountPercent
-                 };
-            }
-            
-            if (apiResult != null) return apiResult;
+                var scrapeCompletedQuickly = await Task.WhenAny(scrapedTask, Task.Delay(MercadoLivreScrapeMergeWait, ct)) == scrapedTask;
+                if (!scrapeCompletedQuickly)
+                {
+                    return apiResult;
+                }
 
-            if (scraped != null && (!string.IsNullOrWhiteSpace(scraped.Title) || scraped.Images.Count > 0))
+                var scraped = await scrapedTask;
+                if (scraped != null)
+                {
+                    return apiResult with
+                    {
+                        EstimatedDelivery = apiResult.EstimatedDelivery ?? scraped.Delivery,
+                        Title = apiResult.Title ?? scraped.Title,
+                        DataSource = "mercadolivre_api_and_scraper",
+                        PreviousPrice = scraped.IsLightningDeal ? scraped.OldPrice : apiResult.PreviousPrice,
+                        CurrentPrice = scraped.IsLightningDeal ? scraped.Price : apiResult.CurrentPrice,
+                        DiscountPercent = scraped.IsLightningDeal ? scraped.DiscountPercent : apiResult.DiscountPercent,
+                        IsLightningDeal = scraped.IsLightningDeal,
+                        CouponCode = scraped.CouponCode,
+                        CouponDescription = scraped.CouponDescription
+                    };
+                }
+
+                return apiResult;
+            }
+
+            var scrapedFallback = await scrapedTask;
+
+            if (scrapedFallback != null && (!string.IsNullOrWhiteSpace(scrapedFallback.Title) || scrapedFallback.Images.Count > 0))
             {
                 return new OfficialProductDataResult(
                     Store: "Mercado Livre",
-                    Title: scraped.Title,
-                    CurrentPrice: scraped.Price,
-                    PreviousPrice: scraped.OldPrice,
-                    DiscountPercent: scraped.DiscountPercent,
-                    Images: scraped.Images,
+                    Title: scrapedFallback.Title,
+                    CurrentPrice: scrapedFallback.Price,
+                    PreviousPrice: scrapedFallback.OldPrice,
+                    DiscountPercent: scrapedFallback.DiscountPercent,
+                    Images: scrapedFallback.Images,
                     IsOfficial: false,
                     DataSource: "mercadolivre_html_scraper",
                     SourceUrl: resolvedUrl,
-                    EstimatedDelivery: scraped.Delivery,
-                    VideoUrl: null);
+                    EstimatedDelivery: scrapedFallback.Delivery,
+                    VideoUrl: null,
+                    IsLightningDeal: scrapedFallback.IsLightningDeal,
+                    CouponCode: scrapedFallback.CouponCode,
+                    CouponDescription: scrapedFallback.CouponDescription);
             }
 
             return null;
@@ -305,9 +518,16 @@ public sealed class OfficialProductDataService
 
     private async Task<string?> TryResolveMercadoLivreItemIdAsync(Uri uri, CancellationToken ct)
     {
+        var cacheKey = $"ml-item-id:{uri}";
+        if (_memoryCache.TryGetValue(cacheKey, out string? cachedItemId))
+        {
+            return cachedItemId;
+        }
+
         var itemId = ExtractMercadoLivreItemId(uri);
         if (!string.IsNullOrWhiteSpace(itemId))
         {
+            _memoryCache.Set(cacheKey, itemId, MercadoLivreItemIdCacheTtl);
             return itemId;
         }
 
@@ -318,6 +538,7 @@ public sealed class OfficialProductDataService
             itemId = ExtractMercadoLivreItemId(resolvedUri);
             if (!string.IsNullOrWhiteSpace(itemId))
             {
+                _memoryCache.Set(cacheKey, itemId, MercadoLivreItemIdCacheTtl);
                 return itemId;
             }
         }
@@ -329,6 +550,7 @@ public sealed class OfficialProductDataService
             var fromHtml = ExtractMercadoLivreItemIdFromText(html);
             if (!string.IsNullOrWhiteSpace(fromHtml))
             {
+                _memoryCache.Set(cacheKey, fromHtml, MercadoLivreItemIdCacheTtl);
                 return fromHtml;
             }
         }
@@ -336,6 +558,7 @@ public sealed class OfficialProductDataService
         {
         }
 
+        _memoryCache.Set<string?>(cacheKey, null, TimeSpan.FromMinutes(5));
         return null;
     }
 
@@ -416,11 +639,6 @@ public sealed class OfficialProductDataService
     {
         var appId = _affiliateOptions.ShopeeAppId?.Trim();
         var secret = _affiliateOptions.ShopeeSecret?.Trim();
-        if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(secret))
-        {
-            return null;
-        }
-
         var targetUrl = uri.ToString();
         if (targetUrl.Contains("s.shopee.com.br", StringComparison.OrdinalIgnoreCase) || 
             targetUrl.Contains("shope.ee", StringComparison.OrdinalIgnoreCase))
@@ -448,10 +666,12 @@ public sealed class OfficialProductDataService
             }
         }
 
+        long? shopId = null;
         long? itemId = null;
         var match = Regex.Match(targetUrl, @"-i[._](\d+)[._](\d+)");
         if (match.Success)
         {
+            if (long.TryParse(match.Groups[1].Value, out var sId)) shopId = sId;
             if (long.TryParse(match.Groups[2].Value, out var mId)) itemId = mId;
         }
         else
@@ -459,6 +679,7 @@ public sealed class OfficialProductDataService
             match = Regex.Match(targetUrl, @"shopee\.com\.br/[^/]+/(\d+)/(\d+)");
             if (match.Success)
             {
+                if (long.TryParse(match.Groups[1].Value, out var sId)) shopId = sId;
                 if (long.TryParse(match.Groups[2].Value, out var mId)) itemId = mId;
             }
             else
@@ -473,7 +694,25 @@ public sealed class OfficialProductDataService
             return null;
         }
 
-        return await TryGetShopeeGraphQlDataAsync(appId, secret, itemId.Value, targetUrl, ct);
+        if (!string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(secret))
+        {
+            var official = await TryGetShopeeGraphQlDataAsync(appId, secret, itemId.Value, targetUrl, ct);
+            if (official is not null)
+            {
+                return official;
+            }
+        }
+
+        if (shopId.HasValue && shopId.Value > 0)
+        {
+            var publicItem = await TryGetShopeePublicItemDataAsync(shopId.Value, itemId.Value, targetUrl, ct);
+            if (publicItem is not null)
+            {
+                return publicItem;
+            }
+        }
+
+        return null;
     }
 
     private async Task<OfficialProductDataResult?> TryGetShopeeGraphQlDataAsync(string appId, string secret, long itemId, string targetUrl, CancellationToken ct)
@@ -646,6 +885,179 @@ public sealed class OfficialProductDataService
         }
     }
 
+    private async Task<OfficialProductDataResult?> SearchAmazonAsync(string title, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+
+        try
+        {
+            var searchTitle = title;
+            // Clean title: take first 6-8 words for more accurate search
+            var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length > 8) searchTitle = string.Join(" ", words.Take(8));
+
+            var client = _httpClientFactory.CreateClient("default");
+            var query = Uri.EscapeDataString(searchTitle);
+            var searchUrl = $"https://www.amazon.com.br/s?k={query}";
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, searchUrl);
+            request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
+            
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var html = await response.Content.ReadAsStringAsync(ct);
+            // Look for ASINs in data-asin attributes
+            var asinMatches = Regex.Matches(html, @"data-asin=""(?<asin>[A-Z0-9]{10})""", RegexOptions.IgnoreCase);
+            
+            var asins = asinMatches.Cast<Match>()
+                .Select(m => m.Groups["asin"].Value)
+                .Where(a => !string.IsNullOrEmpty(a))
+                .Distinct()
+                .Take(2) // Just try the first two relevant results
+                .ToList();
+
+            foreach (var asin in asins)
+            {
+                if (Uri.TryCreate($"https://www.amazon.com.br/dp/{asin}", UriKind.Absolute, out var amazonUri))
+                {
+                    var result = await TryGetAmazonDataAsync(amazonUri, ct);
+                    if (result != null) return result;
+                }
+            }
+
+            return null;
+        }
+        catch { return null; }
+    }
+
+    private async Task<List<OfficialProductDataResult>> SearchMercadoLivreMultiAsync(string title, CancellationToken ct)
+    {
+        var results = new List<OfficialProductDataResult>();
+        if (string.IsNullOrWhiteSpace(title)) return results;
+
+        var cacheKey = $"ml-search:{title.Trim().ToLowerInvariant()}";
+        if (_memoryCache.TryGetValue(cacheKey, out List<OfficialProductDataResult>? cachedResults))
+        {
+            return cachedResults ?? results;
+        }
+
+        try
+        {
+            var searchTitle = title;
+            var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length > 6) searchTitle = string.Join(" ", words.Take(6));
+
+            var client = _httpClientFactory.CreateClient("default");
+            var query = Uri.EscapeDataString(searchTitle);
+            var endpoint = $"https://api.mercadolibre.com/sites/MLB/search?q={query}&limit=3";
+            
+            var accessToken = await _mercadoLivreOAuthService.GetAccessTokenAsync(ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            if (!string.IsNullOrWhiteSpace(accessToken))
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            }
+
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return results;
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("results", out var resultsNode) || resultsNode.ValueKind != JsonValueKind.Array)
+                return results;
+
+            foreach (var first in resultsNode.EnumerateArray())
+            {
+                var itemId = TryGetString(first, "id");
+                if (string.IsNullOrWhiteSpace(itemId)) continue;
+
+                var res = await TryGetFromSingleUrlAsync($"https://produto.mercadolivre.com.br/{itemId}", ct);
+                if (res != null) results.Add(res);
+                if (results.Count >= 2) break;
+            }
+        }
+        catch { }
+
+        _memoryCache.Set(cacheKey, results, MercadoLivreSearchCacheTtl);
+        return results;
+    }
+
+    private async Task<OfficialProductDataResult?> SearchMercadoLivreAsync(string title, CancellationToken ct)
+    {
+        var list = await SearchMercadoLivreMultiAsync(title, ct);
+        return list.FirstOrDefault();
+    }
+
+    private async Task<OfficialProductDataResult?> SearchShopeeAsync(string title, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return null;
+        }
+
+        try
+        {
+            var searchTitle = title;
+            var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length > 6)
+            {
+                searchTitle = string.Join(" ", words.Take(6));
+            }
+
+            var client = _httpClientFactory.CreateClient("default");
+            var query = Uri.EscapeDataString(searchTitle);
+            var endpoint = $"https://shopee.com.br/api/v4/search/search_items?by=relevancy&keyword={query}&limit=3&newest=0&order=desc&page_type=search&scenario=PAGE_GLOBAL_SEARCH&version=2";
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+            request.Headers.TryAddWithoutValidation("Accept", "application/json,text/plain,*/*");
+            request.Headers.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var item in items.EnumerateArray())
+            {
+                if (!item.TryGetProperty("item_basic", out var basic) || basic.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var itemId = TryGetDecimal(basic, "itemid");
+                var shopId = TryGetDecimal(basic, "shopid");
+                if (!itemId.HasValue || !shopId.HasValue)
+                {
+                    continue;
+                }
+
+                var itemIdLong = Convert.ToInt64(itemId.Value);
+                var shopIdLong = Convert.ToInt64(shopId.Value);
+                var targetUrl = $"https://shopee.com.br/product/{shopIdLong}/{itemIdLong}";
+                var result = await TryGetShopeePublicItemDataAsync(shopIdLong, itemIdLong, targetUrl, ct);
+                if (result is not null)
+                {
+                    return result;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
     private async Task<string?> TryResolveFinalUrlAsync(string? url, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -658,15 +1070,216 @@ public sealed class OfficialProductDataService
             return null;
         }
 
+        var cacheKey = $"resolved-url:{url.Trim()}";
+        if (_memoryCache.TryGetValue(cacheKey, out string? cachedResolvedUrl))
+        {
+            return cachedResolvedUrl;
+        }
+
         try
         {
             var client = _httpClientFactory.CreateClient("default");
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            return response.RequestMessage?.RequestUri?.ToString();
+            var resolved = response.RequestMessage?.RequestUri?.ToString();
+            _memoryCache.Set(cacheKey, resolved, ResolvedUrlCacheTtl);
+            return resolved;
         }
         catch
         {
+            return null;
+        }
+    }
+
+    private async Task<OfficialProductDataResult?> SearchSingleStoreWithFallbackAsync(
+        IReadOnlyList<string> queryVariants,
+        Func<string, CancellationToken, Task<OfficialProductDataResult?>> searchFn,
+        string storeName,
+        List<string> logs,
+        CancellationToken ct)
+    {
+        foreach (var query in queryVariants)
+        {
+            var result = await searchFn(query, ct);
+            if (result is not null)
+            {
+                logs.Add($"Match em {storeName} com query: {query}");
+                return result;
+            }
+
+            logs.Add($"Sem match em {storeName} para query: {query}");
+        }
+
+        return null;
+    }
+
+    private async Task<List<OfficialProductDataResult>> SearchMercadoLivreWithFallbackAsync(
+        IReadOnlyList<string> queryVariants,
+        List<string> logs,
+        CancellationToken ct)
+    {
+        foreach (var query in queryVariants)
+        {
+            var results = await SearchMercadoLivreMultiAsync(query, ct);
+            if (results.Count > 0)
+            {
+                logs.Add($"Match no Mercado Livre com query: {query}");
+                return results;
+            }
+
+            logs.Add($"Sem match no Mercado Livre para query: {query}");
+        }
+
+        return new List<OfficialProductDataResult>();
+    }
+
+    private static IReadOnlyList<string> BuildSearchQueries(string rawTitle)
+    {
+        if (string.IsNullOrWhiteSpace(rawTitle))
+        {
+            return new List<string>();
+        }
+
+        var normalized = Regex.Replace(rawTitle, @"[^\p{L}\p{Nd}\s]", " ");
+        var words = normalized
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.Trim())
+            .Where(w => w.Length > 1)
+            .ToList();
+
+        if (words.Count == 0)
+        {
+            return new List<string>();
+        }
+
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "de", "da", "do", "dos", "das", "com", "para", "por", "sem", "na", "no", "a", "o", "e"
+        };
+
+        var compact = words.Where(w => !stopWords.Contains(w)).ToList();
+        var modelLike = compact.Where(w => w.Any(char.IsDigit)).ToList();
+        var descriptor = compact.Where(w => !w.Any(char.IsDigit)).Take(4).ToList();
+
+        var queries = new List<string>
+        {
+            string.Join(" ", words.Take(10)),
+            string.Join(" ", compact.Take(7))
+        };
+
+        if (modelLike.Count > 0)
+        {
+            queries.Add(string.Join(" ", modelLike.Take(3).Concat(descriptor.Take(2))));
+        }
+
+        queries.Add(string.Join(" ", words.Take(6)));
+
+        return queries
+            .Where(q => !string.IsNullOrWhiteSpace(q) && q.Length > 4)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task<OfficialProductDataResult?> TryGetLinkMetaFallbackAsync(string url, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        if (LooksLikeImageUrl(uri.AbsoluteUri))
+        {
+            return new OfficialProductDataResult(
+                Store: GetStoreLabel(uri.Host),
+                Title: null,
+                CurrentPrice: null,
+                PreviousPrice: null,
+                DiscountPercent: null,
+                Images: new List<string> { uri.AbsoluteUri },
+                IsOfficial: false,
+                DataSource: "direct_image_url",
+                SourceUrl: uri.AbsoluteUri,
+                EstimatedDelivery: null,
+                VideoUrl: null);
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            request.Headers.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var finalUri = response.RequestMessage?.RequestUri ?? uri;
+            var mediaType = response.Content.Headers.ContentType?.MediaType;
+            if (!string.IsNullOrWhiteSpace(mediaType) && mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                return new OfficialProductDataResult(
+                    Store: GetStoreLabel(finalUri.Host),
+                    Title: null,
+                    CurrentPrice: null,
+                    PreviousPrice: null,
+                    DiscountPercent: null,
+                    Images: new List<string> { finalUri.AbsoluteUri },
+                    IsOfficial: false,
+                    DataSource: "direct_image_content_type",
+                    SourceUrl: finalUri.AbsoluteUri,
+                    EstimatedDelivery: null,
+                    VideoUrl: null);
+            }
+
+            var html = await response.Content.ReadAsStringAsync(ct);
+            if (string.IsNullOrWhiteSpace(html))
+            {
+                return null;
+            }
+
+            var title = FirstNonEmpty(
+                ExtractMetaContent(html, "property", "og:title"),
+                ExtractMetaContent(html, "name", "twitter:title"),
+                ExtractMetaContent(html, "itemprop", "name"),
+                ExtractTitleTag(html));
+
+            var images = new List<string>();
+            images.AddRange(ExtractMetaContents(html, "property", "og:image"));
+            images.AddRange(ExtractMetaContents(html, "property", "og:image:url"));
+            images.AddRange(ExtractMetaContents(html, "property", "og:image:secure_url"));
+            images.AddRange(ExtractMetaContents(html, "name", "twitter:image"));
+            images.AddRange(ExtractMetaContents(html, "name", "twitter:image:src"));
+            images.AddRange(ExtractMetaContents(html, "itemprop", "image"));
+            images = NormalizeUrls(images, finalUri)
+                .Where(LooksLikeImageUrl)
+                .Take(10)
+                .ToList();
+
+            if (images.Count == 0)
+            {
+                return null;
+            }
+
+            return new OfficialProductDataResult(
+                Store: GetStoreLabel(finalUri.Host),
+                Title: string.IsNullOrWhiteSpace(title) ? null : title,
+                CurrentPrice: null,
+                PreviousPrice: null,
+                DiscountPercent: null,
+                Images: images,
+                IsOfficial: false,
+                DataSource: "link_meta_fallback",
+                SourceUrl: finalUri.AbsoluteUri,
+                EstimatedDelivery: null,
+                VideoUrl: null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao extrair imagem por fallback de metadados do link. Url={Url}", url);
             return null;
         }
     }
@@ -681,6 +1294,112 @@ public sealed class OfficialProductDataService
         if (!string.IsNullOrWhiteSpace(item.PreviousPrice)) score += 10;
         if (item.DiscountPercent.HasValue && item.DiscountPercent.Value > 0) score += 8;
         return score;
+    }
+
+    private static string GetStoreLabel(string host)
+    {
+        if (IsAmazonHost(host))
+        {
+            return "Amazon";
+        }
+
+        if (IsMercadoLivreHost(host))
+        {
+            return "Mercado Livre";
+        }
+
+        if (IsShopeeHost(host))
+        {
+            return "Shopee";
+        }
+
+        return "Link";
+    }
+
+    private static bool LooksLikeImageUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var path = uri.AbsolutePath;
+        return path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".avif", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+
+    private static string ExtractTitleTag(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return string.Empty;
+        }
+
+        var titleTag = Regex.Match(html, "<title[^>]*>(?<value>[^<]+)</title>", RegexOptions.IgnoreCase);
+        return titleTag.Success ? (WebUtility.HtmlDecode(titleTag.Groups["value"].Value)?.Trim() ?? string.Empty) : string.Empty;
+    }
+
+    private static string ExtractMetaContent(string html, string attrName, string attrValue)
+        => ExtractMetaContents(html, attrName, attrValue).FirstOrDefault() ?? string.Empty;
+
+    private static List<string> ExtractMetaContents(string html, string attrName, string attrValue)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return new List<string>();
+        }
+
+        var escapedValue = Regex.Escape(attrValue);
+        var valueFirst = $@"<meta[^>]*\b{attrName}\s*=\s*['\""]{escapedValue}['\""][^>]*\bcontent\s*=\s*['\""](?<content>[^'\""]+)['\""][^>]*>";
+        var contentFirst = $@"<meta[^>]*\bcontent\s*=\s*['\""](?<content>[^'\""]+)['\""][^>]*\b{attrName}\s*=\s*['\""]{escapedValue}['\""][^>]*>";
+        var matches = Regex.Matches(html, $"{valueFirst}|{contentFirst}", RegexOptions.IgnoreCase);
+
+        return matches
+            .Select(m => (m.Groups["content"].Value ?? string.Empty).Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Select(v => WebUtility.HtmlDecode(v) ?? string.Empty)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> NormalizeUrls(IEnumerable<string> urls, Uri? baseUri)
+    {
+        var list = new List<string>();
+        foreach (var raw in urls)
+        {
+            var value = WebUtility.HtmlDecode(raw)?.Replace("\\/", "/", StringComparison.Ordinal).Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (Uri.TryCreate(value, UriKind.Absolute, out var absolute))
+            {
+                list.Add(absolute.ToString());
+                continue;
+            }
+
+            if (baseUri is not null && Uri.TryCreate(baseUri, value, out var relative))
+            {
+                list.Add(relative.ToString());
+            }
+        }
+
+        return list
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static void AddCandidate(List<string> urls, string? value)
@@ -1110,5 +1829,18 @@ public sealed record OfficialProductDataResult(
     bool IsLightningDeal = false,
     DateTimeOffset? LightningDealExpiry = null,
     string? CouponCode = null,
-    string? CouponDescription = null);
+    string? CouponDescription = null,
+    IReadOnlyList<PriceComparisonResult>? SearchResults = null,
+    IReadOnlyList<string>? ProcessingLogs = null,
+    string? SavingsDisplay = null,
+    int? SavingsPercent = null,
+    IReadOnlyList<string>? StoresConsulted = null,
+    int? MatchesFound = null);
+
+public sealed record PriceComparisonResult(
+    string Store,
+    string Title,
+    string Price,
+    string Url,
+    string? Coupon = null);
 

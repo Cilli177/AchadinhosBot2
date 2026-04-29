@@ -10,48 +10,95 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@400;500;600&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="dashboard.css?v=20260312h" />
+  <link rel="stylesheet" href="/dashboard.css?v=20260331-wa-monitor-unified" />
 </head>
 
 <body class="unauthenticated">
   <div class="layout">
     <aside class="sidebar">
-      <h3>Painel</h3>
-      <div class="nav"> <button data-tab="connections" onclick="showSection('connections')">Conexões</button> <button
-          data-tab="ops" onclick="showSection('ops')">Operação</button> <button data-tab="route"
-          onclick="showSection('route')">Telegram -> WhatsApp</button> <button data-tab="linkresponder"
-          onclick="showSection('linkresponder')">Resposta de link</button> <button data-tab="mercadolivre"
-          onclick="showSection('mercadolivre')">Mercado Livre</button> <button data-tab="instagram"
-          onclick="showSection('instagram')">Instagram</button> <button data-tab="agents"
-          onclick="showSection('agents')">Agentes</button> <button data-tab="ai-lab"
-          onclick="showSection('ai-lab')">IA Lab</button> <button data-tab="instagram-publish"
-          onclick="showSection('instagram-publish')">Instagram Publicar</button> <button data-tab="instagram-story"
-          onclick="showSection('instagram-story')">Instagram Story</button> <button data-tab="bio-growth"
-          onclick="showSection('bio-growth')">Bio & Growth</button> <button data-tab="autoreplies"
-          onclick="showSection('autoreplies')">Respostas automáticas</button> <button data-tab="logs"
-          onclick="showSection('logs')"> Logs <span id="logsBadge" class="badge-dot hidden">0</span> </button> <button
-          data-tab="playground" onclick="showSection('playground')">Playground</button> <button data-tab="debug"
-          onclick="showSection('debug')">Debug</button> <button data-tab="analytics"
-          onclick="showSection('analytics')">Analytics 📊</button> </div> <button id="themeToggle" class="theme-toggle"
-        onclick="toggleTheme()">Alternar tema</button>
+      <div class="sidebar-brand">
+        <p class="sidebar-kicker">Operations Center</p>
+        <h3>AchadinhosBot.Next</h3>
+        <p class="sidebar-copy">Monitoramento, automação e mensageria em uma leitura mais limpa e profissional.</p>
+      </div>
+      <div class="nav">
+        <div class="nav-group">
+          <div class="nav-label">Visão Geral</div>
+          <button data-tab="overview" onclick="showSection('overview')">Ops Home</button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Mensageria</div>
+          <button data-tab="connections" onclick="showSection('connections')">Conexões</button>
+          <button data-tab="ops" onclick="showSection('ops')">Operação</button>
+          <button data-tab="route" onclick="showSection('route')">Telegram -> WhatsApp</button>
+          <button data-tab="linkresponder" onclick="showSection('linkresponder')">Resposta de link</button>
+          <button data-tab="wa-monitoring" onclick="showSection('wa-monitoring')">Monitoramento WhatsApp</button>
+          <button data-tab="wa-automation" onclick="showSection('wa-automation')">Automação WhatsApp</button>
+          <button data-tab="wa-outreach" onclick="showSection('wa-outreach')">Disparo para participantes</button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Automação</div>
+          <button data-tab="mercadolivre" onclick="showSection('mercadolivre')">Mercado Livre</button>
+          <button data-tab="instagram" onclick="showSection('instagram')">Instagram</button>
+          <button data-tab="instagram-publish" onclick="showSection('instagram-publish')">Instagram Publicar</button>
+          <button data-tab="instagram-story" onclick="showSection('instagram-story')">Instagram Story</button>
+          <button data-tab="bio-growth" onclick="showSection('bio-growth')">Bio & Growth</button>
+          <button data-tab="autoreplies" onclick="showSection('autoreplies')">Respostas automáticas</button>
+          <button data-tab="engagement-plan" onclick="showSection('engagement-plan')">Plano de Engajamento</button>
+          <button data-tab="offers" onclick="showSection('offers')">Ofertas</button>
+          <button data-tab="agents" onclick="showSection('agents')">Agentes</button>
+          <button data-tab="ai-lab" onclick="showSection('ai-lab')">IA Lab</button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Insights e Admin</div>
+          <button data-tab="ai-ops" onclick="showSection('ai-ops')">AI Ops</button>
+          <button data-tab="skills" onclick="showSection('skills')">Skills</button>
+          <button data-tab="analytics" onclick="showSection('analytics')">Analytics</button>
+          <button data-tab="logs" onclick="showSection('logs')">Logs <span id="logsBadge" class="badge-dot hidden">0</span></button>
+          <button data-tab="playground" onclick="showSection('playground')">Playground</button>
+          <button data-tab="debug" onclick="showSection('debug')">Debug</button>
+        </div>
+      </div>
+      <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()">Alternar tema</button>
     </aside>
     <main class="content">
       <div class="container">
-        <div class="hero">
+        <div class="hero ops-hero">
           <div class="hero-content">
-            <h1>AchadinhosBot.Next — Painel de Operação</h1>
-            <p class="meta">Automação, integrações e repasse de ofertas em tempo real.</p>
+            <p class="eyebrow">Ops Home</p>
+            <h1>AchadinhosBot.Next</h1>
+            <p class="meta">Leitura operacional premium para acompanhar saúde do sistema, integrações críticas e ação rápida sem ruído visual.</p>
             <div class="stats">
-              <div class="stat">Status: <span id="statStatus">Online</span></div>
-              <div class="stat">Userbot: <span id="statUserbot">Conectando...</span></div>
-              <div class="stat">Últimos logs: <span id="statLogs">0</span></div>
+              <div class="stat">
+                <span class="stat-label">Sistema</span>
+                <span id="statStatus">Carregando...</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Userbot</span>
+                <span id="statUserbot">Conectando...</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Últimos logs</span>
+                <span id="statLogs">0</span>
+              </div>
             </div>
           </div>
-          <div class="stats"> <span id="chipTelegramBot" class="chip warn">Telegram Bot: Não conectado</span> <span
-              id="chipUserbot" class="chip warn">Telegram Userbot: Conectando...</span> <span id="chipWhatsApp"
-              class="chip warn">WhatsApp: Não conectado</span> <span id="chipMercadoLivre" class="chip warn">Mercado
-              Livre: Não validado</span> </div>
-          <div id="envPill" class="pill env-pill env-other">Ambiente: Detectando...</div>
+          <div class="hero-side">
+            <div class="hero-side-card">
+              <div class="hero-side-top">
+                <div id="envPill" class="pill env-pill env-other">Ambiente: Detectando...</div>
+                <div class="muted hero-updated">Atualizado em <strong id="overviewUpdatedAt">--</strong></div>
+              </div>
+              <p id="sessionInfo" class="status muted">Sessão não iniciada.</p>
+              <div class="hero-ribbon">
+                <span id="overviewRibbonSystem" class="chip warn">Sistema</span>
+                <span id="overviewRibbonTelegram" class="chip warn">Telegram</span>
+                <span id="overviewRibbonWhatsApp" class="chip warn">WhatsApp</span>
+                <span id="overviewRibbonRabbit" class="chip warn">RabbitMQ</span>
+                <span id="overviewRibbonEvolution" class="chip warn">Evolution</span>
+              </div>
+            </div>
+          </div>
         </div>
         <section id="loginCard" class="card">
           <h2>Acesso ao painel</h2> <label>Usuário</label> <input id="username" placeholder="admin" />
@@ -60,143 +107,496 @@
           <p id="loginStatus" class="status warn">Não autenticado</p>
         </section>
         <section id="panel" class="hidden">
-          <div class="card" style="margin-top:16px;">
-            <div class="row" style="justify-content: space-between;">
-              <h2>Sessão</h2> <button class="danger" onclick="logout()">Sair</button>
+          <div id="section-overview">
+            <div class="overview-grid">
+              <section class="card overview-card overview-card-primary">
+                <div class="overview-head">
+                  <div>
+                    <p class="eyebrow">Readiness</p>
+                    <h2>Visão operacional do sistema</h2>
+                  </div>
+                  <div class="overview-actions">
+                    <button class="secondary" onclick="loadOperationalOverview(true)">Atualizar agora</button>
+                    <button class="danger" onclick="logout()">Sair</button>
+                  </div>
+                </div>
+                <div class="overview-primary-layout">
+                  <div>
+                    <span id="overviewReadinessBadge" class="badge muted">Carregando</span>
+                    <h3 id="overviewReadinessTitle">Aguardando dados operacionais</h3>
+                    <p id="overviewReadinessSubtitle" class="muted">Assim que o snapshot for carregado, esta área resume o estado do ambiente e destaca riscos imediatos.</p>
+                  </div>
+                  <div class="overview-metrics">
+                    <div class="metric-card">
+                      <span class="metric-label">Alertas</span>
+                      <strong id="overviewAlertsCount">0</strong>
+                    </div>
+                    <div class="metric-card">
+                      <span class="metric-label">Workers saudáveis</span>
+                      <strong id="overviewWorkersHealthy">0/0</strong>
+                    </div>
+                    <div class="metric-card">
+                      <span class="metric-label">Backlog total</span>
+                      <strong id="overviewBacklogTotal">0</strong>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card overview-card">
+                <div class="section-header-inline">
+                  <h2>Status crítico</h2>
+                  <span class="status muted">Acima da dobra</span>
+                </div>
+                <div class="status-board status-board-critical">
+                  <article class="status-board-item">
+                    <span class="status-board-label">Sistema</span>
+                    <strong id="overviewSystemSummary">Carregando...</strong>
+                    <p id="overviewSystemDetail" class="muted">Sem dados ainda.</p>
+                  </article>
+                  <article class="status-board-item">
+                    <span class="status-board-label">Telegram</span>
+                    <strong id="overviewTelegramSummary">Carregando...</strong>
+                    <p id="overviewTelegramDetail" class="muted">Sem dados ainda.</p>
+                  </article>
+                  <article class="status-board-item">
+                    <span class="status-board-label">WhatsApp</span>
+                    <strong id="overviewWhatsAppSummary">Carregando...</strong>
+                    <p id="overviewWhatsAppDetail" class="muted">Sem dados ainda.</p>
+                  </article>
+                  <article class="status-board-item">
+                    <span class="status-board-label">RabbitMQ</span>
+                    <strong id="overviewRabbitSummary">Carregando...</strong>
+                    <p id="overviewRabbitDetail" class="muted">Sem dados ainda.</p>
+                  </article>
+                  <article class="status-board-item">
+                    <span class="status-board-label">Evolution</span>
+                    <strong id="overviewEvolutionSummary">Carregando...</strong>
+                    <p id="overviewEvolutionDetail" class="muted">Sem dados ainda.</p>
+                  </article>
+                </div>
+              </section>
+
+              <section class="card overview-card">
+                <div class="section-header-inline">
+                  <h2>Alertas</h2>
+                  <span class="status muted">Severidade operacional</span>
+                </div>
+                <div id="overviewAlertsList" class="overview-list">
+                  <div class="overview-list-empty">Nenhum alerta carregado.</div>
+                </div>
+              </section>
+
+              <section class="card overview-card">
+                <div class="section-header-inline">
+                  <h2>Workers</h2>
+                  <span class="status muted">Ciclos recentes</span>
+                </div>
+                <div id="overviewWorkersList" class="overview-list">
+                  <div class="overview-list-empty">Nenhum worker carregado.</div>
+                </div>
+              </section>
+
+              <section class="card overview-card">
+                <div class="section-header-inline">
+                  <h2>Outboxes</h2>
+                  <span class="status muted">Backpressure</span>
+                </div>
+                <div id="overviewOutboxesList" class="overview-list">
+                  <div class="overview-list-empty">Nenhum backlog carregado.</div>
+                </div>
+              </section>
+
+              <section class="card overview-card">
+                <div class="section-header-inline">
+                  <h2>Volumes 24h</h2>
+                  <span class="status muted">Leitura rápida</span>
+                </div>
+                <div class="volume-grid">
+                  <div class="metric-card">
+                    <span class="metric-label">Conversões</span>
+                    <strong id="overviewVolumeConversions">0</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">Conversões ok</span>
+                    <strong id="overviewVolumeConversionsOk">0</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">WhatsApp</span>
+                    <strong id="overviewVolumeWhatsApp">0</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">Telegram</span>
+                    <strong id="overviewVolumeTelegram">0</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">Falhas de mídia</span>
+                    <strong id="overviewVolumeMediaFailures">0</strong>
+                  </div>
+                </div>
+                <p id="overviewMediaFailureDetail" class="muted">Sem falhas recentes de mídia.</p>
+              </section>
+
+              <section class="card overview-card">
+                <div class="section-header-inline">
+                  <h2>Ações rápidas</h2>
+                  <span class="status muted">Acesso guiado</span>
+                </div>
+                <div class="quick-actions">
+                  <button class="secondary" onclick="showSection('connections')">Abrir conexões</button>
+                  <button class="secondary" onclick="showSection('ops')">Abrir operação</button>
+                  <button class="secondary" onclick="showSection('logs')">Ver logs</button>
+                  <button class="secondary" onclick="showSection('wa-monitoring')">Monitorar WhatsApp</button>
+                </div>
+                <p id="overviewQuickSummary" class="muted">Use esta home como ponto de entrada para diagnóstico e tomada de decisão.</p>
+              </section>
             </div>
-            <p id="sessionInfo" class="status ok"></p>
           </div>
           <div id="section-connections" class="hidden">
-            <div class="grid" style="margin-top:16px;">
-              <section class="card">
-                <h2>Telegram (Bot API)</h2> <label
-                  data-tooltip="Adicione/valide um token de bot e teste o status no Telegram.">Bot Token
-                  (opcional)</label> <input id="telegramBotToken" type="password" placeholder="123456:AA..." />
-                <div class="row"> <button id="btnTelegramConnect" onclick="connectTelegram()">Adicionar bot e
-                    testar</button> <span id="telegramStatus" class="status warn">Não conectado</span> </div>
-                <p id="telegramStatusDetail" class="status muted">Sem teste recente.</p>
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Conexões</p>
+                    <h2>Integrações com foco em estado e ação</h2>
+                    <p class="section-copy">Valide rapidamente o que está online, identifique gargalos e execute a ação principal sem navegar por campos avançados logo de cara.</p>
+                  </div>
+                  <div class="section-actions">
+                    <button class="secondary" onclick="loadSettings()">Atualizar integrações</button>
+                    <button class="secondary" onclick="showSection('overview')">Voltar para Ops Home</button>
+                  </div>
+                </div>
+                <div class="status-board connection-summary-grid">
+                  <article class="status-board-item">
+                    <span class="status-board-label">Telegram Bot</span>
+                    <strong id="connectionSummaryTelegramBot">Não conectado</strong>
+                    <p id="connectionSummaryTelegramBotDetail" class="muted">Pronto para teste do token.</p>
+                  </article>
+                  <article class="status-board-item">
+                    <span class="status-board-label">Telegram Userbot</span>
+                    <strong id="connectionSummaryUserbot">Monitorando</strong>
+                    <p id="connectionSummaryUserbotDetail" class="muted">Reconexão manual quando necessário.</p>
+                  </article>
+                  <article class="status-board-item">
+                    <span class="status-board-label">WhatsApp / Evolution</span>
+                    <strong id="connectionSummaryWhatsApp">Não conectado</strong>
+                    <p id="connectionSummaryWhatsAppDetail" class="muted">Repasse depende da instância ativa.</p>
+                  </article>
+                  <article class="status-board-item">
+                    <span class="status-board-label">Mercado Livre</span>
+                    <strong id="connectionSummaryMercadoLivre">Não validado</strong>
+                    <p id="connectionSummaryMercadoLivreDetail" class="muted">OAuth precisa ser testado periodicamente.</p>
+                  </article>
+                </div>
               </section>
-              <section class="card">
-                <h2
-                  data-tooltip="Use quando o Telegram pedir código SMS/Telegram ou senha 2FA. As credenciais ficam apenas na memória.">
-                  Telegram Userbot (Reconexão)</h2> <label>Telefone (opcional)</label> <input id="userbotAuthPhone"
-                  placeholder="+5513999999999" /> <label>Código de verificação (opcional)</label> <input
-                  id="userbotAuthCode" type="password" placeholder="12345" /> <label>Senha 2FA (opcional)</label> <input
-                  id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
-                <div class="row"> <label class="switch"><input type="checkbox" id="userbotForceReconnect" /><span
-                      class="slider"></span></label> <span class="muted">Forçar reconexão após aplicar</span> </div>
-                <div class="row"> <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e
-                    reconectar</button> </div>
-                <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>
-              </section>
-              <section class="card">
-                <h2>WhatsApp (Evolution API)</h2> <label>Instance Name</label> <input id="waInstanceName"
-                  placeholder="ZapOfertas" /> <button id="btnWhatsAppConnect" onclick="connectWhatsApp()">Conectar e
-                  gerar QR</button> <button class="secondary" onclick="createWhatsAppInstance()">Criar nova
-                  instância</button>
-                <div class="row"> <span id="waForwardStatus" class="status warn">Repasse inativo</span> <label
-                    class="switch"><input type="checkbox" id="waForwardEnabled" /><span class="slider"></span></label>
-                  <span class="muted">Repasse ativo</span> </div>
-                <div class="row"> <label class="switch"><input type="checkbox" id="waFromMeOnly" /><span
-                      class="slider"></span></label> <span class="muted">Processar apenas mensagens enviadas por
-                    mim</span> </div>
-                <div class="row"> <label class="switch"><input type="checkbox" id="waSendMedia" /><span
-                      class="slider"></span></label> <span class="muted">Enviar imagens (WhatsApp)</span> </div>
-                <label>Rodapé (texto extra)</label> <input id="waFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
-                <div class="row"> <label class="switch"><input type="checkbox" id="waAppendShein" /><span
-                      class="slider"></span></label> <span class="muted">Anexar código Shein</span> </div>
-                <p id="whatsappStatus" class="status warn">Não conectado</p> <img id="qrImage" class="qr hidden"
-                  alt="QR code WhatsApp" />
-                <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>
-              </section>
-              <section class="card">
-                <h2
-                  data-tooltip="Valida client_id, refresh_token e conta vinculada usando variáveis do bloco Affiliate no backend.">
-                  Mercado Livre (OAuth)</h2>
-                <div class="row"> <button id="btnMercadoLivreConnect" onclick="connectMercadoLivre()">Testar
-                    conexão</button> <span id="mercadoLivreStatus" class="status warn">Não validado</span> </div>
-              </section>
+              <div class="connection-grid">
+                <section class="card connection-card">
+                  <div class="connection-card-head">
+                    <div>
+                      <p class="section-kicker">Telegram</p>
+                      <h2>Bot API</h2>
+                      <p class="section-copy">Use esta área para validar o token ativo e confirmar se o bot administrativo está aceitando chamadas.</p>
+                    </div>
+                    <span id="telegramStatus" class="status warn">Não conectado</span>
+                  </div>
+                  <p id="telegramStatusDetail" class="status muted">Sem teste recente.</p>
+                  <label data-tooltip="Adicione/valide um token de bot e teste o status no Telegram.">Bot Token (opcional)</label>
+                  <input id="telegramBotToken" type="password" placeholder="123456:AA..." />
+                  <div class="connection-card-actions">
+                    <button id="btnTelegramConnect" onclick="connectTelegram()">Adicionar bot e testar</button>
+                  </div>
+                </section>
+                <section class="card connection-card">
+                  <div class="connection-card-head">
+                    <div>
+                      <p class="section-kicker">Telegram</p>
+                      <h2 data-tooltip="Use quando o Telegram pedir código SMS/Telegram ou senha 2FA. As credenciais ficam apenas na memória.">Userbot (Reconexão)</h2>
+                      <p class="section-copy">Fluxo de recuperação manual para renovar sessão sem sair da tela de operação.</p>
+                    </div>
+                    <span id="connectionUserbotBadge" class="badge muted">Sob demanda</span>
+                  </div>
+                  <div class="stack-tight">
+                    <label>Telefone (opcional)</label>
+                    <input id="userbotAuthPhone" placeholder="+5513999999999" />
+                    <label>Código de verificação (opcional)</label>
+                    <input id="userbotAuthCode" type="password" placeholder="12345" />
+                    <label>Senha 2FA (opcional)</label>
+                    <input id="userbotAuthPassword" type="password" placeholder="Senha 2FA do Telegram" />
+                  </div>
+                  <div class="toggle-row">
+                    <label class="switch"><input type="checkbox" id="userbotForceReconnect" /><span class="slider"></span></label>
+                    <span class="muted">Forçar reconexão após aplicar</span>
+                  </div>
+                  <div class="connection-card-actions">
+                    <button id="btnUserbotAuthApply" onclick="applyUserbotAuth()">Aplicar e reconectar</button>
+                  </div>
+                  <p id="userbotAuthStatus" class="status muted">Sem envio recente.</p>
+                </section>
+                <section class="card connection-card connection-card-wide">
+                  <div class="connection-card-head">
+                    <div>
+                      <p class="section-kicker">WhatsApp</p>
+                      <h2>Evolution API</h2>
+                      <p class="section-copy">Controle a instância principal, teste a conectividade e ajuste o comportamento de repasse do pipeline.</p>
+                    </div>
+                    <div class="status-cluster">
+                      <span id="whatsappStatus" class="status warn">Não conectado</span>
+                      <span id="waForwardStatus" class="badge warn">Repasse inativo</span>
+                    </div>
+                  </div>
+                  <div class="connection-inline-grid">
+                    <div>
+                      <label>Instance Name</label>
+                      <input id="waInstanceName" placeholder="ZapOfertas" />
+                    </div>
+                    <div class="connection-card-actions action-wrap">
+                      <button id="btnWhatsAppConnect" onclick="connectWhatsApp()">Conectar e gerar QR</button>
+                      <button id="btnWhatsAppTest" class="secondary" onclick="testWhatsAppConnection()">Testar conexão</button>
+                      <button class="secondary" onclick="createWhatsAppInstance()">Criar nova instância</button>
+                    </div>
+                  </div>
+                  <div class="wa-connected-instances-panel">
+                    <div class="wa-connected-instances-head">
+                      <span class="section-kicker">Instâncias do WhatsApp</span>
+                      <button type="button" class="secondary" onclick="loadWaInstances(true)">Atualizar instâncias</button>
+                    </div>
+                    <div id="waConnectionInstanceList" class="wa-connected-instances-list muted">Carregando instâncias...</div>
+                  </div>
+                  <div class="toggle-grid">
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="waForwardEnabled" /><span class="slider"></span></label>
+                      <span class="muted">Repasse ativo</span>
+                    </div>
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="waFromMeOnly" /><span class="slider"></span></label>
+                      <span class="muted">Processar apenas mensagens enviadas por mim</span>
+                    </div>
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="waSendMedia" /><span class="slider"></span></label>
+                      <span class="muted">Enviar imagens no destino</span>
+                    </div>
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="waPreferLinkPreviewNoMedia" /><span class="slider"></span></label>
+                      <span class="muted">Sem imagem original: priorizar preview do link</span>
+                    </div>
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="waAppendShein" /><span class="slider"></span></label>
+                      <span class="muted">Anexar código Shein</span>
+                    </div>
+                  </div>
+                  <label>Rodapé (texto extra)</label>
+                  <input id="waFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+                  <div class="connection-card-actions">
+                    <button id="btnSaveWaFooter" class="secondary" onclick="saveWhatsAppFooter(false)">Salvar rodapé</button>
+                    <span id="waFooterSaveStatus" class="status muted"></span>
+                  </div>
+                  <div id="waQrCard" class="wa-qr-card hidden">
+                    <div class="wa-qr-card-head">
+                      <div>
+                        <strong>QR Code da instância</strong>
+                        <p id="qrHint" class="muted hidden">Escaneie com o WhatsApp para concluir a conexão.</p>
+                      </div>
+                      <span id="qrStateBadge" class="badge warn">Aguardando QR</span>
+                    </div>
+                    <div class="wa-qr-card-body">
+                      <img id="qrImage" class="wa-qr-image hidden" alt="QR code WhatsApp" />
+                    </div>
+                  </div>
+                </section>
+                <section class="card connection-card">
+                  <div class="connection-card-head">
+                    <div>
+                      <p class="section-kicker">Afiliados</p>
+                      <h2 data-tooltip="Valida client_id, refresh_token e conta vinculada usando variáveis do bloco Affiliate no backend.">Mercado Livre (OAuth)</h2>
+                      <p class="section-copy">Use este teste como sanidade do bloco afiliado antes de investigar conversão ou bloqueios de rota.</p>
+                    </div>
+                    <span id="mercadoLivreStatus" class="status warn">Não validado</span>
+                  </div>
+                  <div class="connection-card-actions">
+                    <button id="btnMercadoLivreConnect" onclick="connectMercadoLivre()">Testar conexão</button>
+                  </div>
+                </section>
+              </div>
             </div>
           </div>
-          <div id="section-ops">
-            <section class="card" style="margin-top:16px;">
-              <div class="row" style="justify-content: space-between;">
-                <h2 data-tooltip="Status rápido das integrações e da última mídia capturada.">Saúde dos Mensageiros</h2>
-                <span class="status muted">Monitoramento rápido</span>
-              </div>
-              <div class="row"> <span id="healthTelegramBot" class="badge warn">Telegram Bot</span> <span
-                  id="healthUserbot" class="badge warn">Telegram Userbot</span> <span id="healthWhatsApp"
-                  class="badge warn">WhatsApp</span> </div>
-              <p class="muted">Mídia: <span id="healthMedia" class="badge muted">Sem dados</span></p>
-              <p class="muted">Última mídia: <span id="healthMediaDetail">-</span></p>
-            </section>
-            <div class="grid" style="margin-top:16px;">
-              <section class="card">
-                <h2
-                  data-tooltip="Monitora grupos com a conta pessoal logada e repassa ofertas para o canal/grupo destino.">
-                  Telegram Userbot (WTelegram)</h2>
-                <div class="row"> <span id="userbotStatus" class="status warn">Aguardando conexão</span> <label
-                    class="switch"><input type="checkbox" id="userbotEnabled" /><span class="slider"></span></label>
-                  <span class="muted">Repasse ativo</span> </div>
-                <div class="row"> <button onclick="refreshUserbotChats()">Atualizar grupos</button> <button
-                    class="secondary" onclick="loadUserbotChats()">Recarregar</button> </div> <label>Destino (ID do
-                  grupo/canal)</label> <input id="userbotDestinationId" placeholder="-1003612784929" />
-                <div class="row"> <label class="switch"><input type="checkbox" id="userbotAppendShein" /><span
-                      class="slider"></span></label> <span class="muted">Anexar código Shein</span> </div> <label>Rodapé
-                  (texto extra)</label> <input id="userbotFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
-                <div class="row"> <input id="userbotSearch"
-                    data-tooltip="Selecione abaixo os grupos de origem (fontes de ofertas) para escutar."
-                    placeholder="Buscar grupo por nome ou ID" /> <span class="muted">Selecionados: <strong
-                      id="userbotSelectedCount">0</strong></span> </div>
-                <div class="row"> <button class="secondary" onclick="selectAllUserbotChats()">Selecionar todos</button>
-                  <button class="secondary" onclick="clearUserbotSelection()">Limpar seleção</button> <button
-                    class="secondary" onclick="showAllUserbotChats()">Mostrar todos</button> <button class="secondary"
-                    onclick="saveUserbotSelection()">Salvar seleção</button> </div>
-                <p id="userbotSaveStatus" class="status muted"></p>
-                <div id="userbotSelectedChips" class="muted"></div>
-                <details>
-                  <summary>Configurações Avançadas de Origem</summary>
-                  <label data-tooltip="Adicione aqui IDs de canais privados que não apareceram na lista acima.">IDs
-                    manuais (um por linha ou separado por vírgula)</label>
-                  <textarea id="userbotManualIds" rows="4" placeholder="-100123...\n-100456..."></textarea>
-                </details>
-                <div id="userbotChats" class="muted">Nenhum grupo carregado.</div>
-              </section>
-              <section class="card">
-                <h2 data-tooltip="Selecione de quais grupos o bot deve capturar ofertas.">WhatsApp Grupos (Origem)</h2>
-                <div class="row"> <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>
-                  <button class="secondary" onclick="loadWhatsAppGroups()">Recarregar</button> </div>
-                <div class="row"> <select id="waRoutePicker" style="max-width:260px;"
-                    onchange="switchWhatsAppRoute()"></select> <button class="secondary" onclick="addWhatsAppRoute()">+
-                    Nova rota</button> <button class="secondary" onclick="removeWhatsAppRoute()">Excluir rota</button>
-                </div> <label>Nome da rota</label> <input id="waRouteName" placeholder="Rota principal"
-                  oninput="renameWhatsAppRoute()" />
-                <div class="row"> <input id="waSourceSearch" placeholder="Buscar grupo por nome ou ID" /> <span
-                    class="muted">Selecionados: <strong id="waSourceSelectedCount">0</strong></span> </div>
-                <div class="row"> <button class="secondary" onclick="selectAllWhatsAppSourceGroups()">Selecionar
-                    todos</button> <button class="secondary" onclick="clearWhatsAppSourceSelection()">Limpar
-                    seleção</button> <button class="secondary" onclick="showAllWhatsAppSourceGroups()">Mostrar
-                    todos</button> <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>
+          <div id="section-ops" class="hidden">
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Operação</p>
+                    <h2>Monitoramento no topo, configuração logo abaixo</h2>
+                    <p class="section-copy">A leitura operacional fica acima da dobra e as listas de origem e destino aparecem em cards mais previsíveis para salvar, revisar e depurar.</p>
+                  </div>
+                  <div class="section-actions">
+                    <button class="secondary" onclick="refreshUserbotChats()">Atualizar userbot</button>
+                    <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>
+                  </div>
                 </div>
-                <p id="waSourceSaveStatus" class="status muted"></p>
-                <div id="waSourceSelectedChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
-                  vírgula)</label> <textarea id="waManualSourceIds" rows="3" placeholder="1203630@g.us"></textarea>
-                <div id="waSourceGroups" class="muted">Nenhum grupo carregado.</div>
+                <div class="ops-summary-grid">
+                  <article class="metric-card">
+                    <span class="metric-label">Telegram Bot</span>
+                    <strong id="opsSummaryTelegramBot">Monitorando</strong>
+                    <span id="healthTelegramBot" class="badge warn">Telegram Bot</span>
+                  </article>
+                  <article class="metric-card">
+                    <span class="metric-label">Telegram Userbot</span>
+                    <strong id="opsSummaryUserbot">Monitorando</strong>
+                    <span id="healthUserbot" class="badge warn">Telegram Userbot</span>
+                  </article>
+                  <article class="metric-card">
+                    <span class="metric-label">WhatsApp</span>
+                    <strong id="opsSummaryWhatsApp">Monitorando</strong>
+                    <span id="healthWhatsApp" class="badge warn">WhatsApp</span>
+                  </article>
+                  <article class="metric-card">
+                    <span class="metric-label">Mídia</span>
+                    <strong id="healthMediaDetail">-</strong>
+                    <span id="healthMedia" class="badge muted">Sem dados</span>
+                  </article>
+                </div>
               </section>
-              <section class="card">
-                <h2 data-tooltip="Selecione para onde as ofertas convertidas serão enviadas.">WhatsApp Grupos (Destino)
-                </h2>
-                <div class="row"> <input id="waDestSearch" placeholder="Buscar grupo por nome ou ID" /> <span
-                    class="muted">Selecionados: <strong id="waSelectedCount">0</strong></span> </div>
-                <div class="row"> <button class="secondary" onclick="selectAllWhatsAppGroups()">Selecionar
-                    todos</button> <button class="secondary" onclick="clearWhatsAppSelection()">Limpar seleção</button>
-                  <button class="secondary" onclick="showAllWhatsAppGroups()">Mostrar todos</button> <button
-                    class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button> </div>
-                <p id="waSaveStatus" class="status muted"></p>
-                <div id="waSelectedChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
-                  vírgula)</label> <textarea id="waManualIds" rows="3" placeholder="1203630@g.us"></textarea>
-                <div id="waGroups" class="muted">Nenhum grupo carregado.</div>
-              </section>
+              <div class="ops-grid">
+                <section class="card ops-card ops-card-wide">
+                  <div class="connection-card-head">
+                    <div>
+                      <p class="section-kicker">Telegram</p>
+                      <h2 data-tooltip="Monitora grupos com a conta pessoal logada e repassa ofertas para o canal/grupo destino.">Userbot (WTelegram)</h2>
+                      <p class="section-copy">Escolha as origens do Telegram, defina o destino e deixe a seleção sempre visível com status de save e filtros rápidos.</p>
+                    </div>
+                    <span id="userbotStatus" class="status warn">Aguardando conexão</span>
+                  </div>
+                  <div class="ops-card-topbar">
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="userbotEnabled" /><span class="slider"></span></label>
+                      <span class="muted">Repasse ativo</span>
+                    </div>
+                    <div class="connection-card-actions action-wrap">
+                      <button onclick="refreshUserbotChats()">Atualizar grupos</button>
+                      <button class="secondary" onclick="loadUserbotChats()">Recarregar</button>
+                    </div>
+                  </div>
+                  <div class="ops-settings-grid">
+                    <div>
+                      <label>Destino (ID do grupo/canal)</label>
+                      <input id="userbotDestinationId" placeholder="-1003612784929" />
+                    </div>
+                    <div>
+                      <label>Rodapé (texto extra)</label>
+                      <input id="userbotFooter" placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
+                    </div>
+                  </div>
+                  <div class="toggle-grid">
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="userbotAppendShein" /><span class="slider"></span></label>
+                      <span class="muted">Anexar código Shein</span>
+                    </div>
+                    <div class="toggle-row">
+                      <label class="switch"><input type="checkbox" id="userbotPreferLinkPreviewNoMedia" /><span class="slider"></span></label>
+                      <span class="muted">Sem imagem original: priorizar preview do link</span>
+                    </div>
+                  </div>
+                  <div class="selection-shell">
+                    <div class="selection-toolbar">
+                      <input id="userbotSearch" data-tooltip="Selecione abaixo os grupos de origem (fontes de ofertas) para escutar." placeholder="Buscar grupo por nome ou ID" />
+                      <div class="selection-summary">
+                        <span class="selection-count">Selecionados</span>
+                        <strong id="userbotSelectedCount">0</strong>
+                      </div>
+                    </div>
+                    <div class="selection-actions">
+                      <button class="secondary" onclick="selectAllUserbotChats()">Selecionar todos</button>
+                      <button class="secondary" onclick="clearUserbotSelection()">Limpar seleção</button>
+                      <button class="secondary" onclick="showAllUserbotChats()">Mostrar todos</button>
+                      <button class="secondary" onclick="saveUserbotSelection()">Salvar seleção</button>
+                    </div>
+                    <p id="userbotSaveStatus" class="status muted"></p>
+                    <div id="userbotSelectedChips" class="selection-chips"></div>
+                    <details>
+                      <summary>Configurações avançadas de origem</summary>
+                      <label data-tooltip="Adicione aqui IDs de canais privados que não apareceram na lista acima.">IDs manuais (um por linha ou separado por vírgula)</label>
+                      <textarea id="userbotManualIds" rows="4" placeholder="-100123...\n-100456..."></textarea>
+                    </details>
+                    <div id="userbotChats" class="selection-scroll selection-scroll-groups muted">Nenhum grupo carregado.</div>
+                  </div>
+                </section>
+                <section class="card ops-card">
+                  <div class="connection-card-head">
+                    <div>
+                      <p class="section-kicker">WhatsApp</p>
+                      <h2 data-tooltip="Selecione de quais grupos o bot deve capturar ofertas.">Grupos de origem</h2>
+                      <p class="section-copy">Organize as rotas de captura em cards mais legíveis, com nome claro, busca e feedback de persistência.</p>
+                    </div>
+                    <span class="badge muted">Roteamento</span>
+                  </div>
+                  <div class="ops-settings-grid">
+                    <div>
+                      <label>Rota ativa</label>
+                      <div class="row row-compact">
+                        <select id="waRoutePicker" onchange="switchWhatsAppRoute()"></select>
+                        <button class="secondary" onclick="addWhatsAppRoute()">+ Nova rota</button>
+                        <button class="secondary" onclick="removeWhatsAppRoute()">Excluir rota</button>
+                      </div>
+                    </div>
+                    <div>
+                      <label>Nome da rota</label>
+                      <input id="waRouteName" placeholder="Rota principal" oninput="renameWhatsAppRoute()" />
+                    </div>
+                  </div>
+                  <div class="selection-shell">
+                    <div class="selection-toolbar">
+                      <input id="waSourceSearch" placeholder="Buscar grupo por nome ou ID" />
+                      <div class="selection-summary">
+                        <span class="selection-count">Selecionados</span>
+                        <strong id="waSourceSelectedCount">0</strong>
+                      </div>
+                    </div>
+                    <div class="selection-actions">
+                      <button class="secondary" onclick="refreshWhatsAppGroups()">Atualizar grupos</button>
+                      <button class="secondary" onclick="loadWhatsAppGroups()">Recarregar</button>
+                      <button class="secondary" onclick="selectAllWhatsAppSourceGroups()">Selecionar todos</button>
+                      <button class="secondary" onclick="clearWhatsAppSourceSelection()">Limpar seleção</button>
+                      <button class="secondary" onclick="showAllWhatsAppSourceGroups()">Mostrar todos</button>
+                      <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>
+                    </div>
+                    <p id="waSourceSaveStatus" class="status muted"></p>
+                    <div id="waSourceSelectedChips" class="selection-chips"></div>
+                    <label>IDs manuais (um por linha ou separado por vírgula)</label>
+                    <textarea id="waManualSourceIds" rows="3" placeholder="1203630@g.us"></textarea>
+                    <div id="waSourceGroups" class="selection-scroll selection-scroll-groups muted">Nenhum grupo carregado.</div>
+                  </div>
+                </section>
+                <section class="card ops-card">
+                  <div class="connection-card-head">
+                    <div>
+                      <p class="section-kicker">WhatsApp</p>
+                      <h2 data-tooltip="Selecione para onde as ofertas convertidas serão enviadas.">Grupos de destino</h2>
+                      <p class="section-copy">Mantenha os canais oficiais sob controle, com busca rápida, seleção em lote e IDs manuais sempre visíveis.</p>
+                    </div>
+                    <span class="badge muted">Distribuição</span>
+                  </div>
+                  <div class="selection-shell">
+                    <div class="selection-toolbar">
+                      <input id="waDestSearch" placeholder="Buscar grupo por nome ou ID" />
+                      <div class="selection-summary">
+                        <span class="selection-count">Selecionados</span>
+                        <strong id="waSelectedCount">0</strong>
+                      </div>
+                    </div>
+                    <div class="selection-actions">
+                      <button class="secondary" onclick="selectAllWhatsAppGroups()">Selecionar todos</button>
+                      <button class="secondary" onclick="clearWhatsAppSelection()">Limpar seleção</button>
+                      <button class="secondary" onclick="showAllWhatsAppGroups()">Mostrar todos</button>
+                      <button class="secondary" onclick="saveWhatsAppSelection()">Salvar seleção</button>
+                    </div>
+                    <p id="waSaveStatus" class="status muted"></p>
+                    <div id="waSelectedChips" class="selection-chips"></div>
+                    <label>IDs manuais (um por linha ou separado por vírgula)</label>
+                    <textarea id="waManualIds" rows="3" placeholder="1203630@g.us"></textarea>
+                    <div id="waGroups" class="selection-scroll selection-scroll-groups muted">Nenhum grupo carregado.</div>
+                  </div>
+                </section>
+              </div>
             </div>
           </div>
           <div id="section-linkresponder" class="hidden">
@@ -245,6 +645,39 @@
                     placeholder="🔥 Vi no: @ReiDasOfertasVIP" />
                 </section>
               </div>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>Boas-vindas para entrada no grupo</h3>
+                  <div class="row">
+                    <label class="switch"><input type="checkbox" id="responderWelcomeEnabled" /><span class="slider"></span></label>
+                    <span class="muted">Enviar agradecimento automático ao entrar no grupo Rei das Ofertas</span>
+                  </div>
+                  <div class="grid" style="margin-top:10px;">
+                    <div>
+                      <label>Quem envia</label>
+                      <select id="responderWelcomeInstanceName" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                        <option value="">Padrão do servidor</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Onde envia</label>
+                      <select id="responderWelcomeTargetMode" onchange="toggleResponderWelcomeTargetConfig()" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                        <option value="private">Privado do participante</option>
+                        <option value="same-group">No mesmo grupo em que entrou</option>
+                        <option value="custom">Chat ou grupo específico</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div id="responderWelcomeCustomTargetWrap" style="margin-top:10px;">
+                    <label>Destino específico</label>
+                    <input id="responderWelcomeTargetChatId" placeholder="5511999999999 ou 1203630@g.us" />
+                    <div class="muted" style="margin-top:6px;">Use número para privado ou ID completo para grupo quando escolher destino específico.</div>
+                  </div>
+                  <label style="margin-top:10px;">Mensagem de agradecimento</label>
+                  <textarea id="responderWelcomeMessage" rows="5" placeholder="REI DAS OFERTAS: oi, tudo bem? Seja muito bem-vindo ao grupo VIP."></textarea>
+                  <div class="muted" style="margin-top:8px;">Variáveis: <code>{participant}</code>, <code>{participantId}</code>, <code>{groupName}</code>, <code>{groupId}</code>, <code>{senderInstance}</code>.</div>
+                </section>
+              </div>
               <div class="row" style="margin-top:12px;"> <button class="secondary" onclick="saveLinkResponder()">Salvar
                   gatilho</button> <span id="responderSaveStatus" class="status muted"></span> </div>
             </section>
@@ -289,6 +722,136 @@
             </section>
           </div>
           <div id="section-mercadolivre" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2 data-tooltip="Armazene login, sessão, filtros e seletores do fluxo de captura do Mercado Livre Afiliados sem expor os segredos no dashboard.">
+                Scout Mercado Livre Afiliados</h2>
+              <p class="muted">Esta área prepara o coletor com browser para entrar na home de afiliados, abrir o produto e acionar o fluxo de “compartilhar oferta” antes de publicar no grupo.</p>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>Ativação e publicação</h3>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="mlScoutEnabled" /><span
+                        class="slider"></span></label> <span class="muted">Ativar scout do Mercado Livre Afiliados</span> </div>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="mlScoutUsePersistentSession" /><span
+                        class="slider"></span></label> <span class="muted">Reaproveitar sessão persistida</span> </div>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="mlScoutHeadless" /><span
+                        class="slider"></span></label> <span class="muted">Rodar headless</span> </div>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="mlScoutRequireShareFlow" /><span
+                        class="slider"></span></label> <span class="muted">Exigir fluxo “entrar no produto -> compartilhar oferta”</span> </div>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="mlScoutRequireImage" /><span
+                        class="slider"></span></label> <span class="muted">Só aceitar oferta com imagem válida</span> </div>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="mlScoutAutoPublishOfficial" /><span
+                        class="slider"></span></label> <span class="muted">Permitir publicação automática no grupo oficial</span> </div>
+                  <div class="row"> <label class="switch"><input type="checkbox" id="mlScoutSaveScreenshotsOnFailure" /><span
+                        class="slider"></span></label> <span class="muted">Salvar screenshot quando falhar</span> </div>
+                  <label>Instância WhatsApp</label>
+                  <input id="mlScoutInstanceName" placeholder="ZapOfertas" />
+                  <label>Grupo de destino</label>
+                  <input id="mlScoutDestinationGroupId" placeholder="120363405661434395@g.us" />
+                </section>
+                <section class="card">
+                  <h3>Credenciais e sessão</h3>
+                  <label data-tooltip="Pode ser e-mail, usuário ou login da conta afiliada. O backend devolve mascarado.">Login</label>
+                  <input id="mlScoutLoginUser" type="password" placeholder="email ou usuário da conta afiliada" />
+                  <label>Senha</label>
+                  <input id="mlScoutLoginPassword" type="password" placeholder="senha da conta afiliada" />
+                  <label>Código 2FA / OTP (opcional)</label>
+                  <input id="mlScoutTwoFactorCode" type="password" placeholder="123456" />
+                  <label>Modo de autenticação esperado</label>
+                  <input id="mlScoutAuthMode" placeholder="code-or-qr" />
+                  <label data-tooltip="Opcional. Use quando quiser colar o storageState/cookies exportado do browser em vez de relogar.">Storage state JSON (opcional)</label>
+                  <textarea id="mlScoutStorageStateJson" rows="5" placeholder="{ ... }"></textarea>
+                  <label>Caminho do storage state</label>
+                  <input id="mlScoutStorageStatePath" placeholder="D:\Achadinhos\data\mercadolivre-affiliate-storage-state.json" />
+                  <div class="muted" style="margin-top:8px;">Os campos sensíveis voltam como <code>********</code> no dashboard. Se não mudar, o backend preserva o valor atual. Para este fluxo, o login esperado é por código ou leitura de QR code.</div>
+                </section>
+              </div>
+              <div class="grid" style="margin-top:12px;">
+                <section class="card">
+                  <h3>URLs e agenda</h3>
+                  <label>Base URL</label>
+                  <input id="mlScoutBaseUrl" placeholder="https://www.mercadolivre.com.br/afiliados" />
+                  <label>Login URL</label>
+                  <input id="mlScoutLoginUrl" placeholder="https://..." />
+                  <label>Home URL</label>
+                  <input id="mlScoutHomeUrl" placeholder="https://..." />
+                  <div class="grid" style="margin-top:10px;">
+                    <div>
+                      <label>Intervalo (min)</label>
+                      <input id="mlScoutIntervalMinutes" type="number" min="5" max="240" />
+                    </div>
+                    <div>
+                      <label>Jitter (min)</label>
+                      <input id="mlScoutIntervalJitterMinutes" type="number" min="0" max="30" />
+                    </div>
+                    <div>
+                      <label>Comissão mínima (%)</label>
+                      <input id="mlScoutMinCommissionPercent" type="number" min="0" max="100" step="0.1" />
+                    </div>
+                    <div>
+                      <label>Faixa 1: preÃ§o mÃ­nimo</label>
+                      <input id="mlScoutTier1MinPrice" type="number" min="0" step="0.01" />
+                    </div>
+                    <div>
+                      <label>Faixa 1: comissÃ£o mÃ­nima (%)</label>
+                      <input id="mlScoutTier1MinCommissionPercent" type="number" min="0" max="100" step="0.1" />
+                    </div>
+                    <div>
+                      <label>Faixa 2: preÃ§o mÃ­nimo</label>
+                      <input id="mlScoutTier2MinPrice" type="number" min="0" step="0.01" />
+                    </div>
+                    <div>
+                      <label>Faixa 2: comissÃ£o mÃ­nima (%)</label>
+                      <input id="mlScoutTier2MinCommissionPercent" type="number" min="0" max="100" step="0.1" />
+                    </div>
+                    <div>
+                      <label>Faixa 3: preÃ§o mÃ­nimo</label>
+                      <input id="mlScoutTier3MinPrice" type="number" min="0" step="0.01" />
+                    </div>
+                    <div>
+                      <label>Faixa 3: comissÃ£o mÃ­nima (%)</label>
+                      <input id="mlScoutTier3MinCommissionPercent" type="number" min="0" max="100" step="0.1" />
+                    </div>
+                    <div>
+                      <label>Ofertas por ciclo</label>
+                      <input id="mlScoutMaxOffersPerRun" type="number" min="1" max="10" />
+                    </div>
+                    <div>
+                      <label>Janela de repetição (h)</label>
+                      <input id="mlScoutRepeatWindowHours" type="number" min="1" max="168" />
+                    </div>
+                  </div>
+                </section>
+                <section class="card">
+                  <h3>Seletores do fluxo</h3>
+                  <label>Card da oferta</label>
+                  <input id="mlScoutOfferCardSelector" placeholder="[data-testid='affiliate-offer-card']" />
+                  <label>Link da oferta</label>
+                  <input id="mlScoutOfferLinkSelector" placeholder="a[href*='/p/']" />
+                  <label>Título</label>
+                  <input id="mlScoutOfferTitleSelector" placeholder="h2, h3" />
+                  <label>Preço</label>
+                  <input id="mlScoutOfferPriceSelector" placeholder="[data-testid='price']" />
+                  <label>Imagem</label>
+                  <input id="mlScoutOfferImageSelector" placeholder="img" />
+                  <label>Comissão</label>
+                  <input id="mlScoutOfferCommissionSelector" placeholder="[data-testid='commission']" />
+                  <label>Botão compartilhar oferta</label>
+                  <input id="mlScoutShareButtonSelector" placeholder="button:has-text('Compartilhar oferta')" />
+                  <label>Ação/link dentro do compartilhamento</label>
+                  <input id="mlScoutShareActionSelector" placeholder="[data-testid='share-offer-link']" />
+                  <label>Campo do link compartilhado</label>
+                  <input id="mlScoutSharedLinkSelector" placeholder="input[value^='https://']" />
+                  <label>Botão copiar link compartilhado</label>
+                  <input id="mlScoutSharedLinkCopyButtonSelector" placeholder="button:has-text('Copiar')" />
+                </section>
+              </div>
+              <label style="margin-top:12px;">Notas operacionais</label>
+              <textarea id="mlScoutNotes" rows="4" placeholder="Observações sobre login, fluxo da página, validações manuais e qualquer detalhe do DOM."></textarea>
+              <div class="row" style="margin-top:12px;"> <button class="secondary"
+                  onclick="saveMercadoLivreAffiliateScout()">Salvar scout</button> <button class="secondary"
+                  onclick="testMercadoLivreAffiliateScout()">Testar scout</button> <span id="mlScoutSaveStatus"
+                  class="status muted"></span> </div>
+            </section>
             <section class="card" style="margin-top:16px;">
               <h2 data-tooltip="Controle de bloqueio em automações, whitelist de canais e fila de aprovação manual.">
                 Compliance Mercado Livre</h2>
@@ -338,44 +901,150 @@
             </section>
           </div>
           <div id="section-route" class="hidden">
-            <section class="card" style="margin-top:16px;">
-              <h2 data-tooltip="Escolha grupos de origem no Telegram e destinos no WhatsApp para envio direto.">Rota
-                Telegram -> WhatsApp</h2>
-              <div class="row"> <select id="tgWaRoutePicker" style="max-width:260px;"
-                  onchange="switchTgWaRoute()"></select> <button class="secondary" onclick="addTgWaRoute()">+ Nova
-                  rota</button> <button class="secondary" onclick="removeTgWaRoute()">Excluir rota</button> </div>
-              <label>Nome da rota</label> <input id="tgWaRouteName" placeholder="Rota Telegram principal"
-                oninput="renameTgWaRoute()" />
-              <div class="row"> <label class="switch"><input type="checkbox" id="tgWaEnabled" /><span
-                    class="slider"></span></label> <span class="muted">Rota ativa</span> </div>
-              <div class="row"> <button class="secondary" onclick="saveTelegramToWhatsAppRoute()">Salvar rota</button>
-                <span id="tgWaSaveStatus" class="status muted"></span> </div>
-              <div class="grid" style="margin-top:12px;">
-                <section class="card">
-                  <h3>Origem (Telegram)</h3>
-                  <div class="row"> <input id="tgWaSourceSearch" placeholder="Buscar grupo por nome ou ID" /> <span
-                      class="muted">Selecionados: <strong id="tgWaSourceCount">0</strong></span> </div>
-                  <div class="row"> <button class="secondary" onclick="selectAllTgWaSource()">Selecionar todos</button>
-                    <button class="secondary" onclick="clearTgWaSource()">Limpar seleção</button> <button
-                      class="secondary" onclick="showAllTgWaSource()">Mostrar todos</button> </div>
-                  <div id="tgWaSourceChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
-                    vírgula)</label> <textarea id="tgWaSourceManual" rows="3"
-                    placeholder="-100123...\n-100456..."></textarea>
-                  <div id="tgWaSourceList" class="muted">Nenhum grupo carregado.</div>
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Mensageria</p>
+                    <h2 data-tooltip="Escolha grupos de origem no Telegram e destinos no WhatsApp para envio direto.">Rota Telegram -> WhatsApp</h2>
+                    <p class="section-copy">Monte a ponte entre grupos do Telegram e destinos do WhatsApp com leitura executiva no topo, replay manual isolado e seletores largos já preparados para operação diária.</p>
+                  </div>
+                  <div class="section-actions">
+                    <select id="tgWaRoutePicker" style="max-width:260px;" onchange="switchTgWaRoute()"></select>
+                    <button class="secondary" onclick="addTgWaRoute()">+ Nova rota</button>
+                    <button class="secondary" onclick="removeTgWaRoute()">Excluir rota</button>
+                  </div>
+                </div>
+                <div class="ops-summary-grid">
+                  <article class="metric-card">
+                    <span>Rota</span>
+                    <strong id="tgWaRouteNameSummary">Ativa</strong>
+                    <small id="tgWaSaveStatus">Sem alterações salvas</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Origens Telegram</span>
+                    <strong id="tgWaSourceCountSummary">0</strong>
+                    <small>Grupos conectados</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Destinos WhatsApp</span>
+                    <strong id="tgWaDestCountSummary">0</strong>
+                    <small>Grupos de distribuição</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Replay</span>
+                    <strong id="tgWaReplaySummary">Pronto</strong>
+                    <small id="tgWaReplayRouteSummary">Rota nao carregada</small>
+                  </article>
+                </div>
+              </section>
+              <div class="ops-grid">
+                <section class="card ops-card">
+                  <div class="connection-card-head">
+                    <div>
+                      <h3>Configuração da rota</h3>
+                      <p class="section-copy">Controle o nome e o estado da rota principal sem misturar isso com a seleção de grupos.</p>
+                    </div>
+                    <span class="badge muted">Configuração</span>
+                  </div>
+                  <div class="ops-settings-grid">
+                    <div>
+                      <label>Nome da rota</label>
+                      <input id="tgWaRouteName" placeholder="Rota Telegram principal" oninput="renameTgWaRoute()" />
+                    </div>
+                    <div class="toggle-row action-wrap">
+                      <label class="switch"><input type="checkbox" id="tgWaEnabled" /><span class="slider"></span></label>
+                      <span class="muted">Rota ativa</span>
+                    </div>
+                  </div>
+                  <div class="section-actions" style="margin-top:16px;">
+                    <button class="secondary" onclick="saveTelegramToWhatsAppRoute()">Salvar rota</button>
+                  </div>
                 </section>
-                <section class="card">
-                  <h3>Destino (WhatsApp)</h3>
-                  <div class="row"> <input id="tgWaDestSearch" placeholder="Buscar grupo por nome ou ID" /> <span
-                      class="muted">Selecionados: <strong id="tgWaDestCount">0</strong></span> </div>
-                  <div class="row"> <button class="secondary" onclick="selectAllTgWaDest()">Selecionar todos</button>
-                    <button class="secondary" onclick="clearTgWaDest()">Limpar seleção</button> <button
-                      class="secondary" onclick="showAllTgWaDest()">Mostrar todos</button> </div>
-                  <div id="tgWaDestChips" class="muted"></div> <label>IDs manuais (um por linha ou separado por
-                    vírgula)</label> <textarea id="tgWaDestManual" rows="3" placeholder="1203630@g.us"></textarea>
-                  <div id="tgWaDestList" class="muted">Nenhum grupo carregado.</div>
+                <section class="card ops-card">
+                  <div class="connection-card-head">
+                    <div>
+                      <h3>Replay manual</h3>
+                      <p class="section-copy">Use um replay controlado para validar a rota ativa antes de ampliar a distribuição.</p>
+                    </div>
+                    <span class="badge muted">Controle</span>
+                  </div>
+                  <div class="ops-settings-grid">
+                    <div>
+                      <label>Origem para replay</label>
+                      <select id="tgWaReplaySourceChat" class="form-control">
+                        <option value="">Selecione um grupo do Telegram...</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Quantidade</label>
+                      <input id="tgWaReplayCount" type="number" min="1" max="50" value="1" class="form-control" />
+                    </div>
+                  </div>
+                  <div class="toggle-row" style="margin-top:16px;">
+                    <label class="switch"><input id="tgWaReplayAllowOfficial" type="checkbox" onchange="this.dataset.touched='1'" /><span class="slider"></span></label>
+                    <span class="muted">Permitir destino oficial nesta execução</span>
+                  </div>
+                  <div class="section-actions" style="margin-top:16px;">
+                    <button id="btnTgWaReplay" onclick="runTelegramToWhatsAppReplay()">Rodar replay</button>
+                    <span id="tgWaReplayStatus" class="status muted"></span>
+                  </div>
+                  <div id="tgWaReplayResult" class="surface-note">Nenhum replay executado nesta sessão.</div>
+                </section>
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Origem (Telegram)</h3>
+                      <p class="section-copy">Filtre grupos de origem e mantenha a seleção operacional visível sem expandir a página.</p>
+                    </div>
+                    <div class="selection-summary">
+                      <span class="selection-count">Selecionados</span>
+                      <strong id="tgWaSourceCount">0</strong>
+                    </div>
+                  </div>
+                  <div class="selection-shell">
+                    <div class="selection-toolbar">
+                      <input id="tgWaSourceSearch" placeholder="Buscar grupo por nome ou ID" />
+                      <div class="selection-actions">
+                        <button class="secondary" onclick="selectAllTgWaSource()">Selecionar todos</button>
+                        <button class="secondary" onclick="clearTgWaSource()">Limpar</button>
+                        <button class="secondary" onclick="showAllTgWaSource()">Mostrar todos</button>
+                      </div>
+                    </div>
+                    <div id="tgWaSourceChips" class="selection-chips"></div>
+                    <label>IDs manuais (um por linha ou separado por vírgula)</label>
+                    <textarea id="tgWaSourceManual" rows="3" placeholder="-100123...\n-100456..."></textarea>
+                    <div id="tgWaSourceList" class="selection-scroll selection-scroll-groups muted">Nenhum grupo carregado.</div>
+                  </div>
+                </section>
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Destino (WhatsApp)</h3>
+                      <p class="section-copy">Prepare a lista final de envio com busca, seleção em lote e rolagem controlada.</p>
+                    </div>
+                    <div class="selection-summary">
+                      <span class="selection-count">Selecionados</span>
+                      <strong id="tgWaDestCount">0</strong>
+                    </div>
+                  </div>
+                  <div class="selection-shell">
+                    <div class="selection-toolbar">
+                      <input id="tgWaDestSearch" placeholder="Buscar grupo por nome ou ID" />
+                      <div class="selection-actions">
+                        <button class="secondary" onclick="selectAllTgWaDest()">Selecionar todos</button>
+                        <button class="secondary" onclick="clearTgWaDest()">Limpar</button>
+                        <button class="secondary" onclick="showAllTgWaDest()">Mostrar todos</button>
+                      </div>
+                    </div>
+                    <div id="tgWaDestChips" class="selection-chips"></div>
+                    <label>IDs manuais (um por linha ou separado por vírgula)</label>
+                    <textarea id="tgWaDestManual" rows="3" placeholder="1203630@g.us"></textarea>
+                    <div id="tgWaDestList" class="selection-scroll selection-scroll-groups muted">Nenhum grupo carregado.</div>
+                  </div>
                 </section>
               </div>
-            </section>
+            </div>
           </div>
           <div id="section-instagram" class="hidden">
             <section class="card" style="margin-top:16px;">
@@ -493,6 +1162,7 @@
                   <div class="row" style="margin-top:12px;">
                     <label><input type="checkbox" id="aiLabProviderOpenAi" checked /> OpenAI</label>
                     <label><input type="checkbox" id="aiLabProviderGemini" checked /> Gemini</label>
+                    <label><input type="checkbox" id="aiLabProviderGemma4" checked /> Gemma 4</label>
                     <label><input type="checkbox" id="aiLabProviderDeepSeek" checked /> DeepSeek</label>
                     <label><input type="checkbox" id="aiLabProviderNemotron" checked /> Nemotron</label>
                     <label><input type="checkbox" id="aiLabProviderQwen" checked /> Qwen</label>
@@ -524,6 +1194,24 @@
                   <div class="row">
                     <input id="geminiModel" placeholder="Modelo Gemini (ex: gemini-2.5-flash)" />
                     <input id="geminiMaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
+                  </div>
+                </section>
+                <section class="card">
+                  <h3>Gemma 4 <span class="badge" style="background:#4285f4;color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;margin-left:6px;">Google AI Studio · Grátis</span></h3>
+                  <p class="muted" style="margin-bottom:8px;">Usa a mesma API key do Gemini. Obtenha em <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></p>
+                  <label>Chaves API (uma por linha)</label>
+                  <div id="gemma4ApiKeyRows"></div>
+                  <div class="row" style="margin-top:8px;">
+                    <button class="secondary" type="button" onclick="addGemma4ApiKeyRow()">+ Adicionar chave</button>
+                  </div>
+                  <div class="row" style="margin-top:8px;">
+                    <input id="gemma4Model" placeholder="Modelo padrão (ex: gemma-4-26b-a4b-it)" title="Modelo rápido — captions, WhatsApp" />
+                    <input id="gemma4ModelAdvanced" placeholder="Modelo avançado (ex: gemma-4-31b-it)" title="Modelo pesado — skills, workspace, análise profunda" />
+                    <input id="gemma4MaxTokens" type="number" step="1" min="200" max="4096" placeholder="Max output tokens" />
+                  </div>
+                  <div class="row">
+                    <input id="gemma4MonthlyLimit" type="number" step="1" min="0" placeholder="Limite mensal de chamadas" />
+                    <input id="gemma4CostPerCall" type="number" step="0.0001" min="0" placeholder="Custo estimado USD/chamada" />
                   </div>
                 </section>
                 <section class="card">
@@ -647,6 +1335,27 @@
                 <div class="row"> <label class="switch"><input type="checkbox" id="igAutoRequireAi" /><span
                       class="slider"></span></label> <span class="muted">Exigir legenda gerada por IA (sem fallback
                     genérico)</span> </div>
+                <hr />
+                <h3>Reels virais do Telegram</h3>
+                <div class="row"> <label class="switch"><input type="checkbox" id="igViralReelsEnabled" /><span
+                      class="slider"></span></label> <span class="muted">Criar draft automatico a partir do grupo de videos virais</span> </div>
+                <label>Chat Telegram origem</label> <input id="igViralReelsSourceChatId" type="number" step="1"
+                  placeholder="2425105459" />
+                <label>Intervalo em horas</label> <input id="igViralReelsIntervalHours" type="number" min="1" max="72"
+                  step="1" placeholder="12" />
+                <label>Horarios fixos</label> <input id="igViralReelsScheduleTimes" placeholder="07:30, 17:30" />
+                <label>Janela de busca em horas</label> <input id="igViralReelsLookbackHours" type="number" min="1"
+                  max="168" step="1" placeholder="24" />
+                <label>Janela anti-repeticao em horas</label> <input id="igViralReelsRepeatWindowHours" type="number"
+                  min="1" max="720" step="1" placeholder="72" />
+                <div class="row"> <label class="switch"><input type="checkbox" id="igViralReelsSendApproval" /><span
+                      class="slider"></span></label> <span class="muted">Enviar pedido de aprovacao por WhatsApp</span> </div>
+                <label>Grupo WhatsApp de aprovacao</label> <input id="igViralReelsApprovalWhatsAppGroupId"
+                  placeholder="Ex.: 120363...@g.us" />
+                <label>Instancia WhatsApp de aprovacao</label> <input id="igViralReelsApprovalWhatsAppInstanceName"
+                  placeholder="ZapOfertas" />
+                <div class="row"> <label class="switch"><input type="checkbox" id="igViralReelsAutoPublish" disabled /><span
+                      class="slider"></span></label> <span class="muted">Publicacao automatica futura (desativada nesta fase)</span> </div>
                 <div class="row" style="margin-top:8px;"> <button class="secondary" type="button"
                     onclick="loadApiDiagnostics()">Ver status das APIs</button> <span id="apiDiagStatus"
                     class="status muted"></span> </div>
@@ -656,6 +1365,57 @@
                   onclick="saveInstagramPublishSettings()">Salvar configuracoes</button> <button
                   onclick="testInstagramPublish()">Testar conexao</button> <span id="igPubSaveStatus"
                   class="status muted"></span> </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h3>Fluxo Reel Assistido</h3>
+              <div class="ops-summary-grid">
+                <article class="metric-card">
+                  <span>Processo</span>
+                  <strong id="igProcessName">Legado</strong>
+                  <small id="igProcessLabel">Aguardando dados</small>
+                </article>
+                <article class="metric-card">
+                  <span>Drafts</span>
+                  <strong id="igProcessDrafts">0 drafts</strong>
+                  <small id="igProcessLastDraft">Sem draft</small>
+                </article>
+                <article class="metric-card">
+                  <span>Publicados</span>
+                  <strong id="igProcessPublished">0 publicados</strong>
+                  <small id="igProcessLastPublish">Sem publicação</small>
+                </article>
+                <article class="metric-card">
+                  <span>Falhas</span>
+                  <strong id="igProcessFailed">0 falhas</strong>
+                  <small id="igProcessLastError">Sem erro</small>
+                </article>
+              </div>
+            </section>
+            <section class="card" style="margin-top:16px;">
+              <h3>Mapa de Origens e Destinos</h3>
+              <p class="muted">Visao descritiva dos grupos e chats do fluxo. Nao altera roteamento nem regras de envio.</p>
+              <div class="row" style="margin-top:12px;">
+                <input id="flowEndpointsMapSearch" placeholder="Filtrar por nome, canal, id ou destino" />
+                <button class="secondary" onclick="renderFlowEndpointsMap()">Atualizar</button>
+              </div>
+              <div class="table-wrap compact-five" style="margin-top:12px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Canal</th>
+                      <th>Nome amigavel</th>
+                      <th>ID(s)</th>
+                      <th>Papel no fluxo</th>
+                      <th>Destino</th>
+                    </tr>
+                  </thead>
+                  <tbody id="flowEndpointsMapBody">
+                    <tr>
+                      <td colspan="5" class="muted">Carregando mapa...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </section>
             <section class="card" style="margin-top:16px;">
               <h3>Novo post</h3> <label>Produto</label> <input id="igDraftProduct" placeholder="Nome do produto" />
@@ -694,11 +1454,94 @@
             </section>
             <section class="card" style="margin-top:16px;">
               <h3>Logs Instagram</h3>
-              <div class="row"> <input id="igPubLogSearch" placeholder="Buscar por erro, media, draft..." /> <button
+              <div class="row"> <input id="igPubProcessFilter" placeholder="Filtrar por processo" /> <input id="igPubLogSearch" placeholder="Buscar por erro, media, draft..." /> <button
                   class="secondary" onclick="loadInstagramPublishLogs()">Atualizar</button> <button class="secondary"
                   onclick="clearInstagramPublishLogs()">Limpar</button> </div>
               <div id="igPubLogs" class="log-table"></div>
             </section>
+            <div class="grid" style="margin-top:16px;">
+              <section class="card">
+                <h3>Agendamento de Adição</h3>
+                <p class="muted">Adiciona participantes em lotes para reduzir risco operacional na conta.</p>
+                <div class="grid" style="margin-top:12px; gap:12px;">
+                  <div>
+                    <label>Nome</label>
+                    <input id="legacyWaScheduleCopyName" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" placeholder="Ex: VIP por lotes" />
+                  </div>
+                  <div>
+                    <label>Grupo Origem</label>
+                    <select id="legacyWaScheduleCopySourceGroup" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                      <option value="">Selecione o grupo origem...</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Grupo Destino</label>
+                    <select id="legacyWaScheduleCopyTargetGroup" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                      <option value="">Selecione o grupo destino...</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Lote por execução</label>
+                    <input id="legacyWaScheduleCopyBatchSize" type="number" min="1" value="10" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  </div>
+                  <div>
+                    <label>Intervalo em minutos</label>
+                    <input id="legacyWaScheduleCopyInterval" type="number" min="1" value="10" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  </div>
+                  <div>
+                    <label>Instância WhatsApp</label>
+                    <select id="legacyWaScheduleCopyInstanceName" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                      <option value="">Padrão do servidor</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row" style="margin-top:12px;">
+                  <button id="legacyBtnCreateCopySchedule" onclick="createParticipantCopySchedule()">Criar agendamento</button>
+                  <span id="legacyWaScheduleCopyStatus" class="status muted"></span>
+                </div>
+                <div id="legacyWaCopySchedulesList" style="margin-top:12px;">
+                  <span class="muted">Nenhum agendamento criado.</span>
+                </div>
+              </section>
+
+              <section class="card">
+                <h3>Mensagens Agendadas</h3>
+                <p class="muted">Envia lembretes e mensagens fixas para grupos em intervalo recorrente.</p>
+                <div class="grid" style="margin-top:12px; gap:12px;">
+                  <div>
+                    <label>Nome</label>
+                    <input id="legacyWaMessageScheduleName" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" placeholder="Ex: Aviso conversor" />
+                  </div>
+                  <div>
+                    <label>Grupo Destino</label>
+                    <select id="legacyWaMessageScheduleTargetGroup" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                      <option value="">Selecione o grupo destino...</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Intervalo em minutos</label>
+                    <input id="legacyWaMessageScheduleInterval" type="number" min="1" value="60" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  </div>
+                  <div>
+                    <label>Instância WhatsApp</label>
+                    <select id="legacyWaMessageScheduleInstanceName" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                      <option value="">Padrão do servidor</option>
+                    </select>
+                  </div>
+                  <div style="grid-column: 1 / -1;">
+                    <label>Mensagem</label>
+                    <textarea id="legacyWaMessageScheduleText" class="form-control" style="width:100%; min-height:120px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" placeholder="Ex: Silenciem o grupo para não perder as ofertas. Use também o site conversor..."></textarea>
+                  </div>
+                </div>
+                <div class="row" style="margin-top:12px;">
+                  <button id="legacyBtnCreateMessageSchedule" onclick="createScheduledGroupMessage()">Criar mensagem agendada</button>
+                  <span id="legacyWaMessageScheduleStatus" class="status muted"></span>
+                </div>
+                <div id="legacyWaMessageSchedulesList" style="margin-top:12px;">
+                  <span class="muted">Nenhuma mensagem agendada.</span>
+                </div>
+              </section>
+            </div>
           </div>
           <div id="section-instagram-story" class="hidden">
             <section class="card" style="margin-top:16px;">
@@ -756,7 +1599,7 @@
                 <div style="flex:1;"> <label>Campanha padrao</label> <input id="bioHubDefaultCampaign"
                     placeholder="insta-feed" /> </div>
               </div> <label>Dominio publico dos links</label> <input id="bioHubPublicBaseUrl"
-                placeholder="https://achadinhos.reidasofertas.ia.br" />
+                placeholder="https://reidasofertas.ia.br" />
               <div class="row" style="margin-top:12px;"> <button class="secondary" onclick="saveBioHubSettings()">Salvar
                   Bio Hub</button> <button class="secondary" onclick="refreshBioLinksPreview()">Atualizar links</button>
                 <button class="secondary" onclick="syncCatalogNow()">Sincronizar catalogo</button> <span
@@ -817,74 +1660,132 @@
             </section>
           </div>
           <div id="section-logs" class="hidden">
-            <section class="card" style="margin-top:16px;">
-              <h2 data-tooltip="Mostra se a imagem foi capturada e enviada (ou o motivo da falha).">Log de Mídia</h2>
-              <div id="mediaAlert" class="alert hidden"></div>
-              <div class="row"> <button onclick="loadMediaFailures()">Carregar falhas</button> <button class="secondary"
-                  onclick="clearMediaFailures()">Limpar falhas</button> </div>
-              <div class="table-wrap" style="margin-top:8px;">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Data/Hora</th>
-                      <th>Origem</th>
-                      <th>Destino</th>
-                      <th>Status</th>
-                      <th>Motivo</th>
-                      <th>Detalhe</th>
-                      <th>Ação</th>
-                    </tr>
-                  </thead>
-                  <tbody id="mediaTableBody"></tbody>
-                </table>
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Observabilidade</p>
+                    <h2>Logs e rastreabilidade</h2>
+                    <p class="section-copy">Concentre leitura executiva de mídia e conversão acima da dobra, mantendo as tabelas completas logo abaixo para investigação detalhada.</p>
+                  </div>
+                  <div class="section-actions">
+                    <button onclick="loadMediaFailures()">Atualizar mídia</button>
+                    <button class="secondary" onclick="loadConversionLogs()">Atualizar conversões</button>
+                  </div>
+                </div>
+                <div class="ops-summary-grid">
+                  <article class="metric-card">
+                    <span>Log de mídia</span>
+                    <strong id="mediaLogSummary">Monitorado</strong>
+                    <small id="mediaAlertSummary">Últimos registros visíveis</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Conversões</span>
+                    <strong id="conversionLogSummary">Ativo</strong>
+                    <small id="logStatus">Sem dados ainda.</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Qualidade</span>
+                    <strong id="conversionQualitySummary">Validando</strong>
+                    <small>Links afiliados e correções</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Investigação</span>
+                    <strong id="conversionActionSummary">Rápida</strong>
+                    <small>Filtros e ações preservados</small>
+                  </article>
+                </div>
+              </section>
+              <div class="ops-grid">
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3 data-tooltip="Mostra se a imagem foi capturada e enviada (ou o motivo da falha).">Log de mídia</h3>
+                      <p class="section-copy">Acompanhe captura, envio e falhas de mídia com foco em origem, destino e motivo.</p>
+                    </div>
+                    <div class="section-actions">
+                      <button onclick="loadMediaFailures()">Carregar falhas</button>
+                      <button class="secondary" onclick="clearMediaFailures()">Limpar falhas</button>
+                    </div>
+                  </div>
+                  <div id="mediaAlert" class="alert hidden"></div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Data/Hora</th>
+                          <th>Origem</th>
+                          <th>Destino</th>
+                          <th>Status</th>
+                          <th>Motivo</th>
+                          <th>Detalhe</th>
+                          <th>Ação</th>
+                        </tr>
+                      </thead>
+                      <tbody id="mediaTableBody"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <section class="card ops-card-wide">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Logs de conversão</h3>
+                      <p class="section-copy">Filtre por loja, sucesso e busca textual sem perder contexto operacional.</p>
+                    </div>
+                    <div class="section-actions">
+                      <button onclick="loadConversionLogs()">Carregar</button>
+                      <button class="secondary" onclick="clearConversionLogs()">Limpar logs</button>
+                    </div>
+                  </div>
+                  <div class="filter-grid">
+                    <select id="logStore">
+                      <option value="">Todas as lojas</option>
+                      <option>Amazon</option>
+                      <option>Mercado Livre</option>
+                      <option>Shopee</option>
+                      <option>Shein</option>
+                      <option>Unknown</option>
+                    </select>
+                    <select id="logSuccess">
+                      <option value="">Todos</option>
+                      <option value="true">Sucesso</option>
+                      <option value="false">Falha</option>
+                    </select>
+                    <input id="logSearch" placeholder="Buscar por URL, origem ou ID" />
+                    <select id="logLimit">
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                      <option value="200" selected>200</option>
+                      <option value="500">500</option>
+                    </select>
+                  </div>
+                  <div id="logAlert" class="alert hidden"></div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Data/Hora</th>
+                          <th>Loja</th>
+                          <th>Status</th>
+                          <th>Mídia</th>
+                          <th>Cliques</th>
+                          <th>Validação</th>
+                          <th>Correção</th>
+                          <th>Erro</th>
+                          <th>Origem/Destino</th>
+                          <th>URL Original</th>
+                          <th>URL Convertido</th>
+                          <th>Ações</th>
+                          <th>Tempo (ms)</th>
+                        </tr>
+                      </thead>
+                      <tbody id="logTableBody"></tbody>
+                    </table>
+                  </div>
+                </section>
               </div>
-            </section>
-            <section class="card" style="margin-top:16px;">
-              <h2>Logs de Conversão</h2>
-              <div class="row"> <select id="logStore">
-                  <option value="">Todas as lojas</option>
-                  <option>Amazon</option>
-                  <option>Mercado Livre</option>
-                  <option>Shopee</option>
-                  <option>Shein</option>
-                  <option>Unknown</option>
-                </select> <select id="logSuccess">
-                  <option value="">Todos</option>
-                  <option value="true">Sucesso</option>
-                  <option value="false">Falha</option>
-                </select> <input id="logSearch" placeholder="Buscar por URL, origem ou ID" /> <select id="logLimit">
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                  <option value="200" selected>200</option>
-                  <option value="500">500</option>
-                </select> <button onclick="loadConversionLogs()">Carregar</button> <button class="secondary"
-                  onclick="clearConversionLogs()">Limpar logs</button> </div>
-              <p id="logStatus" class="status muted">Sem dados ainda.</p>
-              <div id="logAlert" class="alert hidden"></div>
-              <div class="table-wrap" style="margin-top:8px;">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Data/Hora</th>
-                      <th>Loja</th>
-                      <th>Status</th>
-                      <th>Mídia</th>
-                      <th>Cliques</th>
-                      <th>Validação</th>
-                      <th>Correção</th>
-                      <th>Erro</th>
-                      <th>Origem/Destino</th>
-                      <th>URL Original</th>
-                      <th>URL Convertido</th>
-                      <th>Ações</th>
-                      <th>Tempo (ms)</th>
-                    </tr>
-                  </thead>
-                  <tbody id="logTableBody"></tbody>
-                </table>
-              </div>
-            </section>
+            </div>
           </div>
           <div id="section-playground" class="hidden">
             <section class="card" style="margin-top:16px;">
@@ -899,6 +1800,198 @@
               <h2>Debug (JSON)</h2>
               <pre id="debug"></pre>
             </section>
+          </div>
+          <div id="section-offers" class="hidden">
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Ofertas</p>
+                    <h2>Central de normalização de ofertas</h2>
+                    <p class="section-copy">Cole JSON, CSV, tabela simples ou payload bruto e normalize tudo para o contrato canônico antes de seguir para revisão, catálogo ou fila de automação.</p>
+                  </div>
+                  <div class="section-actions">
+                    <button class="secondary" onclick="loadOfferNormalizationRuns()">Atualizar histórico</button>
+                    <button class="secondary" onclick="clearOfferNormalizationComposer()">Limpar entrada</button>
+                  </div>
+                </div>
+                <div class="ops-summary-grid">
+                  <article class="metric-card">
+                    <span>Run atual</span>
+                    <strong id="offerNormalizeRunId">Nenhum</strong>
+                    <small id="offerNormalizeStatusText">Aguardando entrada</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Ofertas</span>
+                    <strong id="offerNormalizeOffersCount">0</strong>
+                    <small id="offerNormalizeSourceType">Sem origem processada</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Issues</span>
+                    <strong id="offerNormalizeIssuesCount">0</strong>
+                    <small>Gaps e linhas inválidas</small>
+                  </article>
+                  <article class="metric-card">
+                    <span>Destino</span>
+                    <strong id="offerNormalizeCurrentTarget">Review</strong>
+                    <small id="offerNormalizeNextStep">Revise a entrada e normalize.</small>
+                  </article>
+                </div>
+              </section>
+
+              <div class="ops-grid">
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Entrada</h3>
+                      <p class="section-copy">Use autodetect como padrão. A normalização só transforma e audita; não publica nada automaticamente.</p>
+                    </div>
+                    <span class="badge muted">affiliate-data-loader</span>
+                  </div>
+                  <div class="filter-grid">
+                    <div>
+                      <label>Tipo de entrada</label>
+                      <select id="offerNormalizeInputType">
+                        <option value="autodetect" selected>Autodetectar</option>
+                        <option value="json">JSON</option>
+                        <option value="csv">CSV</option>
+                        <option value="tsv">TSV</option>
+                        <option value="table">Tabela simples</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Destino inicial</label>
+                      <select id="offerNormalizeTarget">
+                        <option value="review" selected>Preview + revisão</option>
+                        <option value="catalog">Catálogo</option>
+                        <option value="queue">Fila de automação</option>
+                      </select>
+                    </div>
+                    <div style="grid-column: span 2;">
+                      <label>Notas operacionais</label>
+                      <input id="offerNormalizeNotes" placeholder="Ex.: export da Shopee da campanha da tarde" />
+                    </div>
+                  </div>
+                  <label>Conteúdo bruto</label>
+                  <textarea id="offerNormalizeInput" rows="12" placeholder='Cole aqui JSON, CSV, TSV, tabela simples ou payload bruto de API/webhook'></textarea>
+                  <div class="section-actions" style="margin-top:16px;">
+                    <button onclick="normalizeOffersInput()">Normalizar ofertas</button>
+                    <button class="secondary" onclick="clearOfferNormalizationComposer()">Limpar</button>
+                    <span id="offerNormalizeActionStatus" class="status muted"></span>
+                  </div>
+                </section>
+
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Encaminhamento</h3>
+                      <p class="section-copy">Após revisar o preview, atualize o destino da execução auditável sem disparar publicação silenciosa.</p>
+                    </div>
+                    <span class="badge muted">Fluxo auditável</span>
+                  </div>
+                  <div class="surface-note">
+                    <strong id="offerNormalizeSummaryTitle">Nenhuma execução carregada.</strong>
+                    <div id="offerNormalizeSummary" class="muted" style="margin-top:8px;">Normalize uma entrada para gerar preview, issues e histórico.</div>
+                  </div>
+                  <div class="section-actions offer-route-actions" style="margin-top:16px;">
+                    <button class="secondary" onclick="routeOfferNormalizationRun('review')">Mandar para revisão</button>
+                    <button class="secondary" onclick="routeOfferNormalizationRun('catalog')">Mandar para catálogo</button>
+                    <button class="secondary" onclick="routeOfferNormalizationRun('queue')">Mandar para fila</button>
+                  </div>
+                  <div class="surface-note" style="margin-top:16px;">
+                    <strong>Skill conceitual</strong>
+                    <div class="muted" style="margin-top:8px;">`affiliate-data-loader` é o padrão desta tela. `affiliate-api-fetcher` só entra quando o payload remoto já vier configurado e colado aqui pelo operador.</div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="ops-grid">
+                <section class="card ops-card-wide">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Preview normalizado</h3>
+                      <p class="section-copy">Veja o contrato final antes de decidir o destino da execução.</p>
+                    </div>
+                    <span id="offerNormalizeStatusBadge" class="badge muted">Sem execução</span>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Produto</th>
+                          <th>URL</th>
+                          <th>Preço original</th>
+                          <th>Preço promo</th>
+                          <th>Desconto</th>
+                          <th>Loja</th>
+                          <th>Categoria</th>
+                          <th>Comissão</th>
+                        </tr>
+                      </thead>
+                      <tbody id="offerNormalizePreviewBody">
+                        <tr><td colspan="8" class="muted">Nenhuma oferta normalizada nesta sessão.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section class="card ops-card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Issues de validação</h3>
+                      <p class="section-copy">Gaps e linhas descartadas aparecem aqui para revisão rápida.</p>
+                    </div>
+                  </div>
+                  <div id="offerNormalizeIssuesList" class="overview-list">
+                    <div class="overview-list-empty">Nenhuma issue carregada.</div>
+                  </div>
+                </section>
+              </div>
+
+              <section class="card">
+                <div class="ops-card-topbar">
+                  <div>
+                    <h3>Histórico auditável</h3>
+                    <p class="section-copy">Reabra execuções, filtre por destino/status e reaplique o encaminhamento quando necessário.</p>
+                  </div>
+                  <div class="section-actions">
+                    <select id="offerNormalizeHistoryStatus" onchange="loadOfferNormalizationRuns()">
+                      <option value="">Todos os status</option>
+                      <option value="normalized">Normalized</option>
+                      <option value="review_required">Review required</option>
+                      <option value="sent_to_catalog">Sent to catalog</option>
+                      <option value="queued_for_automation">Queued for automation</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                    <select id="offerNormalizeHistoryTarget" onchange="loadOfferNormalizationRuns()">
+                      <option value="">Todos os destinos</option>
+                      <option value="review">Preview + revisão</option>
+                      <option value="catalog">Catálogo</option>
+                      <option value="queue">Fila</option>
+                    </select>
+                    <button class="secondary" onclick="loadOfferNormalizationRuns()">Atualizar</button>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Quando</th>
+                        <th>Origem</th>
+                        <th>Resumo</th>
+                        <th>Destino</th>
+                        <th>Status</th>
+                        <th>Operador</th>
+                        <th>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody id="offerNormalizeHistoryBody">
+                      <tr><td colspan="7" class="muted">Nenhuma execução carregada.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
           </div>
           <div id="section-agents" class="hidden">
             <section class="card" style="margin-top:16px;">
@@ -1037,73 +2130,206 @@
               </div>
             </section>
           </div>
-          <div id="section-analytics" class="hidden">
-            <section class="card" style="margin-top:16px;">
-              <div class="row" style="justify-content: space-between;">
-                <h2>Analytics Dashboard &#128202;</h2>
-                <div class="row">
-                  <select id="analyticsHours" onchange="loadAnalyticsSummary()">
-                    <option value="1">Ultima 1h</option>
-                    <option value="2">Ultimas 2h</option>
-                    <option value="3">Ultimas 3h</option>
-                    <option value="6">Ultimas 6h</option>
-                    <option value="12">Ultimas 12h</option>
-                    <option value="24" selected>Ultimas 24h</option>
-                    <option value="72">Ultimas 72h</option>
-                    <option value="168">Ultimos 7 dias</option>
-                  </select>
-                  <button class="secondary" onclick="loadAnalyticsSummary()">Atualizar</button>
-                </div>
-              </div>
-              <p class="muted">Visao geral de cliques e comportamento nas ultimas 24h.</p>
-              <div class="subtabs" style="margin-top:16px;">
-                <button id="analyticsTab-overview" class="active" onclick="showAnalyticsSubtab('overview')">Visao Geral</button>
-                <button id="analyticsTab-behavior" onclick="showAnalyticsSubtab('behavior')">Comportamento</button>
-                <button id="analyticsTab-recent" onclick="showAnalyticsSubtab('recent')">Eventos Recentes</button>
-              </div>
-              <div id="analyticsSubtab-overview">
-                <div class="grid" style="margin-top:16px;" id="analyticsSummaryCards"></div>
-                <div class="grid" style="margin-top:16px;" id="analyticsIdentityCards"></div>
-                <div class="card" style="margin-top:24px; padding:16px;">
-                  <h3>Top Origens & Campanhas</h3>
-                  <div class="grid">
-                    <div>
-                      <h4>Origens</h4>
-                      <pre id="analyticsSources">Carregando...</pre>
-                    </div>
-                    <div>
-                      <h4>Campanhas</h4>
-                      <pre id="analyticsCampaigns">Carregando...</pre>
-                    </div>
+          <div id="section-skills" class="hidden">
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Skills</p>
+                    <h2>Hub de Skills</h2>
+                    <p class="section-copy">Governança central das skills internas do produto, com leitura por tipo, canal, templates e comportamento operacional.</p>
+                  </div>
+                  <div class="section-actions">
+                    <select id="skillsHubChannelFilter" onchange="renderSkillsHubList()">
+                      <option value="all">Todos os canais</option>
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="converter">Conversor</option>
+                    </select>
+                    <select id="skillsHubStatusFilter" onchange="renderSkillsHubList()">
+                      <option value="all">Todos os status</option>
+                      <option value="enabled">Somente ativos</option>
+                      <option value="disabled">Somente inativos</option>
+                    </select>
+                    <button class="secondary" onclick="loadSkillsHub()">Atualizar</button>
                   </div>
                 </div>
+                <p id="skillsHubStatus" class="status muted" style="margin-top:12px;">Carregando catálogo de skills...</p>
+              </section>
+              <div class="grid" style="margin-top:16px; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap:16px;">
+                <section class="card">
+                  <div class="section-header-inline">
+                    <h2>Catálogo</h2>
+                    <span class="status muted" id="skillsHubCountBadge">0 skills</span>
+                  </div>
+                  <div id="skillsHubList" class="stack-list" style="margin-top:12px;">
+                    <span class="muted">Nenhuma skill carregada.</span>
+                  </div>
+                </section>
+                <section class="card">
+                  <div class="section-header-inline">
+                    <h2>Editor</h2>
+                    <span class="status muted">Por tipo</span>
+                  </div>
+                  <div id="skillsHubEditor" style="margin-top:12px;">
+                    <p class="muted">Selecione uma skill para editar.</p>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div id="section-analytics" class="hidden">
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Analytics</p>
+                    <h2>Analytics Dashboard</h2>
+                    <p class="section-copy">Organize a leitura de cliques, comportamento e conversão em uma visão premium mais leve, com subtabs limpas e cards padronizados.</p>
+                  </div>
+                  <div class="section-actions">
+                    <select id="analyticsHours" onchange="loadAnalyticsSummary()">
+                      <option value="1">Ultima 1h</option>
+                      <option value="2">Ultimas 2h</option>
+                      <option value="3">Ultimas 3h</option>
+                      <option value="6">Ultimas 6h</option>
+                      <option value="12">Ultimas 12h</option>
+                      <option value="24" selected>Ultimas 24h</option>
+                      <option value="72">Ultimas 72h</option>
+                      <option value="168">Ultimos 7 dias</option>
+                    </select>
+                    <button class="secondary" onclick="loadAnalyticsSummary()">Atualizar</button>
+                  </div>
+                </div>
+                <div class="subtabs analytics-subtabs">
+                  <button id="analyticsTab-overview" class="active" onclick="showAnalyticsSubtab('overview')">Visão Geral</button>
+                  <button id="analyticsTab-behavior" onclick="showAnalyticsSubtab('behavior')">Comportamento</button>
+                  <button id="analyticsTab-recent" onclick="showAnalyticsSubtab('recent')">Eventos Recentes</button>
+                </div>
+              </section>
+              <div id="analyticsSubtab-overview" class="section-shell section-shell-compact">
+                <div class="analytics-card-grid" id="analyticsSummaryCards"></div>
+                <div class="analytics-card-grid" id="analyticsIdentityCards"></div>
+                <div class="analytics-card-grid" id="analyticsTrackingCards"></div>
+                <div class="ops-grid">
+                  <div class="card ops-card" id="analyticsConversionCard">
+                    <h3>Performance de Conversão</h3>
+                    <div id="analyticsConversionStats" class="muted">Carregando...</div>
+                  </div>
+                  <div class="card ops-card" id="analyticsAiPerformanceCard">
+                    <h3>Performance de IA</h3>
+                    <div id="analyticsAiStats" class="muted">Carregando...</div>
+                  </div>
+                </div>
+                <section class="card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Ofertas em alta</h3>
+                      <p class="section-copy">Veja rapidamente o que está puxando o desempenho da janela selecionada.</p>
+                    </div>
+                  </div>
+                  <div id="analyticsHotDeals" class="analytics-hot-grid"></div>
+                </section>
+                <section class="card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Top origens e campanhas</h3>
+                      <p class="section-copy">Distribuição compacta para entender quais fontes estão sustentando os acessos.</p>
+                    </div>
+                  </div>
+                  <div class="ops-grid">
+                    <div class="card ops-card">
+                      <h4>Origens</h4>
+                      <pre id="analyticsSources" class="analytics-pre">Carregando...</pre>
+                    </div>
+                    <div class="card ops-card">
+                      <h4>Campanhas</h4>
+                      <pre id="analyticsCampaigns" class="analytics-pre">Carregando...</pre>
+                    </div>
+                  </div>
+                </section>
+                <section class="card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Tracking estratégico</h3>
+                      <p class="section-copy">Entenda onde o link nasce, de onde o clique chega e quais superfícies estão entregando melhor sinal.</p>
+                    </div>
+                  </div>
+                  <div class="ops-grid">
+                    <div class="card ops-card">
+                      <h4>Origens do link</h4>
+                      <pre id="analyticsOriginSurfaces" class="analytics-pre">Carregando...</pre>
+                    </div>
+                    <div class="card ops-card">
+                      <h4>Origens do clique</h4>
+                      <pre id="analyticsClickSurfaces" class="analytics-pre">Carregando...</pre>
+                    </div>
+                  </div>
+                  <div class="ops-grid">
+                    <div class="card ops-card">
+                      <h4>Lojas por canal</h4>
+                      <pre id="analyticsStoreChannels" class="analytics-pre">Carregando...</pre>
+                    </div>
+                    <div class="card ops-card">
+                      <h4>Links com baixa tração</h4>
+                      <pre id="analyticsLowEngagement" class="analytics-pre">Carregando...</pre>
+                    </div>
+                  </div>
+                </section>
+                <section class="card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Matriz e insights</h3>
+                      <p class="section-copy">Cruzamento entre origem do link e origem do clique, com recomendações automáticas para orientar operação e distribuição.</p>
+                    </div>
+                  </div>
+                  <div class="ops-grid">
+                    <div class="card ops-card">
+                      <h4>Matriz origem x clique</h4>
+                      <pre id="analyticsSurfaceMatrix" class="analytics-pre">Carregando...</pre>
+                    </div>
+                    <div class="card ops-card">
+                      <h4>Insights estratégicos</h4>
+                      <pre id="analyticsStrategicInsights" class="analytics-pre">Carregando...</pre>
+                    </div>
+                  </div>
+                </section>
               </div>
               <div id="analyticsSubtab-behavior" class="hidden">
-                <div class="card" style="margin-top:24px; padding:16px;">
-                  <h3>Comportamento</h3>
-                  <div class="grid">
+                <section class="card">
+                  <div class="ops-card-topbar">
                     <div>
-                      <h4>Eventos</h4>
-                      <pre id="analyticsEventTypes">Carregando...</pre>
-                    </div>
-                    <div>
-                      <h4>Paginas</h4>
-                      <pre id="analyticsPageTypes">Carregando...</pre>
-                    </div>
-                    <div>
-                      <h4>Dispositivos</h4>
-                      <pre id="analyticsDevices">Carregando...</pre>
-                    </div>
-                    <div>
-                      <h4>Navegadores</h4>
-                      <pre id="analyticsBrowsers">Carregando...</pre>
+                      <h3>Comportamento</h3>
+                      <p class="section-copy">Eventos, páginas, dispositivos e navegadores organizados em painéis consistentes.</p>
                     </div>
                   </div>
-                </div>
+                  <div class="analytics-pre-grid">
+                    <div class="card">
+                      <h4>Eventos</h4>
+                      <pre id="analyticsEventTypes" class="analytics-pre">Carregando...</pre>
+                    </div>
+                    <div class="card">
+                      <h4>Páginas</h4>
+                      <pre id="analyticsPageTypes" class="analytics-pre">Carregando...</pre>
+                    </div>
+                    <div class="card">
+                      <h4>Dispositivos</h4>
+                      <pre id="analyticsDevices" class="analytics-pre">Carregando...</pre>
+                    </div>
+                    <div class="card">
+                      <h4>Navegadores</h4>
+                      <pre id="analyticsBrowsers" class="analytics-pre">Carregando...</pre>
+                    </div>
+                  </div>
+                </section>
               </div>
               <div id="analyticsSubtab-recent" class="hidden">
-                <div class="card" style="margin-top:24px; padding:16px;">
-                  <h3>Cliques Recentes</h3>
+                <section class="card">
+                  <div class="ops-card-topbar">
+                    <div>
+                      <h3>Cliques recentes</h3>
+                      <p class="section-copy">Últimos eventos em tabela limpa, sem alterar o contrato atual do endpoint.</p>
+                    </div>
+                  </div>
                   <div class="table-wrap">
                     <table>
                       <thead>
@@ -1112,25 +2338,788 @@
                           <th>Categoria</th>
                           <th>Evento</th>
                           <th>Origem</th>
-                          <th>URL Destino</th>
+                          <th>Clique</th>
+                          <th>Links</th>
                         </tr>
                       </thead>
                       <tbody id="analyticsRecentBody">
                         <tr>
-                          <td colspan="5" class="muted">Carregando...</td>
+                          <td colspan="6" class="muted">Carregando...</td>
                         </tr>
                       </tbody>
                     </table>
                   </div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div id="section-wa-monitoring" class="hidden">
+            <div class="section-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Operação WhatsApp</p>
+                    <h2>Monitoramento de Grupos WhatsApp</h2>
+                    <p class="section-copy">Separe monitoramento, cópia manual, fila e agendamentos em blocos mais claros para operação diária, sem alterar a lógica existente do backend.</p>
+                  </div>
+                  <div class="section-actions">
+                    <button class="secondary" onclick="loadMonitorGroups(true)">Atualizar grupos</button>
+                    <button class="secondary" onclick="loadMembershipEvents(true)">Atualizar log</button>
+                    <button class="secondary" onclick="loadWhatsAppAutomation()">Atualizar automação</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card wa-monitor-card wa-monitor-card-full">
+                <div class="wa-monitor-card-head">
+                  <div>
+                    <h3>Instâncias WhatsApp</h3>
+                    <p class="muted">Estado atual de cada instância conectada ao Evolution.</p>
+                  </div>
+                  <div class="section-actions wa-monitor-toolbar">
+                    <button class="secondary" onclick="renderWaInstancesStatusCard(true)">Atualizar</button>
+                  </div>
+                </div>
+                <div id="waInstanceStatusBoard" class="wa-instance-status-board">
+                  <span class="muted">Carregando instâncias...</span>
+                </div>
+              </section>
+
+              <div class="wa-monitor-summary-grid">
+                <article class="card wa-monitor-card wa-monitor-summary-card">
+                  <p class="section-kicker">Grupos monitorados</p>
+                  <strong id="waMonitorOverview">Ativo</strong>
+                  <p class="muted">Seleção salva pelo painel</p>
+                </article>
+                <article class="card wa-monitor-card wa-monitor-summary-card">
+                  <p class="section-kicker">Log de adesão</p>
+                  <strong id="waMembershipOverview">Auditável</strong>
+                  <p class="muted">Entradas e saídas recentes</p>
+                </article>
+                <article class="card wa-monitor-card wa-monitor-summary-card">
+                  <p class="section-kicker">Cópia manual</p>
+                  <strong id="waCopyOverview">Controlada</strong>
+                  <p class="muted">Seleção de membros preservada</p>
+                </article>
+                <article class="card wa-monitor-card wa-monitor-summary-card">
+                  <p class="section-kicker">Fila e agenda</p>
+                  <strong id="waAutomationOverview">Operando</strong>
+                  <p class="muted">Execução gradual e recorrente</p>
+                </article>
+              </div>
+
+              <div class="ops-grid wa-monitor-grid">
+                <section class="card ops-card wa-monitor-card">
+                  <div class="wa-monitor-card-head">
+                    <div>
+                      <h3>Grupos Monitorados</h3>
+                      <p class="muted">Selecione e salve quais grupos entram no monitoramento contínuo.</p>
+                    </div>
+                    <div class="section-actions wa-monitor-toolbar">
+                      <button class="secondary" onclick="loadMonitorGroups(true)">Atualizar lista</button>
+                      <button onclick="saveMonitorSelection()">Salvar seleção</button>
+                    </div>
+                  </div>
+                  <span id="waMonitorSaveStatus" class="status muted"></span>
+                  <div id="waMonitorGroupPicker" class="selection-scroll selection-scroll-groups muted">
+                    Nenhum grupo carregado.
+                  </div>
+                </section>
+
+                <section class="card ops-card wa-monitor-card">
+                  <div class="wa-monitor-card-head">
+                    <div>
+                      <h3>Log de Adesão</h3>
+                      <p class="muted">Entradas e saídas recentes para auditoria rápida da operação.</p>
+                    </div>
+                    <div class="section-actions wa-monitor-toolbar">
+                      <button class="secondary" onclick="loadMembershipEvents(true)">Atualizar log</button>
+                    </div>
+                  </div>
+                  <div class="table-wrap compact-five">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Data/Hora</th>
+                          <th>Grupo</th>
+                          <th>Participante</th>
+                          <th>Ação</th>
+                        </tr>
+                      </thead>
+                      <tbody id="waMonitorEventBody">
+                        <tr><td colspan="4" class="muted">Carregue os eventos para visualizar o histórico.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+
+              <section class="card ops-card-wide wa-monitor-card">
+                <div class="wa-monitor-card-head">
+                  <div>
+                    <h3>Fila do WhatsApp</h3>
+                    <p class="muted">Mostra o que já foi solicitado e ainda está aguardando processamento.</p>
+                  </div>
+                  <div class="section-actions wa-monitor-toolbar">
+                    <button class="secondary" onclick="loadWhatsAppAutomation()">Atualizar fila</button>
+                  </div>
+                </div>
+                <div id="waAutomationQueueList" class="stack-list">
+                  <span class="muted">Nenhuma operação enfileirada no momento.</span>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div id="section-wa-automation" class="hidden">
+            <div class="section-shell wa-monitor-automation-shell">
+              <section class="card section-intro-card">
+                <div class="section-intro">
+                  <div>
+                    <p class="section-kicker">Automação WhatsApp</p>
+                    <h2>Rotinas Assistidas de Cópia e Agenda</h2>
+                    <p class="section-copy">Concentre cópia manual, travas de segurança, agendamento de adição e mensagens agendadas em uma trilha separada e mais confortável para operação.</p>
+                  </div>
+                  <div class="section-actions">
+                    <button class="secondary" onclick="loadWhatsAppAutomation()">Atualizar automação</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card wa-monitor-card wa-monitor-card-full">
+                <div class="wa-monitor-card-head">
+                  <div>
+                    <h3>Copiar Participantes <span id="waCopyParticipantsInstanceBadge" class="badge muted" style="font-size:11px;vertical-align:middle;margin-left:8px;">Padrão</span></h3>
+                    <p class="muted">Copia membros de um grupo e adiciona em outro com controle manual.</p>
+                  </div>
+                </div>
+                <div class="wa-monitor-form-grid">
+                  <div class="wa-monitor-field">
+                    <label>Grupo Origem</label>
+                    <select id="waCopySourceGroup" onchange="handleCopySourceGroupChange()">
+                      <option value="">Selecione o grupo origem...</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Grupo Destino</label>
+                    <select id="waCopyTargetGroup">
+                      <option value="">Selecione o grupo destino...</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Instância WhatsApp</label>
+                    <select id="waCopyParticipantsInstanceName" onchange="updateSchedulingInstanceBadge('waCopyParticipantsInstanceName','waCopyParticipantsInstanceBadge')">
+                      <option value="">Padrão do servidor</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field wa-monitor-field-action">
+                    <button class="secondary" onclick="loadGroupParticipantsForCopy()">Carregar Participantes</button>
+                  </div>
+                </div>
+                <div id="waCopySelectionArea" class="selection-shell wa-monitor-selection-shell hidden">
+                  <h4>Seleção de Membros</h4>
+                  <div class="wa-monitor-toolbar wa-monitor-toolbar-dense">
+                    <label class="wa-monitor-inline-check">
+                      <input type="checkbox" id="waCopySelectAll" onchange="toggleSelectAllParticipants(this.checked)">
+                      <span>Selecionar Todos</span>
+                    </label>
+                    <div class="wa-monitor-mini-field">
+                      <label>Quantidade</label>
+                      <input type="number" id="waCopyLimit" placeholder="Ex: 50" oninput="applyParticipantLimit(this.value)">
+                    </div>
+                    <div class="wa-monitor-search-field">
+                      <label>Pesquisar participante</label>
+                      <input type="text" id="waCopySearch" placeholder="Pesquisar participante..." oninput="filterParticipantsList(this.value)">
+                    </div>
+                  </div>
+                  <div id="waCopyParticipantList" class="selection-scroll selection-scroll-members">
+                    <span class="muted">Aguardando carregamento...</span>
+                  </div>
+                  <div class="wa-monitor-statline muted">
+                    <span id="waCopySelectionCount">0</span> selecionados de <span id="waCopyTotalCount">0</span> membros.
+                  </div>
+                </div>
+                <div class="section-actions wa-monitor-toolbar">
+                  <button id="btnStartCopy" class="primary" onclick="copyGroupParticipants()">Iniciar Cópia</button>
+                  <span id="waCopyStatus" class="status muted"></span>
+                </div>
+              </section>
+
+              <section class="card wa-monitor-card wa-monitor-card-full">
+                <div class="wa-monitor-card-head">
+                  <div>
+                    <h3>Travas de Segurança de Adição</h3>
+                    <p class="muted">Ajuste o limite diário e o cooldown mínimo por instância, com fallback para o padrão do servidor.</p>
+                  </div>
+                </div>
+                <div class="wa-monitor-form-grid">
+                  <div class="wa-monitor-field">
+                    <label>Instância das travas</label>
+                    <select id="waSafetyInstanceName">
+                      <option value="">Padrão do servidor</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Limite diário por conta</label>
+                    <input id="waSafetyDailyLimit" type="number" min="1" value="120" />
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Cooldown mínimo (minutos)</label>
+                    <input id="waSafetyCooldownMinutes" type="number" min="1" value="10" />
+                  </div>
+                </div>
+                <div class="section-actions wa-monitor-toolbar">
+                  <button id="btnSaveWaSafetySettings" onclick="saveWhatsAppAutomationSafetySettings()">Salvar travas</button>
+                  <button id="btnToggleWaCopyPause" class="secondary" onclick="toggleWhatsAppParticipantCopyPause()">Ativar pausa</button>
+                  <span id="waSafetySettingsStatus" class="status muted"></span>
+                </div>
+                <div class="wa-monitor-statline muted">
+                  <span>Perfil ativo: <span id="waSafetyInstanceBadge" class="badge muted">Padrão do servidor</span></span>
+                  <span>Status da cópia: <span id="waParticipantCopyPauseState" class="badge muted">Carregando...</span></span>
+                  <span>Uso hoje: <span id="waSafetyParticipantsAddedToday">0</span></span>
+                  <span>Restante: <span id="waSafetyRemainingQuota">0</span></span>
+                </div>
+              </section>
+
+              <section class="card wa-monitor-card wa-monitor-card-full">
+                <div class="wa-monitor-card-head">
+                  <div>
+                    <h3>Agendamento de Adição <span id="waScheduleCopyInstanceBadge" class="badge muted" style="font-size:11px;vertical-align:middle;margin-left:8px;">Padrão</span></h3>
+                    <p class="muted">Adiciona participantes em lotes para reduzir risco operacional na conta.</p>
+                  </div>
+                </div>
+                <div class="wa-monitor-form-grid">
+                  <div class="wa-monitor-field">
+                    <label>Nome</label>
+                    <input id="waScheduleCopyName" placeholder="Ex: VIP por lotes" />
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Grupo Origem</label>
+                    <select id="waScheduleCopySourceGroup">
+                      <option value="">Selecione o grupo origem...</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Grupo Destino</label>
+                    <select id="waScheduleCopyTargetGroup">
+                      <option value="">Selecione o grupo destino...</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Lote por execução</label>
+                    <input id="waScheduleCopyBatchSize" type="number" min="1" value="10" />
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Intervalo em minutos</label>
+                    <input id="waScheduleCopyInterval" type="number" min="1" value="10" />
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Instância WhatsApp</label>
+                    <select id="waScheduleCopyInstanceName" onchange="updateSchedulingInstanceBadge('waScheduleCopyInstanceName','waScheduleCopyInstanceBadge')">
+                      <option value="">Padrão do servidor</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="section-actions wa-monitor-toolbar">
+                  <button id="btnCreateCopySchedule" onclick="createParticipantCopySchedule()">Criar agendamento</button>
+                  <span id="waScheduleCopyStatus" class="status muted"></span>
+                </div>
+                <div id="waCopySchedulesList" class="stack-list">
+                  <span class="muted">Nenhum agendamento criado.</span>
+                </div>
+              </section>
+
+              <section class="card wa-monitor-card wa-monitor-card-full">
+                <div class="wa-monitor-card-head">
+                  <div>
+                    <h3>Mensagens Agendadas <span id="waMessageScheduleInstanceBadge" class="badge muted" style="font-size:11px;vertical-align:middle;margin-left:8px;">Padrão</span></h3>
+                    <p class="muted">Envia lembretes e mensagens fixas para grupos em intervalo recorrente.</p>
+                  </div>
+                </div>
+                <div class="section-actions wa-monitor-toolbar wa-monitor-toolbar-dense">
+                  <button type="button" class="secondary" onclick="applyScheduledMessageTemplate('conversor')">Modelo conversor</button>
+                  <button type="button" class="secondary" onclick="applyScheduledMessageTemplate('bio')">Modelo bio</button>
+                  <button type="button" class="secondary" onclick="applyScheduledMessageTemplate('silent')">Modelo silenciar</button>
+                </div>
+                <div class="wa-monitor-form-grid">
+                  <div class="wa-monitor-field">
+                    <label>Nome</label>
+                    <input id="waMessageScheduleName" placeholder="Ex: Aviso conversor" oninput="updateScheduledMessagePreview()" />
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Grupo Destino</label>
+                    <select id="waMessageScheduleTargetGroup" onchange="updateScheduledMessagePreview()">
+                      <option value="">Selecione o grupo destino...</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Intervalo em minutos</label>
+                    <input id="waMessageScheduleInterval" type="number" min="1" value="60" />
+                  </div>
+                  <div class="wa-monitor-field">
+                    <label>Instância WhatsApp</label>
+                    <select id="waMessageScheduleInstanceName" onchange="updateSchedulingInstanceBadge('waMessageScheduleInstanceName','waMessageScheduleInstanceBadge')">
+                      <option value="">Padrão do servidor</option>
+                    </select>
+                  </div>
+                  <div class="wa-monitor-field wa-monitor-field-full">
+                    <label>Mensagem</label>
+                    <textarea id="waMessageScheduleText" class="wa-monitor-textarea" placeholder="Ex: Silenciem o grupo para não perder as ofertas. Use também o site conversor..." oninput="updateScheduledMessagePreview()"></textarea>
+                  </div>
+                  <div class="wa-monitor-field wa-monitor-field-full">
+                    <label>Imagem pública opcional</label>
+                    <input id="waMessageScheduleImageUrl" placeholder="https://dominio-publico/assets/messages/conversor-vip-banner.svg" oninput="updateScheduledMessagePreview()" />
+                    <small class="muted">Use somente URL pública do domínio. Os modelos prontos preenchem este campo automaticamente.</small>
+                    <div class="section-actions wa-monitor-toolbar wa-monitor-toolbar-dense">
+                      <input id="waMessageScheduleImageFile" type="file" accept="image/*" class="wa-monitor-file-input" />
+                      <button type="button" class="secondary" onclick="uploadScheduledMessageImageFromInput()">Carregar imagem</button>
+                      <button type="button" class="secondary" onclick="pasteScheduledMessageImage()">Colar imagem</button>
+                    </div>
+                    <small class="muted">Se enviar um arquivo ou colar uma imagem, o sistema sobe a mídia para o domínio público e preenche o link automaticamente.</small>
+                  </div>
+                </div>
+                <div class="preview-card wa-monitor-preview-card" id="waMessageSchedulePreviewCard">
+                  <div class="wa-monitor-card-head wa-monitor-card-head-compact">
+                    <h4>Preview da mensagem</h4>
+                    <span class="badge muted">Visualização</span>
+                  </div>
+                  <div id="waMessageSchedulePreview" class="muted">Preencha os campos acima para ver como a mensagem vai ficar.</div>
+                </div>
+                <div class="section-actions wa-monitor-toolbar">
+                  <button id="btnCreateMessageSchedule" onclick="createScheduledGroupMessage()">Criar mensagem agendada</button>
+                  <span id="waMessageScheduleStatus" class="status muted"></span>
+                </div>
+                <div id="waMessageSchedulesList" class="stack-list">
+                  <span class="muted">Nenhuma mensagem agendada.</span>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div id="section-engagement-plan" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2>Plano de Engajamento (Editável)</h2>
+              <p class="muted">Monte e ajuste o plano prático para levar o grupo até 1.000 participantes. Os dados ficam salvos no navegador deste painel.</p>
+              <div class="grid" style="margin-top:12px; gap:12px;">
+                <div>
+                  <label>Participantes atuais</label>
+                  <input id="engCurrentParticipants" type="number" min="0" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Meta de curto prazo</label>
+                  <input id="engTarget120" type="number" min="1" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Meta final</label>
+                  <input id="engTarget1000" type="number" min="1" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Crescimento diário desejado</label>
+                  <input id="engDailyGoal" type="number" min="1" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
                 </div>
               </div>
+              <div class="grid" style="margin-top:12px; gap:12px;">
+                <div>
+                  <label>Ações da semana 1 (0-120)</label>
+                  <textarea id="engActionsWeek1" class="form-control" style="width:100%; min-height:130px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></textarea>
+                </div>
+                <div>
+                  <label>Ações da semana 2-4 (120-300)</label>
+                  <textarea id="engActionsWeek2To4" class="form-control" style="width:100%; min-height:130px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></textarea>
+                </div>
+                <div>
+                  <label>Ações de escala (300-1000)</label>
+                  <textarea id="engActionsScale" class="form-control" style="width:100%; min-height:130px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></textarea>
+                </div>
+                <div>
+                  <label>Mensagens de boas-vindas / retenção</label>
+                  <textarea id="engRetentionMessages" class="form-control" style="width:100%; min-height:130px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></textarea>
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
+                <button onclick="saveEngagementPlan()">Salvar plano</button>
+                <button class="secondary" onclick="resetEngagementPlan()">Restaurar padrão</button>
+                <button class="secondary" onclick="copyEngagementPlanJson()">Copiar JSON do plano</button>
+                <span id="engagementPlanStatus" class="status muted"></span>
+              </div>
+              <div class="card" style="margin-top:16px; padding:12px;">
+                <h3 style="margin-top:0;">Resumo automático</h3>
+                <div id="engagementPlanSummary" class="muted">Preencha os campos para ver o resumo.</div>
+              </div>
+            </section>
+          </div>
+          <div id="section-ai-ops" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2>AI Ops - Workspace Admin Gateway</h2>
+              <p class="muted">Sessao operacional com controle de PIN, auditoria e acoes de chat, terminal e arquivos.</p>
+              <div class="grid" style="margin-top:12px; gap:12px;">
+                <div>
+                  <label>Provider</label>
+                  <select id="aiOpsProvider">
+                    <option value="codex">Codex</option>
+                    <option value="vscode">VS Code Chat (bridge)</option>
+                    <option value="antigravity">Antigravity Pro (bridge)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Ambiente</label>
+                  <select id="aiOpsEnvironment">
+                    <option value="dev">DEV</option>
+                    <option value="prod">PROD</option>
+                  </select>
+                </div>
+                <div>
+                  <label>PIN</label>
+                  <input id="aiOpsPin" type="password" placeholder="Informe o PIN operacional" />
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
+                <button onclick="openAiOpsSession()">Desbloquear sessao</button>
+                <button class="secondary" onclick="closeAiOpsSession()">Encerrar sessao</button>
+                <span id="aiOpsSessionStatus" class="status muted">Sessao bloqueada.</span>
+              </div>
+              <div id="aiOpsSessionMeta" class="muted" style="margin-top:8px;"></div>
+            </section>
+
+            <section class="card" style="margin-top:16px;">
+              <h2>Chat operacional</h2>
+              <label>Prompt</label>
+              <textarea id="aiOpsPrompt" rows="5" placeholder="Descreva a tarefa operacional para o motor selecionado."></textarea>
+              <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap;">
+                <button onclick="sendAiOpsChat()">Enviar prompt</button>
+                <span id="aiOpsChatStatus" class="status muted">Aguardando sessao ativa.</span>
+              </div>
+              <label style="margin-top:12px;">Resposta</label>
+              <textarea id="aiOpsResponse" rows="12" readonly placeholder="Resposta do motor selecionado"></textarea>
+            </section>
+
+            <section class="card" style="margin-top:16px;">
+              <h2>Terminal remoto</h2>
+              <label>Comando</label>
+              <input id="aiOpsTerminalCommand" placeholder="Ex: dotnet build AchadinhosBot.Next/AchadinhosBot.Next.csproj -c Release" />
+              <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap;">
+                <label style="display:flex; align-items:center; gap:8px; margin:0;">
+                  <input type="checkbox" id="aiOpsTerminalConfirmCritical" />
+                  Confirmar operacao critica
+                </label>
+                <button onclick="runAiOpsTerminal()">Executar comando</button>
+                <span id="aiOpsTerminalStatus" class="status muted">Sem execucao.</span>
+              </div>
+              <label style="margin-top:12px;">Saida</label>
+              <textarea id="aiOpsTerminalOutput" rows="12" readonly placeholder="Saida de terminal"></textarea>
+            </section>
+
+            <section class="card" style="margin-top:16px;">
+              <h2>Arquivos do workspace</h2>
+              <label>Caminho relativo</label>
+              <input id="aiOpsFilePath" placeholder="Ex: AchadinhosBot.Next/Program.cs" />
+              <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap;">
+                <button class="secondary" onclick="readAiOpsFile()">Ler arquivo</button>
+                <button onclick="writeAiOpsFile()">Salvar arquivo</button>
+                <label style="display:flex; align-items:center; gap:8px; margin:0;">
+                  <input type="checkbox" id="aiOpsFileConfirmCritical" />
+                  Confirmar escrita critica
+                </label>
+                <span id="aiOpsFileStatus" class="status muted">Nenhum arquivo carregado.</span>
+              </div>
+              <label style="margin-top:12px;">Conteudo</label>
+              <textarea id="aiOpsFileContent" rows="14" placeholder="Conteudo do arquivo"></textarea>
+            </section>
+          </div>
+          <div id="section-wa-outreach" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <h2>Disparo para Participantes de Outros Grupos</h2>
+              <p class="muted">Selecione participantes de um grupo origem e envie mensagem direta para conversão no seu grupo oficial.</p>
+              <div class="row" style="margin-top:10px; flex-wrap:wrap; gap:10px;">
+                <div>
+                  <label>Grupo Origem</label>
+                  <select id="waOutreachSourceGroup" onchange="handleOutreachSourceGroupChange()" class="form-control" style="width:250px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                    <option value="">Selecione o grupo origem...</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Vários grupos (segure Ctrl para múltipla seleção)</label>
+                  <select id="waOutreachSourceGroups" multiple onchange="handleOutreachSourceGroupChange()" class="form-control" style="width:320px; min-height:120px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></select>
+                </div>
+                <div>
+                  <label>Instância WhatsApp</label>
+                  <select id="waOutreachInstanceName" class="form-control" style="width:250px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                    <option value="">Padrão do servidor</option>
+                  </select>
+                </div>
+                <div style="align-self:flex-end;">
+                  <button class="secondary" onclick="loadGroupParticipantsForOutreach()">Carregar participantes</button>
+                </div>
+              </div>
+              <div class="row" style="margin-top:8px; gap:12px; flex-wrap:wrap;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="checkbox" id="waOutreachUseAllParticipants" />
+                  <span>Usar grupo inteiro (todos os participantes dos grupos selecionados)</span>
+                </label>
+              </div>
+              <div id="waOutreachSelectionArea" class="card hidden" style="margin-top:15px; background: rgba(0,0,0,0.1); border: 1px dashed var(--border);">
+                <h3 style="margin-top:0;">Seleção de participantes</h3>
+                <div class="row" style="gap:20px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+                  <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                    <input type="checkbox" id="waOutreachSelectAll" onchange="toggleSelectAllOutreachParticipants(this.checked)">
+                    Selecionar todos
+                  </label>
+                  <div style="display:flex; align-items:center; gap:5px;">
+                    <label>Quantidade:</label>
+                    <input type="number" id="waOutreachLimit" class="form-control" style="width:90px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); padding: 4px;" placeholder="Ex: 80" oninput="applyOutreachParticipantLimit(this.value)">
+                  </div>
+                  <div style="flex:1; min-width:220px;">
+                    <input type="text" id="waOutreachSearch" class="form-control" style="width:100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border); padding: 8px;" placeholder="Pesquisar participante..." oninput="filterOutreachParticipantsList(this.value)">
+                  </div>
+                </div>
+                <div id="waOutreachParticipantList" style="max-height:250px; overflow-y:auto; display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:5px; padding:10px; background: var(--bg);">
+                  <span class="muted">Aguardando carregamento...</span>
+                </div>
+                <div class="muted" style="margin-top:5px; font-size:0.85em;">
+                  <span id="waOutreachSelectionCount">0</span> selecionados de <span id="waOutreachTotalCount">0</span> participantes.
+                </div>
+              </div>
+              <div class="grid" style="margin-top:12px; gap:12px;">
+                <div style="grid-column: 1 / -1;">
+                  <label>Link do grupo oficial</label>
+                  <input id="waOutreachLinkUrl" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" placeholder="https://chat.whatsapp.com/..." />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label>Pitch base (modelos prontos)</label>
+                  <div class="row" style="gap:8px; align-items:center;">
+                    <select id="waOutreachPitchPreset" class="form-control" style="min-width:280px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                      <option value="direto">Direto</option>
+                      <option value="amigavel" selected>Amigável</option>
+                      <option value="premium">Premium</option>
+                      <option value="seguranca-forte">Segurança forte</option>
+                    </select>
+                    <button type="button" class="secondary" onclick="applyOutreachPitchPreset()">Aplicar pitch base</button>
+                  </div>
+                </div>
+                <div>
+                  <label>Intervalo entre mensagens (ms)</label>
+                  <input id="waOutreachIntervalMs" type="number" min="250" max="15000" value="1500" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Limite recomendado por disparo</label>
+                  <input id="waOutreachRecommendedLimit" type="number" value="80" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" oninput="applyOutreachParticipantLimit(this.value)" />
+                </div>
+                <div>
+                  <label>Intervalo mínimo entre usuários (ms)</label>
+                  <input id="waOutreachMinIntervalMs" type="number" min="250" max="30000" value="1200" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Intervalo máximo entre usuários (ms)</label>
+                  <input id="waOutreachMaxIntervalMs" type="number" min="250" max="30000" value="2600" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Tamanho do lote</label>
+                  <input id="waOutreachBatchSize" type="number" min="1" max="200" value="25" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Pausa entre lotes (segundos)</label>
+                  <input id="waOutreachBatchPauseSeconds" type="number" min="0" max="1800" value="90" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Mensagens antes do link</label>
+                  <select id="waOutreachPreLinkMessages" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                    <option value="2">2 mensagens</option>
+                    <option value="3" selected>3 mensagens</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Modo de espera</label>
+                  <select id="waOutreachWaitMode" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                    <option value="response-or-timeout" selected>Aguardar resposta ou timeout</option>
+                    <option value="timeout">Somente timeout</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Timeout de resposta (segundos)</label>
+                  <input id="waOutreachWaitTimeoutSeconds" type="number" min="10" max="600" value="120" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Fallback de envio</label>
+                  <label style="display:flex; align-items:center; gap:8px; padding-top:8px;">
+                    <input type="checkbox" id="waOutreachSendLinkOnTimeout" checked />
+                    <span>Enviar link mesmo sem resposta após timeout</span>
+                  </label>
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label>Pitch de segurança (usado no diálogo IA)</label>
+                  <textarea id="waOutreachMessage" class="form-control" style="width:100%; min-height:110px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" placeholder="Ex: Nosso grupo oficial é moderado, com ofertas verificadas e links revisados para reduzir risco de golpe."></textarea>
+                  <small class="muted">A IA monta saudação por horário + explicação + convite antes de enviar o link.</small>
+                  <div class="card" style="margin-top:10px; padding:10px;">
+                    <div class="row" style="justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+                      <strong>Dicionário de emoji para o disparo</strong>
+                      <span class="muted" style="font-size:12px;">Clique para inserir no texto da mensagem</span>
+                    </div>
+                    <div id="waOutreachEmojiDictionary" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:10px;">
+                      <div>
+                        <div class="muted" style="margin-bottom:6px;">Urgência</div>
+                        <div class="row" style="gap:6px; flex-wrap:wrap;">
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🔥')">🔥</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('⚡')">⚡</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🚨')">🚨</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('⏰')">⏰</button>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="muted" style="margin-bottom:6px;">Oferta</div>
+                        <div class="row" style="gap:6px; flex-wrap:wrap;">
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('💸')">💸</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🏷️')">🏷️</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🎁')">🎁</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🛒')">🛒</button>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="muted" style="margin-bottom:6px;">Confiança</div>
+                        <div class="row" style="gap:6px; flex-wrap:wrap;">
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('✅')">✅</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🛡️')">🛡️</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🔒')">🔒</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('⭐')">⭐</button>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="muted" style="margin-bottom:6px;">Convite</div>
+                        <div class="row" style="gap:6px; flex-wrap:wrap;">
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('👉')">👉</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('📲')">📲</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('📩')">📩</button>
+                          <button type="button" class="secondary" onclick="insertOutreachEmoji('🙌')">🙌</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
+                <button id="btnOutreachSend" onclick="sendOutreachMessages()">Disparar mensagens</button>
+                <button class="secondary" onclick="prefillOutreachMessageTemplate()">Aplicar template</button>
+                <span id="waOutreachStatus" class="status muted"></span>
+              </div>
+              <section class="card" style="margin-top:14px;">
+                <div class="row" style="justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap;">
+                  <div>
+                    <h3 style="margin:0;">Log de Andamento do Disparo</h3>
+                    <p class="muted" style="margin:6px 0 0 0;">Acompanhe fila, execução e resultado por participante em tempo real.</p>
+                  </div>
+                  <div class="row" style="gap:8px; align-items:flex-end; flex-wrap:wrap;">
+                    <div>
+                      <label>Operação (opcional)</label>
+                      <input id="waOutreachOperationId" class="form-control" placeholder="ID da operação" style="width:220px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                    </div>
+                    <div>
+                      <label>Limite</label>
+                      <input id="waOutreachLogsLimit" type="number" min="10" max="2000" value="200" class="form-control" style="width:90px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                    </div>
+                    <button type="button" class="secondary" onclick="loadOutreachProgressLogs()">Atualizar log</button>
+                  </div>
+                </div>
+                <p id="waOutreachLogsSummary" class="status muted" style="margin-top:10px;">Sem eventos carregados.</p>
+                <div class="grid" style="margin-top:10px; gap:10px;">
+                  <div class="card" style="padding:10px;">
+                    <h4 style="margin:0 0 6px 0;">Progresso</h4>
+                    <div id="waOutreachMetricProgress" class="muted">-</div>
+                  </div>
+                  <div class="card" style="padding:10px;">
+                    <h4 style="margin:0 0 6px 0;">Sucesso</h4>
+                    <div id="waOutreachMetricSuccess" class="muted">-</div>
+                  </div>
+                  <div class="card" style="padding:10px;">
+                    <h4 style="margin:0 0 6px 0;">Falhas</h4>
+                    <div id="waOutreachMetricFail" class="muted">-</div>
+                  </div>
+                  <div class="card" style="padding:10px;">
+                    <h4 style="margin:0 0 6px 0;">ETA</h4>
+                    <div id="waOutreachMetricEta" class="muted">-</div>
+                  </div>
+                </div>
+                <div class="table-wrap" style="margin-top:10px; max-height:320px; overflow:auto;">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Data/Hora</th>
+                        <th>Etapa</th>
+                        <th>Participante</th>
+                        <th>Progresso</th>
+                        <th>Mensagem</th>
+                        <th>Operação</th>
+                      </tr>
+                    </thead>
+                    <tbody id="waOutreachLogsBody">
+                      <tr>
+                        <td colspan="6" class="muted">Clique em "Atualizar log" para carregar.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <!-- Conversão: cruzamento de enviados x entradas no grupo -->
+              <section style="margin-top:20px;">
+                <h4 style="margin-bottom:10px;">Conversão — Quem recebeu e entrou no grupo</h4>
+                <div class="grid" style="grid-template-columns: 1fr 1fr auto; gap:8px; align-items:end; margin-bottom:10px;">
+                  <div>
+                    <label>Disparo</label>
+                    <select id="waConversionScheduleId" class="form-control" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px;">
+                      <option value="">— selecione um disparo —</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Filtrar por Grupo (opcional)</label>
+                    <input id="waConversionGroupId" class="form-control" placeholder="ID do grupo ou deixe em branco" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:6px;" />
+                  </div>
+                  <div>
+                    <button class="btn" onclick="loadOutreachConversion()">Calcular Conversão</button>
+                  </div>
+                </div>
+
+                <div class="grid" style="grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:12px;">
+                  <div class="card" style="padding:12px; text-align:center;">
+                    <div class="muted" style="font-size:11px;">Mensagens Enviadas</div>
+                    <div id="waConvMetricSent" style="font-size:22px; font-weight:700;">-</div>
+                  </div>
+                  <div class="card" style="padding:12px; text-align:center;">
+                    <div class="muted" style="font-size:11px;">Entraram no Grupo</div>
+                    <div id="waConvMetricJoined" style="font-size:22px; font-weight:700; color:var(--ok);">-</div>
+                  </div>
+                  <div class="card" style="padding:12px; text-align:center;">
+                    <div class="muted" style="font-size:11px;">Taxa de Conversão</div>
+                    <div id="waConvMetricRate" style="font-size:22px; font-weight:700; color:var(--accent);">-</div>
+                  </div>
+                  <div class="card" style="padding:12px; text-align:center;">
+                    <div class="muted" style="font-size:11px;">Eventos de Entrada</div>
+                    <div id="waConvMetricEvents" style="font-size:22px; font-weight:700;">-</div>
+                  </div>
+                </div>
+
+                <div id="waConversionSummary" class="status muted" style="margin-bottom:6px;"></div>
+                <div style="overflow-x:auto;">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Participante</th>
+                        <th>Grupo</th>
+                        <th>Nome do Grupo</th>
+                        <th>Ação</th>
+                        <th>Hora de Entrada</th>
+                      </tr>
+                    </thead>
+                    <tbody id="waConversionBody">
+                      <tr><td colspan="5" class="muted">Selecione um disparo e clique em "Calcular Conversão".</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             </section>
           </div>
         </section>
       </div>
     </main>
   </div>
-  <script src="dashboard.js?v=20260313j"></script>
+  <script src="/flow-endpoints-map.js?v=20260422-flow-map"></script>
+  <script src="/dashboard.js?v=20260402-analytics-product-modal"></script>
   <div id="toastContainer"></div>
   <div id="docModal" class="modal">
     <div class="modal-content">
@@ -1139,6 +3128,113 @@
       <div id="docBody"></div>
     </div>
   </div>
-</body>
+  <div id="waScheduleEditModal" class="modal">
+    <div class="modal-content" style="max-width:900px;">
+      <span class="modal-close" onclick="closeWaScheduleEditor()">&times;</span>
+      <h2 id="waScheduleEditTitle">Editar agendamento</h2>
+      <input type="hidden" id="waScheduleEditId" />
+      <input type="hidden" id="waScheduleEditType" />
+
+      <div class="grid" style="margin-top:12px; gap:12px;">
+        <div>
+          <label>Nome</label>
+          <input id="waScheduleEditName" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+        </div>
+        <div>
+          <label>Status</label>
+          <label style="display:flex; align-items:center; gap:10px; padding-top:8px;">
+            <input id="waScheduleEditEnabled" type="checkbox" />
+            <span>Ativo</span>
+          </label>
+        </div>
+        <div>
+          <label>Instância WhatsApp</label>
+          <select id="waScheduleEditInstanceName" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+            <option value="">Padrão do servidor</option>
+          </select>
+        </div>
+        <div id="waScheduleEditCopySourceWrap">
+          <label>Grupo Origem</label>
+          <select id="waScheduleEditCopySourceGroup" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></select>
+        </div>
+        <div id="waScheduleEditCopyTargetWrap">
+          <label>Grupo Destino</label>
+          <select id="waScheduleEditCopyTargetGroup" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></select>
+        </div>
+        <div id="waScheduleEditCopyBatchWrap">
+          <label>Lote por execução</label>
+          <input id="waScheduleEditCopyBatchSize" type="number" min="1" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+        </div>
+        <div id="waScheduleEditCopyIntervalWrap">
+          <label>Intervalo em minutos</label>
+          <input id="waScheduleEditCopyInterval" type="number" min="1" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+        </div>
+        <div id="waScheduleEditCopyStartWrap">
+          <label>Início</label>
+          <input id="waScheduleEditCopyStartAt" type="datetime-local" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+        </div>
+        <div id="waScheduleEditCopyRefreshWrap" style="grid-column: 1 / -1;">
+          <label style="display:flex; align-items:center; gap:10px; padding-top:8px;">
+            <input id="waScheduleEditCopyRefreshQueue" type="checkbox" checked />
+            <span>Recarregar fila da origem ao salvar</span>
+          </label>
+        </div>
+        <div id="waScheduleEditMessageTargetWrap">
+          <label>Grupo Destino</label>
+          <select id="waScheduleEditMessageTargetGroup" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></select>
+        </div>
+        <div id="waScheduleEditMessageIntervalWrap">
+          <label>Intervalo em minutos</label>
+          <input id="waScheduleEditMessageInterval" type="number" min="1" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+        </div>
+        <div id="waScheduleEditMessageStartWrap">
+          <label>Início</label>
+          <input id="waScheduleEditMessageStartAt" type="datetime-local" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+        </div>
+        <div id="waScheduleEditMessageImageWrap" style="grid-column: 1 / -1;">
+          <label>Imagem pública opcional</label>
+          <input id="waScheduleEditMessageImageUrl" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+          <small class="muted">Use uma URL pública do domínio. Se estiver em branco, será enviada só a mensagem.</small>
+        </div>
+        <div style="grid-column: 1 / -1;">
+          <label>Mensagem</label>
+          <textarea id="waScheduleEditMessageText" class="form-control" style="width:100%; min-height:130px; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;"></textarea>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:14px; justify-content:flex-end;">
+        <span id="waScheduleEditStatus" class="status muted" style="margin-right:auto;"></span>
+        <button type="button" class="secondary" onclick="closeWaScheduleEditor()">Cancelar</button>
+        <button type="button" id="btnSaveWaScheduleEdit" onclick="saveWaScheduleEditor()">Salvar alterações</button>
+      </div>
+    </div>
+  </div>
+  <div id="analyticsProductModal" class="modal">
+    <div class="modal-content analytics-product-modal-content">
+      <span class="modal-close" onclick="closeAnalyticsProductModal()">&times;</span>
+      <h2 id="analyticsProductModalTitle">Detalhes do produto</h2>
+      <div class="analytics-product-grid">
+        <div class="analytics-product-media-wrap">
+          <img id="analyticsProductModalImage" class="analytics-product-image" alt="Produto" src="img/placeholder.png" />
+        </div>
+        <div class="analytics-product-meta">
+          <div class="analytics-product-meta-row"><span class="muted">Loja</span><strong id="analyticsProductModalStore">-</strong></div>
+          <div class="analytics-product-meta-row"><span class="muted">Preço</span><strong id="analyticsProductModalPrice">-</strong></div>
+          <div class="analytics-product-meta-row"><span class="muted">Preço anterior</span><strong id="analyticsProductModalPrevPrice">-</strong></div>
+          <div class="analytics-product-meta-row"><span class="muted">Desconto</span><strong id="analyticsProductModalDiscount">-</strong></div>
+          <div class="analytics-product-actions">
+            <a id="analyticsProductModalTracked" href="#" target="_blank" rel="noopener noreferrer" class="secondary">Abrir rastreado</a>
+            <a id="analyticsProductModalConverted" href="#" target="_blank" rel="noopener noreferrer" class="secondary">Abrir convertido</a>
+            <a id="analyticsProductModalOriginal" href="#" target="_blank" rel="noopener noreferrer" class="secondary">Ver produto</a>
+          </div>
+        </div>
+      </div>
+      <div class="analytics-product-description-wrap">
+        <h3>Descricao</h3>
+        <p id="analyticsProductModalDescription" class="analytics-product-description muted">Sem descricao disponivel.</p>
+      </div>
+    </div>
+  </div>
+  </body>
 
 </html>

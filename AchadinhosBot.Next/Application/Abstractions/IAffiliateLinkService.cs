@@ -2,7 +2,7 @@ namespace AchadinhosBot.Next.Application.Abstractions;
 
 public interface IAffiliateLinkService
 {
-    Task<AffiliateLinkResult> ConvertAsync(string rawUrl, CancellationToken cancellationToken, string? source = null);
+    Task<AffiliateLinkResult> ConvertAsync(string rawUrl, CancellationToken cancellationToken, string? source = null, bool forceResolution = false);
 }
 
 public sealed record AffiliateLinkResult(

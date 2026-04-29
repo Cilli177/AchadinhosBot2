@@ -1,5 +1,380 @@
-let currentRole = null;
+﻿let currentRole = null;
+let aiOpsSessionId = null;
 let logsAutoTimer = null;
+let waCurrentGroupParticipants = [];
+let waAdminGroupsCache = null;
+let waAdminGroupsByInstanceCache = new Map();
+let waParticipantsCache = new Map();
+let waAutomationCache = null;
+let waAutomationQueueCache = null;
+let waInstancesCache = null;
+let waScheduleEditState = null;
+let waQrPollTimer = null;
+let waQrPollInstanceName = null;
+let opsOverviewTimer = null;
+let currentOfferNormalizationRunId = null;
+const WA_MANUAL_COPY_MAX_PARTICIPANTS = 50;
+let waOutreachLogsTimer = null;
+let waOutreachLastOperationId = null;
+let skillsHubCache = [];
+let skillsHubActiveType = '';
+let instagramDraftCache = [];
+let instagramPublishLogCache = [];
+const WA_ENGAGEMENT_PLAN_STORAGE_KEY = 'waEngagementPlan:v1';
+const INSTAGRAM_REEL_ASSISTED_PROCESS = 'Fluxo Reel Assistido';
+const INSTAGRAM_PROCESS_LEGACY = 'Legado';
+const FLOW_ENDPOINTS_MAP_FALLBACK = [
+  {
+    canal: 'Telegram',
+    nome: 'AE-IA 3000 - VÍDEOS VIRAIS',
+    id: '2425105459',
+    papel: 'Origem de reels e vídeo do produto',
+    destino: 'Instagram - preview e publicação'
+  },
+  {
+    canal: 'Telegram',
+    nome: 'Rota Telegram principal',
+    id: '1871121243, 1271986083, 2775581964, 3703804341, 1569488789, 3632436217',
+    papel: 'Origem Telegram para WhatsApp',
+    destino: 'Grupo oficial WhatsApp'
+  },
+  {
+    canal: 'WhatsApp',
+    nome: 'Rota Nova Oficial',
+    id: '120363399495595930@g.us, 120363216142767996@g.us, 120363390817589999@g.us, 120363401464158461@g.us, 120363403893859078@g.us, 120363027285871635@g.us, 120363421220620042@g.us, 120363343810565726@g.us, 120363296924962892@g.us, 120363421418282703@g.us',
+    papel: 'Origem WhatsApp principal',
+    destino: 'Grupo oficial WhatsApp'
+  },
+  {
+    canal: 'WhatsApp',
+    nome: 'Ponte Mercado Livre Scout',
+    id: '120363409272515351@g.us',
+    papel: 'Ponte e triagem de ofertas do Mercado Livre',
+    destino: 'Grupo oficial WhatsApp'
+  },
+  {
+    canal: 'WhatsApp',
+    nome: 'Rei das Ofertas Oficial',
+    id: '120363405661434395@g.us',
+    papel: 'Destino final',
+    destino: 'Publicação e recebimento de ofertas'
+  }
+];
+const WA_OUTREACH_PITCH_PRESETS = {
+  direto: 'Grupo oficial com ofertas verificadas, links revisados e menos spam. O foco e receber oportunidade real com seguranca.',
+  amigavel: 'Nosso grupo oficial e moderado, com ofertas validadas e links revisados para mais seguranca e menos ruido no seu WhatsApp.',
+  premium: 'No grupo oficial voce recebe oportunidades filtradas e confiaveis primeiro, com curadoria e padrao de qualidade mais alto.',
+  'seguranca-forte': 'Antes de qualquer oferta, validamos origem e qualidade dos links para reduzir risco de golpe. O grupo oficial existe para isso.'
+};
+
+// Safety Helpers for DOM interaction
+function setSafeVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
+}
+function setSafeChecked(id, checked) {
+  const el = document.getElementById(id);
+  if (el) el.checked = !!checked;
+}
+function setSafeText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+function setSafeClass(id, cls) {
+  const el = document.getElementById(id);
+  if (el) el.className = cls;
+}
+
+function getConfiguredPublicBaseUrl() {
+  const raw = window.__settingsCache?.bioHub?.publicBaseUrl || '';
+  return String(raw).trim().replace(/\/+$/, '');
+}
+
+function looksLikeInternalHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return host === 'localhost'
+    || host === '127.0.0.1'
+    || host === '0.0.0.0'
+    || host === 'host.docker.internal'
+    || host.endsWith('.local')
+    || host.endsWith('.internal');
+}
+
+function buildPublicUrl(path) {
+  const publicBaseUrl = getConfiguredPublicBaseUrl();
+  if (publicBaseUrl) {
+    return new URL(path, publicBaseUrl.endsWith('/') ? publicBaseUrl : `${publicBaseUrl}/`).toString();
+  }
+
+  const origin = window.location?.origin || '';
+  try {
+    const parsed = new URL(origin);
+    if (looksLikeInternalHost(parsed.hostname)) {
+      return null;
+    }
+    return new URL(path, origin).toString();
+  } catch {
+    return null;
+  }
+}
+
+function isPublicAbsoluteUrl(value) {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function hideWhatsAppQr() {
+  const card = document.getElementById('waQrCard');
+  const image = document.getElementById('qrImage');
+  const hint = document.getElementById('qrHint');
+  const badge = document.getElementById('qrStateBadge');
+  if (card) card.classList.add('hidden');
+  if (image) {
+    image.classList.add('hidden');
+    image.removeAttribute('src');
+  }
+  if (hint) hint.classList.add('hidden');
+  if (badge) {
+    badge.textContent = 'Aguardando QR';
+    badge.className = 'badge warn';
+  }
+}
+
+function getWhatsAppQrValue(payload) {
+  return payload?.qrCode || payload?.qrCodeBase64 || null;
+}
+
+function showWhatsAppQr(qrCode, hintText = 'Escaneie com o WhatsApp para concluir a conexão.') {
+  const card = document.getElementById('waQrCard');
+  const image = document.getElementById('qrImage');
+  const hint = document.getElementById('qrHint');
+  const badge = document.getElementById('qrStateBadge');
+  if (!card || !image) return;
+  image.src = qrCode;
+  image.classList.remove('hidden');
+  card.classList.remove('hidden');
+  if (hint) {
+    hint.textContent = hintText;
+    hint.classList.remove('hidden');
+  }
+  if (badge) {
+    badge.textContent = 'QR disponível';
+    badge.className = 'badge warn';
+  }
+}
+
+function stopWhatsAppQrPolling() {
+  if (waQrPollTimer) {
+    clearInterval(waQrPollTimer);
+    waQrPollTimer = null;
+  }
+  waQrPollInstanceName = null;
+}
+
+async function refreshWhatsAppQrSnapshot(options = {}) {
+  const instanceName = (options.instanceName ?? document.getElementById('waInstanceName')?.value ?? '').trim();
+  const silent = options.silent !== false;
+
+  try {
+    const query = instanceName ? `?instanceName=${encodeURIComponent(instanceName)}` : '';
+    const snapshot = await api(`/api/integrations/whatsapp/status${query}`);
+    const qrValue = getWhatsAppQrValue(snapshot);
+    const status = document.getElementById('whatsappStatus');
+
+    if (snapshot.connected) {
+      hideWhatsAppQr();
+      stopWhatsAppQrPolling();
+      if (status) {
+        status.textContent = snapshot.message || 'Instância conectada.';
+        status.className = 'status ok';
+      }
+      return snapshot;
+    }
+
+    if (qrValue) {
+      showWhatsAppQr(qrValue, snapshot.message || 'Escaneie com o WhatsApp para concluir a conexão.');
+      if (status) {
+        status.textContent = snapshot.message || 'QR disponível. Aguardando leitura...';
+        status.className = 'status warn';
+      }
+      return snapshot;
+    }
+
+    if (!silent && status) {
+      status.textContent = snapshot.message || 'Instância desconectada.';
+      status.className = 'status bad';
+    }
+
+    return snapshot;
+  } catch (e) {
+    if (!silent) {
+      const status = document.getElementById('whatsappStatus');
+      if (status) {
+        status.textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+        status.className = 'status bad';
+      }
+    }
+    return null;
+  }
+}
+
+function startWhatsAppQrPolling(instanceName) {
+  const normalizedInstance = (instanceName || '').trim();
+  if (waQrPollTimer && waQrPollInstanceName === normalizedInstance) {
+    return;
+  }
+
+  stopWhatsAppQrPolling();
+  waQrPollInstanceName = normalizedInstance;
+  waQrPollTimer = setInterval(() => {
+    refreshWhatsAppQrSnapshot({ instanceName: waQrPollInstanceName, silent: true });
+  }, 5000);
+}
+
+function renderScheduledMessagePreview() {
+  const preview = document.getElementById('waMessageSchedulePreview');
+  if (!preview) return;
+
+  const name = (document.getElementById('waMessageScheduleName')?.value || '').trim();
+  const targetSelect = document.getElementById('waMessageScheduleTargetGroup');
+  const targetGroupLabel = targetSelect?.selectedOptions?.[0]?.textContent?.trim() || 'Grupo destino';
+  const text = (document.getElementById('waMessageScheduleText')?.value || '').trim();
+  const imageUrl = (document.getElementById('waMessageScheduleImageUrl')?.value || '').trim();
+  const messageHtml = text
+    ? escapeHtml(text).replace(/\n/g, '<br />')
+    : '<span class="muted">Sem mensagem ainda.</span>';
+  const imageHtml = imageUrl
+    ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener noreferrer" class="scheduled-preview-image-link">
+        <img src="${escapeHtml(imageUrl)}" alt="Preview" onerror="this.style.display='none';" />
+      </a>`
+    : '';
+  const linkHint = text.match(/https?:\/\/[^\s<]+/i)?.[0] || '';
+
+  preview.innerHTML = `
+    <div class="scheduled-preview-shell">
+      <div class="scheduled-preview-head">
+        <div>
+          <strong>${escapeHtml(name || 'Mensagem agendada')}</strong><br />
+          <small class="muted">${escapeHtml(targetGroupLabel)}</small>
+        </div>
+        <span class="badge muted">${imageUrl ? 'Com imagem' : 'Texto apenas'}</span>
+      </div>
+      ${imageHtml}
+      <div class="scheduled-preview-message">${messageHtml}</div>
+      ${linkHint ? `<div class="scheduled-preview-linkhint"><small class="muted">Link detectado:</small><br /><code>${escapeHtml(linkHint)}</code></div>` : ''}
+    </div>
+  `;
+}
+
+function updateScheduledMessagePreview() {
+  renderScheduledMessagePreview();
+}
+
+async function uploadScheduledMessageImage(file) {
+  if (!file) return;
+
+  const status = document.getElementById('waMessageScheduleStatus');
+  if (status) {
+    status.textContent = 'Enviando imagem...';
+    status.className = 'status muted';
+  }
+
+  const formData = new FormData();
+  formData.append('file', file, file.name || 'image.png');
+
+  const res = await fetch('/api/admin/media/upload', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData
+  });
+
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw { status: res.status, data };
+
+  const imageUrlEl = document.getElementById('waMessageScheduleImageUrl');
+  if (imageUrlEl) {
+    imageUrlEl.value = data.publicUrl || '';
+  }
+  renderScheduledMessagePreview();
+  return data;
+}
+
+async function uploadScheduledMessageImageFromInput() {
+  const fileInput = document.getElementById('waMessageScheduleImageFile');
+  const file = fileInput?.files?.[0];
+  if (!file) {
+    const status = document.getElementById('waMessageScheduleStatus');
+    if (status) {
+      status.textContent = 'Selecione um arquivo de imagem primeiro.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  try {
+    await uploadScheduledMessageImage(file);
+    const status = document.getElementById('waMessageScheduleStatus');
+    if (status) {
+      status.textContent = 'Imagem carregada e vinculada ao modelo.';
+      status.className = 'status ok';
+    }
+  } catch (err) {
+    const status = document.getElementById('waMessageScheduleStatus');
+    if (status) {
+      status.textContent = err?.data?.error || 'Falha ao carregar a imagem.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+async function pasteScheduledMessageImage() {
+  const status = document.getElementById('waMessageScheduleStatus');
+  if (!navigator.clipboard?.read) {
+    if (status) {
+      status.textContent = 'Seu navegador nao permite colar imagem por clipboard. Use o arquivo.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const imageType = item.types.find(t => t.startsWith('image/'));
+      if (!imageType) continue;
+      const blob = await item.getType(imageType);
+      const ext = imageType.split('/')[1] || 'png';
+      const file = new File([blob], `clipboard.${ext === 'jpeg' ? 'jpg' : ext}`, { type: imageType });
+      await uploadScheduledMessageImage(file);
+      if (status) {
+        status.textContent = 'Imagem colada da area de transferencia.';
+        status.className = 'status ok';
+      }
+      return;
+    }
+
+    if (status) {
+      status.textContent = 'Nenhuma imagem foi encontrada na area de transferencia.';
+      status.className = 'status warn';
+    }
+  } catch (err) {
+    if (status) {
+      status.textContent = err?.message || 'Falha ao colar a imagem.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+function refreshBioLinksPreview() {
+  console.debug('refreshBioLinksPreview nao implementado nesta versao.');
+}
+
 
 async function api(url, method = 'GET', body = null) {
   const res = await fetch(url, {
@@ -17,18 +392,26 @@ async function api(url, method = 'GET', body = null) {
 
 function showAuthState(authenticated, username = '', role = '') {
   document.body.classList.toggle('unauthenticated', !authenticated);
-  document.getElementById('loginCard').classList.toggle('hidden', authenticated);
-  document.getElementById('panel').classList.toggle('hidden', !authenticated);
+  const loginCard = document.getElementById('loginCard');
+  if (loginCard) loginCard.classList.toggle('hidden', authenticated);
+  const panel = document.getElementById('panel');
+  if (panel) panel.classList.toggle('hidden', !authenticated);
+  
   if (authenticated) {
     currentRole = role;
-    document.getElementById('sessionInfo').textContent = `Autenticado como ${username} (${role})`;
-    document.getElementById('saveBtn').disabled = role !== 'admin';
-    showSection(localStorage.getItem('activeTab') || 'ops');
+    setSafeText('sessionInfo', `Autenticado como ${username} (${role})`);
+    const saveBtn = document.getElementById('saveBtn');
+    if (saveBtn) saveBtn.disabled = (role !== 'admin');
+    const waFooterSaveBtn = document.getElementById('btnSaveWaFooter');
+    if (waFooterSaveBtn) waFooterSaveBtn.disabled = (role !== 'admin');
+    const waSafetySaveBtn = document.getElementById('btnSaveWaSafetySettings');
+    if (waSafetySaveBtn) waSafetySaveBtn.disabled = (role !== 'admin');
+    showSection(localStorage.getItem('activeTab') || 'overview');
   }
 }
 
 function showSection(name) {
-  const sections = ['ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'ai-lab', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'analytics'];
+  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -37,6 +420,12 @@ function showSection(name) {
   document.querySelectorAll('.nav button').forEach(btn => {
     btn.classList.toggle('active', btn.getAttribute('data-tab') === name);
   });
+  if (name === 'overview') {
+    loadOperationalOverview();
+    startOperationalOverviewAutoRefresh();
+  } else {
+    stopOperationalOverviewAutoRefresh();
+  }
   if (name === 'logs') {
     startLogsAutoRefresh();
   } else {
@@ -44,6 +433,9 @@ function showSection(name) {
   }
   if (name === 'analytics') {
     loadAnalyticsSummary();
+  }
+  if (name === 'skills') {
+    loadSkillsHub();
   }
   if (name === 'linkresponder') {
     loadResponderLogs();
@@ -63,8 +455,17 @@ function showSection(name) {
       loadAgentChannelTargets().then(() => loadWhatsAppOfferScout());
     });
   }
+  if (name === 'offers') {
+    loadOfferNormalizationRuns();
+    if (currentOfferNormalizationRunId) {
+      loadOfferNormalizationRun(currentOfferNormalizationRunId);
+    }
+  }
   if (name === 'ai-lab') {
     document.getElementById('aiLabResults').innerHTML = '';
+  }
+  if (name === 'ai-ops') {
+    refreshAiOpsSessionState();
   }
   if (name === 'instagram-publish') {
     loadInstagramDrafts();
@@ -75,6 +476,539 @@ function showSection(name) {
     refreshBioLinksPreview();
     loadBioFunnel();
   }
+  if (name === 'wa-monitoring') {
+    loadMonitorGroups();
+    loadMembershipEvents();
+    loadWhatsAppAutomation();
+  }
+  if (name === 'wa-automation') {
+    loadWhatsAppAutomation();
+  }
+  if (name === 'engagement-plan') {
+    loadEngagementPlan();
+    refreshEngagementPlanSummary();
+  }
+  if (name === 'wa-outreach') {
+    refreshInstanceBoundGroupSelectors();
+    startOutreachLogsAutoRefresh();
+  } else {
+    stopOutreachLogsAutoRefresh();
+  }
+}
+
+function setAiOpsStatus(id, text, cls = 'muted') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = `status ${cls}`;
+}
+
+function getAiOpsSessionId() {
+  if (aiOpsSessionId) return aiOpsSessionId;
+  const cached = localStorage.getItem('aiOpsSessionId');
+  if (cached) aiOpsSessionId = cached;
+  return aiOpsSessionId;
+}
+
+function setAiOpsSessionId(value) {
+  aiOpsSessionId = value || null;
+  if (aiOpsSessionId) localStorage.setItem('aiOpsSessionId', aiOpsSessionId);
+  else localStorage.removeItem('aiOpsSessionId');
+}
+
+async function refreshAiOpsSessionState() {
+  const sessionId = getAiOpsSessionId();
+  const meta = document.getElementById('aiOpsSessionMeta');
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsSessionStatus', 'Sessao bloqueada.', 'warn');
+    if (meta) meta.textContent = '';
+    return;
+  }
+
+  try {
+    const data = await api(`/api/admin/workspace-agent/session/${encodeURIComponent(sessionId)}`);
+    const s = data?.session;
+    if (!s) throw new Error('Sessao nao encontrada.');
+    setAiOpsStatus('aiOpsSessionStatus', `Sessao ativa (${s.provider})`, 'ok');
+    if (meta) {
+      meta.textContent = `Sessao: ${s.sessionId} | expira: ${formatTs(s.expiresAtUtc)} | terminal: ${s.canRunTerminal ? 'on' : 'off'} | escrita: ${s.canWriteWorkspace ? 'on' : 'off'}`;
+    }
+  } catch (err) {
+    setAiOpsSessionId(null);
+    setAiOpsStatus('aiOpsSessionStatus', err?.data?.error || 'Sessao expirada.', 'warn');
+    if (meta) meta.textContent = '';
+  }
+}
+
+async function openAiOpsSession() {
+  const provider = document.getElementById('aiOpsProvider')?.value || 'codex';
+  const pin = document.getElementById('aiOpsPin')?.value || '';
+  const environment = document.getElementById('aiOpsEnvironment')?.value || 'dev';
+  setAiOpsStatus('aiOpsSessionStatus', 'Abrindo sessao...', 'muted');
+
+  try {
+    const data = await api('/api/admin/workspace-agent/session/open', 'POST', { provider, pin, environment });
+    const session = data?.session;
+    if (!session?.sessionId) throw new Error('Sessao nao retornada pelo backend.');
+    setAiOpsSessionId(session.sessionId);
+    setAiOpsStatus('aiOpsSessionStatus', `Sessao ativa (${session.provider})`, 'ok');
+    const meta = document.getElementById('aiOpsSessionMeta');
+    if (meta) {
+      meta.textContent = `Sessao: ${session.sessionId} | expira: ${formatTs(session.expiresAtUtc)} | workspace: ${session.workspacePath}`;
+    }
+  } catch (err) {
+    setAiOpsStatus('aiOpsSessionStatus', err?.data?.error || 'Falha ao abrir sessao.', 'warn');
+  }
+}
+
+async function closeAiOpsSession() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsSessionStatus', 'Nenhuma sessao ativa.', 'warn');
+    return;
+  }
+
+  try {
+    await api('/api/admin/workspace-agent/session/close', 'POST', { sessionId });
+  } catch (err) {
+    console.debug('Erro ao encerrar sessao AI Ops', err);
+  }
+
+  setAiOpsSessionId(null);
+  setAiOpsStatus('aiOpsSessionStatus', 'Sessao encerrada.', 'muted');
+  const meta = document.getElementById('aiOpsSessionMeta');
+  if (meta) meta.textContent = '';
+}
+
+async function sendAiOpsChat() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsChatStatus', 'Abra uma sessao antes de usar o chat.', 'warn');
+    return;
+  }
+
+  const prompt = document.getElementById('aiOpsPrompt')?.value || '';
+  if (!prompt.trim()) {
+    setAiOpsStatus('aiOpsChatStatus', 'Informe um prompt.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsChatStatus', 'Processando prompt...', 'muted');
+  try {
+    const data = await api('/api/admin/workspace-agent/chat', 'POST', { sessionId, prompt });
+    const text = data?.text || '';
+    const provider = data?.provider || '-';
+    const output = document.getElementById('aiOpsResponse');
+    if (output) output.value = text;
+    setAiOpsStatus('aiOpsChatStatus', `Resposta recebida (${provider}).`, 'ok');
+  } catch (err) {
+    setAiOpsStatus('aiOpsChatStatus', err?.data?.error || 'Falha ao enviar prompt.', 'warn');
+  }
+}
+
+async function runAiOpsTerminal() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsTerminalStatus', 'Abra uma sessao antes de usar terminal.', 'warn');
+    return;
+  }
+
+  const command = document.getElementById('aiOpsTerminalCommand')?.value || '';
+  const confirmCritical = !!document.getElementById('aiOpsTerminalConfirmCritical')?.checked;
+  if (!command.trim()) {
+    setAiOpsStatus('aiOpsTerminalStatus', 'Informe um comando.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsTerminalStatus', 'Executando comando...', 'muted');
+  try {
+    const data = await api('/api/admin/workspace-agent/terminal', 'POST', {
+      sessionId,
+      command,
+      timeoutSeconds: 180,
+      confirmCritical
+    });
+    const result = data?.result || {};
+    const out = document.getElementById('aiOpsTerminalOutput');
+    if (out) out.value = result.output || '';
+    const tone = result.exitCode === 0 ? 'ok' : 'warn';
+    setAiOpsStatus('aiOpsTerminalStatus', `Exit ${result.exitCode} | ${result.durationMs || 0} ms`, tone);
+  } catch (err) {
+    setAiOpsStatus('aiOpsTerminalStatus', err?.data?.error || 'Falha ao executar comando.', 'warn');
+  }
+}
+
+async function readAiOpsFile() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsFileStatus', 'Abra uma sessao antes de ler arquivos.', 'warn');
+    return;
+  }
+
+  const path = document.getElementById('aiOpsFilePath')?.value || '';
+  if (!path.trim()) {
+    setAiOpsStatus('aiOpsFileStatus', 'Informe um caminho relativo.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsFileStatus', 'Lendo arquivo...', 'muted');
+  try {
+    const data = await api('/api/admin/workspace-agent/files/read', 'POST', { sessionId, path });
+    const file = data?.file || {};
+    const content = document.getElementById('aiOpsFileContent');
+    if (content) content.value = file.content || '';
+    setAiOpsStatus('aiOpsFileStatus', `Arquivo carregado (${file.sizeBytes || 0} bytes).`, 'ok');
+  } catch (err) {
+    setAiOpsStatus('aiOpsFileStatus', err?.data?.error || 'Falha ao ler arquivo.', 'warn');
+  }
+}
+
+async function writeAiOpsFile() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsFileStatus', 'Abra uma sessao antes de salvar arquivos.', 'warn');
+    return;
+  }
+
+  const path = document.getElementById('aiOpsFilePath')?.value || '';
+  const content = document.getElementById('aiOpsFileContent')?.value || '';
+  const confirmCritical = !!document.getElementById('aiOpsFileConfirmCritical')?.checked;
+
+  if (!path.trim()) {
+    setAiOpsStatus('aiOpsFileStatus', 'Informe um caminho relativo.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsFileStatus', 'Salvando arquivo...', 'muted');
+  try {
+    await api('/api/admin/workspace-agent/files/write', 'POST', {
+      sessionId,
+      path,
+      content,
+      confirmCritical
+    });
+    setAiOpsStatus('aiOpsFileStatus', 'Arquivo salvo com sucesso.', 'ok');
+  } catch (err) {
+    setAiOpsStatus('aiOpsFileStatus', err?.data?.error || 'Falha ao salvar arquivo.', 'warn');
+  }
+}
+
+function stopOutreachLogsAutoRefresh() {
+  if (waOutreachLogsTimer) {
+    clearInterval(waOutreachLogsTimer);
+    waOutreachLogsTimer = null;
+  }
+}
+
+function normalizeSkillHubTextArea(value) {
+  return String(value || '')
+    .split('\n')
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
+function getSkillHubItem(type) {
+  return skillsHubCache.find(item => item.type === type) || null;
+}
+
+async function loadSkillsHub(preferredType = '') {
+  const status = document.getElementById('skillsHubStatus');
+  if (status) {
+    status.textContent = 'Carregando skills...';
+    status.className = 'status muted';
+  }
+
+  try {
+    const response = await api('/api/skills');
+    const items = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.items)
+        ? response.items
+        : [];
+    skillsHubCache = items;
+    if (!skillsHubActiveType || preferredType) {
+      skillsHubActiveType = preferredType || skillsHubCache[0]?.type || '';
+    }
+    renderSkillsHubList();
+    renderSkillHubEditor(skillsHubActiveType);
+    if (status) {
+      status.textContent = `${skillsHubCache.length} skill(s) carregada(s).`;
+      status.className = 'status ok';
+    }
+  } catch (err) {
+    console.error('Erro ao carregar hub de skills', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao carregar o hub de skills.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+function renderSkillsHubList() {
+  const list = document.getElementById('skillsHubList');
+  const countBadge = document.getElementById('skillsHubCountBadge');
+  if (!list) return;
+
+  const channelFilter = document.getElementById('skillsHubChannelFilter')?.value || 'all';
+  const statusFilter = document.getElementById('skillsHubStatusFilter')?.value || 'all';
+  const filtered = skillsHubCache.filter(item => {
+    if (channelFilter !== 'all' && item.channel !== channelFilter) return false;
+    if (statusFilter === 'enabled' && !item.enabled) return false;
+    if (statusFilter === 'disabled' && item.enabled) return false;
+    return true;
+  });
+
+  if (countBadge) {
+    countBadge.textContent = `${filtered.length} skill${filtered.length === 1 ? '' : 's'}`;
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<span class="muted">Nenhuma skill corresponde ao filtro atual.</span>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(item => `
+    <button type="button" class="${item.type === skillsHubActiveType ? 'secondary' : ''}" style="width:100%; text-align:left; display:block; padding:14px; margin-bottom:10px;" onclick="renderSkillHubEditor('${escapeHtml(item.type)}')">
+      <div class="row" style="justify-content:space-between; gap:8px; align-items:flex-start;">
+        <div>
+          <strong>${escapeHtml(item.displayName || item.type)}</strong>
+          <div class="muted" style="margin-top:6px;">Canal: ${escapeHtml(item.channel || 'n/a')}</div>
+        </div>
+        <span class="badge ${item.enabled ? 'ok' : 'muted'}">${item.enabled ? 'Ativa' : 'Inativa'}</span>
+      </div>
+      ${item.instanceName ? `<div class="muted" style="margin-top:8px;">Instância: ${escapeHtml(item.instanceName)}</div>` : ''}
+      ${item.targetMode ? `<div class="muted" style="margin-top:4px;">Destino: ${escapeHtml(item.targetMode)}</div>` : ''}
+    </button>
+  `).join('');
+}
+
+function renderSkillHubEditor(type) {
+  skillsHubActiveType = type || skillsHubCache[0]?.type || '';
+  renderSkillsHubList();
+
+  const editor = document.getElementById('skillsHubEditor');
+  const item = getSkillHubItem(skillsHubActiveType);
+  if (!editor) return;
+  if (!item) {
+    editor.innerHTML = '<p class="muted">Selecione uma skill para editar.</p>';
+    return;
+  }
+
+  const cfg = item.config || {};
+  const templates = item.templates || {};
+  const boolChecked = value => value ? 'checked' : '';
+  const toLines = key => Array.isArray(templates[key]) ? templates[key].join('\n') : '';
+  const storesValue = Array.isArray(cfg.storesToCompare) ? cfg.storesToCompare.join('\n') : '';
+
+  if (item.type === 'whatsapp_welcome') {
+    editor.innerHTML = `
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="margin:0;">${escapeHtml(item.displayName)}</h3>
+          <p class="muted" style="margin-top:6px;">Controla a jornada de boas-vindas quando alguém entra no grupo.</p>
+        </div>
+        <label class="switch"><input type="checkbox" id="skillEnabled" ${boolChecked(item.enabled)} /><span class="slider"></span></label>
+      </div>
+      <div class="grid" style="margin-top:16px; gap:12px;">
+        <div>
+          <label>Instância remetente</label>
+          <input id="skillInstanceName" value="${escapeHtml(item.instanceName || '')}" placeholder="ZapOfertas" />
+        </div>
+        <div>
+          <label>Modo de destino</label>
+          <select id="skillTargetMode">
+            <option value="private" ${item.targetMode === 'private' ? 'selected' : ''}>Privado</option>
+            <option value="same-group" ${item.targetMode === 'same-group' ? 'selected' : ''}>Mesmo grupo</option>
+            <option value="specific-chat" ${item.targetMode === 'specific-chat' ? 'selected' : ''}>Chat específico</option>
+          </select>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label>Chat alvo</label>
+          <input id="skillTargetChatId" value="${escapeHtml(item.targetChatId || '')}" placeholder="1203...@g.us" />
+        </div>
+        <div>
+          <label style="display:flex; gap:8px; align-items:center;"><input id="skillUseVariableMessages" type="checkbox" ${boolChecked(cfg.useVariableMessages)} /> Mensagens variáveis</label>
+        </div>
+        <div>
+          <label style="display:flex; gap:8px; align-items:center;"><input id="skillWelcomeFollowupOnYesEnabled" type="checkbox" ${boolChecked(cfg.welcomeFollowupOnYesEnabled)} /> Follow-up no "sim"</label>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label>Mensagem fixa de boas-vindas</label>
+          <textarea id="skillWelcomeMessage" rows="3">${escapeHtml(cfg.welcomeMessage || '')}</textarea>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label>Mensagem fixa de follow-up</label>
+          <textarea id="skillWelcomeFollowupOnYesMessage" rows="3">${escapeHtml(cfg.welcomeFollowupOnYesMessage || '')}</textarea>
+        </div>
+        <div>
+          <label>Templates de boas-vindas</label>
+          <textarea id="skillWelcomeTemplates" rows="6">${escapeHtml(toLines('welcomeTemplates'))}</textarea>
+        </div>
+        <div>
+          <label>Templates de follow-up</label>
+          <textarea id="skillFollowupTemplates" rows="6">${escapeHtml(toLines('followupOnYesTemplates'))}</textarea>
+        </div>
+      </div>
+      <div class="row" style="margin-top:16px; gap:8px;">
+        <button onclick="saveSkillHubItem()">Salvar skill</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (item.type === 'whatsapp_invite_conversation') {
+    editor.innerHTML = `
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="margin:0;">${escapeHtml(item.displayName)}</h3>
+          <p class="muted" style="margin-top:6px;">Controla o diálogo antes de enviar o link do grupo oficial.</p>
+        </div>
+        <label class="switch"><input type="checkbox" id="skillEnabled" ${boolChecked(item.enabled)} /><span class="slider"></span></label>
+      </div>
+      <div class="grid" style="margin-top:16px; gap:12px;">
+        <div>
+          <label style="display:flex; gap:8px; align-items:center;"><input id="skillUseVariableMessages" type="checkbox" ${boolChecked(cfg.useVariableMessages)} /> Mensagens variáveis</label>
+        </div>
+        <div>
+          <label>Min. mensagens antes do link</label>
+          <input id="skillMinPreLinkMessages" type="number" min="2" max="4" value="${escapeHtml(String(cfg.minPreLinkMessages ?? 2))}" />
+        </div>
+        <div>
+          <label>Máx. mensagens antes do link</label>
+          <input id="skillMaxPreLinkMessages" type="number" min="2" max="4" value="${escapeHtml(String(cfg.maxPreLinkMessages ?? 3))}" />
+        </div>
+        <div><label>Greeting</label><textarea id="skillGreetingTemplates" rows="5">${escapeHtml(toLines('greetingTemplates'))}</textarea></div>
+        <div><label>Explain</label><textarea id="skillExplainTemplates" rows="5">${escapeHtml(toLines('explainTemplates'))}</textarea></div>
+        <div><label>Trust</label><textarea id="skillTrustTemplates" rows="5">${escapeHtml(toLines('trustTemplates'))}</textarea></div>
+        <div><label>Ask</label><textarea id="skillAskTemplates" rows="5">${escapeHtml(toLines('askTemplates'))}</textarea></div>
+        <div><label>Link após resposta</label><textarea id="skillLinkAfterReplyTemplates" rows="5">${escapeHtml(toLines('linkAfterReplyTemplates'))}</textarea></div>
+        <div><label>Link após timeout</label><textarea id="skillLinkAfterTimeoutTemplates" rows="5">${escapeHtml(toLines('linkAfterTimeoutTemplates'))}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:16px; gap:8px;">
+        <button onclick="saveSkillHubItem()">Salvar skill</button>
+      </div>
+    `;
+    return;
+  }
+
+  editor.innerHTML = `
+    <div class="row" style="justify-content:space-between; align-items:center;">
+      <div>
+        <h3 style="margin:0;">${escapeHtml(item.displayName)}</h3>
+        <p class="muted" style="margin-top:6px;">Busca cupom da loja original e compara o mesmo produto entre lojas afiliadas.</p>
+      </div>
+      <label class="switch"><input type="checkbox" id="skillEnabled" ${boolChecked(item.enabled)} /><span class="slider"></span></label>
+    </div>
+    <div class="grid" style="margin-top:16px; gap:12px;">
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillShowOnWeb" type="checkbox" ${boolChecked(cfg.showOnWeb)} /> Mostrar no conversor web</label>
+      </div>
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillAppendToWhatsApp" type="checkbox" ${boolChecked(cfg.appendToWhatsApp)} /> Anexar no WhatsApp</label>
+      </div>
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillRequireExactProductMatch" type="checkbox" ${boolChecked(cfg.requireExactProductMatch)} /> Exigir match exato</label>
+      </div>
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillPreferOfficialData" type="checkbox" ${boolChecked(cfg.preferOfficialData)} /> Preferir dado oficial</label>
+      </div>
+      <div>
+        <label>Máx. resultados no comparativo</label>
+        <input id="skillMaxComparisonResults" type="number" min="1" max="6" value="${escapeHtml(String(cfg.maxComparisonResults ?? 3))}" />
+      </div>
+      <div style="grid-column:1 / -1;">
+        <label>Lojas para comparar</label>
+        <textarea id="skillStoresToCompare" rows="6" placeholder="Amazon&#10;Mercado Livre&#10;Shopee&#10;Shein">${escapeHtml(storesValue)}</textarea>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px; gap:8px;">
+      <button onclick="saveSkillHubItem()">Salvar skill</button>
+    </div>
+  `;
+}
+
+async function saveSkillHubItem() {
+  const status = document.getElementById('skillsHubStatus');
+  const type = skillsHubActiveType;
+  const item = getSkillHubItem(type);
+  if (!type || !item) return;
+
+  const payload = {
+    enabled: !!document.getElementById('skillEnabled')?.checked,
+    instanceName: document.getElementById('skillInstanceName')?.value || null,
+    targetMode: document.getElementById('skillTargetMode')?.value || null,
+    targetChatId: document.getElementById('skillTargetChatId')?.value || null,
+    templates: {},
+    config: {}
+  };
+
+  if (type === 'whatsapp_welcome') {
+    payload.templates = {
+      welcomeTemplates: normalizeSkillHubTextArea(document.getElementById('skillWelcomeTemplates')?.value),
+      followupOnYesTemplates: normalizeSkillHubTextArea(document.getElementById('skillFollowupTemplates')?.value)
+    };
+    payload.config = {
+      useVariableMessages: !!document.getElementById('skillUseVariableMessages')?.checked,
+      welcomeMessage: document.getElementById('skillWelcomeMessage')?.value || '',
+      welcomeFollowupOnYesEnabled: !!document.getElementById('skillWelcomeFollowupOnYesEnabled')?.checked,
+      welcomeFollowupOnYesMessage: document.getElementById('skillWelcomeFollowupOnYesMessage')?.value || ''
+    };
+  } else if (type === 'whatsapp_invite_conversation') {
+    payload.templates = {
+      greetingTemplates: normalizeSkillHubTextArea(document.getElementById('skillGreetingTemplates')?.value),
+      explainTemplates: normalizeSkillHubTextArea(document.getElementById('skillExplainTemplates')?.value),
+      trustTemplates: normalizeSkillHubTextArea(document.getElementById('skillTrustTemplates')?.value),
+      askTemplates: normalizeSkillHubTextArea(document.getElementById('skillAskTemplates')?.value),
+      linkAfterReplyTemplates: normalizeSkillHubTextArea(document.getElementById('skillLinkAfterReplyTemplates')?.value),
+      linkAfterTimeoutTemplates: normalizeSkillHubTextArea(document.getElementById('skillLinkAfterTimeoutTemplates')?.value)
+    };
+    payload.config = {
+      useVariableMessages: !!document.getElementById('skillUseVariableMessages')?.checked,
+      minPreLinkMessages: Number(document.getElementById('skillMinPreLinkMessages')?.value || 2),
+      maxPreLinkMessages: Number(document.getElementById('skillMaxPreLinkMessages')?.value || 3)
+    };
+  } else {
+    payload.templates = {};
+    payload.config = {
+      showOnWeb: !!document.getElementById('skillShowOnWeb')?.checked,
+      appendToWhatsApp: !!document.getElementById('skillAppendToWhatsApp')?.checked,
+      requireExactProductMatch: !!document.getElementById('skillRequireExactProductMatch')?.checked,
+      preferOfficialData: !!document.getElementById('skillPreferOfficialData')?.checked,
+      maxComparisonResults: Number(document.getElementById('skillMaxComparisonResults')?.value || 3),
+      storesToCompare: normalizeSkillHubTextArea(document.getElementById('skillStoresToCompare')?.value)
+    };
+  }
+
+  if (status) {
+    status.textContent = `Salvando ${item.displayName}...`;
+    status.className = 'status muted';
+  }
+
+  try {
+    await api(`/api/skills/${encodeURIComponent(type)}`, 'PUT', payload);
+    await loadSkillsHub(type);
+    if (status) {
+      status.textContent = `${item.displayName} salva com sucesso.`;
+      status.className = 'status ok';
+    }
+  } catch (err) {
+    console.error('Erro ao salvar skill', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao salvar skill.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+function startOutreachLogsAutoRefresh() {
+  stopOutreachLogsAutoRefresh();
+  loadOutreachProgressLogs(true);
+  loadOutreachScheduleList();
+  waOutreachLogsTimer = setInterval(() => {
+    if (localStorage.getItem('activeTab') === 'wa-outreach') {
+      loadOutreachProgressLogs(true);
+    }
+  }, 5000);
 }
 
 function renderAgentActionBadge(action) {
@@ -117,7 +1051,7 @@ function buildAgentAdminUrl(item, sourceChannel) {
     params.set('postType', item.suggestedPostType);
   }
   const query = params.toString();
-  return query ? `/conversor-admin?${query}` : '/conversor-admin';
+  return query ? `/studio-ofertas?${query}` : '/studio-ofertas';
 }
 
 async function agentOpenWhatsAppAdmin(messageId, sourceChannel, suggestedPostType = 'feed', draftId = '', requiresLinkConversion = false) {
@@ -128,12 +1062,12 @@ async function agentOpenWhatsAppAdmin(messageId, sourceChannel, suggestedPostTyp
   if (suggestedPostType) params.set('postType', suggestedPostType);
   if (requiresLinkConversion) params.set('deepAnalyze', '1');
   const query = params.toString();
-  window.open(query ? `/conversor-admin?${query}` : '/conversor-admin', '_blank');
+  window.open(query ? `/studio-ofertas?${query}` : '/studio-ofertas', '_blank');
 }
 
 function formatAgentDetails(item) {
   const reasons = Array.isArray(item.reasons) && item.reasons.length > 0
-    ? item.reasons.map(x => `� ${escapeHtml(x)}`).join('<br />')
+    ? item.reasons.map(x => `• ${escapeHtml(x)}`).join('<br />')
     : '<span class="muted">Sem justificativa.</span>';
   const source = item.decisionSource
     ? `<div style="margin-top:8px;"><strong>Decisao:</strong> ${escapeHtml(item.decisionSource)}${item.decisionProvider ? ` (${escapeHtml(item.decisionProvider)})` : ''}</div>`
@@ -145,7 +1079,7 @@ function formatAgentDetails(item) {
     ? `<div style="margin-top:8px;"><strong>IA:</strong><br />${escapeHtml(item.aiReasoning)}</div>`
     : '';
   const risks = Array.isArray(item.risks) && item.risks.length > 0
-    ? `<div style="margin-top:8px;"><strong>Riscos:</strong><br />${item.risks.map(x => `� ${escapeHtml(x)}`).join('<br />')}</div>`
+    ? `<div style="margin-top:8px;"><strong>Riscos:</strong><br />${item.risks.map(x => `• ${escapeHtml(x)}`).join('<br />')}</div>`
     : '';
   return `${reasons}${source}${memory}${aiReasoning}${risks}`;
 }
@@ -326,7 +1260,7 @@ async function loadOfferCuration() {
               ${canHighlightOnBio ? `<button class="secondary" onclick="agentHighlightOnBio('${escapeHtml(item.draftId)}')">Destacar na bio</button>` : ''}
               ${canPublishNow ? `<button class="secondary" onclick="agentPublishDraftNow('${escapeHtml(item.draftId)}', '${escapeHtml(catalogTarget)}')">Publicar agora</button>` : ''}
               ${canReschedule ? `<button class="secondary" onclick="agentRescheduleDraft('${escapeHtml(item.draftId)}', '${escapeHtml(item.scheduledFor || '')}')">Reagendar</button>` : ''}
-              <button class="secondary" onclick="window.open('/conversor-admin?draftId=${escapeHtml(item.draftId)}', '_blank')">Abrir draft</button>
+              <button class="secondary" onclick="window.open('/studio-ofertas?draftId=${escapeHtml(item.draftId)}', '_blank')">Abrir no Studio</button>
             </div>
           </td>
         </tr>
@@ -968,8 +1902,40 @@ function formatTs(ts) {
   return d.toLocaleString();
 }
 
+function formatRelativeTime(ts) {
+  if (!ts) return 'agora';
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return 'agora';
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (Math.abs(diffMin) < 1) return 'agora';
+  if (Math.abs(diffMin) < 60) return `${Math.abs(diffMin)} min ${diffMin >= 0 ? 'atrás' : 'à frente'}`;
+  const diffHours = Math.round(diffMin / 60);
+  if (Math.abs(diffHours) < 24) return `${Math.abs(diffHours)} h ${diffHours >= 0 ? 'atrás' : 'à frente'}`;
+  return formatTs(ts);
+}
+
+function normalizeDashboardText(text) {
+  if (text === null || text === undefined) return '';
+  let normalized = String(text);
+  const looksBroken = /[áÂ�]|Cá|aá|ná|áƒ|á¢|�/.test(normalized);
+  if (!looksBroken) return normalized;
+
+  for (let i = 0; i < 2; i++) {
+    try {
+      const repaired = decodeURIComponent(escape(normalized));
+      if (!repaired || repaired === normalized) break;
+      normalized = repaired;
+    } catch {
+      break;
+    }
+  }
+
+  return normalized.replace(/\uFFFD/g, '').trim();
+}
+
 function escapeHtml(text) {
-  return String(text || '')
+  return normalizeDashboardText(text || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -980,7 +1946,7 @@ function escapeHtml(text) {
 function shortId(text) {
   const s = String(text || '');
   if (s.length <= 18) return s;
-  return `${s.slice(0, 6)}…${s.slice(-6)}`;
+  return `${s.slice(0, 6)}...${s.slice(-6)}`;
 }
 
 function getGeminiApiKeyRowsFromDom() {
@@ -1026,6 +1992,48 @@ function collectGeminiApiKeysFromUi() {
     .filter(Boolean);
 }
 
+// --- Gemma 4 API key helpers ---
+function getGemma4ApiKeyRowsFromDom() {
+  return Array.from(document.querySelectorAll('#gemma4ApiKeyRows input[data-gemma4-key="1"]'))
+    .map(input => String(input.value || '').trim());
+}
+
+function renderGemma4ApiKeyRows(values) {
+  const container = document.getElementById('gemma4ApiKeyRows');
+  if (!container) return;
+  const rows = (values || []).map(v => String(v || '').trim());
+  const effective = rows.length > 0 ? rows : [''];
+  container.innerHTML = effective.map((value, index) => `
+    <div class="row" style="margin-top:8px;">
+      <input type="password" data-gemma4-key="1" placeholder="Chave Gemma 4 ${index + 1} (AIza...)" value="${escapeHtml(value)}" />
+      <button class="secondary" type="button" onclick="removeGemma4ApiKeyRow(${index})">- Remover</button>
+    </div>
+  `).join('');
+}
+
+function addGemma4ApiKeyRow() {
+  const current = getGemma4ApiKeyRowsFromDom();
+  current.push('');
+  renderGemma4ApiKeyRows(current);
+}
+
+function removeGemma4ApiKeyRow(index) {
+  const current = getGemma4ApiKeyRowsFromDom();
+  if (current.length <= 1) {
+    renderGemma4ApiKeyRows(['']);
+    return;
+  }
+  const safeIndex = Math.max(0, Math.min(index, current.length - 1));
+  current.splice(safeIndex, 1);
+  renderGemma4ApiKeyRows(current);
+}
+
+function collectGemma4ApiKeysFromUi() {
+  return getGemma4ApiKeyRowsFromDom()
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 function parseApiKeysTextarea(id, fallbackMaskedSingle = '') {
   const values = String(document.getElementById(id)?.value || '')
     .split(/\r?\n/)
@@ -1051,13 +2059,342 @@ function renderSourceBadge(source) {
   return `<span class="badge ${cls}">${escapeHtml(s)}</span>`;
 }
 
+function renderPillList(targetId, values, emptyText = '') {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  const items = Array.isArray(values) ? values.filter(Boolean) : [];
+  if (items.length === 0) {
+    target.innerHTML = emptyText ? `<span class="muted">${escapeHtml(emptyText)}</span>` : '';
+    return;
+  }
+  target.innerHTML = items.map(value => `<span class="pill selection-chip">${escapeHtml(String(value))}</span>`).join('');
+}
+
+function offerNormalizationTargetLabel(target) {
+  switch (String(target || '').toLowerCase()) {
+    case 'catalog':
+      return 'Catálogo';
+    case 'queue':
+      return 'Fila de automação';
+    default:
+      return 'Preview + revisão';
+  }
+}
+
+function offerNormalizationStatusMeta(status) {
+  switch (String(status || '').toLowerCase()) {
+    case 'normalized':
+      return { label: 'Normalizado', badge: 'ok' };
+    case 'review_required':
+      return { label: 'Revisão obrigatória', badge: 'warn' };
+    case 'sent_to_catalog':
+      return { label: 'Enviado ao catálogo', badge: 'ok' };
+    case 'queued_for_automation':
+      return { label: 'Na fila de automação', badge: 'warn' };
+    case 'failed':
+      return { label: 'Falhou', badge: 'bad' };
+    default:
+      return { label: 'Sem execução', badge: 'muted' };
+  }
+}
+
+function offerNormalizationSourceLabel(sourceType) {
+  switch (String(sourceType || '').toLowerCase()) {
+    case 'json':
+      return 'JSON';
+    case 'csv':
+      return 'CSV';
+    case 'tsv':
+      return 'TSV';
+    case 'table':
+      return 'Tabela simples';
+    default:
+      return 'Autodetectar';
+  }
+}
+
+function formatOfferNormalizationMoney(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return numeric.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function formatOfferNormalizationDiscount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return `${numeric.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
+}
+
+function setOfferNormalizationActionStatus(message = '', type = 'muted') {
+  const el = document.getElementById('offerNormalizeActionStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `status ${type}`;
+}
+
+function escapeOfferNormalizationCell(value, fallback = '-') {
+  const text = value === null || value === undefined || value === '' ? fallback : String(value);
+  return escapeHtml(text);
+}
+
+function renderOfferNormalizationIssues(issues) {
+  const container = document.getElementById('offerNormalizeIssuesList');
+  if (!container) return;
+
+  const items = Array.isArray(issues) ? issues : [];
+  if (!items.length) {
+    container.innerHTML = '<div class="overview-list-empty">Nenhuma issue carregada.</div>';
+    return;
+  }
+
+  container.innerHTML = items.map(issue => {
+    const level = String(issue?.level || 'warn').toLowerCase();
+    const badgeClass = level === 'error' ? 'bad' : level === 'info' ? 'muted' : 'warn';
+    const row = issue?.rowNumber ? `Linha ${issue.rowNumber}` : 'Geral';
+    const field = issue?.field ? ` • ${escapeHtml(issue.field)}` : '';
+    return `
+      <div class="overview-list-item">
+        <div>
+          <strong>${escapeHtml(issue?.message || 'Issue sem descrição')}</strong>
+          <small class="muted">${escapeHtml(row)}${field}</small>
+        </div>
+        <span class="badge ${badgeClass}">${escapeHtml(level)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderOfferNormalizationPreview(offers) {
+  const body = document.getElementById('offerNormalizePreviewBody');
+  if (!body) return;
+
+  const items = Array.isArray(offers) ? offers : [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="8" class="muted">Nenhuma oferta normalizada nesta sessão.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = items.map(item => {
+    const issues = [];
+    if (!item?.productName) issues.push('Sem nome');
+    if (!item?.productUrl) issues.push('Sem URL');
+    if (item?.promoPrice === null || item?.promoPrice === undefined) issues.push('Sem preço promo');
+
+    const issueBadges = issues.length
+      ? issues.map(issue => `<span class="badge warn">${escapeHtml(issue)}</span>`).join(' ')
+      : '<span class="badge ok">Pronta</span>';
+
+    const safeUrl = item?.productUrl && /^https?:\/\//i.test(item.productUrl)
+      ? `<a href="${escapeHtml(item.productUrl)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
+      : '<span class="muted">Sem URL</span>';
+
+    return `
+      <tr>
+        <td>
+          <strong>${escapeOfferNormalizationCell(item?.productName, 'Sem nome')}</strong><br />
+          <small class="muted">${safeUrl}</small>
+        </td>
+        <td>${formatOfferNormalizationMoney(item?.originalPrice)}</td>
+        <td>${formatOfferNormalizationMoney(item?.promoPrice)}</td>
+        <td>${formatOfferNormalizationDiscount(item?.discountPercent)}</td>
+        <td>${escapeOfferNormalizationCell(item?.storeName)}</td>
+        <td>${escapeOfferNormalizationCell(item?.category)}</td>
+        <td>${escapeOfferNormalizationCell(item?.commissionRaw)}</td>
+        <td>${issueBadges}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderOfferNormalizationRun(run) {
+  const statusMeta = offerNormalizationStatusMeta(run?.status);
+  const targetLabel = offerNormalizationTargetLabel(run?.selectedTarget);
+  const sourceLabel = offerNormalizationSourceLabel(run?.sourceType);
+  const offersCount = Array.isArray(run?.normalizedOffers) ? run.normalizedOffers.length : 0;
+  const issuesCount = Array.isArray(run?.validationIssues) ? run.validationIssues.length : 0;
+  const assistedSummary = run?.assistedDelivery?.summary ? ` ${run.assistedDelivery.summary}` : '';
+
+  setSafeText('offerNormalizeRunId', run?.id ? shortId(run.id) : 'Nenhum');
+  setSafeText('offerNormalizeStatusText', statusMeta.label);
+  setSafeText('offerNormalizeOffersCount', String(offersCount));
+  setSafeText('offerNormalizeSourceType', run ? sourceLabel : 'Sem origem processada');
+  setSafeText('offerNormalizeIssuesCount', String(issuesCount));
+  setSafeText('offerNormalizeCurrentTarget', targetLabel);
+  setSafeText('offerNormalizeNextStep', run?.nextStepHint || 'Revise a entrada e normalize.');
+  setSafeText('offerNormalizeSummaryTitle', run ? `Execução ${shortId(run.id)} • ${formatTs(run.createdAtUtc)}` : 'Nenhuma execução carregada.');
+  setSafeText('offerNormalizeSummary', run ? `${run.summary || ''}${assistedSummary}`.trim() || 'Normalize uma entrada para gerar preview, issues e histórico.' : 'Normalize uma entrada para gerar preview, issues e histórico.');
+
+  const badge = document.getElementById('offerNormalizeStatusBadge');
+  if (badge) {
+    badge.textContent = statusMeta.label;
+    badge.className = `badge ${statusMeta.badge}`;
+  }
+
+  const targetSelect = document.getElementById('offerNormalizeTarget');
+  if (targetSelect && run?.selectedTarget) {
+    targetSelect.value = run.selectedTarget;
+  }
+
+  const notesInput = document.getElementById('offerNormalizeNotes');
+  if (notesInput && run?.notes !== undefined && run?.notes !== null) {
+    notesInput.value = run.notes;
+  }
+
+  renderOfferNormalizationPreview(run?.normalizedOffers || []);
+  renderOfferNormalizationIssues(run?.validationIssues || []);
+}
+
+function renderOfferNormalizationHistory(runs) {
+  const body = document.getElementById('offerNormalizeHistoryBody');
+  if (!body) return;
+
+  const items = Array.isArray(runs) ? runs : [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="7" class="muted">Nenhuma execução carregada.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = items.map(run => {
+    const statusMeta = offerNormalizationStatusMeta(run?.status);
+    const offersCount = Array.isArray(run?.normalizedOffers) ? run.normalizedOffers.length : 0;
+    const issuesCount = Array.isArray(run?.validationIssues) ? run.validationIssues.length : 0;
+
+    return `
+      <tr>
+        <td><strong>${escapeHtml(shortId(run?.id || ''))}</strong></td>
+        <td>${escapeHtml(formatTs(run?.createdAtUtc))}</td>
+        <td>${escapeHtml(offerNormalizationSourceLabel(run?.sourceType))}</td>
+        <td><span class="badge ${statusMeta.badge}">${escapeHtml(statusMeta.label)}</span></td>
+        <td>${escapeHtml(offerNormalizationTargetLabel(run?.selectedTarget))}</td>
+        <td>${offersCount} oferta(s) / ${issuesCount} issue(s)</td>
+        <td>
+          <div class="section-actions">
+            <button class="secondary" onclick="loadOfferNormalizationRun('${escapeHtml(run?.id || '')}')">Abrir</button>
+            <button class="secondary" onclick="routeOfferNormalizationRun('review', '${escapeHtml(run?.id || '')}')">Revisão</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function loadOfferNormalizationRuns() {
+  const status = document.getElementById('offerNormalizeHistoryStatus')?.value || '';
+  const target = document.getElementById('offerNormalizeHistoryTarget')?.value || '';
+  const body = document.getElementById('offerNormalizeHistoryBody');
+
+  if (body) {
+    body.innerHTML = '<tr><td colspan="7" class="muted">Carregando execuções...</td></tr>';
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (target) params.set('target', target);
+    params.set('limit', '20');
+      const response = await api(`/api/admin/offers/normalization-runs?${params.toString()}`);
+      renderOfferNormalizationHistory(response?.items || response?.runs || []);
+  } catch (e) {
+    if (body) {
+      body.innerHTML = `<tr><td colspan="7" class="muted">Falha ao carregar histórico: ${escapeHtml(e?.data?.error || e?.message || 'erro desconhecido')}</td></tr>`;
+    }
+  }
+}
+
+async function loadOfferNormalizationRun(id) {
+  if (!id) return;
+  try {
+      const response = await api(`/api/admin/offers/normalization-runs/${encodeURIComponent(id)}`);
+      const run = response?.run || response || null;
+    currentOfferNormalizationRunId = run?.id || null;
+    renderOfferNormalizationRun(run);
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao carregar execução.', 'error');
+  }
+}
+
+async function normalizeOffersInput() {
+  const rawInput = document.getElementById('offerNormalizeInput')?.value || '';
+  const inputType = document.getElementById('offerNormalizeInputType')?.value || 'autodetect';
+  const selectedTarget = document.getElementById('offerNormalizeTarget')?.value || 'review';
+  const notes = document.getElementById('offerNormalizeNotes')?.value || '';
+
+  if (!rawInput.trim()) {
+    setOfferNormalizationActionStatus('Cole algum conteúdo antes de normalizar.', 'warn');
+    showToast('Cole JSON, CSV ou tabela antes de normalizar.', 'error');
+    return;
+  }
+
+  setOfferNormalizationActionStatus('Normalizando ofertas...', 'muted');
+  try {
+    const response = await api('/api/admin/offers/normalize', 'POST', {
+      rawInput,
+      inputType,
+      selectedTarget,
+      notes
+    });
+
+    currentOfferNormalizationRunId = response?.runId || null;
+    setOfferNormalizationActionStatus(`Execução ${shortId(response?.runId || '')} criada com sucesso.`, 'ok');
+    showToast(`Normalização concluída: ${response?.offers?.length || 0} oferta(s).`, 'success');
+    if (currentOfferNormalizationRunId) {
+      await loadOfferNormalizationRun(currentOfferNormalizationRunId);
+    }
+    await loadOfferNormalizationRuns();
+  } catch (e) {
+    const message = e?.data?.error || e?.message || 'Falha ao normalizar ofertas.';
+    setOfferNormalizationActionStatus(message, 'bad');
+    showToast(message, 'error');
+  }
+}
+
+async function routeOfferNormalizationRun(targetOverride, runIdOverride = null) {
+  const runId = runIdOverride || currentOfferNormalizationRunId;
+  if (!runId) {
+    showToast('Abra ou normalize uma execução antes de encaminhar.', 'error');
+    return;
+  }
+
+  const selectedTarget = targetOverride || document.getElementById('offerNormalizeTarget')?.value || 'review';
+  const notes = document.getElementById('offerNormalizeNotes')?.value || '';
+  setOfferNormalizationActionStatus(`Atualizando destino para ${offerNormalizationTargetLabel(selectedTarget)}...`, 'muted');
+
+  try {
+    const response = await api(`/api/admin/offers/normalization-runs/${encodeURIComponent(runId)}/route`, 'POST', {
+      selectedTarget,
+      notes
+    });
+
+      const run = response?.run || response || null;
+      currentOfferNormalizationRunId = run?.id || runId;
+      renderOfferNormalizationRun(run);
+    await loadOfferNormalizationRuns();
+    setOfferNormalizationActionStatus(`Execução encaminhada para ${offerNormalizationTargetLabel(selectedTarget)}.`, 'ok');
+    showToast(`Execução enviada para ${offerNormalizationTargetLabel(selectedTarget)}.`, 'success');
+  } catch (e) {
+    const message = e?.data?.error || e?.message || 'Falha ao atualizar destino da execução.';
+    setOfferNormalizationActionStatus(message, 'bad');
+    showToast(message, 'error');
+  }
+}
+
+function clearOfferNormalizationComposer() {
+  currentOfferNormalizationRunId = null;
+  setSafeVal('offerNormalizeInput', '');
+  setSafeVal('offerNormalizeNotes', '');
+  setSafeVal('offerNormalizeInputType', 'autodetect');
+  setSafeVal('offerNormalizeTarget', 'review');
+  setOfferNormalizationActionStatus('', 'muted');
+  renderOfferNormalizationRun(null);
+}
+
 function loadTheme() {
-  const saved = localStorage.getItem('theme') || 'dark';
+  const saved = localStorage.getItem('theme') || 'light';
   document.body.setAttribute('data-theme', saved);
 }
 
 function toggleTheme() {
-  const current = document.body.getAttribute('data-theme') || 'dark';
+  const current = document.body.getAttribute('data-theme') || 'light';
   const next = current === 'dark' ? 'light' : 'dark';
   document.body.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
@@ -1273,407 +2610,522 @@ function setEnvironmentBadge(runtimeEnvironment) {
   envPill.textContent = `Ambiente: ${effectiveEnv}`;
 }
 
+function getOperationalTone(value) {
+  if (value === true) return 'ok';
+  if (value === false) return 'bad';
+  return 'warn';
+}
+
+function setOperationalSummary(prefix, summary, detail, tone) {
+  const summaryEl = document.getElementById(`${prefix}Summary`);
+  const detailEl = document.getElementById(`${prefix}Detail`);
+  if (summaryEl) summaryEl.textContent = summary;
+  if (detailEl) detailEl.textContent = detail;
+  const card = summaryEl?.closest('.status-board-item');
+  if (card) {
+    card.dataset.tone = tone;
+    card.style.removeProperty('border-color');
+  }
+}
+
+function renderOperationalList(containerId, items, renderer, emptyText) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  if (!Array.isArray(items) || items.length === 0) {
+    container.innerHTML = `<div class="overview-list-empty">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+  container.innerHTML = items.map(renderer).join('');
+}
+
+function setOverviewRibbon(id, label, ok, detailText) {
+  const tone = ok === true ? 'ok' : ok === false ? 'bad' : 'warn';
+  setChipStatus(id, detailText ? `${label}: ${detailText}` : label, tone);
+}
+
+function stopOperationalOverviewAutoRefresh() {
+  if (!opsOverviewTimer) return;
+  clearInterval(opsOverviewTimer);
+  opsOverviewTimer = null;
+}
+
+function startOperationalOverviewAutoRefresh() {
+  if (opsOverviewTimer) return;
+  opsOverviewTimer = setInterval(() => {
+    if (localStorage.getItem('activeTab') === 'overview') {
+      loadOperationalOverview(true);
+    }
+  }, 30000);
+}
+
+function renderOperationalOverview(snapshot) {
+  const readiness = snapshot?.readiness || {};
+  const checks = readiness.checks || {};
+  const alerts = Array.isArray(snapshot?.alerts) ? snapshot.alerts : [];
+  const workers = Array.isArray(checks.workers) ? checks.workers : [];
+  const outboxes = Array.isArray(checks.outboxes) ? checks.outboxes : [];
+  const issues = Array.isArray(readiness.issues) ? readiness.issues : [];
+  const volumes = snapshot?.volumes || {};
+  const recentMediaFailures = Array.isArray(snapshot?.recentMediaFailures) ? snapshot.recentMediaFailures : [];
+  const healthyWorkers = workers.filter(x => x.healthy).length;
+  const backlogTotal = outboxes.reduce((sum, item) => sum + Number(item.pendingCount || 0), 0);
+  const readinessTone = readiness.ready ? 'ok' : alerts.length > 0 ? 'bad' : 'warn';
+  const readinessBadge = document.getElementById('overviewReadinessBadge');
+
+  if (readinessBadge) {
+    readinessBadge.textContent = readiness.ready ? 'Saudável' : alerts.length > 0 ? 'Atenção' : 'Monitorando';
+    readinessBadge.className = `badge ${readinessTone}`;
+  }
+
+  setSafeText('overviewReadinessTitle', readiness.ready
+    ? 'Fluxo principal pronto para operar'
+    : 'Existem sinais de degradação que pedem atenção imediata');
+  setSafeText(
+    'overviewReadinessSubtitle',
+    readiness.ready
+      ? 'RabbitMQ, Evolution, userbot e workers críticos responderam sem alertas ativos.'
+      : (issues[0] || 'O snapshot indicou pendências operacionais. Use os cartões abaixo para identificar o gargalo.')
+  );
+  setSafeText('overviewAlertsCount', String(alerts.length));
+  setSafeText('overviewWorkersHealthy', `${healthyWorkers}/${workers.length}`);
+  setSafeText('overviewBacklogTotal', String(backlogTotal));
+  setSafeText('overviewUpdatedAt', formatRelativeTime(snapshot?.readiness?.ts || snapshot?.ts));
+  setSafeText('statStatus', readiness.ready ? 'Saudável' : 'Atenção');
+
+  const settings = window.__settingsCache || {};
+  const telegramConnected = !!settings.integrations?.telegram?.connected;
+  const whatsAppConnected = !!(settings.integrations?.whatsApp?.connected || settings.integrations?.whatsapp?.connected);
+
+  setOverviewRibbon('overviewRibbonSystem', 'Sistema', readiness.ready, readiness.ready ? 'estável' : 'atenção');
+  setOverviewRibbon('overviewRibbonTelegram', 'Telegram', telegramConnected && !!checks.telegramUserbotReady, telegramConnected ? 'ativo' : 'pendente');
+  setOverviewRibbon('overviewRibbonWhatsApp', 'WhatsApp', whatsAppConnected && !!checks.evolutionReady, whatsAppConnected ? 'ativo' : 'pendente');
+  setOverviewRibbon('overviewRibbonRabbit', 'RabbitMQ', checks.rabbitMqReachable, checks.rabbitMqReachable ? 'ok' : 'falha');
+  setOverviewRibbon('overviewRibbonEvolution', 'Evolution', checks.evolutionReady, checks.evolutionReady ? 'ok' : 'falha');
+
+  setOperationalSummary('overviewSystem', readiness.ready ? 'Saudável' : 'Degradado', readiness.ready ? 'Sem incidentes críticos ativos.' : (issues[0] || 'Existem verificações em atenção.'), readinessTone);
+  setOperationalSummary('overviewTelegram', telegramConnected ? 'Conectado' : 'Pendente', checks.telegramUserbotReady ? 'Userbot pronto para escuta.' : 'Userbot ainda não está pronto.', telegramConnected && checks.telegramUserbotReady ? 'ok' : 'warn');
+  setOperationalSummary('overviewWhatsApp', whatsAppConnected ? 'Conectado' : 'Pendente', checks.evolutionReady ? 'Instância pronta para envio.' : 'Evolution ainda não validou a instância.', whatsAppConnected && checks.evolutionReady ? 'ok' : 'warn');
+  setOperationalSummary('overviewRabbit', checks.rabbitMqReachable ? 'Disponível' : 'Indisponível', checks.rabbitMqReachable ? 'Fila acessível para replay e publish.' : 'Readiness não conseguiu abrir conexão.', getOperationalTone(checks.rabbitMqReachable));
+  setOperationalSummary('overviewEvolution', checks.evolutionReady ? 'Disponível' : 'Indisponível', checks.evolutionReady ? 'Instância autenticada e acessível.' : 'WhatsApp ou Evolution não responderam como esperado.', getOperationalTone(checks.evolutionReady));
+
+  renderOperationalList(
+    'overviewAlertsList',
+    alerts,
+    (alert) => `
+      <div class="overview-list-item">
+        <div>
+          <strong>${escapeHtml(alert.message || alert.code || 'Alerta')}</strong>
+          <div class="muted">${escapeHtml(alert.code || 'sem código')}</div>
+        </div>
+        <span class="badge ${String(alert.severity || '').toLowerCase() === 'critical' ? 'bad' : 'warn'}">${escapeHtml(alert.severity || 'warn')}</span>
+      </div>
+    `,
+    'Nenhum alerta crítico ativo.'
+  );
+
+  renderOperationalList(
+    'overviewWorkersList',
+    workers,
+    (worker) => `
+      <div class="overview-list-item">
+        <div>
+          <strong>${escapeHtml(worker.workerName || 'worker')}</strong>
+          <div class="muted">${escapeHtml(worker.message || 'sem mensagem')}</div>
+          <div class="muted">Último sucesso: ${escapeHtml(formatTs(worker.lastSuccessUtc))}</div>
+        </div>
+        <span class="badge ${worker.healthy ? 'ok' : 'bad'}">${worker.healthy ? 'ok' : 'falha'}</span>
+      </div>
+    `,
+    'Nenhum worker monitorado.'
+  );
+
+  renderOperationalList(
+    'overviewOutboxesList',
+    outboxes,
+    (outbox) => `
+      <div class="overview-list-item">
+        <div>
+          <strong>${escapeHtml(outbox.name || 'outbox')}</strong>
+          <div class="muted">Pendências em fila local para replay.</div>
+        </div>
+        <span class="badge ${Number(outbox.pendingCount || 0) > 0 ? 'warn' : 'ok'}">${Number(outbox.pendingCount || 0)}</span>
+      </div>
+    `,
+    'Nenhuma outbox monitorada.'
+  );
+
+  setSafeText('overviewVolumeConversions', String(volumes.conversions24h || 0));
+  setSafeText('overviewVolumeConversionsOk', String(volumes.successfulConversions24h || 0));
+  setSafeText('overviewVolumeWhatsApp', String(volumes.whatsAppOutbound24h || 0));
+  setSafeText('overviewVolumeTelegram', String(volumes.telegramOutbound24h || 0));
+  setSafeText('overviewVolumeMediaFailures', String(volumes.mediaFailures24h || 0));
+
+  const latestMediaFailure = recentMediaFailures[0];
+  setSafeText(
+    'overviewMediaFailureDetail',
+    latestMediaFailure
+      ? `Última falha: ${latestMediaFailure.reason || latestMediaFailure.detail || 'sem detalhe'} em ${formatTs(latestMediaFailure.timestamp || latestMediaFailure.createdAtUtc)}.`
+      : 'Sem falhas recentes de mídia.'
+  );
+
+  setSafeText(
+    'overviewQuickSummary',
+    readiness.ready
+      ? 'Ambiente estável. Use os atalhos para navegar nas rotinas administrativas sem perder o contexto da saúde operacional.'
+      : 'Existe pelo menos um componente em atenção. Priorize alertas, workers e backlog antes de atuar nas áreas secundárias.'
+  );
+}
+
+async function loadOperationalOverview(force = false) {
+  if (!force && !document.getElementById('section-overview')) return;
+  try {
+    const snapshot = await api('/api/admin/ops/status');
+    window.__opsStatusCache = snapshot;
+    renderOperationalOverview(snapshot);
+  } catch (error) {
+    console.error('Erro ao carregar snapshot operacional', error);
+    const badge = document.getElementById('overviewReadinessBadge');
+    if (badge) {
+      badge.textContent = 'Erro';
+      badge.className = 'badge bad';
+    }
+    setSafeText('overviewReadinessTitle', 'Falha ao carregar a visão operacional');
+    setSafeText('overviewReadinessSubtitle', error?.data?.error || error?.message || 'Não foi possível consultar /api/admin/ops/status.');
+    setSafeText('overviewUpdatedAt', 'falhou');
+    setOverviewRibbon('overviewRibbonSystem', 'Sistema', false, 'erro');
+  }
+}
+
 function renderSettings(s) {
+  if (!s) return;
   window.__settingsCache = s;
-  setEnvironmentBadge(s.runtimeEnvironment);
-  const now = Date.now();
-  const lockUntil = window.__telegramStatusLockUntil || 0;
-  const isLocked = now < lockUntil;
-  const telegramStatusText = s.integrations.telegram.connected
-    ? `Conectado (${s.integrations.telegram.identifier || 'sem id'})`
-    : 'Não conectado';
-  const telegramStatusState = s.integrations.telegram.connected ? 'ok' : 'warn';
-  if (!isLocked) {
-    const telegramStatusEl = document.getElementById('telegramStatus');
-    if (telegramStatusEl) {
-      telegramStatusEl.textContent = telegramStatusText;
-      telegramStatusEl.className = 'status ' + telegramStatusState;
+  
+  try {
+    setEnvironmentBadge(s.runtimeEnvironment);
+    const now = Date.now();
+    const lockUntil = window.__telegramStatusLockUntil || 0;
+    const isLocked = now < lockUntil;
+    
+    // Integrations
+    const tg = s.integrations?.telegram || {};
+    const tgConnected = !!tg.connected;
+    const telegramStatusText = tgConnected ? `Conectado (${tg.identifier || 'sem id'})` : 'Não conectado';
+    const telegramStatusState = tgConnected ? 'ok' : 'warn';
+    
+    if (!isLocked) {
+      setSafeText('telegramStatus', telegramStatusText);
+      setSafeClass('telegramStatus', 'status ' + telegramStatusState);
     }
-  }
-  const telegramDetail = document.getElementById('telegramStatusDetail');
-  if (telegramDetail) {
-    if (isLocked) {
-      telegramDetail.textContent = window.__telegramStatusLockedText || telegramStatusText;
-      telegramDetail.className = 'status ' + (window.__telegramStatusLockedState || telegramStatusState);
-    } else {
-      telegramDetail.textContent = telegramStatusText;
-      telegramDetail.className = 'status ' + telegramStatusState;
+    
+      const telegramDetailText = isLocked ? (window.__telegramStatusLockedText || telegramStatusText) : telegramStatusText;
+      const telegramDetailState = isLocked ? (window.__telegramStatusLockedState || telegramStatusState) : telegramStatusState;
+      setSafeText('telegramStatusDetail', telegramDetailText);
+      setSafeClass('telegramStatusDetail', 'status ' + telegramDetailState);
+      setSafeText('connectionSummaryTelegramBot', tgConnected ? 'Online' : 'Offline');
+      setSafeText('connectionSummaryTelegramBotDetail', telegramDetailText);
+      setSafeText('opsSummaryTelegramBot', tgConnected ? 'Online' : 'Offline');
+
+      const wa = s.integrations?.whatsApp || s.integrations?.whatsapp || {};
+      const waConnected = !!wa.connected;
+      setSafeText('whatsappStatus', waConnected ? `Conectado (${wa.identifier || 'sem id'})` : 'Não conectado');
+      setSafeClass('whatsappStatus', 'status ' + (waConnected ? 'ok' : 'warn'));
+      if (waConnected) hideWhatsAppQr();
+      setSafeText('connectionSummaryWhatsApp', waConnected ? 'Online' : 'Offline');
+      setSafeText('connectionSummaryWhatsAppDetail', waConnected ? `Instância ativa: ${wa.identifier || 'sem id'}` : 'A instância principal ainda não respondeu.');
+      setSafeText('opsSummaryWhatsApp', waConnected ? 'Online' : 'Offline');
+
+      const ml = s.integrations?.mercadoLivre || {};
+      const mlConnected = !!ml.connected;
+      setSafeText('mercadoLivreStatus', mlConnected ? `Conectado (${ml.identifier || 'sem id'})` : 'Não validado');
+      setSafeClass('mercadoLivreStatus', 'status ' + (mlConnected ? 'ok' : 'warn'));
+      setSafeText('connectionSummaryMercadoLivre', mlConnected ? 'Validado' : 'Pendente');
+      setSafeText('connectionSummaryMercadoLivreDetail', mlConnected ? `Conta ${ml.identifier || 'sem id'} validada.` : 'Faça um teste de OAuth para confirmar o fluxo afiliado.');
+
+    setChipStatus('chipTelegramBot', tgConnected ? 'Telegram Bot: Conectado' : 'Telegram Bot: Offline', tgConnected ? 'ok' : 'warn');
+    setChipStatus('chipWhatsApp', waConnected ? 'WhatsApp: Conectado' : 'WhatsApp: Offline', waConnected ? 'ok' : 'warn');
+    setChipStatus('chipMercadoLivre', mlConnected ? 'Mercado Livre: Conectado' : 'Mercado Livre: Nao validado', mlConnected ? 'ok' : 'warn');
+    setChipStatus('chipUserbot', 'Telegram Userbot: Conectando...', 'warn');
+    
+    setHealthBadge('healthTelegramBot', tgConnected ? 'Telegram Bot OK' : 'Telegram Bot Offline', tgConnected ? 'ok' : 'bad');
+    setHealthBadge('healthWhatsApp', waConnected ? 'WhatsApp OK' : 'WhatsApp Offline', waConnected ? 'ok' : 'bad');
+
+    // Auto Replies
+    setSafeVal('rules', (s.autoReplies || []).map(r => `${r.trigger} => ${r.responseTemplate}`).join('\n'));
+    setSafeChecked('autoRepliesEnabled', s.autoRepliesSettings?.enabled ?? true);
+
+    // Link Automation
+    const la = s.linkAutomation || {};
+    setSafeChecked('autoConvert', !!la.autoConvertIncomingLinks);
+    setSafeChecked('autoSend', !!la.autoSendToDestinationChannel);
+    setSafeVal('destinationChannel', la.destinationChannel || '');
+
+    // Telegram Forwarding
+    const tf = s.telegramForwarding || {};
+    setSafeChecked('userbotEnabled', !!tf.enabled);
+    setSafeVal('userbotDestinationId', tf.destinationChatId || '');
+    setSafeChecked('userbotAppendShein', !!tf.appendSheinCode);
+    setSafeChecked('userbotPreferLinkPreviewNoMedia', tf.preferLinkPreviewWhenNoMedia ?? true);
+    setSafeVal('userbotFooter', tf.footerText || '');
+
+    // WhatsApp Forwarding
+    const wf = s.whatsAppForwarding || {};
+    setSafeChecked('waForwardEnabled', !!wf.enabled);
+    setSafeChecked('waFromMeOnly', wf.processFromMeOnly ?? true);
+    setSafeChecked('waSendMedia', wf.sendMediaEnabled ?? true);
+    setSafeChecked('waPreferLinkPreviewNoMedia', wf.preferLinkPreviewWhenNoMedia ?? true);
+    setSafeVal('waFooter', wf.footerText || '');
+    setSafeChecked('waAppendShein', wf.appendSheinCode ?? true);
+    setSafeVal('waInstanceName', wf.instanceName || '');
+    setSafeText('waForwardStatus', wf.enabled ? 'Repasse ativo' : 'Repasse inativo');
+    setSafeClass('waForwardStatus', `badge ${wf.enabled ? 'ok' : 'warn'}`);
+
+    // Link Responder
+    const responder = s.linkResponder || {};
+    setSafeChecked('responderEnabled', !!responder.enabled);
+    setSafeChecked('responderWhatsApp', responder.allowWhatsApp ?? true);
+    setSafeChecked('responderTelegramBot', !!responder.allowTelegramBot);
+    setSafeChecked('responderTelegramUserbot', !!responder.allowTelegramUserbot);
+    setSafeChecked('responderWaPrivate', responder.whatsAppAllowPrivate ?? true);
+    setSafeChecked('responderWaGroups', !!responder.whatsAppAllowGroups);
+    setSafeChecked('responderTgPrivate', responder.telegramAllowPrivate ?? true);
+    setSafeChecked('responderTgGroups', !!responder.telegramAllowGroups);
+    setSafeVal('responderWaIds', (responder.whatsAppChatIds || []).join('\n'));
+    setSafeVal('responderTgIds', (responder.telegramChatIds || []).join('\n'));
+    setSafeVal('responderTemplate', responder.replyTemplate || '');
+    setSafeVal('responderFailTemplate', responder.replyOnFailure || '');
+    setSafeChecked('responderAppendShein', responder.appendSheinCode ?? true);
+    setSafeChecked('responderTracking', responder.trackingEnabled ?? true);
+    setSafeChecked('responderWelcomeEnabled', responder.welcomeEnabled ?? true);
+    const responderWelcomeInstanceSelect = document.getElementById('responderWelcomeInstanceName');
+    if (responderWelcomeInstanceSelect) {
+      responderWelcomeInstanceSelect.dataset.selectedValue = responder.welcomeInstanceName || '';
+      responderWelcomeInstanceSelect.value = responder.welcomeInstanceName || '';
     }
-  }
+    setSafeVal('responderWelcomeTargetMode', responder.welcomeTargetMode || 'private');
+    setSafeVal('responderWelcomeTargetChatId', responder.welcomeTargetChatId || '');
+    setSafeVal('responderWelcomeMessage', responder.welcomeMessage || '');
+    setSafeVal('responderFooter', responder.footerText || '');
+    toggleResponderWelcomeTargetConfig();
 
-  document.getElementById('whatsappStatus').textContent = s.integrations.whatsApp.connected
-    ? `Conectado (${s.integrations.whatsApp.identifier || 'sem id'})`
-    : 'Não conectado';
-  document.getElementById('whatsappStatus').className = 'status ' + (s.integrations.whatsApp.connected ? 'ok' : 'warn');
+    // ML Compliance
+    const mlCompliance = s.mercadoLivreCompliance || {};
+    setSafeChecked('mlCompEnabled', !!mlCompliance.enabled);
+    setSafeChecked('mlCompBlockAuto', mlCompliance.blockAutoFlows ?? true);
+    setSafeChecked('mlCompRequireApproval', mlCompliance.requireManualApproval ?? true);
+    setSafeChecked('mlCompWhitelistEnabled', !!mlCompliance.enforceChannelWhitelist);
+    setSafeChecked('mlCompBlockUnknown', mlCompliance.blockWhenChannelUnknown ?? true);
+    setSafeVal('mlCompAllowedChannels', (mlCompliance.allowedChannels || []).join('\n'));
 
-  const ml = s.integrations?.mercadoLivre || {};
-  const mlConnected = !!ml.connected;
-  const mlStatus = document.getElementById('mercadoLivreStatus');
-  if (mlStatus) {
-    mlStatus.textContent = mlConnected
-      ? `Conectado (${ml.identifier || 'sem id'})`
-      : 'Não validado';
-    mlStatus.className = 'status ' + (mlConnected ? 'ok' : 'warn');
-  }
+    const mlScout = s.mercadoLivreAffiliateScout || {};
+    setSafeChecked('mlScoutEnabled', !!mlScout.enabled);
+    setSafeChecked('mlScoutUsePersistentSession', mlScout.usePersistentSession ?? true);
+    setSafeChecked('mlScoutHeadless', mlScout.headless ?? true);
+    setSafeChecked('mlScoutRequireShareFlow', mlScout.requireShareButtonFlow ?? true);
+    setSafeChecked('mlScoutRequireImage', mlScout.requireImage ?? true);
+    setSafeChecked('mlScoutAutoPublishOfficial', !!mlScout.autoPublishToOfficialGroup);
+    setSafeChecked('mlScoutSaveScreenshotsOnFailure', mlScout.saveScreenshotsOnFailure ?? true);
+    setSafeVal('mlScoutInstanceName', mlScout.whatsAppInstanceName || '');
+    setSafeVal('mlScoutDestinationGroupId', mlScout.destinationGroupId || '');
+    setSafeVal('mlScoutLoginUser', mlScout.loginUser || '');
+    setSafeVal('mlScoutLoginPassword', mlScout.loginPassword || '');
+    setSafeVal('mlScoutTwoFactorCode', mlScout.twoFactorCode || '');
+    setSafeVal('mlScoutAuthMode', mlScout.authMode || 'code-or-qr');
+    setSafeVal('mlScoutStorageStateJson', mlScout.storageStateJson || '');
+    setSafeVal('mlScoutStorageStatePath', mlScout.storageStatePath || 'D:\\Achadinhos\\data\\mercadolivre-affiliate-storage-state.json');
+    setSafeVal('mlScoutBaseUrl', mlScout.baseUrl || 'https://www.mercadolivre.com.br/afiliados');
+    setSafeVal('mlScoutLoginUrl', mlScout.loginUrl || 'https://www.mercadolivre.com.br/entrar?go=https%3A%2F%2Fwww.mercadolivre.com.br%2Fafiliados%2Fhub');
+    setSafeVal('mlScoutHomeUrl', mlScout.homeUrl || 'https://www.mercadolivre.com.br/afiliados/hub');
+    setSafeVal('mlScoutIntervalMinutes', mlScout.intervalMinutes ?? 10);
+    setSafeVal('mlScoutIntervalJitterMinutes', mlScout.intervalJitterMinutes ?? 2);
+    setSafeVal('mlScoutMinCommissionPercent', mlScout.minCommissionPercent ?? 19);
+    setSafeVal('mlScoutTier1MinPrice', mlScout.tier1MinPrice ?? 99);
+    setSafeVal('mlScoutTier1MinCommissionPercent', mlScout.tier1MinCommissionPercent ?? 12);
+    setSafeVal('mlScoutTier2MinPrice', mlScout.tier2MinPrice ?? 189);
+    setSafeVal('mlScoutTier2MinCommissionPercent', mlScout.tier2MinCommissionPercent ?? 11);
+    setSafeVal('mlScoutTier3MinPrice', mlScout.tier3MinPrice ?? 325);
+    setSafeVal('mlScoutTier3MinCommissionPercent', mlScout.tier3MinCommissionPercent ?? 7);
+    setSafeVal('mlScoutMaxOffersPerRun', mlScout.maxOffersPerRun ?? 1);
+    setSafeVal('mlScoutRepeatWindowHours', mlScout.repeatWindowHours ?? 24);
+    setSafeVal('mlScoutOfferCardSelector', mlScout.offerCardSelector || "[data-testid='recommendation-card'], [data-testid='affiliate-offer-card'], article, section");
+    setSafeVal('mlScoutOfferLinkSelector', mlScout.offerLinkSelector || "a[href*='/p/'], a[href*='/MLB-'], a[href*='mercadolivre.com.br/p/']");
+    setSafeVal('mlScoutOfferTitleSelector', mlScout.offerTitleSelector || "h2, h3, [data-testid='item-title'], [data-testid='recommendation-title']");
+    setSafeVal('mlScoutOfferPriceSelector', mlScout.offerPriceSelector || "[data-testid='price'], [data-testid='price-current'], .andes-money-amount__fraction");
+    setSafeVal('mlScoutOfferImageSelector', mlScout.offerImageSelector || "img[src], img[data-src]");
+    setSafeVal('mlScoutOfferCommissionSelector', mlScout.offerCommissionSelector || "[data-testid='commission'], [data-testid='extra-profit'], :text-matches('%|comiss|ganho','i')");
+    setSafeVal('mlScoutShareButtonSelector', mlScout.shareButtonSelector || "button:has-text('Compartilhar oferta'), button:has-text('Compartilhar'), [data-testid='share-offer']");
+    setSafeVal('mlScoutShareActionSelector', mlScout.shareActionSelector || "button:has-text('Copiar link'), button:has-text('Gerar link'), [data-testid='copy-affiliate-link'], [data-testid='share-offer-link']");
+    setSafeVal('mlScoutSharedLinkSelector', mlScout.sharedLinkSelector || "input[value^='http'], textarea");
+    setSafeVal('mlScoutSharedLinkCopyButtonSelector', mlScout.sharedLinkCopyButtonSelector || "button:has-text('Copiar'), [data-testid='copy-link'], [data-testid='copy-affiliate-link']");
+    setSafeVal('mlScoutNotes', mlScout.notes || "Fluxo esperado: entrar na Central de Afiliados e Criadores, abrir o hub, usar a secao 'Produtos que escolhemos para voce', abrir o produto, clicar em 'Compartilhar oferta' e copiar o link gerado. O login pode exigir codigo ou leitura de QR code.");
 
-  setChipStatus('chipTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot: Conectado' : 'Telegram Bot: Offline', s.integrations.telegram.connected ? 'ok' : 'warn');
-  setChipStatus('chipWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp: Conectado' : 'WhatsApp: Offline', s.integrations.whatsApp.connected ? 'ok' : 'warn');
-  setChipStatus('chipMercadoLivre', mlConnected ? 'Mercado Livre: Conectado' : 'Mercado Livre: Nao validado', mlConnected ? 'ok' : 'warn');
-  setChipStatus('chipUserbot', 'Telegram Userbot: Conectando...', 'warn');
-  setHealthBadge('healthTelegramBot', s.integrations.telegram.connected ? 'Telegram Bot OK' : 'Telegram Bot Offline', s.integrations.telegram.connected ? 'ok' : 'bad');
-  setHealthBadge('healthWhatsApp', s.integrations.whatsApp.connected ? 'WhatsApp OK' : 'WhatsApp Offline', s.integrations.whatsApp.connected ? 'ok' : 'bad');
-
-  document.getElementById('rules').value = (s.autoReplies || [])
-    .map(r => `${r.trigger} => ${r.responseTemplate}`)
-    .join('\n');
-  const autoRepliesEnabled = document.getElementById('autoRepliesEnabled');
-  if (autoRepliesEnabled) autoRepliesEnabled.checked = s.autoRepliesSettings?.enabled ?? true;
-
-  document.getElementById('autoConvert').checked = !!s.linkAutomation.autoConvertIncomingLinks;
-  document.getElementById('autoSend').checked = !!s.linkAutomation.autoSendToDestinationChannel;
-  document.getElementById('destinationChannel').value = s.linkAutomation.destinationChannel || '';
-  document.getElementById('userbotEnabled').checked = !!s.telegramForwarding?.enabled;
-  document.getElementById('userbotDestinationId').value = s.telegramForwarding?.destinationChatId || '';
-  document.getElementById('userbotAppendShein').checked = !!s.telegramForwarding?.appendSheinCode;
-  document.getElementById('userbotFooter').value = s.telegramForwarding?.footerText || '';
-  document.getElementById('waForwardEnabled').checked = !!s.whatsAppForwarding?.enabled;
-  document.getElementById('waFromMeOnly').checked = s.whatsAppForwarding?.processFromMeOnly ?? true;
-  const waSendMedia = document.getElementById('waSendMedia');
-  if (waSendMedia) waSendMedia.checked = s.whatsAppForwarding?.sendMediaEnabled ?? true;
-  document.getElementById('waFooter').value = s.whatsAppForwarding?.footerText || '';
-  document.getElementById('waAppendShein').checked = s.whatsAppForwarding?.appendSheinCode ?? true;
-  if (s.whatsAppForwarding?.instanceName) {
-    document.getElementById('waInstanceName').value = s.whatsAppForwarding.instanceName;
-  }
-  const responder = s.linkResponder || {};
-  const responderEnabled = document.getElementById('responderEnabled');
-  if (responderEnabled) responderEnabled.checked = !!responder.enabled;
-  const responderWhatsApp = document.getElementById('responderWhatsApp');
-  if (responderWhatsApp) responderWhatsApp.checked = responder.allowWhatsApp ?? true;
-  const responderTelegramBot = document.getElementById('responderTelegramBot');
-  if (responderTelegramBot) responderTelegramBot.checked = !!responder.allowTelegramBot;
-  const responderTelegramUserbot = document.getElementById('responderTelegramUserbot');
-  if (responderTelegramUserbot) responderTelegramUserbot.checked = !!responder.allowTelegramUserbot;
-  const responderWaPrivate = document.getElementById('responderWaPrivate');
-  if (responderWaPrivate) responderWaPrivate.checked = responder.whatsAppAllowPrivate ?? true;
-  const responderWaGroups = document.getElementById('responderWaGroups');
-  if (responderWaGroups) responderWaGroups.checked = !!responder.whatsAppAllowGroups;
-  const responderTgPrivate = document.getElementById('responderTgPrivate');
-  if (responderTgPrivate) responderTgPrivate.checked = responder.telegramAllowPrivate ?? true;
-  const responderTgGroups = document.getElementById('responderTgGroups');
-  if (responderTgGroups) responderTgGroups.checked = !!responder.telegramAllowGroups;
-  const responderWaIds = document.getElementById('responderWaIds');
-  if (responderWaIds) responderWaIds.value = (responder.whatsAppChatIds || []).join('\n');
-  const responderTgIds = document.getElementById('responderTgIds');
-  if (responderTgIds) responderTgIds.value = (responder.telegramChatIds || []).join('\n');
-  const responderTemplate = document.getElementById('responderTemplate');
-  if (responderTemplate) responderTemplate.value = responder.replyTemplate || '';
-  const responderFailTemplate = document.getElementById('responderFailTemplate');
-  if (responderFailTemplate) responderFailTemplate.value = responder.replyOnFailure || '';
-  const responderAppendShein = document.getElementById('responderAppendShein');
-  if (responderAppendShein) responderAppendShein.checked = responder.appendSheinCode ?? true;
-  const responderTracking = document.getElementById('responderTracking');
-  if (responderTracking) responderTracking.checked = responder.trackingEnabled ?? true;
-  const responderFooter = document.getElementById('responderFooter');
-  if (responderFooter) responderFooter.value = responder.footerText || '';
-  const mlCompliance = s.mercadoLivreCompliance || {};
-  const mlCompEnabled = document.getElementById('mlCompEnabled');
-  if (mlCompEnabled) mlCompEnabled.checked = !!mlCompliance.enabled;
-  const mlCompBlockAuto = document.getElementById('mlCompBlockAuto');
-  if (mlCompBlockAuto) mlCompBlockAuto.checked = mlCompliance.blockAutoFlows ?? true;
-  const mlCompRequireApproval = document.getElementById('mlCompRequireApproval');
-  if (mlCompRequireApproval) mlCompRequireApproval.checked = mlCompliance.requireManualApproval ?? true;
-  const mlCompWhitelistEnabled = document.getElementById('mlCompWhitelistEnabled');
-  if (mlCompWhitelistEnabled) mlCompWhitelistEnabled.checked = !!mlCompliance.enforceChannelWhitelist;
-  const mlCompBlockUnknown = document.getElementById('mlCompBlockUnknown');
-  if (mlCompBlockUnknown) mlCompBlockUnknown.checked = mlCompliance.blockWhenChannelUnknown ?? true;
-  const mlCompAllowedChannels = document.getElementById('mlCompAllowedChannels');
-  if (mlCompAllowedChannels) mlCompAllowedChannels.value = (mlCompliance.allowedChannels || []).join('\n');
-  const insta = s.instagramPosts || {};
-  const instaEnabled = document.getElementById('instaEnabled');
-  if (instaEnabled) instaEnabled.checked = insta.enabled ?? true;
-  const instaAllowWhatsApp = document.getElementById('instaAllowWhatsApp');
-  if (instaAllowWhatsApp) instaAllowWhatsApp.checked = insta.allowWhatsApp ?? true;
-  const instaAllowTelegramBot = document.getElementById('instaAllowTelegramBot');
-  if (instaAllowTelegramBot) instaAllowTelegramBot.checked = !!insta.allowTelegramBot;
-  const instaAllowTelegramUserbot = document.getElementById('instaAllowTelegramUserbot');
-  if (instaAllowTelegramUserbot) instaAllowTelegramUserbot.checked = !!insta.allowTelegramUserbot;
-  const instaWaPrivate = document.getElementById('instaWaPrivate');
-  if (instaWaPrivate) instaWaPrivate.checked = insta.whatsAppAllowPrivate ?? true;
-  const instaWaGroups = document.getElementById('instaWaGroups');
-  if (instaWaGroups) instaWaGroups.checked = insta.whatsAppAllowGroups ?? false;
-  const instaWaIds = document.getElementById('instaWaIds');
-  if (instaWaIds) instaWaIds.value = (insta.whatsAppChatIds || []).join('\n');
-  const instaTgPrivate = document.getElementById('instaTgPrivate');
-  if (instaTgPrivate) instaTgPrivate.checked = insta.telegramAllowPrivate ?? true;
-  const instaTgGroups = document.getElementById('instaTgGroups');
-  if (instaTgGroups) instaTgGroups.checked = insta.telegramAllowGroups ?? true;
-  const instaTgIds = document.getElementById('instaTgIds');
-  if (instaTgIds) instaTgIds.value = (insta.telegramChatIds || []).join('\n');
-  const instaContextMode = document.getElementById('instaContextMode');
-  if (instaContextMode) {
-    let mode = 'Off';
-    if (typeof insta.offerContextMode === 'number') {
-      mode = insta.offerContextMode === 1 ? 'Suggestion' : insta.offerContextMode === 2 ? 'ExtraPost' : 'Off';
-    } else if (typeof insta.offerContextMode === 'string') {
-      mode = insta.offerContextMode;
-    } else if (insta.useOfferContext) {
-      mode = 'ExtraPost';
-    }
-    instaContextMode.value = mode;
-  }
-  const instaTriggers = document.getElementById('instaTriggers');
-  if (instaTriggers) instaTriggers.value = (insta.triggers || []).join('\n');
-  const instaFooter = document.getElementById('instaFooter');
-  if (instaFooter) instaFooter.value = insta.footerText || '';
-
-  const instaUseAi = document.getElementById('instaUseAi');
-  if (instaUseAi) instaUseAi.checked = !!insta.useAi;
-  const openai = s.openAI || {};
-  const openaiKey = document.getElementById('openaiApiKey');
-  if (openaiKey) openaiKey.value = openai.apiKey ? '********' : '';
-  const openaiKeys = document.getElementById('openaiApiKeys');
-  if (openaiKeys) openaiKeys.value = Array.isArray(openai.apiKeys) && openai.apiKeys.length > 0 ? openai.apiKeys.join('\n') : '';
-  const openaiModel = document.getElementById('openaiModel');
-  if (openaiModel) openaiModel.value = openai.model || 'gpt-4o-mini';
-  const openaiTemp = document.getElementById('openaiTemp');
-  if (openaiTemp) openaiTemp.value = (openai.temperature ?? 0.7);
-  const openaiMaxTokens = document.getElementById('openaiMaxTokens');
-  if (openaiMaxTokens) openaiMaxTokens.value = (openai.maxOutputTokens ?? 700);
-  const instaPrompt = document.getElementById('instaPrompt');
-  if (instaPrompt) {
-    instaPrompt.value = insta.promptTemplate || '';
-    if (!instaPrompt.value) {
-      const preset = (insta.promptPreset || 'premium');
-      const templates = getInstaPromptPresetTemplates();
-      if (templates[preset]) {
-        instaPrompt.value = templates[preset];
+    // Instagram Posts
+    const insta = s.instagramPosts || {};
+    setSafeChecked('instaEnabled', insta.enabled ?? true);
+    setSafeChecked('instaAllowWhatsApp', insta.allowWhatsApp ?? true);
+    setSafeChecked('instaAllowTelegramBot', !!insta.allowTelegramBot);
+    setSafeChecked('instaAllowTelegramUserbot', !!insta.allowTelegramUserbot);
+    setSafeChecked('instaWaPrivate', insta.whatsAppAllowPrivate ?? true);
+    setSafeChecked('instaWaGroups', insta.whatsAppAllowGroups ?? false);
+    setSafeVal('instaWaIds', (insta.whatsAppChatIds || []).join('\n'));
+    setSafeChecked('instaTgPrivate', insta.telegramAllowPrivate ?? true);
+    setSafeChecked('instaTgGroups', insta.telegramAllowGroups ?? true);
+    setSafeVal('instaTgIds', (insta.telegramChatIds || []).join('\n'));
+    
+    if (document.getElementById('instaContextMode')) {
+      let mode = 'Off';
+      if (typeof insta.offerContextMode === 'number') {
+        mode = insta.offerContextMode === 1 ? 'Suggestion' : insta.offerContextMode === 2 ? 'ExtraPost' : 'Off';
+      } else if (typeof insta.offerContextMode === 'string') {
+        mode = insta.offerContextMode;
+      } else if (insta.useOfferContext) {
+        mode = 'ExtraPost';
       }
+      setSafeVal('instaContextMode', mode);
     }
+    setSafeVal('instaTriggers', (insta.triggers || []).join('\n'));
+    setSafeVal('instaFooter', insta.footerText || '');
+    setSafeChecked('instaUseAi', !!insta.useAi);
+    setSafeVal('instaPrompt', insta.promptTemplate || '');
+    setSafeVal('instaPromptPreset', insta.promptPreset || 'premium');
+    setSafeVal('instaVariations', insta.variationsCount ?? 2);
+    setSafeUltraPrompt(insta);
+
+    // AI Providers
+    const openai = s.openAI || {};
+    setSafeVal('openaiApiKey', openai.apiKey ? '********' : '');
+    setSafeVal('openaiApiKeys', Array.isArray(openai.apiKeys) ? openai.apiKeys.join('\n') : '');
+    setSafeVal('openaiModel', openai.model || 'gpt-4o-mini');
+    setSafeVal('openaiTemp', openai.temperature ?? 0.7);
+    setSafeVal('openaiMaxTokens', openai.maxOutputTokens ?? 700);
+
+    const gemini = s.gemini || {};
+    const gemKeys = Array.isArray(gemini.apiKeys) ? gemini.apiKeys : (gemini.apiKey ? ['********'] : ['']);
+    renderGeminiApiKeyRows(gemKeys);
+    setSafeVal('geminiModel', gemini.model || 'gemini-2.5-flash');
+    setSafeVal('geminiMaxTokens', gemini.maxOutputTokens ?? 1200);
+
+    const gemma4 = s.gemma4 || {};
+    const gemma4Keys = Array.isArray(gemma4.apiKeys) ? gemma4.apiKeys : (gemma4.apiKey ? ['********'] : ['']);
+    renderGemma4ApiKeyRows(gemma4Keys);
+    setSafeVal('gemma4Model', gemma4.model || 'gemma-4-26b-a4b-it');
+    setSafeVal('gemma4ModelAdvanced', gemma4.modelAdvanced || 'gemma-4-31b-it');
+    setSafeVal('gemma4MaxTokens', gemma4.maxOutputTokens ?? 1200);
+    setSafeVal('gemma4MonthlyLimit', gemma4.monthlyCallLimit ?? 0);
+    setSafeVal('gemma4CostPerCall', gemma4.estimatedCostPerCallUsd ?? 0);
+
+    const deepseek = s.deepSeek || {};
+    setSafeVal('deepseekApiKey', deepseek.apiKey ? '********' : '');
+    setSafeVal('deepseekApiKeys', Array.isArray(deepseek.apiKeys) ? deepseek.apiKeys.join('\n') : '');
+    setSafeVal('deepseekModel', deepseek.model || 'deepseek-chat');
+    setSafeVal('deepseekTemp', deepseek.temperature ?? 0.7);
+    setSafeVal('deepseekMaxTokens', deepseek.maxOutputTokens ?? 1200);
+
+    const nemotron = s.nemotron || {};
+    setSafeVal('nemotronApiKey', nemotron.apiKey ? '********' : '');
+    setSafeVal('nemotronApiKeys', Array.isArray(nemotron.apiKeys) ? nemotron.apiKeys.join('\n') : '');
+    setSafeVal('nemotronModel', nemotron.model || 'nvidia/nemotron-3-super-120b-a12b');
+    setSafeVal('nemotronTemp', nemotron.temperature ?? 1.0);
+    setSafeVal('nemotronTopP', nemotron.topP ?? 0.95);
+    setSafeVal('nemotronMaxTokens', nemotron.maxOutputTokens ?? 4096);
+    setSafeVal('nemotronReasoningBudget', nemotron.reasoningBudget ?? 4096);
+    setSafeChecked('nemotronEnableThinking', nemotron.enableThinking ?? true);
+    setSafeVal('nemotronMonthlyLimit', nemotron.monthlyCallLimit ?? 0);
+    setSafeVal('nemotronCostPerCall', nemotron.estimatedCostPerCallUsd ?? 0);
+
+    const qwen = s.qwen || {};
+    setSafeVal('qwenApiKey', qwen.apiKey ? '********' : '');
+    setSafeVal('qwenApiKeys', Array.isArray(qwen.apiKeys) ? qwen.apiKeys.join('\n') : '');
+    setSafeVal('qwenModel', qwen.model || 'qwen3.5-plus');
+    setSafeVal('qwenVisionModel', qwen.visionModel || 'qwen3-vl-plus');
+    setSafeVal('qwenTemp', qwen.temperature ?? 0.7);
+    setSafeVal('qwenMaxTokens', qwen.maxOutputTokens ?? 4096);
+    setSafeVal('qwenBaseUrl', qwen.baseUrl || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1');
+    setSafeChecked('qwenEnableThinking', qwen.enableThinking ?? true);
+    setSafeVal('qwenMonthlyLimit', qwen.monthlyCallLimit ?? 0);
+    setSafeVal('qwenCostPerCall', qwen.estimatedCostPerCallUsd ?? 0);
+
+    const vila = s.vilaNvidia || {};
+    setSafeVal('vilaApiKey', vila.apiKey ? '********' : '');
+    setSafeVal('vilaApiKeys', Array.isArray(vila.apiKeys) ? vila.apiKeys.join('\n') : '');
+    setSafeVal('vilaModel', vila.model || 'nvidia/vila');
+    setSafeVal('vilaTemp', vila.temperature ?? 0.2);
+    setSafeVal('vilaTopP', vila.topP ?? 0.7);
+    setSafeVal('vilaMaxTokens', vila.maxOutputTokens ?? 4096);
+    setSafeVal('vilaBaseUrl', vila.baseUrl || 'https://integrate.api.nvidia.com/v1');
+    setSafeChecked('vilaEnableThinking', vila.enableThinking ?? true);
+    setSafeVal('vilaMonthlyLimit', vila.monthlyCallLimit ?? 0);
+    setSafeVal('vilaCostPerCall', vila.estimatedCostPerCallUsd ?? 0);
+
+    // Instagram Publish & Story
+    const pub = s.instagramPublish || {};
+    setSafeVal('igPubToken', pub.accessToken || '');
+    setSafeVal('igPubUserId', pub.userId || '');
+    setSafeVal('igPubBaseUrl', pub.baseUrl || '');
+    setSafeVal('igPubVerifyToken', pub.verifyToken || '');
+    setSafeChecked('igPubAutoPilotEnabled', !!pub.autoPilotEnabled);
+    setSafeVal('igPubAutoPilotWhatsAppInstance', pub.autoPilotWhatsAppInstance || '');
+    setSafeChecked('igViralReelsEnabled', !!pub.viralReelsAutoPilotEnabled);
+    setSafeVal('igViralReelsSourceChatId', pub.viralReelsSourceTelegramChatId ?? 2425105459);
+    setSafeVal('igViralReelsIntervalHours', pub.viralReelsIntervalHours ?? 12);
+    setSafeVal('igViralReelsScheduleTimes', Array.isArray(pub.viralReelsScheduleTimes) ? pub.viralReelsScheduleTimes.join(', ') : '07:30, 17:30');
+    setSafeVal('igViralReelsLookbackHours', pub.viralReelsLookbackHours ?? 24);
+    setSafeVal('igViralReelsRepeatWindowHours', pub.viralReelsRepeatWindowHours ?? 72);
+    setSafeChecked('igViralReelsSendApproval', pub.viralReelsSendForApproval ?? true);
+    setSafeVal('igViralReelsApprovalWhatsAppGroupId', pub.viralReelsApprovalWhatsAppGroupId || '');
+    setSafeVal('igViralReelsApprovalWhatsAppInstanceName', pub.viralReelsApprovalWhatsAppInstanceName || 'ZapOfertas');
+    setSafeChecked('igViralReelsAutoPublish', false);
+
+    const story = s.instagramStory || {};
+    setSafeVal('igStoryToken', story.accessToken || '');
+    setSafeVal('igStoryUserId', story.userId || '');
+    setSafeVal('igStoryApprovalWhatsAppInstance', story.approvalWhatsAppInstance || '');
+    setSafeVal('igStoryApprovalWhatsAppGroupId', story.approvalWhatsAppGroupId || '');
+    setSafeChecked('igStoryEnabled', !!story.enabled);
+
+    // WA Monitoring
+    const monitoredIds = s.monitoredGroupIds || [];
+    renderMonitorGroups(null, monitoredIds);
+
+    // Final UI
+    setSafeText('debug', JSON.stringify(s, null, 2));
+    setSafeText('statStatus', 'Online');
+    refreshBioLinksPreview();
+  } catch (err) {
+    console.warn('Erro ao renderizar configuracoes, ignorando crash:', err);
   }
-  const instaPreset = document.getElementById('instaPromptPreset');
-  if (instaPreset) instaPreset.value = insta.promptPreset || 'premium';
-  const instaVariations = document.getElementById('instaVariations');
-  if (instaVariations) instaVariations.value = insta.variationsCount ?? 2;
+}
+
+function setSafeUltraPrompt(insta) {
+  setSafeChecked('instaUltraPrompt', !!insta.useUltraPrompt);
+  setSafeChecked('instaShortName', !!insta.useShortProductName);
+  setSafeChecked('instaBenefits', !!insta.useBenefitBullets);
+  setSafeChecked('instaImageDownload', !!insta.useImageDownload);
+  
   const captionTemplates = Array.isArray(insta.captionTemplates) && insta.captionTemplates.length > 0
     ? insta.captionTemplates
     : getDefaultInstaCaptionTemplates();
-  const instaCaptionTemplate1 = document.getElementById('instaCaptionTemplate1');
-  if (instaCaptionTemplate1) instaCaptionTemplate1.value = captionTemplates[0] || getDefaultInstaCaptionTemplates()[0];
-  const instaCaptionTemplate2 = document.getElementById('instaCaptionTemplate2');
-  if (instaCaptionTemplate2) instaCaptionTemplate2.value = captionTemplates[1] || getDefaultInstaCaptionTemplates()[1];
-  const instaCaptionTemplate3 = document.getElementById('instaCaptionTemplate3');
-  if (instaCaptionTemplate3) instaCaptionTemplate3.value = captionTemplates[2] || getDefaultInstaCaptionTemplates()[2];
-  const instaAiProvider = document.getElementById('instaAiProvider');
-  if (instaAiProvider) instaAiProvider.value = insta.aiProvider || 'nemotron';
-  const instaUltraPrompt = document.getElementById('instaUltraPrompt');
-  if (instaUltraPrompt) instaUltraPrompt.checked = !!insta.useUltraPrompt;
-  const instaShortName = document.getElementById('instaShortName');
-  if (instaShortName) instaShortName.checked = !!insta.useShortProductName;
-  const instaBenefits = document.getElementById('instaBenefits');
-  if (instaBenefits) instaBenefits.checked = !!insta.useBenefitBullets;
-  const instaImageDownload = document.getElementById('instaImageDownload');
-  if (instaImageDownload) instaImageDownload.checked = !!insta.useImageDownload;
-
-  const gemini = s.gemini || {};
-  const maskedKeys = Array.isArray(gemini.apiKeys) ? gemini.apiKeys : [];
-  if (maskedKeys.length > 0) {
-    renderGeminiApiKeyRows(maskedKeys);
-  } else if (gemini.apiKey) {
-    renderGeminiApiKeyRows(['********']);
-  } else {
-    renderGeminiApiKeyRows(['']);
-  }
-  const geminiModel = document.getElementById('geminiModel');
-  if (geminiModel) geminiModel.value = gemini.model || 'gemini-2.5-flash';
-  const geminiMaxTokens = document.getElementById('geminiMaxTokens');
-  if (geminiMaxTokens) geminiMaxTokens.value = String(gemini.maxOutputTokens ?? 1200);
-
-  const deepseek = s.deepSeek || {};
-  const deepseekApiKey = document.getElementById('deepseekApiKey');
-  if (deepseekApiKey) deepseekApiKey.value = deepseek.apiKey ? '********' : '';
-  const deepseekApiKeys = document.getElementById('deepseekApiKeys');
-  if (deepseekApiKeys) deepseekApiKeys.value = Array.isArray(deepseek.apiKeys) && deepseek.apiKeys.length > 0 ? deepseek.apiKeys.join('\n') : '';
-  const deepseekModel = document.getElementById('deepseekModel');
-  if (deepseekModel) deepseekModel.value = deepseek.model || 'deepseek-chat';
-  const deepseekTemp = document.getElementById('deepseekTemp');
-  if (deepseekTemp) deepseekTemp.value = String(deepseek.temperature ?? 0.7);
-  const deepseekMaxTokens = document.getElementById('deepseekMaxTokens');
-  if (deepseekMaxTokens) deepseekMaxTokens.value = String(deepseek.maxOutputTokens ?? 1200);
-
-  const nemotron = s.nemotron || {};
-  const nemotronApiKey = document.getElementById('nemotronApiKey');
-  if (nemotronApiKey) nemotronApiKey.value = nemotron.apiKey ? '********' : '';
-  const nemotronApiKeys = document.getElementById('nemotronApiKeys');
-  if (nemotronApiKeys) nemotronApiKeys.value = Array.isArray(nemotron.apiKeys) && nemotron.apiKeys.length > 0 ? nemotron.apiKeys.join('\n') : '';
-  const nemotronModel = document.getElementById('nemotronModel');
-  if (nemotronModel) nemotronModel.value = nemotron.model || 'nvidia/nemotron-3-super-120b-a12b';
-  const nemotronTemp = document.getElementById('nemotronTemp');
-  if (nemotronTemp) nemotronTemp.value = String(nemotron.temperature ?? 1.0);
-  const nemotronTopP = document.getElementById('nemotronTopP');
-  if (nemotronTopP) nemotronTopP.value = String(nemotron.topP ?? 0.95);
-  const nemotronMaxTokens = document.getElementById('nemotronMaxTokens');
-  if (nemotronMaxTokens) nemotronMaxTokens.value = String(nemotron.maxOutputTokens ?? 4096);
-  const nemotronReasoningBudget = document.getElementById('nemotronReasoningBudget');
-  if (nemotronReasoningBudget) nemotronReasoningBudget.value = String(nemotron.reasoningBudget ?? 4096);
-  const nemotronEnableThinking = document.getElementById('nemotronEnableThinking');
-  if (nemotronEnableThinking) nemotronEnableThinking.checked = nemotron.enableThinking ?? true;
-  const nemotronMonthlyLimit = document.getElementById('nemotronMonthlyLimit');
-  if (nemotronMonthlyLimit) nemotronMonthlyLimit.value = String(nemotron.monthlyCallLimit ?? 0);
-  const nemotronCostPerCall = document.getElementById('nemotronCostPerCall');
-  if (nemotronCostPerCall) nemotronCostPerCall.value = String(nemotron.estimatedCostPerCallUsd ?? 0);
-  const qwen = s.qwen || {};
-  const qwenApiKey = document.getElementById('qwenApiKey');
-  if (qwenApiKey) qwenApiKey.value = qwen.apiKey ? '********' : '';
-  const qwenApiKeys = document.getElementById('qwenApiKeys');
-  if (qwenApiKeys) qwenApiKeys.value = Array.isArray(qwen.apiKeys) && qwen.apiKeys.length > 0 ? qwen.apiKeys.join('\n') : '';
-  const qwenModel = document.getElementById('qwenModel');
-  if (qwenModel) qwenModel.value = qwen.model || 'qwen3.5-plus';
-  const qwenVisionModel = document.getElementById('qwenVisionModel');
-  if (qwenVisionModel) qwenVisionModel.value = qwen.visionModel || 'qwen3-vl-plus';
-  const qwenTemp = document.getElementById('qwenTemp');
-  if (qwenTemp) qwenTemp.value = String(qwen.temperature ?? 0.7);
-  const qwenMaxTokens = document.getElementById('qwenMaxTokens');
-  if (qwenMaxTokens) qwenMaxTokens.value = String(qwen.maxOutputTokens ?? 4096);
-  const qwenBaseUrl = document.getElementById('qwenBaseUrl');
-  if (qwenBaseUrl) qwenBaseUrl.value = qwen.baseUrl || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
-  const qwenEnableThinking = document.getElementById('qwenEnableThinking');
-  if (qwenEnableThinking) qwenEnableThinking.checked = qwen.enableThinking ?? true;
-  const qwenMonthlyLimit = document.getElementById('qwenMonthlyLimit');
-  if (qwenMonthlyLimit) qwenMonthlyLimit.value = String(qwen.monthlyCallLimit ?? 0);
-  const qwenCostPerCall = document.getElementById('qwenCostPerCall');
-  if (qwenCostPerCall) qwenCostPerCall.value = String(qwen.estimatedCostPerCallUsd ?? 0);
-  const vila = s.vilaNvidia || {};
-  const vilaApiKey = document.getElementById('vilaApiKey');
-  if (vilaApiKey) vilaApiKey.value = vila.apiKey ? '********' : '';
-  const vilaApiKeys = document.getElementById('vilaApiKeys');
-  if (vilaApiKeys) vilaApiKeys.value = Array.isArray(vila.apiKeys) && vila.apiKeys.length > 0 ? vila.apiKeys.join('\n') : '';
-  const vilaModel = document.getElementById('vilaModel');
-  if (vilaModel) vilaModel.value = vila.model || 'nvidia/vila';
-  const vilaTemp = document.getElementById('vilaTemp');
-  if (vilaTemp) vilaTemp.value = String(vila.temperature ?? 0.2);
-  const vilaTopP = document.getElementById('vilaTopP');
-  if (vilaTopP) vilaTopP.value = String(vila.topP ?? 0.7);
-  const vilaMaxTokens = document.getElementById('vilaMaxTokens');
-  if (vilaMaxTokens) vilaMaxTokens.value = String(vila.maxOutputTokens ?? 4096);
-  const vilaBaseUrl = document.getElementById('vilaBaseUrl');
-  if (vilaBaseUrl) vilaBaseUrl.value = vila.baseUrl || 'https://integrate.api.nvidia.com/v1';
-  const vilaEnableThinking = document.getElementById('vilaEnableThinking');
-  if (vilaEnableThinking) vilaEnableThinking.checked = vila.enableThinking ?? true;
-  const vilaMonthlyLimit = document.getElementById('vilaMonthlyLimit');
-  if (vilaMonthlyLimit) vilaMonthlyLimit.value = String(vila.monthlyCallLimit ?? 0);
-  const vilaCostPerCall = document.getElementById('vilaCostPerCall');
-  if (vilaCostPerCall) vilaCostPerCall.value = String(vila.estimatedCostPerCallUsd ?? 0);
-  const igPub = s.instagramPublish || {};
-  const igPubEnabled = document.getElementById('igPubEnabled');
-  if (igPubEnabled) igPubEnabled.checked = igPub.enabled ?? true;
-  const igPubToken = document.getElementById('igPubToken');
-  if (igPubToken) igPubToken.value = igPub.accessToken ? '********' : '';
-  const igPubUserId = document.getElementById('igPubUserId');
-  if (igPubUserId) igPubUserId.value = igPub.instagramUserId || '';
-  const igPubBaseUrl = document.getElementById('igPubBaseUrl');
-  if (igPubBaseUrl) igPubBaseUrl.value = igPub.graphBaseUrl || 'https://graph.facebook.com/v19.0';
-  const igPubVerify = document.getElementById('igPubVerifyToken');
-  if (igPubVerify) igPubVerify.value = igPub.verifyToken || '';
-  const igPubReplyTemplate = document.getElementById('igPubReplyTemplate');
-  if (igPubReplyTemplate) igPubReplyTemplate.value = igPub.replyTemplate || 'Aqui esta o link: {link}';
-  const igPubReplyNoMatch = document.getElementById('igPubReplyNoMatch');
-  if (igPubReplyNoMatch) igPubReplyNoMatch.value = igPub.replyNoMatchTemplate || 'Comente a palavra correta para receber o link.';
-  const igPubAutoReplyEnabled = document.getElementById('igPubAutoReplyEnabled');
-  if (igPubAutoReplyEnabled) igPubAutoReplyEnabled.checked = igPub.autoReplyEnabled ?? true;
-  const igPubAutoReplyOnlyKeyword = document.getElementById('igPubAutoReplyOnlyKeyword');
-  if (igPubAutoReplyOnlyKeyword) igPubAutoReplyOnlyKeyword.checked = igPub.autoReplyOnlyOnKeywordMatch ?? true;
-  const igPubAutoDmEnabled = document.getElementById('igPubAutoDmEnabled');
-  if (igPubAutoDmEnabled) igPubAutoDmEnabled.checked = !!igPub.autoDmEnabled;
-  const igPubDmProvider = document.getElementById('igPubDmProvider');
-  if (igPubDmProvider) igPubDmProvider.value = igPub.dmProvider || 'meta';
-  const igPubDmFallbackManyChat = document.getElementById('igPubDmFallbackManyChat');
-  if (igPubDmFallbackManyChat) igPubDmFallbackManyChat.checked = igPub.dmFallbackToManyChatOnError ?? true;
-  const igPubDmTemplate = document.getElementById('igPubDmTemplate');
-  if (igPubDmTemplate) igPubDmTemplate.value = igPub.dmTemplate || 'Oi {name}! Aqui esta seu link: {link}';
-  const igPubManyChatWebhookUrl = document.getElementById('igPubManyChatWebhookUrl');
-  if (igPubManyChatWebhookUrl) igPubManyChatWebhookUrl.value = igPub.manyChatWebhookUrl || '';
-  const igPubManyChatApiKey = document.getElementById('igPubManyChatApiKey');
-  if (igPubManyChatApiKey) igPubManyChatApiKey.value = igPub.manyChatApiKey ? '********' : '';
-  const igAutoRequireOfficial = document.getElementById('igAutoRequireOfficial');
-  if (igAutoRequireOfficial) igAutoRequireOfficial.checked = igPub.autoPilotRequireOfficialProductData ?? true;
-  const igAutoMinImageMatch = document.getElementById('igAutoMinImageMatch');
-  if (igAutoMinImageMatch) igAutoMinImageMatch.value = String(igPub.autoPilotMinimumImageMatchScore ?? 80);
-  const igAutoRequireAi = document.getElementById('igAutoRequireAi');
-  if (igAutoRequireAi) igAutoRequireAi.checked = igPub.autoPilotRequireAiCaption ?? true;
-  const igStoryAutoEnabled = document.getElementById('igStoryAutoEnabled');
-  if (igStoryAutoEnabled) igStoryAutoEnabled.checked = !!igPub.storyAutoPilotEnabled;
-  const igStoryInterval = document.getElementById('igStoryInterval');
-  if (igStoryInterval) igStoryInterval.value = String(igPub.storyAutoPilotIntervalMinutes ?? 240);
-  const igStoryTopCount = document.getElementById('igStoryTopCount');
-  if (igStoryTopCount) igStoryTopCount.value = String(igPub.storyAutoPilotTopCount ?? 2);
-  const igStoryLookback = document.getElementById('igStoryLookback');
-  if (igStoryLookback) igStoryLookback.value = String(igPub.storyAutoPilotLookbackHours ?? 24);
-  const igStoryRepeatWindow = document.getElementById('igStoryRepeatWindow');
-  if (igStoryRepeatWindow) igStoryRepeatWindow.value = String(igPub.storyAutoPilotRepeatWindowHours ?? 24);
-  const igStorySendApproval = document.getElementById('igStorySendApproval');
-  if (igStorySendApproval) igStorySendApproval.checked = igPub.storyAutoPilotSendForApproval ?? true;
-  const igStoryApprovalChannel = document.getElementById('igStoryApprovalChannel');
-  if (igStoryApprovalChannel) igStoryApprovalChannel.value = igPub.storyAutoPilotApprovalChannel || 'whatsapp';
-  const igStoryApprovalTelegramChatId = document.getElementById('igStoryApprovalTelegramChatId');
-  if (igStoryApprovalTelegramChatId) igStoryApprovalTelegramChatId.value = String(igPub.storyAutoPilotApprovalTelegramChatId ?? 0);
-  const igStoryApprovalWhatsAppGroupId = document.getElementById('igStoryApprovalWhatsAppGroupId');
-  if (igStoryApprovalWhatsAppGroupId) igStoryApprovalWhatsAppGroupId.value = igPub.storyAutoPilotApprovalWhatsAppGroupId || '';
-  const igStoryApprovalWhatsAppInstance = document.getElementById('igStoryApprovalWhatsAppInstance');
-  if (igStoryApprovalWhatsAppInstance) igStoryApprovalWhatsAppInstance.value = igPub.storyAutoPilotApprovalWhatsAppInstanceName || '';
-  const bioHub = s.bioHub || {};
-  const bioHubEnabled = document.getElementById('bioHubEnabled');
-  if (bioHubEnabled) bioHubEnabled.checked = bioHub.enabled ?? true;
-  const bioHubBrandName = document.getElementById('bioHubBrandName');
-  if (bioHubBrandName) bioHubBrandName.value = bioHub.brandName || 'Rei das Ofertas';
-  const bioHubHeadline = document.getElementById('bioHubHeadline');
-  if (bioHubHeadline) bioHubHeadline.value = bioHub.headline || 'Achadinhos em destaque';
-  const bioHubSubheadline = document.getElementById('bioHubSubheadline');
-  if (bioHubSubheadline) bioHubSubheadline.value = bioHub.subheadline || 'Toque no botao para abrir a oferta.';
-  const bioHubButtonLabel = document.getElementById('bioHubButtonLabel');
-  if (bioHubButtonLabel) bioHubButtonLabel.value = bioHub.buttonLabel || 'Abrir oferta';
-  const bioHubMaxItems = document.getElementById('bioHubMaxItems');
-  if (bioHubMaxItems) bioHubMaxItems.value = String(bioHub.maxItems ?? 40);
-  const bioHubDefaultSource = document.getElementById('bioHubDefaultSource');
-  if (bioHubDefaultSource) bioHubDefaultSource.value = bioHub.defaultSource || 'bio';
-  const bioHubDefaultCampaign = document.getElementById('bioHubDefaultCampaign');
-  if (bioHubDefaultCampaign) bioHubDefaultCampaign.value = bioHub.defaultCampaign || '';
-  const bioHubPublicBaseUrl = document.getElementById('bioHubPublicBaseUrl');
-  if (bioHubPublicBaseUrl) bioHubPublicBaseUrl.value = bioHub.publicBaseUrl || s.publicBaseUrl || '';
-  const tgWaEnabled = document.getElementById('tgWaEnabled');
-  if (tgWaEnabled) tgWaEnabled.checked = !!s.telegramToWhatsApp?.enabled;
-  document.getElementById('waForwardEnabled').onchange = scheduleWhatsAppSave;
-  document.getElementById('waFromMeOnly').onchange = scheduleWhatsAppSave;
-  if (waSendMedia) waSendMedia.onchange = scheduleWhatsAppSave;
-  document.getElementById('waAppendShein').onchange = scheduleWhatsAppSave;
-  document.getElementById('waFooter').onchange = scheduleWhatsAppSave;
-  document.getElementById('waInstanceName').onchange = scheduleWhatsAppSave;
-  const waStatus = document.getElementById('waForwardStatus');
-  if (waStatus) {
-    waStatus.textContent = s.whatsAppForwarding?.enabled ? 'Repasse ativo' : 'Repasse inativo';
-    waStatus.className = 'status ' + (s.whatsAppForwarding?.enabled ? 'ok' : 'warn');
-  }
-  const sourceStatus = document.getElementById('waSourceSaveStatus');
-  if (sourceStatus && s.whatsAppForwarding?.sourceChatIds) {
-    sourceStatus.textContent = `Origem: ${s.whatsAppForwarding.sourceChatIds.length} grupo(s)`;
-    sourceStatus.className = 'status muted';
-  }
-
-  document.getElementById('debug').textContent = JSON.stringify(s, null, 2);
-  document.getElementById('statStatus').textContent = 'Online';
-  refreshBioLinksPreview();
+  
+  setSafeVal('instaCaptionTemplate1', captionTemplates[0] || '');
+  setSafeVal('instaCaptionTemplate2', captionTemplates[1] || '');
+  setSafeVal('instaCaptionTemplate3', captionTemplates[2] || '');
 }
 
 async function loadSettings() {
   const s = await api('/api/settings');
   renderSettings(s);
-  await loadUserbotChats();
-  await loadWhatsAppGroups();
-  await hydrateAgentUiState();
+  window.__settingsCache = s;
+  await Promise.all([
+    loadWaInstances(),
+    loadUserbotChats(),
+    loadWhatsAppGroups(s),
+    hydrateAgentUiState(),
+    loadConversionLogs(),
+    loadMediaFailures(),
+    loadOperationalOverview()
+  ]);
   restoreAgentUiState();
   renderTelegramToWhatsAppRoute();
-  await loadConversionLogs();
-  await loadMediaFailures();
+  renderFlowEndpointsMap();
 }
 
 function renderResponderLogs(items) {
@@ -1848,6 +3300,99 @@ async function saveMercadoLivreCompliance() {
   }
 }
 
+async function saveMercadoLivreAffiliateScout() {
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('mlScoutSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando scout...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.mercadoLivreAffiliateScout = existing.mercadoLivreAffiliateScout || {};
+  existing.mercadoLivreAffiliateScout.enabled = document.getElementById('mlScoutEnabled')?.checked ?? false;
+  existing.mercadoLivreAffiliateScout.usePersistentSession = document.getElementById('mlScoutUsePersistentSession')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.headless = document.getElementById('mlScoutHeadless')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.requireShareButtonFlow = document.getElementById('mlScoutRequireShareFlow')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.requireImage = document.getElementById('mlScoutRequireImage')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.autoPublishToOfficialGroup = document.getElementById('mlScoutAutoPublishOfficial')?.checked ?? false;
+  existing.mercadoLivreAffiliateScout.saveScreenshotsOnFailure = document.getElementById('mlScoutSaveScreenshotsOnFailure')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.whatsAppInstanceName = document.getElementById('mlScoutInstanceName')?.value || '';
+  existing.mercadoLivreAffiliateScout.destinationGroupId = document.getElementById('mlScoutDestinationGroupId')?.value || '';
+  existing.mercadoLivreAffiliateScout.loginUser = document.getElementById('mlScoutLoginUser')?.value || '';
+  existing.mercadoLivreAffiliateScout.loginPassword = document.getElementById('mlScoutLoginPassword')?.value || '';
+  existing.mercadoLivreAffiliateScout.twoFactorCode = document.getElementById('mlScoutTwoFactorCode')?.value || '';
+  existing.mercadoLivreAffiliateScout.authMode = document.getElementById('mlScoutAuthMode')?.value || '';
+  existing.mercadoLivreAffiliateScout.storageStateJson = document.getElementById('mlScoutStorageStateJson')?.value || '';
+  existing.mercadoLivreAffiliateScout.storageStatePath = document.getElementById('mlScoutStorageStatePath')?.value || '';
+  existing.mercadoLivreAffiliateScout.baseUrl = document.getElementById('mlScoutBaseUrl')?.value || '';
+  existing.mercadoLivreAffiliateScout.loginUrl = document.getElementById('mlScoutLoginUrl')?.value || '';
+  existing.mercadoLivreAffiliateScout.homeUrl = document.getElementById('mlScoutHomeUrl')?.value || '';
+  existing.mercadoLivreAffiliateScout.intervalMinutes = Number(document.getElementById('mlScoutIntervalMinutes')?.value || 10);
+  existing.mercadoLivreAffiliateScout.intervalJitterMinutes = Number(document.getElementById('mlScoutIntervalJitterMinutes')?.value || 2);
+  existing.mercadoLivreAffiliateScout.minCommissionPercent = Number(document.getElementById('mlScoutMinCommissionPercent')?.value || 19);
+  existing.mercadoLivreAffiliateScout.tier1MinPrice = Number(document.getElementById('mlScoutTier1MinPrice')?.value || 99);
+  existing.mercadoLivreAffiliateScout.tier1MinCommissionPercent = Number(document.getElementById('mlScoutTier1MinCommissionPercent')?.value || 12);
+  existing.mercadoLivreAffiliateScout.tier2MinPrice = Number(document.getElementById('mlScoutTier2MinPrice')?.value || 189);
+  existing.mercadoLivreAffiliateScout.tier2MinCommissionPercent = Number(document.getElementById('mlScoutTier2MinCommissionPercent')?.value || 11);
+  existing.mercadoLivreAffiliateScout.tier3MinPrice = Number(document.getElementById('mlScoutTier3MinPrice')?.value || 325);
+  existing.mercadoLivreAffiliateScout.tier3MinCommissionPercent = Number(document.getElementById('mlScoutTier3MinCommissionPercent')?.value || 7);
+  existing.mercadoLivreAffiliateScout.maxOffersPerRun = Number(document.getElementById('mlScoutMaxOffersPerRun')?.value || 1);
+  existing.mercadoLivreAffiliateScout.repeatWindowHours = Number(document.getElementById('mlScoutRepeatWindowHours')?.value || 24);
+  existing.mercadoLivreAffiliateScout.offerCardSelector = document.getElementById('mlScoutOfferCardSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerLinkSelector = document.getElementById('mlScoutOfferLinkSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerTitleSelector = document.getElementById('mlScoutOfferTitleSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerPriceSelector = document.getElementById('mlScoutOfferPriceSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerImageSelector = document.getElementById('mlScoutOfferImageSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerCommissionSelector = document.getElementById('mlScoutOfferCommissionSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.shareButtonSelector = document.getElementById('mlScoutShareButtonSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.shareActionSelector = document.getElementById('mlScoutShareActionSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.sharedLinkSelector = document.getElementById('mlScoutSharedLinkSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.sharedLinkCopyButtonSelector = document.getElementById('mlScoutSharedLinkCopyButtonSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.notes = document.getElementById('mlScoutNotes')?.value || '';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Scout salvo com segurança.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      const message = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar scout.');
+      status.textContent = message;
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function testMercadoLivreAffiliateScout() {
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('mlScoutSaveStatus');
+  if (status) {
+    status.textContent = 'Testando scout...';
+    status.className = 'status warn';
+  }
+
+  try {
+    await saveMercadoLivreAffiliateScout();
+    const result = await api('/api/admin/mercadolivre-affiliate-scout/test', 'POST', {});
+    const offerCount = Array.isArray(result?.offers) ? result.offers.length : 0;
+    const message = result?.message || 'Teste concluído.';
+
+    if (status) {
+      status.textContent = `${message} Ofertas encontradas: ${offerCount}.`;
+      status.className = result?.success ? 'status ok' : 'status warn';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = `Falha no teste: ${e?.message || e}`;
+      status.className = 'status err';
+    }
+  }
+}
+
 function renderMercadoLivrePending(items) {
   const tbody = document.getElementById('mlPendingBody');
   const count = document.getElementById('mlPendingCount');
@@ -1863,7 +3408,7 @@ function renderMercadoLivrePending(items) {
   };
 
   if (!items || items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pend�ncias.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pend?ncias.</td></tr>';
     if (count) count.textContent = '0 item(s)';
     return;
   }
@@ -1897,7 +3442,7 @@ function renderMercadoLivrePending(items) {
         <td><small>${escapeHtml(item.reason || '-')}</small></td>
         <td>
           <div><small><strong>Original:</strong><br>${originalLinksHtml}</small></div>
-          <div style="margin-top:6px;"><small><strong>Convertido (pr�via):</strong><br>${convertedLinksHtml}</small></div>
+          <div style="margin-top:6px;"><small><strong>Convertido (pr?via):</strong><br>${convertedLinksHtml}</small></div>
           ${originalImageHtml}
           ${status === 'pending' ? `<div style="margin-top:6px;">
             <small><strong>Link corrigido:</strong></small>
@@ -1944,14 +3489,14 @@ async function loadMercadoLivrePending() {
 
 async function approveMercadoLivrePending(id) {
   if (currentRole !== 'admin') return;
-  const note = prompt('Observa��o de aprova��o (opcional):', '') || '';
+  const note = prompt('Observa??o de aprova??o (opcional):', '') || '';
   const overrideUrl = (document.getElementById(`mlOverride_${id}`)?.value || '').trim();
   if (!overrideUrl) {
     alert('Informe o link corrigido antes de aprovar.');
     return;
   }
   if (!/^https?:\/\//i.test(overrideUrl)) {
-    alert('Link corrigido inv�lido. Use URL completa com http(s).');
+    alert('Link corrigido inv?lido. Use URL completa com http(s).');
     return;
   }
   const sendNow = confirm('Enviar o texto aprovado para o(s) destino(s) agora?');
@@ -1967,19 +3512,48 @@ async function approveMercadoLivrePending(id) {
       }
     }
   } catch (e) {
-    alert(e?.data?.error || e?.message || 'Erro ao aprovar pend�ncia.');
+    alert(e?.data?.error || e?.message || 'Erro ao aprovar pend?ncia.');
   }
 }
 async function rejectMercadoLivrePending(id) {
   if (currentRole !== 'admin') return;
-  const note = prompt('Motivo da rejeição (opcional):', '') || '';
-  try {
-    await api(`/api/mercadolivre/pending/${id}/reject`, 'POST', { note });
-    await loadMercadoLivrePending();
-  } catch (e) {
-    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendência.');
-  }
 }
+
+function parseManualIds() {
+  const text = document.getElementById('userbotManualIds').value || '';
+  const parts = text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
+  const ids = [];
+  for (const p of parts) {
+    const num = Number(p);
+    if (!Number.isNaN(num) && Number.isFinite(num)) ids.push(num);
+  }
+  return ids;
+}
+
+function parseManualIdsById(id) {
+  const text = document.getElementById(id)?.value || '';
+  const parts = text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
+  const ids = [];
+  for (const p of parts) {
+    const num = Number(p);
+    if (!Number.isNaN(num) && Number.isFinite(num)) ids.push(num);
+  }
+  return ids;
+}
+
+function parseWhatsAppManualIds(id) {
+  const text = document.getElementById(id)?.value || '';
+  return text.split(/[,\n\r\t ]+/).map(p => p.trim()).filter(Boolean);
+}
+
+function parseLines(id) {
+  const text = document.getElementById(id)?.value || '';
+  return text
+    .split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
 
 async function saveSettings() {
   if (currentRole !== 'admin') return;
@@ -1995,13 +3569,14 @@ async function saveSettings() {
   existing.telegramForwarding.enabled = document.getElementById('userbotEnabled').checked;
   existing.telegramForwarding.destinationChatId = Number(document.getElementById('userbotDestinationId').value || 0);
   existing.telegramForwarding.appendSheinCode = document.getElementById('userbotAppendShein').checked;
+  existing.telegramForwarding.preferLinkPreviewWhenNoMedia = document.getElementById('userbotPreferLinkPreviewNoMedia')?.checked ?? true;
   existing.telegramForwarding.footerText = document.getElementById('userbotFooter').value || '';
-
   existing.whatsAppForwarding = existing.whatsAppForwarding || {};
   existing.whatsAppForwarding.enabled = document.getElementById('waForwardEnabled').checked;
   existing.whatsAppForwarding.processFromMeOnly = document.getElementById('waFromMeOnly').checked;
   existing.whatsAppForwarding.footerText = document.getElementById('waFooter').value || '';
   existing.whatsAppForwarding.appendSheinCode = document.getElementById('waAppendShein').checked;
+  existing.whatsAppForwarding.preferLinkPreviewWhenNoMedia = document.getElementById('waPreferLinkPreviewNoMedia')?.checked ?? true;
   const waSendMedia = document.getElementById('waSendMedia');
   if (waSendMedia) existing.whatsAppForwarding.sendMediaEnabled = waSendMedia.checked;
 
@@ -2011,15 +3586,20 @@ async function saveSettings() {
   const merged = Array.from(new Set([...selected, ...manual]));
   existing.telegramForwarding.sourceChatIds = merged;
 
-  const result = await api('/api/settings', 'PUT', existing);
-  if (result.errors && result.errors.length) {
-    document.getElementById('saveStatus').textContent = result.errors.join(' | ');
-    document.getElementById('saveStatus').className = 'status bad';
-  } else {
-    document.getElementById('saveStatus').textContent = 'Configurações salvas.';
-    document.getElementById('saveStatus').className = 'status ok';
+  const status = document.getElementById('saveStatus');
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Configurações salvas.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
+      status.className = 'status bad';
+    }
   }
-  await loadSettings();
 }
 
 async function saveTelegramToWhatsAppRoute() {
@@ -2040,18 +3620,13 @@ async function saveTelegramToWhatsAppRoute() {
   }));
   existing.telegramToWhatsAppRoutes = routes;
 
-  existing.telegramToWhatsApp = existing.telegramToWhatsApp || {};
-  const firstRoute = routes[0];
-  existing.telegramToWhatsApp.enabled = firstRoute ? !!firstRoute.enabled : false;
-  existing.telegramToWhatsApp.sourceChatIds = firstRoute ? firstRoute.sourceChatIds : [];
-  existing.telegramToWhatsApp.destinationGroupIds = firstRoute ? firstRoute.destinationGroupIds : [];
-
   try {
     await api('/api/settings', 'PUT', existing);
     if (status) {
       status.textContent = 'Rota salva.';
       status.className = 'status ok';
     }
+    await loadSettings();
   } catch (e) {
     if (status) {
       status.textContent = e.data?.errors ? e.data.errors.join(' | ') : 'Erro ao salvar.';
@@ -2084,6 +3659,11 @@ async function saveLinkResponder() {
   existing.linkResponder.replyOnFailure = document.getElementById('responderFailTemplate')?.value || '';
   existing.linkResponder.appendSheinCode = document.getElementById('responderAppendShein')?.checked ?? true;
   existing.linkResponder.trackingEnabled = document.getElementById('responderTracking')?.checked ?? true;
+  existing.linkResponder.welcomeEnabled = document.getElementById('responderWelcomeEnabled')?.checked ?? true;
+  existing.linkResponder.welcomeInstanceName = (document.getElementById('responderWelcomeInstanceName')?.value || '').trim() || null;
+  existing.linkResponder.welcomeTargetMode = document.getElementById('responderWelcomeTargetMode')?.value || 'private';
+  existing.linkResponder.welcomeTargetChatId = (document.getElementById('responderWelcomeTargetChatId')?.value || '').trim() || null;
+  existing.linkResponder.welcomeMessage = document.getElementById('responderWelcomeMessage')?.value || '';
   existing.linkResponder.footerText = document.getElementById('responderFooter')?.value || '';
 
   try {
@@ -2182,6 +3762,16 @@ async function saveAiLabSettings() {
     existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
     existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
 
+    existing.gemma4 = existing.gemma4 || {};
+    const gemma4Keys = collectGemma4ApiKeysFromUi();
+    existing.gemma4.apiKey = gemma4Keys[0] || '';
+    existing.gemma4.apiKeys = gemma4Keys;
+    existing.gemma4.model = document.getElementById('gemma4Model')?.value || 'gemma-4-26b-a4b-it';
+    existing.gemma4.modelAdvanced = document.getElementById('gemma4ModelAdvanced')?.value || 'gemma-4-31b-it';
+    existing.gemma4.maxOutputTokens = parseInt(document.getElementById('gemma4MaxTokens')?.value || '1200', 10);
+    existing.gemma4.monthlyCallLimit = parseInt(document.getElementById('gemma4MonthlyLimit')?.value || '0', 10);
+    existing.gemma4.estimatedCostPerCallUsd = parseFloat(document.getElementById('gemma4CostPerCall')?.value || '0');
+
     existing.deepSeek = existing.deepSeek || {};
     existing.deepSeek.apiKey = document.getElementById('deepseekApiKey')?.value || '';
     existing.deepSeek.apiKeys = parseApiKeysTextarea('deepseekApiKeys', existing.deepSeek.apiKey === '********' ? '********' : '');
@@ -2243,6 +3833,7 @@ async function runAiLabCompare() {
   const providers = [
     document.getElementById('aiLabProviderOpenAi')?.checked ? 'openai' : null,
     document.getElementById('aiLabProviderGemini')?.checked ? 'gemini' : null,
+    document.getElementById('aiLabProviderGemma4')?.checked ? 'gemma4' : null,
     document.getElementById('aiLabProviderDeepSeek')?.checked ? 'deepseek' : null,
     document.getElementById('aiLabProviderNemotron')?.checked ? 'nemotron' : null,
     document.getElementById('aiLabProviderQwen')?.checked ? 'qwen' : null,
@@ -2322,6 +3913,20 @@ async function saveInstagramPublishSettings() {
   existing.instagramPublish.autoPilotRequireOfficialProductData = document.getElementById('igAutoRequireOfficial')?.checked ?? true;
   existing.instagramPublish.autoPilotMinimumImageMatchScore = parseInt(document.getElementById('igAutoMinImageMatch')?.value || '80', 10) || 80;
   existing.instagramPublish.autoPilotRequireAiCaption = document.getElementById('igAutoRequireAi')?.checked ?? true;
+  existing.instagramPublish.viralReelsAutoPilotEnabled = document.getElementById('igViralReelsEnabled')?.checked ?? false;
+  existing.instagramPublish.viralReelsSourceTelegramChatId = parseInt(document.getElementById('igViralReelsSourceChatId')?.value || '2425105459', 10) || 2425105459;
+  existing.instagramPublish.viralReelsIntervalHours = parseInt(document.getElementById('igViralReelsIntervalHours')?.value || '12', 10) || 12;
+  existing.instagramPublish.viralReelsScheduleTimes = String(document.getElementById('igViralReelsScheduleTimes')?.value || '07:30,17:30')
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean);
+  existing.instagramPublish.viralReelsLookbackHours = parseInt(document.getElementById('igViralReelsLookbackHours')?.value || '24', 10) || 24;
+  existing.instagramPublish.viralReelsRepeatWindowHours = parseInt(document.getElementById('igViralReelsRepeatWindowHours')?.value || '72', 10) || 72;
+  existing.instagramPublish.viralReelsSendForApproval = document.getElementById('igViralReelsSendApproval')?.checked ?? true;
+  existing.instagramPublish.viralReelsApprovalChannel = 'whatsapp';
+  existing.instagramPublish.viralReelsApprovalWhatsAppGroupId = document.getElementById('igViralReelsApprovalWhatsAppGroupId')?.value || null;
+  existing.instagramPublish.viralReelsApprovalWhatsAppInstanceName = document.getElementById('igViralReelsApprovalWhatsAppInstanceName')?.value || 'ZapOfertas';
+  existing.instagramPublish.viralReelsAutoPublishEnabled = false;
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -2338,227 +3943,319 @@ async function saveInstagramPublishSettings() {
   }
 }
 
-async function saveInstagramStorySettings() {
-  if (currentRole !== 'admin') return;
-  const status = document.getElementById('igStoryStatus');
-  if (status) {
-    status.textContent = 'Salvando...';
-    status.className = 'status warn';
+function renderMercadoLivrePending(items) {
+  const tbody = document.getElementById('mlPendingBody');
+  const count = document.getElementById('mlPendingCount');
+  if (!tbody) return;
+  const renderLinkList = (urls) => {
+    if (!urls || urls.length === 0) return '-';
+    return urls.map((u) => {
+      const href = String(u || '').trim();
+      if (!href) return '';
+      const safe = escapeHtml(href);
+      return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`;
+    }).filter(Boolean).join('<br>');
+  };
+
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Sem pendências.</td></tr>';
+    if (count) count.textContent = '0 item(s)';
+    return;
   }
 
-  const existing = await api('/api/settings');
-  existing.instagramPublish = existing.instagramPublish || {};
-  existing.instagramPublish.storyAutoPilotEnabled = document.getElementById('igStoryAutoEnabled')?.checked ?? false;
-  existing.instagramPublish.storyAutoPilotIntervalMinutes = parseInt(document.getElementById('igStoryInterval')?.value || '240', 10);
-  existing.instagramPublish.storyAutoPilotTopCount = parseInt(document.getElementById('igStoryTopCount')?.value || '2', 10);
-  existing.instagramPublish.storyAutoPilotLookbackHours = parseInt(document.getElementById('igStoryLookback')?.value || '24', 10);
-  existing.instagramPublish.storyAutoPilotRepeatWindowHours = parseInt(document.getElementById('igStoryRepeatWindow')?.value || '24', 10);
-  existing.instagramPublish.storyAutoPilotSendForApproval = document.getElementById('igStorySendApproval')?.checked ?? true;
-  existing.instagramPublish.storyAutoPilotApprovalChannel = document.getElementById('igStoryApprovalChannel')?.value || 'whatsapp';
-  existing.instagramPublish.storyAutoPilotApprovalTelegramChatId = parseInt(document.getElementById('igStoryApprovalTelegramChatId')?.value || '0', 10) || 0;
-  existing.instagramPublish.storyAutoPilotApprovalWhatsAppGroupId = document.getElementById('igStoryApprovalWhatsAppGroupId')?.value || '';
-  existing.instagramPublish.storyAutoPilotApprovalWhatsAppInstanceName = document.getElementById('igStoryApprovalWhatsAppInstance')?.value || '';
+  if (count) count.textContent = `${items.length} item(ns)`;
+  tbody.innerHTML = items.map(item => {
+    const status = String(item.status || '').toLowerCase();
+    const badgeClass = status === 'pending' ? 'warn' : (status === 'approved' ? 'ok' : 'bad');
+    const originalUrls = (item.extractedUrls || []);
+    const convertedPreviewUrls = (item.previewConvertedUrls || []);
+    const originalLinksHtml = renderLinkList(originalUrls);
+    const convertedLinksHtml = renderLinkList(convertedPreviewUrls);
+    const originalImageUrl = String(item.originalImageUrl || '').trim();
+    const originalImageHtml = originalImageUrl
+      ? `<div style="margin-top:6px;">
+          <small><strong>Imagem original:</strong><br><a href="${escapeHtml(originalImageUrl)}" target="_blank" rel="noopener noreferrer">abrir imagem</a></small>
+        </div>`
+      : '';
+    const channel = [item.originChatRef || item.originChatId || '-', item.destinationChatRef || item.destinationChatId || '-'].join(' -> ');
+    const actions = status === 'pending'
+      ? `<button class="secondary" onclick="approveMercadoLivrePending('${item.id}')">Aprovar</button>
+         <button class="danger" onclick="rejectMercadoLivrePending('${item.id}')">Rejeitar</button>`
+      : `<span class="muted">${escapeHtml(item.reviewedBy || '-')}</span>`;
 
+    return `
+      <tr>
+        <td>${formatTs(item.createdAt)}</td>
+        <td><span class="badge ${badgeClass}">${escapeHtml(item.status || '-')}</span></td>
+        <td>${escapeHtml(item.source || '-')}</td>
+        <td><small>${escapeHtml(channel)}</small></td>
+        <td><small>${escapeHtml(item.reason || '-')}</small></td>
+        <td>
+          <div><small><strong>Original:</strong><br>${originalLinksHtml}</small></div>
+          <div style="margin-top:6px;"><small><strong>Convertido (prévia):</strong><br>${convertedLinksHtml}</small></div>
+          ${originalImageHtml}
+          ${status === 'pending' ? `<div style="margin-top:6px;">
+            <small><strong>Link corrigido:</strong></small>
+            <input id="mlOverride_${item.id}" placeholder="https://..." style="width:100%;margin-top:4px;" />
+          </div>` : ''}
+        </td>
+        <td>
+          ${actions}
+          ${item.convertedText ? `<button class="copy-btn" data-copy="${encodeURIComponent(item.convertedText)}">Copiar convertido</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  document.querySelectorAll('#mlPendingBody .copy-btn').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      const text = decodeURIComponent(ev.currentTarget.getAttribute('data-copy') || '');
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    });
+  });
+}
+async function loadMercadoLivrePending() {
+  try {
+    const status = document.getElementById('mlPendingStatus')?.value ?? 'pending';
+    const query = new URLSearchParams();
+    if (status) query.set('status', status);
+    query.set('limit', '300');
+    const payload = await api('/api/mercadolivre/pending?' + query.toString());
+    renderMercadoLivrePending(payload.items || []);
+  } catch {
+    renderMercadoLivrePending([]);
+  }
+}
+
+async function approveMercadoLivrePending(id) {
+  if (currentRole !== 'admin') return;
+  const note = prompt('Observação de aprovação (opcional):', '') || '';
+  const overrideUrl = (document.getElementById(`mlOverride_${id}`)?.value || '').trim();
+  if (!overrideUrl) {
+    alert('Informe o link corrigido antes de aprovar.');
+    return;
+  }
+  if (!/^https?:\/\//i.test(overrideUrl)) {
+    alert('Link corrigido inválido. Use URL completa com http(s).');
+    return;
+  }
+  const sendNow = confirm('Enviar o texto aprovado para o(s) destino(s) agora?');
+  try {
+    const result = await api(`/api/mercadolivre/pending/${id}/approve`, 'POST', { note, sendNow, overrideUrl: overrideUrl || null });
+    await loadMercadoLivrePending();
+    await loadConversionLogs();
+    if (sendNow) {
+      const sent = result?.sentTargets ?? 0;
+      const failures = (result?.sendFailures || []).length;
+      if (failures > 0) {
+        alert(`Aprovado. Envio: ${sent} sucesso(s), ${failures} falha(s).`);
+      }
+    }
+  } catch (e) {
+    alert(e?.data?.error || e?.message || 'Erro ao aprovar pendência.');
+  }
+}
+async function rejectMercadoLivrePending(id) {
+  if (currentRole !== 'admin') return;
+  const note = prompt('Motivo da rejeição (opcional):', '') || '';
+  try {
+    await api(`/api/mercadolivre/pending/${id}/reject`, 'POST', { note });
+    await loadMercadoLivrePending();
+  } catch (e) {
+    alert(e?.data?.error || e?.message || 'Erro ao rejeitar pendência.');
+  }
+}
+
+async function saveSettings() {
+  if (currentRole !== 'admin') return;
+
+  const existing = await api('/api/settings');
+  existing.autoReplies = parseRules(document.getElementById('rules').value);
+  existing.autoRepliesSettings = existing.autoRepliesSettings || {};
+  existing.autoRepliesSettings.enabled = document.getElementById('autoRepliesEnabled')?.checked ?? true;
+  existing.linkAutomation.autoConvertIncomingLinks = document.getElementById('autoConvert').checked;
+  existing.linkAutomation.autoSendToDestinationChannel = document.getElementById('autoSend').checked;
+  existing.linkAutomation.destinationChannel = document.getElementById('destinationChannel').value;
+  existing.telegramForwarding = existing.telegramForwarding || {};
+  existing.telegramForwarding.enabled = document.getElementById('userbotEnabled').checked;
+  existing.telegramForwarding.destinationChatId = Number(document.getElementById('userbotDestinationId').value || 0);
+  existing.telegramForwarding.appendSheinCode = document.getElementById('userbotAppendShein').checked;
+  existing.telegramForwarding.preferLinkPreviewWhenNoMedia = document.getElementById('userbotPreferLinkPreviewNoMedia')?.checked ?? true;
+  existing.telegramForwarding.footerText = document.getElementById('userbotFooter').value || '';
+  existing.whatsAppForwarding = existing.whatsAppForwarding || {};
+  existing.whatsAppForwarding.enabled = document.getElementById('waForwardEnabled').checked;
+  existing.whatsAppForwarding.processFromMeOnly = document.getElementById('waFromMeOnly').checked;
+  existing.whatsAppForwarding.footerText = document.getElementById('waFooter').value || '';
+  existing.whatsAppForwarding.appendSheinCode = document.getElementById('waAppendShein').checked;
+  existing.whatsAppForwarding.preferLinkPreviewWhenNoMedia = document.getElementById('waPreferLinkPreviewNoMedia')?.checked ?? true;
+  const waSendMedia = document.getElementById('waSendMedia');
+  if (waSendMedia) existing.whatsAppForwarding.sendMediaEnabled = waSendMedia.checked;
+
+  const selected = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked"))
+    .map(el => Number(el.value));
+  const manual = parseManualIds();
+  const merged = Array.from(new Set([...selected, ...manual]));
+  existing.telegramForwarding.sourceChatIds = merged;
+
+  const status = document.getElementById('saveStatus');
   try {
     await api('/api/settings', 'PUT', existing);
     if (status) {
-      status.textContent = 'AutoStory salvo.';
+      status.textContent = 'Configurações salvas.';
       status.className = 'status ok';
     }
     await loadSettings();
   } catch (e) {
     if (status) {
-      status.textContent = e?.data?.error || e?.message || 'Erro ao salvar.';
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
       status.className = 'status bad';
     }
   }
 }
 
-async function loadApiDiagnostics() {
-  const status = document.getElementById('apiDiagStatus');
-  const result = document.getElementById('apiDiagResult');
+async function saveTelegramToWhatsAppRoute() {
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('tgWaSaveStatus');
   if (status) {
-    status.textContent = 'Carregando...';
+    status.textContent = 'Salvando rota...';
     status.className = 'status warn';
   }
-  if (result) {
-    result.textContent = '';
-  }
+
+  const existing = await api('/api/settings');
+  persistActiveTgWaRouteFromUi();
+  const routes = (window.__tgWaRoutes || []).map(route => ({
+    name: (route.name || 'Rota Telegram -> WhatsApp').trim() || 'Rota Telegram -> WhatsApp',
+    enabled: !!route.enabled,
+    sourceChatIds: Array.from(new Set((route.sourceChatIds || []).map(Number).filter(x => Number.isFinite(x)))),
+    destinationGroupIds: Array.from(new Set((route.destinationGroupIds || []).map(String).filter(Boolean)))
+  }));
+  existing.telegramToWhatsAppRoutes = routes;
 
   try {
-    const payload = await api('/api/diagnostics/apis');
-    if (result) {
-      result.textContent = JSON.stringify(payload, null, 2);
-    }
+    await api('/api/settings', 'PUT', existing);
     if (status) {
-      status.textContent = 'Status atualizado.';
+      status.textContent = 'Rota salva.';
       status.className = 'status ok';
     }
+    await loadSettings();
   } catch (e) {
-    if (result) {
-      result.textContent = e?.data?.error || e?.message || 'Falha ao obter diagnostico.';
-    }
     if (status) {
-      status.textContent = 'Erro ao carregar.';
+      status.textContent = e.data?.errors ? e.data.errors.join(' | ') : 'Erro ao salvar.';
       status.className = 'status bad';
     }
   }
 }
 
-function buildBioLinksFromUi() {
-  const manualBase = (document.getElementById('bioHubPublicBaseUrl')?.value || '').trim();
-  const configuredBase = (manualBase || window.__settingsCache?.publicBaseUrl || '').trim();
-  const runtimeBase = (window.location.origin || '').trim();
-  const base = (configuredBase || runtimeBase).replace(/\/$/, '');
-  const source = (document.getElementById('bioHubDefaultSource')?.value || 'bio').trim() || 'bio';
-  const campaign = (document.getElementById('bioHubDefaultCampaign')?.value || '').trim();
-  const feedCampaign = campaign || 'insta-feed';
-  const storyCampaign = campaign || 'insta-story';
-  const manychatCampaign = campaign || 'manychat';
-  const encode = encodeURIComponent;
-
-  const linkBase = `${base}/bio?src=${encode(source)}`;
-  return [
-    { label: 'Instagram Bio', url: campaign ? `${linkBase}&camp=${encode(campaign)}` : linkBase },
-    { label: 'Story CTA', url: `${base}/bio?src=instagram-story&camp=${encode(storyCampaign)}` },
-    { label: 'ManyChat DM', url: `${base}/bio?src=manychat&camp=${encode(manychatCampaign)}` },
-    { label: 'Feed Comentario', url: `${base}/bio?src=instagram-feed&camp=${encode(feedCampaign)}` },
-    { label: 'Catalogo Site', url: `${base}/catalogo` },
-    { label: 'Item Exemplo', url: `${base}/item/42` }
-  ];
-}
-
-function copyToClipboard(text) {
-  if (!text) return;
-  navigator.clipboard.writeText(text).catch(() => {
-    const area = document.createElement('textarea');
-    area.value = text;
-    document.body.appendChild(area);
-    area.select();
-    document.execCommand('copy');
-    document.body.removeChild(area);
-  });
-}
-
-function refreshBioLinksPreview() {
-  const body = document.getElementById('bioLinksTableBody');
-  if (!body) return;
-  const items = buildBioLinksFromUi();
-  body.innerHTML = items.map((item, index) => `
-    <tr>
-      <td>${escapeHtml(item.label)}</td>
-      <td><small>${escapeHtml(item.url)}</small></td>
-      <td>
-        <button class="secondary" onclick="window.open(decodeURIComponent('${encodeURIComponent(item.url)}'), '_blank')">Abrir</button>
-        <button class="secondary" onclick="copyToClipboard(decodeURIComponent('${encodeURIComponent(item.url)}'))">Copiar</button>
-      </td>
-    </tr>
-  `).join('');
-}
-
-async function saveBioHubSettings() {
+async function saveLinkResponder() {
   if (currentRole !== 'admin') return;
-  const status = document.getElementById('bioHubStatus');
+  const status = document.getElementById('responderSaveStatus');
   if (status) {
     status.textContent = 'Salvando...';
     status.className = 'status warn';
   }
 
   const existing = await api('/api/settings');
-  existing.bioHub = existing.bioHub || {};
-  existing.bioHub.enabled = document.getElementById('bioHubEnabled')?.checked ?? true;
-  existing.bioHub.brandName = document.getElementById('bioHubBrandName')?.value || 'Rei das Ofertas';
-  existing.bioHub.headline = document.getElementById('bioHubHeadline')?.value || 'Achadinhos em destaque';
-  existing.bioHub.subheadline = document.getElementById('bioHubSubheadline')?.value || 'Toque no botao para abrir a oferta.';
-  existing.bioHub.buttonLabel = document.getElementById('bioHubButtonLabel')?.value || 'Abrir oferta';
-  existing.bioHub.maxItems = parseInt(document.getElementById('bioHubMaxItems')?.value || '40', 10);
-  existing.bioHub.defaultSource = document.getElementById('bioHubDefaultSource')?.value || 'bio';
-  existing.bioHub.defaultCampaign = document.getElementById('bioHubDefaultCampaign')?.value || '';
-  existing.bioHub.publicBaseUrl = document.getElementById('bioHubPublicBaseUrl')?.value || '';
+  existing.linkResponder = existing.linkResponder || {};
+  existing.linkResponder.enabled = document.getElementById('responderEnabled')?.checked ?? false;
+  existing.linkResponder.allowWhatsApp = document.getElementById('responderWhatsApp')?.checked ?? true;
+  existing.linkResponder.allowTelegramBot = document.getElementById('responderTelegramBot')?.checked ?? false;
+  existing.linkResponder.allowTelegramUserbot = document.getElementById('responderTelegramUserbot')?.checked ?? false;
+  existing.linkResponder.whatsAppAllowPrivate = document.getElementById('responderWaPrivate')?.checked ?? true;
+  existing.linkResponder.whatsAppAllowGroups = document.getElementById('responderWaGroups')?.checked ?? false;
+  existing.linkResponder.telegramAllowPrivate = document.getElementById('responderTgPrivate')?.checked ?? true;
+  existing.linkResponder.telegramAllowGroups = document.getElementById('responderTgGroups')?.checked ?? false;
+  existing.linkResponder.whatsAppChatIds = parseWhatsAppManualIds('responderWaIds');
+  existing.linkResponder.telegramChatIds = parseManualIdsById('responderTgIds');
+  existing.linkResponder.replyTemplate = document.getElementById('responderTemplate')?.value || '';
+  existing.linkResponder.replyOnFailure = document.getElementById('responderFailTemplate')?.value || '';
+  existing.linkResponder.appendSheinCode = document.getElementById('responderAppendShein')?.checked ?? true;
+  existing.linkResponder.trackingEnabled = document.getElementById('responderTracking')?.checked ?? true;
+  existing.linkResponder.welcomeEnabled = document.getElementById('responderWelcomeEnabled')?.checked ?? true;
+  existing.linkResponder.welcomeInstanceName = (document.getElementById('responderWelcomeInstanceName')?.value || '').trim() || null;
+  existing.linkResponder.welcomeTargetMode = document.getElementById('responderWelcomeTargetMode')?.value || 'private';
+  existing.linkResponder.welcomeTargetChatId = (document.getElementById('responderWelcomeTargetChatId')?.value || '').trim() || null;
+  existing.linkResponder.welcomeMessage = document.getElementById('responderWelcomeMessage')?.value || '';
+  existing.linkResponder.footerText = document.getElementById('responderFooter')?.value || '';
 
   try {
     await api('/api/settings', 'PUT', existing);
     if (status) {
-      status.textContent = 'Bio Hub salvo.';
+      status.textContent = 'Gatilho salvo.';
       status.className = 'status ok';
     }
-    refreshBioLinksPreview();
+    await loadSettings();
   } catch (e) {
     if (status) {
-      status.textContent = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
       status.className = 'status bad';
     }
   }
 }
 
-async function syncCatalogNow() {
+async function saveInstagramSettings() {
   if (currentRole !== 'admin') return;
-  const status = document.getElementById('bioHubStatus');
+  const status = document.getElementById('instaSaveStatus');
   if (status) {
-    status.textContent = 'Sincronizando catalogo...';
-    status.className = 'status warn';
-  }
-  try {
-    const res = await api('/api/catalog/sync', 'POST', {});
-    const result = res?.result || {};
-    if (status) {
-      status.textContent = `Catalogo sincronizado. Criados: ${result.created || 0}, atualizados: ${result.updated || 0}, ativos: ${result.totalActive || 0}.`;
-      status.className = 'status ok';
-    }
-  } catch (e) {
-    if (status) {
-      status.textContent = e?.data?.error || e?.message || 'Erro ao sincronizar catalogo.';
-      status.className = 'status bad';
-    }
-  }
-}
-
-async function loadBioFunnel() {
-  const status = document.getElementById('bioFunnelStatus');
-  const totals = document.getElementById('bioFunnelTotals');
-  const sources = document.getElementById('bioFunnelSources');
-  const campaigns = document.getElementById('bioFunnelCampaigns');
-  const hours = document.getElementById('bioFunnelHours')?.value || '168';
-  if (status) {
-    status.textContent = 'Carregando...';
+    status.textContent = 'Salvando...';
     status.className = 'status warn';
   }
 
+  const existing = await api('/api/settings');
+  existing.instagramPosts = existing.instagramPosts || {};
+  existing.instagramPosts.enabled = document.getElementById('instaEnabled')?.checked ?? true;
+  existing.instagramPosts.allowWhatsApp = document.getElementById('instaAllowWhatsApp')?.checked ?? true;
+  existing.instagramPosts.allowTelegramBot = document.getElementById('instaAllowTelegramBot')?.checked ?? false;
+  existing.instagramPosts.allowTelegramUserbot = document.getElementById('instaAllowTelegramUserbot')?.checked ?? false;
+  existing.instagramPosts.whatsAppAllowPrivate = document.getElementById('instaWaPrivate')?.checked ?? true;
+  existing.instagramPosts.whatsAppAllowGroups = document.getElementById('instaWaGroups')?.checked ?? false;
+  existing.instagramPosts.whatsAppChatIds = parseWhatsAppManualIds('instaWaIds');
+  existing.instagramPosts.telegramAllowPrivate = document.getElementById('instaTgPrivate')?.checked ?? true;
+  existing.instagramPosts.telegramAllowGroups = document.getElementById('instaTgGroups')?.checked ?? true;
+  existing.instagramPosts.telegramChatIds = parseManualIdsById('instaTgIds');
+  const instaContextMode = document.getElementById('instaContextMode')?.value || 'Off';
+  const instaContextMap = { Off: 0, Suggestion: 1, ExtraPost: 2 };
+  existing.instagramPosts.offerContextMode = instaContextMap[instaContextMode] ?? 0;
+  existing.instagramPosts.useOfferContext = instaContextMode === 'ExtraPost';
+  existing.instagramPosts.useAi = document.getElementById('instaUseAi')?.checked ?? false;
+  existing.instagramPosts.useUltraPrompt = document.getElementById('instaUltraPrompt')?.checked ?? false;
+  existing.instagramPosts.useShortProductName = document.getElementById('instaShortName')?.checked ?? false;
+  existing.instagramPosts.useBenefitBullets = document.getElementById('instaBenefits')?.checked ?? false;
+  existing.instagramPosts.useImageDownload = document.getElementById('instaImageDownload')?.checked ?? false;
+  existing.instagramPosts.variationsCount = parseInt(document.getElementById('instaVariations')?.value || '2', 10);
+  existing.instagramPosts.promptPreset = document.getElementById('instaPromptPreset')?.value || 'premium';
+  existing.instagramPosts.aiProvider = document.getElementById('instaAiProvider')?.value || 'nemotron';
+  existing.instagramPosts.triggers = parseLines('instaTriggers');
+  existing.instagramPosts.footerText = document.getElementById('instaFooter')?.value || '';
+  existing.instagramPosts.promptTemplate = document.getElementById('instaPrompt')?.value || '';
+  const defaultCaptionTemplates = getDefaultInstaCaptionTemplates();
+  existing.instagramPosts.captionTemplates = [
+    (document.getElementById('instaCaptionTemplate1')?.value || defaultCaptionTemplates[0]).trim(),
+    (document.getElementById('instaCaptionTemplate2')?.value || defaultCaptionTemplates[1]).trim(),
+    (document.getElementById('instaCaptionTemplate3')?.value || defaultCaptionTemplates[2]).trim()
+  ];
+
   try {
-    const data = await api(`/api/logs/funnel?hours=${encodeURIComponent(hours)}`);
-    const total = data?.totals || {};
-    if (totals) {
-      totals.textContent = [
-        `Janela: ${data?.windowHours || hours}h`,
-        `Cliques: ${total.clicks ?? 0}`,
-        `Conversoes: ${total.conversions ?? 0}`,
-        `Conversoes OK: ${total.successfulConversions ?? 0}`,
-        `Conversoes afiliadas: ${total.affiliatedConversions ?? 0}`
-      ].join('\\n');
-    }
-
-    if (sources) {
-      const lines = (data?.bySource || []).slice(0, 8).map(x => `${x.source}: ${x.clicks} cliques (${x.uniqueLinks} links)`);
-      sources.textContent = lines.length ? lines.join('\\n') : 'Sem cliques no periodo.';
-    }
-
-    if (campaigns) {
-      const lines = (data?.byCampaign || []).slice(0, 10).map(x => `${x.campaign}: ${x.clicks} cliques (${x.uniqueLinks} links)`);
-      campaigns.textContent = lines.length ? lines.join('\\n') : 'Sem campanhas no periodo.';
-    }
-
+    await api('/api/settings', 'PUT', existing);
     if (status) {
-      status.textContent = 'Funnel atualizado.';
+      status.textContent = 'Instagram salvo.';
       status.className = 'status ok';
     }
+    await loadSettings();
   } catch (e) {
     if (status) {
-      status.textContent = e?.data?.error || e?.message || 'Erro ao carregar funnel.';
+      status.textContent = `Erro: ${e?.data?.error || e.message || 'Falha ao salvar'}`;
       status.className = 'status bad';
     }
-    if (totals) totals.textContent = 'Falha ao carregar.';
-    if (sources) sources.textContent = 'Falha ao carregar.';
-    if (campaigns) campaigns.textContent = 'Falha ao carregar.';
   }
 }
 
@@ -2599,9 +4296,15 @@ async function runInstagramAutoStory(dryRun) {
   }
 }
 
-async function testInstagramPublish() {
-  if (currentRole !== 'admin') return;
+async function testInstagramPublishConnection() {
   const status = document.getElementById('igPubSaveStatus');
+  if (currentRole !== 'admin') {
+    if (status) {
+      status.textContent = 'Apenas admins podem testar a conexão.';
+      status.className = 'status bad';
+    }
+    return;
+  }
   if (status) {
     status.textContent = 'Testando...';
     status.className = 'status warn';
@@ -2615,7 +4318,34 @@ async function testInstagramPublish() {
     await loadInstagramPublishLogs();
   } catch (e) {
     if (status) {
-      status.textContent = e?.data?.error || e?.message || 'Falha no teste.';
+      status.textContent = (e?.status === 403) ? 'Acesso negado (AdminOnly).' : (e?.data?.error || e?.message || 'Falha no teste.');
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function testInstagramStoryConnection() {
+  const status = document.getElementById('igStoryStatus');
+  if (currentRole !== 'admin') {
+    if (status) {
+      status.textContent = 'Apenas admins podem testar a conexão.';
+      status.className = 'status bad';
+    }
+    return;
+  }
+  if (status) {
+    status.textContent = 'Testando...';
+    status.className = 'status warn';
+  }
+  try {
+    await api('/api/instagram/story/test', 'POST', {});
+    if (status) {
+      status.textContent = 'Conexao OK.';
+      status.className = 'status ok';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = (e?.status === 403) ? 'Acesso negado (AdminOnly).' : (e?.data?.error || e?.message || 'Falha no teste.');
       status.className = 'status bad';
     }
   }
@@ -2765,9 +4495,11 @@ async function loadInstagramDrafts() {
   try {
     const data = await api('/api/instagram/publish/drafts', 'GET');
     const items = data.items || [];
+    instagramDraftCache = items;
     if (!target) return;
     if (items.length === 0) {
       target.innerHTML = '<div class="muted">Nenhum rascunho.</div>';
+      renderInstagramProcessSummary();
       return;
     }
     const rows = items.map(d => `
@@ -2775,6 +4507,7 @@ async function loadInstagramDrafts() {
         <div class="log-time">${escapeHtml(formatTs(d.createdAt))}</div>
         <div class="log-store">${escapeHtml(d.productName || 'Post')}</div>
         <div class="log-msg">
+          <div><strong>Processo:</strong> ${escapeHtml(d.processName || INSTAGRAM_PROCESS_LEGACY)}</div>
           <div><strong>Status:</strong> ${escapeHtml(d.status || '-')}</div>
           <div><strong>Imagens:</strong> ${escapeHtml(String((d.imageUrls || []).length))}</div>
           <div><strong>CTA:</strong> ${escapeHtml(String((d.ctas || []).length))}</div>
@@ -2786,6 +4519,7 @@ async function loadInstagramDrafts() {
       </div>
     `).join('');
     target.innerHTML = rows;
+    renderInstagramProcessSummary();
   } catch (e) {
     if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar.';
   }
@@ -2846,12 +4580,18 @@ async function loadInstagramPublishLogs() {
   const target = document.getElementById('igPubLogs');
   if (target) target.textContent = 'Carregando...';
   const q = document.getElementById('igPubLogSearch')?.value || '';
+  const processName = document.getElementById('igPubProcessFilter')?.value || '';
   try {
-    const data = await api('/api/logs/instagram-publish' + (q ? ('?q=' + encodeURIComponent(q)) : ''), 'GET');
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (processName.trim()) params.set('processName', processName.trim());
+    const data = await api('/api/logs/instagram-publish' + (params.toString() ? (`?${params.toString()}`) : ''), 'GET');
     const items = data.items || [];
+    instagramPublishLogCache = items;
     if (!target) return;
     if (items.length === 0) {
       target.innerHTML = '<div class="muted">Nenhum log.</div>';
+      renderInstagramProcessSummary();
       return;
     }
     const rows = items.map(i => `
@@ -2859,6 +4599,7 @@ async function loadInstagramPublishLogs() {
         <div class="log-time">${escapeHtml(formatTs(i.timestamp))}</div>
         <div class="log-store">${escapeHtml(i.action || '-')} ${i.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERRO</span>'}</div>
         <div class="log-msg">
+          <div><strong>Processo:</strong> ${escapeHtml(i.processName || INSTAGRAM_PROCESS_LEGACY)}</div>
           <div><strong>Draft:</strong> ${escapeHtml(i.draftId || '-')}</div>
           <div><strong>Media:</strong> ${escapeHtml(i.mediaId || '-')}</div>
           <div><strong>Erro:</strong> ${escapeHtml(i.error || '-')}</div>
@@ -2868,6 +4609,7 @@ async function loadInstagramPublishLogs() {
       </div>
     `).join('');
     target.innerHTML = rows;
+    renderInstagramProcessSummary();
   } catch (e) {
     if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar.';
   }
@@ -2877,6 +4619,175 @@ async function clearInstagramPublishLogs() {
   if (currentRole !== 'admin') return;
   await api('/api/logs/instagram-publish/clear', 'POST', {});
   await loadInstagramPublishLogs();
+}
+
+function normalizeInstagramProcessName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isLegacyInstagramProcessName(value) {
+  return !String(value || '').trim();
+}
+
+function matchesInstagramProcessName(value, targetProcess) {
+  const target = String(targetProcess || '').trim();
+  if (!target) return true;
+  if (normalizeInstagramProcessName(target) === normalizeInstagramProcessName(INSTAGRAM_PROCESS_LEGACY)) {
+    return isLegacyInstagramProcessName(value);
+  }
+  return normalizeInstagramProcessName(value) === normalizeInstagramProcessName(target);
+}
+
+function detectInstagramProcessName() {
+  const explicitNames = [
+    ...instagramDraftCache.map(x => x?.processName),
+    ...instagramPublishLogCache.map(x => x?.processName)
+  ].filter(Boolean).map(name => String(name).trim());
+  if (explicitNames.some(name => normalizeInstagramProcessName(name) === normalizeInstagramProcessName(INSTAGRAM_REEL_ASSISTED_PROCESS))) {
+    return INSTAGRAM_REEL_ASSISTED_PROCESS;
+  }
+  return explicitNames[0] || INSTAGRAM_PROCESS_LEGACY;
+}
+
+function renderInstagramProcessSummary() {
+  const summaryName = document.getElementById('igProcessName');
+  const summaryLabel = document.getElementById('igProcessLabel');
+  const summaryDrafts = document.getElementById('igProcessDrafts');
+  const summaryPublished = document.getElementById('igProcessPublished');
+  const summaryFailed = document.getElementById('igProcessFailed');
+  const summaryLastDraft = document.getElementById('igProcessLastDraft');
+  const summaryLastPublish = document.getElementById('igProcessLastPublish');
+  const summaryLastError = document.getElementById('igProcessLastError');
+
+  const filterValue = (document.getElementById('igPubProcessFilter')?.value || '').trim();
+  const processName = filterValue || detectInstagramProcessName();
+  const matchingDrafts = instagramDraftCache.filter(x => matchesInstagramProcessName(x?.processName, processName));
+  const matchingLogs = instagramPublishLogCache.filter(x => matchesInstagramProcessName(x?.processName, processName));
+  const draftCounts = matchingDrafts.reduce((acc, draft) => {
+    const status = String(draft?.status || '').trim().toLowerCase();
+    acc[status || 'draft'] = (acc[status || 'draft'] || 0) + 1;
+    return acc;
+  }, {});
+  const publishedLogs = matchingLogs.filter(x => !!x.success);
+  const failedLogs = matchingLogs.filter(x => !x.success);
+  const latestDraft = [...matchingDrafts].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
+  const latestPublishedLog = publishedLogs.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))[0];
+  const latestFailedLog = failedLogs.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))[0];
+
+  if (summaryName) summaryName.textContent = processName;
+  if (summaryLabel) summaryLabel.textContent = filterValue ? 'Filtro ativo' : 'Processo detectado';
+  if (summaryDrafts) summaryDrafts.textContent = `${matchingDrafts.length} drafts`;
+  if (summaryPublished) summaryPublished.textContent = `${draftCounts.published || 0} publicados`;
+  if (summaryFailed) summaryFailed.textContent = `${draftCounts.failed || 0} falhas`;
+  if (summaryLastDraft) {
+    summaryLastDraft.textContent = latestDraft
+      ? `${latestDraft.productName || 'Post'} · ${latestDraft.status || 'draft'}`
+      : 'Sem draft';
+  }
+  if (summaryLastPublish) {
+    summaryLastPublish.textContent = latestPublishedLog
+      ? `${formatTs(latestPublishedLog.timestamp)} · ${latestPublishedLog.mediaId || latestPublishedLog.draftId || '-'}`
+      : 'Sem publicação';
+  }
+  if (summaryLastError) {
+    summaryLastError.textContent = latestFailedLog
+      ? `${formatTs(latestFailedLog.timestamp)} · ${latestFailedLog.error || latestFailedLog.details || '-' }`
+      : 'Sem erro';
+  }
+}
+
+function formatFlowEndpointIds(value) {
+  const ids = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(',')
+      .map(part => part.trim())
+      .filter(Boolean);
+
+  if (!ids.length) {
+    return '<span class="muted">-</span>';
+  }
+
+  return ids.map(id => `<div><code>${escapeHtml(String(id))}</code></div>`).join('');
+}
+
+function getFlowEndpointsMapRows() {
+  const settings = window.__settingsCache || {};
+  const tgChats = Array.isArray(settings?.InstagramPosts?.TelegramChatIds)
+    ? settings.InstagramPosts.TelegramChatIds.map(id => String(id).trim()).filter(Boolean)
+    : ['2425105459'];
+  const tgRoutes = Array.isArray(settings?.TelegramToWhatsAppRoutes) ? settings.TelegramToWhatsAppRoutes : [];
+  const waRoutes = Array.isArray(settings?.WhatsAppForwardingRoutes) ? settings.WhatsAppForwardingRoutes : [];
+  const waForward = settings?.WhatsAppForwarding || {};
+  const officialDestIds = Array.from(new Set([
+    ...(Array.isArray(waForward.DestinationGroupIds) ? waForward.DestinationGroupIds : []),
+    ...waRoutes.flatMap(route => Array.isArray(route?.DestinationGroupIds) ? route.DestinationGroupIds : []),
+    ...tgRoutes.flatMap(route => Array.isArray(route?.DestinationGroupIds) ? route.DestinationGroupIds : [])
+  ].map(value => String(value).trim()).filter(Boolean)));
+
+  const telegramRoute = tgRoutes[0] || null;
+  const waRoute = waRoutes.find(route => (route?.Name || '').trim() === 'Rota Nova Oficial') || waRoutes[0] || null;
+  const mlRoute = waRoutes.find(route => (route?.Name || '').trim() === 'Ponte Mercado Livre Scout') || null;
+
+  const rows = [
+    {
+      canal: 'Telegram',
+      nome: 'AE-IA 3000 - VÍDEOS VIRAIS',
+      id: tgChats.join(', '),
+      papel: 'Origem de reels e vídeo do produto',
+      destino: 'Instagram - preview e publicação'
+    }
+  ];
+
+  if (telegramRoute) {
+    rows.push({
+      canal: 'Telegram',
+      nome: telegramRoute.Name || 'Rota Telegram principal',
+      id: Array.isArray(telegramRoute.SourceChatIds) ? telegramRoute.SourceChatIds.join(', ') : '',
+      papel: 'Origem Telegram para WhatsApp',
+      destino: Array.isArray(telegramRoute.DestinationGroupIds) && telegramRoute.DestinationGroupIds.length
+        ? telegramRoute.DestinationGroupIds.join(', ')
+        : 'Grupo oficial WhatsApp'
+    });
+  }
+
+  if (waRoute) {
+    rows.push({
+      canal: 'WhatsApp',
+      nome: waRoute.Name || 'Rota Nova Oficial',
+      id: Array.isArray(waRoute.SourceChatIds) ? waRoute.SourceChatIds.join(', ') : '',
+      papel: 'Origem WhatsApp principal',
+      destino: Array.isArray(waRoute.DestinationGroupIds) && waRoute.DestinationGroupIds.length
+        ? waRoute.DestinationGroupIds.join(', ')
+        : 'Grupo oficial WhatsApp'
+    });
+  }
+
+  if (mlRoute) {
+    rows.push({
+      canal: 'WhatsApp',
+      nome: mlRoute.Name || 'Ponte Mercado Livre Scout',
+      id: Array.isArray(mlRoute.SourceChatIds) ? mlRoute.SourceChatIds.join(', ') : '',
+      papel: 'Ponte e triagem de ofertas do Mercado Livre',
+      destino: Array.isArray(mlRoute.DestinationGroupIds) && mlRoute.DestinationGroupIds.length
+        ? mlRoute.DestinationGroupIds.join(', ')
+        : 'Grupo oficial WhatsApp'
+    });
+  }
+
+  rows.push({
+    canal: 'WhatsApp',
+    nome: 'Rei das Ofertas Oficial',
+    id: officialDestIds.join(', '),
+    papel: 'Destino final',
+    destino: 'Publicacao e recebimento de ofertas'
+  });
+
+  return rows.length ? rows : FLOW_ENDPOINTS_MAP_FALLBACK;
+}
+
+function renderFlowEndpointsMap() {
+  window.FlowEndpointsMap?.renderTable('flowEndpointsMapBody', 'flowEndpointsMapSearch', window.__settingsCache);
 }
 
 async function checkInstagramStatus(mediaId) {
@@ -2940,25 +4851,75 @@ async function connectWhatsApp() {
   try {
     const instanceName = document.getElementById('waInstanceName').value || null;
     const r = await api('/api/integrations/whatsapp/connect', 'POST', { instanceName });
-    if (r.qrCode) {
-      document.getElementById('qrImage').src = r.qrCode;
-      document.getElementById('qrImage').classList.remove('hidden');
-      document.getElementById('qrHint').classList.remove('hidden');
+    const qrValue = getWhatsAppQrValue(r);
+    if (qrValue) {
+      showWhatsAppQr(qrValue, r.message || 'Escaneie com o WhatsApp para concluir a conexão.');
       document.getElementById('whatsappStatus').textContent = 'QR gerado. Aguardando leitura...';
       document.getElementById('whatsappStatus').className = 'status warn';
+      startWhatsAppQrPolling(instanceName || '');
     } else if (r.success) {
+      hideWhatsAppQr();
+      stopWhatsAppQrPolling();
       document.getElementById('whatsappStatus').textContent = r.message || 'Instância já conectada.';
       document.getElementById('whatsappStatus').className = 'status ok';
     } else {
+      hideWhatsAppQr();
       document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao gerar QR'}`;
       document.getElementById('whatsappStatus').className = 'status bad';
+      startWhatsAppQrPolling(instanceName || '');
+      await refreshWhatsAppQrSnapshot({ instanceName: instanceName || '', silent: true });
     }
   } catch (e) {
+    hideWhatsAppQr();
+    stopWhatsAppQrPolling();
     document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
     document.getElementById('whatsappStatus').className = 'status bad';
   }
   setButtonBusy('btnWhatsAppConnect', false);
   setTimeout(loadSettings, 4000);
+}
+
+async function testWhatsAppConnection() {
+  setButtonBusy('btnWhatsAppTest', true, 'Testando...');
+  try {
+    const instanceName = document.getElementById('waInstanceName').value || null;
+    const r = await api('/api/integrations/whatsapp/test', 'POST', { instanceName });
+    const status = document.getElementById('whatsappStatus');
+    const qrImage = document.getElementById('qrImage');
+    const qrHint = document.getElementById('qrHint');
+    if (qrImage) {
+      qrImage.classList.add('hidden');
+      qrImage.removeAttribute('src');
+    }
+    if (qrHint) {
+      qrHint.classList.add('hidden');
+    }
+    if (status) {
+      status.textContent = r.success
+        ? (r.message || 'Instância conectada.')
+        : `Falha: ${r.message || 'Instância desconectada'}`;
+      status.className = 'status ' + (r.success ? 'ok' : 'bad');
+    }
+    if (r.success) {
+      hideWhatsAppQr();
+      stopWhatsAppQrPolling();
+    } else {
+      const snapshot = await refreshWhatsAppQrSnapshot({ instanceName: instanceName || '', silent: true });
+      if (getWhatsAppQrValue(snapshot)) {
+        startWhatsAppQrPolling(instanceName || '');
+      } else {
+        stopWhatsAppQrPolling();
+      }
+    }
+  } catch (e) {
+    const status = document.getElementById('whatsappStatus');
+    if (status) {
+      status.textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
+      status.className = 'status bad';
+    }
+  }
+  setButtonBusy('btnWhatsAppTest', false);
+  setTimeout(loadSettings, 3000);
 }
 
 async function createWhatsAppInstance() {
@@ -2970,20 +4931,27 @@ async function createWhatsAppInstance() {
   }
   try {
     const r = await api('/api/integrations/whatsapp/instance', 'POST', { instanceName });
-    if (r.qrCode) {
-      document.getElementById('qrImage').src = r.qrCode;
-      document.getElementById('qrImage').classList.remove('hidden');
-      document.getElementById('qrHint').classList.remove('hidden');
+    const qrValue = getWhatsAppQrValue(r);
+    if (qrValue) {
+      showWhatsAppQr(qrValue, r.message || 'Escaneie com o WhatsApp para concluir a conexão.');
       document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada. QR gerado.';
       document.getElementById('whatsappStatus').className = 'status warn';
+      startWhatsAppQrPolling(instanceName);
     } else if (r.success) {
+      hideWhatsAppQr();
+      stopWhatsAppQrPolling();
       document.getElementById('whatsappStatus').textContent = r.message || 'Instância criada com sucesso.';
       document.getElementById('whatsappStatus').className = 'status ok';
     } else {
+      hideWhatsAppQr();
       document.getElementById('whatsappStatus').textContent = `Erro: ${r.message || 'Falha ao criar instância'}`;
       document.getElementById('whatsappStatus').className = 'status bad';
+      startWhatsAppQrPolling(instanceName);
+      await refreshWhatsAppQrSnapshot({ instanceName, silent: true });
     }
   } catch (e) {
+    hideWhatsAppQr();
+    stopWhatsAppQrPolling();
     document.getElementById('whatsappStatus').textContent = `Erro: ${e.data?.error || e.message || 'Falha na requisição'}`;
     document.getElementById('whatsappStatus').className = 'status bad';
   }
@@ -3062,6 +5030,11 @@ function renderUserbotChats(payload, settings) {
     status.className = 'status bad';
     setChipStatus('chipUserbot', 'Telegram Userbot: Indisponível', 'bad');
     setHealthBadge('healthUserbot', 'Userbot Indisponível', 'bad');
+    setSafeText('connectionSummaryUserbot', 'Indisponível');
+    setSafeText('connectionSummaryUserbotDetail', 'A sessão do userbot não respondeu.');
+    setSafeText('opsSummaryUserbot', 'Indisponível');
+    setSafeText('connectionUserbotBadge', 'Indisponível');
+    setSafeClass('connectionUserbotBadge', 'badge bad');
     return;
   }
 
@@ -3071,6 +5044,11 @@ function renderUserbotChats(payload, settings) {
   setHealthBadge('healthUserbot', payload.ready ? 'Userbot OK' : 'Userbot Conectando', payload.ready ? 'ok' : 'warn');
   const statUserbot = document.getElementById('statUserbot');
   if (statUserbot) statUserbot.textContent = payload.ready ? 'Online' : 'Conectando...';
+  setSafeText('connectionSummaryUserbot', payload.ready ? 'Online' : 'Conectando');
+  setSafeText('connectionSummaryUserbotDetail', payload.ready ? `${payload.chats.length} chats disponíveis para seleção.` : 'A sessão está em reconexão; aguarde antes de salvar mudanças.');
+  setSafeText('opsSummaryUserbot', payload.ready ? 'Online' : 'Conectando');
+  setSafeText('connectionUserbotBadge', payload.ready ? 'Conectado' : 'Reconectando');
+  setSafeClass('connectionUserbotBadge', `badge ${payload.ready ? 'ok' : 'warn'}`);
 
   if (payload.chats.length === 0) {
     container.textContent = 'Nenhum grupo carregado.';
@@ -3123,7 +5101,7 @@ function renderSelectedChips() {
   if (!chips) return;
   const selected = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked"))
     .map(el => el.value);
-  chips.innerHTML = selected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+  renderPillList('userbotSelectedChips', selected, 'Nenhum grupo selecionado.');
 }
 
 function selectAllUserbotChats() {
@@ -3165,6 +5143,7 @@ async function saveUserbotSelection() {
   existing.telegramForwarding.enabled = document.getElementById('userbotEnabled').checked;
   existing.telegramForwarding.destinationChatId = Number(document.getElementById('userbotDestinationId').value || 0);
   existing.telegramForwarding.appendSheinCode = document.getElementById('userbotAppendShein').checked;
+  existing.telegramForwarding.preferLinkPreviewWhenNoMedia = document.getElementById('userbotPreferLinkPreviewNoMedia')?.checked ?? true;
   existing.telegramForwarding.footerText = document.getElementById('userbotFooter').value || '';
   const selected = Array.from(document.querySelectorAll("input[data-userbot-chat=\"1\"]:checked"))
     .map(el => Number(el.value));
@@ -3265,6 +5244,7 @@ function renderTelegramToWhatsAppRoute() {
   applyActiveTgWaRouteToUi();
   renderTgWaSourceList();
   renderTgWaDestList();
+  renderTgWaReplayPanel();
 }
 
 function buildWhatsAppRoutes(settings) {
@@ -3276,6 +5256,7 @@ function buildWhatsAppRoutes(settings) {
     destinationGroupIds: Array.from(new Set((r?.destinationGroupIds || []).map(String).filter(Boolean))),
     appendSheinCode: r?.appendSheinCode ?? true,
     sendMediaEnabled: r?.sendMediaEnabled ?? true,
+    preferLinkPreviewWhenNoMedia: r?.preferLinkPreviewWhenNoMedia ?? true,
     footerText: r?.footerText || '',
     instanceName: (r?.instanceName || '').trim() || null
   }));
@@ -3290,6 +5271,7 @@ function buildWhatsAppRoutes(settings) {
     destinationGroupIds: Array.from(new Set((legacy.destinationGroupIds || []).map(String).filter(Boolean))),
     appendSheinCode: legacy.appendSheinCode ?? true,
     sendMediaEnabled: legacy.sendMediaEnabled ?? true,
+    preferLinkPreviewWhenNoMedia: legacy.preferLinkPreviewWhenNoMedia ?? true,
     footerText: legacy.footerText || '',
     instanceName: (legacy.instanceName || '').trim() || null
   }];
@@ -3311,6 +5293,7 @@ function persistActiveWhatsAppRouteFromUi() {
   route.processFromMeOnly = document.getElementById('waFromMeOnly')?.checked ?? true;
   route.appendSheinCode = document.getElementById('waAppendShein')?.checked ?? true;
   route.sendMediaEnabled = document.getElementById('waSendMedia')?.checked ?? true;
+  route.preferLinkPreviewWhenNoMedia = document.getElementById('waPreferLinkPreviewNoMedia')?.checked ?? true;
   route.footerText = document.getElementById('waFooter')?.value || '';
   route.instanceName = (document.getElementById('waInstanceName')?.value || '').trim() || null;
   const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
@@ -3334,10 +5317,13 @@ function applyActiveWhatsAppRouteToUi() {
   if (waAppendShein) waAppendShein.checked = route.appendSheinCode ?? true;
   const waSendMedia = document.getElementById('waSendMedia');
   if (waSendMedia) waSendMedia.checked = route.sendMediaEnabled ?? true;
+  const waPreferLinkPreviewNoMedia = document.getElementById('waPreferLinkPreviewNoMedia');
+  if (waPreferLinkPreviewNoMedia) waPreferLinkPreviewNoMedia.checked = route.preferLinkPreviewWhenNoMedia ?? true;
   const waFooter = document.getElementById('waFooter');
   if (waFooter) waFooter.value = route.footerText || '';
   const waInstanceName = document.getElementById('waInstanceName');
   if (waInstanceName) waInstanceName.value = route.instanceName || '';
+  populateAllInstanceSelects();
   window.__waSelection = {
     source: new Set((route.sourceChatIds || []).map(String)),
     dest: new Set((route.destinationGroupIds || []).map(String))
@@ -3376,6 +5362,7 @@ function addWhatsAppRoute() {
     destinationGroupIds: [],
     appendSheinCode: document.getElementById('waAppendShein')?.checked ?? true,
     sendMediaEnabled: document.getElementById('waSendMedia')?.checked ?? true,
+    preferLinkPreviewWhenNoMedia: document.getElementById('waPreferLinkPreviewNoMedia')?.checked ?? true,
     footerText: document.getElementById('waFooter')?.value || '',
     instanceName: (document.getElementById('waInstanceName')?.value || '').trim() || null
   });
@@ -3385,6 +5372,7 @@ function addWhatsAppRoute() {
   if (window.__waPayload) {
     renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
   }
+  saveWhatsAppSelection();
 }
 
 function removeWhatsAppRoute() {
@@ -3401,6 +5389,7 @@ function removeWhatsAppRoute() {
   if (window.__waPayload) {
     renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
   }
+  saveWhatsAppSelection();
 }
 
 function renameWhatsAppRoute() {
@@ -3460,6 +5449,85 @@ function applyActiveTgWaRouteToUi() {
     source: new Set((route.sourceChatIds || []).map(String)),
     dest: new Set((route.destinationGroupIds || []).map(String))
   };
+  syncTgWaReplaySelection(route);
+}
+
+function getTgWaChatLabel(chatId) {
+  const chats = window.__userbotPayload?.chats || [];
+  const match = chats.find(c => String(c.id) === String(chatId));
+  return match ? `${match.title} (${match.id})` : String(chatId);
+}
+
+function renderTgWaReplayPanel() {
+  const route = getActiveTgWaRoute();
+  const sourceSelect = document.getElementById('tgWaReplaySourceChat');
+  const routeSummary = document.getElementById('tgWaReplayRouteSummary');
+  const routeNameSummary = document.getElementById('tgWaRouteNameSummary');
+  const sourceSummary = document.getElementById('tgWaSourceCountSummary');
+  const destSummary = document.getElementById('tgWaDestCountSummary');
+  const replaySummary = document.getElementById('tgWaReplaySummary');
+  const allowOfficial = document.getElementById('tgWaReplayAllowOfficial');
+  const chats = window.__userbotPayload?.chats || [];
+
+  if (sourceSelect) {
+    const currentValue = sourceSelect.value;
+    const sourceIds = Array.from(new Set([
+      ...(route?.sourceChatIds || []).map(String),
+      ...chats.map(c => String(c.id))
+    ]));
+    sourceSelect.innerHTML = ['<option value="">Selecione um grupo do Telegram...</option>']
+      .concat(sourceIds.map(id => `<option value="${id}">${getTgWaChatLabel(id)}</option>`))
+      .join('');
+    if (sourceIds.includes(currentValue)) {
+      sourceSelect.value = currentValue;
+    }
+  }
+
+  syncTgWaReplaySelection(route);
+
+  if (routeSummary) {
+    const sources = (route?.sourceChatIds || []).length;
+    const destinations = (route?.destinationGroupIds || []).length;
+    routeSummary.textContent = route
+      ? `${route.name || 'Rota'} | ${sources} origem(ns) | ${destinations} destino(s)`
+      : 'Rota nao carregada';
+  }
+
+  if (routeNameSummary) {
+    routeNameSummary.textContent = route?.enabled ? (route?.name || 'Ativa') : 'Pausada';
+  }
+
+  if (sourceSummary) {
+    sourceSummary.textContent = String((route?.sourceChatIds || []).length);
+  }
+
+  if (destSummary) {
+    destSummary.textContent = String((route?.destinationGroupIds || []).length);
+  }
+
+  if (replaySummary) {
+    replaySummary.textContent = route ? 'Disponível' : 'Indisponível';
+  }
+
+  if (allowOfficial && !allowOfficial.dataset.touched) {
+    allowOfficial.checked = false;
+  }
+}
+
+function syncTgWaReplaySelection(route = getActiveTgWaRoute()) {
+  const sourceSelect = document.getElementById('tgWaReplaySourceChat');
+  if (!sourceSelect) return;
+
+  const routeSources = (route?.sourceChatIds || []).map(String);
+  const currentValue = sourceSelect.value;
+  if (routeSources.length > 0 && (!currentValue || !routeSources.includes(currentValue))) {
+    sourceSelect.value = routeSources[0];
+    return;
+  }
+
+  if (!currentValue && sourceSelect.options.length > 1) {
+    sourceSelect.value = sourceSelect.options[1].value;
+  }
 }
 
 function renderTgWaRoutePicker() {
@@ -3685,6 +5753,73 @@ function showAllTgWaDest() {
   renderTgWaDestList();
 }
 
+async function runTelegramToWhatsAppReplay() {
+  if (currentRole !== 'admin') return;
+
+  const status = document.getElementById('tgWaReplayStatus');
+  const resultEl = document.getElementById('tgWaReplayResult');
+  const button = document.getElementById('btnTgWaReplay');
+  const sourceChatId = Number(document.getElementById('tgWaReplaySourceChat')?.value || 0);
+  const count = Number(document.getElementById('tgWaReplayCount')?.value || 1);
+  const allowOfficialDestination = !!document.getElementById('tgWaReplayAllowOfficial')?.checked;
+
+  if (!Number.isFinite(sourceChatId) || sourceChatId === 0) {
+    if (status) {
+      status.textContent = 'Selecione a origem do Telegram.';
+      status.className = 'status bad';
+    }
+    return;
+  }
+
+  if (button) button.disabled = true;
+  if (status) {
+    status.textContent = 'Executando replay...';
+    status.className = 'status warn';
+  }
+  if (resultEl) {
+    resultEl.textContent = 'Buscando historico recente e reenviando para os destinos da rota ativa...';
+    resultEl.className = 'muted';
+  }
+
+  try {
+    const response = await api('/api/telegram/userbot/replay-to-whatsapp', 'POST', {
+      sourceChatId,
+      count,
+      allowOfficialDestination
+    });
+    const sourceLabel = getTgWaChatLabel(sourceChatId);
+    if (status) {
+      status.textContent = response?.success ? 'Replay concluido.' : (response?.message || 'Replay finalizado com alerta.');
+      status.className = response?.success ? 'status ok' : 'status warn';
+    }
+    if (resultEl) {
+      resultEl.innerHTML = [
+        `<strong>${sourceLabel}</strong>`,
+        `Solicitadas: ${response?.requested ?? count}`,
+        `Carregadas: ${response?.loaded ?? 0}`,
+        `Enviadas: ${response?.replayed ?? 0}`,
+        `Falhas: ${response?.failed ?? 0}`,
+        `${response?.message || 'Execucao concluida.'}`
+      ].join(' | ');
+      resultEl.className = response?.success ? 'status ok' : 'status warn';
+    }
+    showToast(response?.message || `Replay executado para ${sourceLabel}.`, response?.success ? 'success' : 'error');
+  } catch (e) {
+    const message = e?.data?.message || e?.data?.error || e?.message || 'Falha ao executar replay.';
+    if (status) {
+      status.textContent = message;
+      status.className = 'status bad';
+    }
+    if (resultEl) {
+      resultEl.textContent = message;
+      resultEl.className = 'status bad';
+    }
+    showToast(message, 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function renderWhatsAppList(config, payload) {
   const container = document.getElementById(config.containerId);
   const search = document.getElementById(config.searchId);
@@ -3697,7 +5832,7 @@ function renderWhatsAppList(config, payload) {
   if (!payload || !payload.groups || payload.groups.length === 0) {
     if (manualEl) manualEl.value = baseSelected.join('\n');
     if (selectedCount) selectedCount.textContent = baseSelected.length.toString();
-    if (chipsEl) chipsEl.innerHTML = baseSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+    renderPillList(config.selectedChipsId, baseSelected, 'Nenhum grupo selecionado.');
     container.textContent = 'Nenhum grupo carregado.';
     return;
   }
@@ -3750,8 +5885,8 @@ function renderWhatsAppChips() {
   const sourceChips = document.getElementById('waSourceSelectedChips');
   const destSelected = Array.from((window.__waSelection?.dest || new Set()).values());
   const sourceSelected = Array.from((window.__waSelection?.source || new Set()).values());
-  if (destChips) destChips.innerHTML = destSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
-  if (sourceChips) sourceChips.innerHTML = sourceSelected.map(id => `<span class="pill" style="margin-right:6px;">${id}</span>`).join(' ');
+  if (destChips) renderPillList('waSelectedChips', destSelected, 'Nenhum grupo de destino selecionado.');
+  if (sourceChips) renderPillList('waSourceSelectedChips', sourceSelected, 'Nenhum grupo de origem selecionado.');
 }
 
 function selectAllWhatsAppGroups() {
@@ -3800,6 +5935,38 @@ function scheduleWhatsAppSave() {
   waSaveTimer = setTimeout(() => saveWhatsAppSelection(), 400);
 }
 
+let waFooterSaveTimer = null;
+function setWhatsAppFooterSaveStatus(text, tone = 'muted') {
+  const el = document.getElementById('waFooterSaveStatus');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = `status ${tone}`;
+}
+
+function scheduleWhatsAppFooterSave() {
+  if (currentRole !== 'admin') return;
+  if (waFooterSaveTimer) clearTimeout(waFooterSaveTimer);
+  setWhatsAppFooterSaveStatus('Alteracao pendente...', 'warn');
+  waFooterSaveTimer = setTimeout(() => saveWhatsAppFooter(true), 900);
+}
+
+async function saveWhatsAppFooter(isAuto = false) {
+  if (currentRole !== 'admin') {
+    setWhatsAppFooterSaveStatus('Permissao insuficiente para salvar.', 'bad');
+    return;
+  }
+
+  setWhatsAppFooterSaveStatus(isAuto ? 'Salvando rodape...' : 'Salvando rodape manualmente...', 'warn');
+
+  try {
+    await saveWhatsAppSelection();
+    setWhatsAppFooterSaveStatus(isAuto ? 'Rodape salvo automaticamente.' : 'Rodape salvo com sucesso.', 'ok');
+  } catch (e) {
+    const err = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
+    setWhatsAppFooterSaveStatus(err, 'bad');
+  }
+}
+
 async function saveWhatsAppSelection() {
   if (currentRole !== 'admin') {
     const el = document.getElementById('waSaveStatus');
@@ -3826,6 +5993,7 @@ async function saveWhatsAppSelection() {
     destinationGroupIds: Array.from(new Set((route.destinationGroupIds || []).map(String).filter(Boolean))),
     appendSheinCode: route.appendSheinCode ?? true,
     sendMediaEnabled: route.sendMediaEnabled ?? true,
+    preferLinkPreviewWhenNoMedia: route.preferLinkPreviewWhenNoMedia ?? true,
     footerText: route.footerText || '',
     instanceName: (route.instanceName || '').trim() || null
   }));
@@ -3838,6 +6006,7 @@ async function saveWhatsAppSelection() {
   existing.whatsAppForwarding.footerText = firstRoute ? (firstRoute.footerText || '') : '';
   existing.whatsAppForwarding.appendSheinCode = firstRoute ? (firstRoute.appendSheinCode ?? true) : true;
   existing.whatsAppForwarding.sendMediaEnabled = firstRoute ? (firstRoute.sendMediaEnabled ?? true) : true;
+  existing.whatsAppForwarding.preferLinkPreviewWhenNoMedia = firstRoute ? (firstRoute.preferLinkPreviewWhenNoMedia ?? true) : true;
   existing.whatsAppForwarding.destinationGroupIds = firstRoute ? firstRoute.destinationGroupIds : [];
   existing.whatsAppForwarding.sourceChatIds = firstRoute ? firstRoute.sourceChatIds : [];
   existing.whatsAppForwarding.instanceName = firstRoute ? firstRoute.instanceName : null;
@@ -3866,13 +6035,18 @@ async function saveWhatsAppSelection() {
   }
 }
 
-async function loadWhatsAppGroups() {
+async function loadWhatsAppGroups(settingsOverride = null) {
   try {
     const instanceName = document.getElementById('waInstanceName').value || null;
-    const [payload, settings] = await Promise.all([
-      api('/api/whatsapp/groups' + (instanceName ? ('?instanceName=' + encodeURIComponent(instanceName)) : '')),
-      api('/api/settings')
+    const settingsPromise = settingsOverride
+      ? Promise.resolve(settingsOverride)
+      : (window.__settingsCache ? Promise.resolve(window.__settingsCache) : api('/api/settings'));
+    const [groupsResult, settings] = await Promise.all([
+      api('/api/admin/whatsapp/groups' + (instanceName ? ('?instanceName=' + encodeURIComponent(instanceName)) : '')),
+      settingsPromise
     ]);
+    const payload = Array.isArray(groupsResult) ? { groups: groupsResult } : groupsResult;
+    window.__settingsCache = settings;
     window.__waPayload = payload;
     renderWhatsAppGroups(payload, settings);
     renderTelegramToWhatsAppRoute();
@@ -4068,6 +6242,12 @@ async function loadConversionLogs() {
     const invalid = items.filter(i => i.isAffiliated === false);
     const corrected = items.filter(i => i.affiliateCorrected);
     document.getElementById('logStatus').textContent = `Exibindo ${items.length} registros.`;
+    const conversionLogSummary = document.getElementById('conversionLogSummary');
+    const conversionQualitySummary = document.getElementById('conversionQualitySummary');
+    const conversionActionSummary = document.getElementById('conversionActionSummary');
+    if (conversionLogSummary) conversionLogSummary.textContent = String(items.length);
+    if (conversionQualitySummary) conversionQualitySummary.textContent = invalid.length > 0 ? `${invalid.length} inválidos` : 'OK';
+    if (conversionActionSummary) conversionActionSummary.textContent = corrected.length > 0 ? `${corrected.length} corrigidos` : 'Em dia';
     const alert = document.getElementById('logAlert');
     if (invalid.length > 0 || corrected.length > 0) {
       const parts = [];
@@ -4116,6 +6296,10 @@ async function loadMediaFailures() {
         alert.classList.remove('hidden');
       }
     }
+    const mediaLogSummary = document.getElementById('mediaLogSummary');
+    const mediaAlertSummary = document.getElementById('mediaAlertSummary');
+    if (mediaLogSummary) mediaLogSummary.textContent = items.length > 0 ? String(items.length) : '0';
+    if (mediaAlertSummary) mediaAlertSummary.textContent = items.length > 0 ? 'Falhas recentes disponíveis' : 'Sem falhas recentes';
     const healthMedia = document.getElementById('healthMedia');
     const healthMediaDetail = document.getElementById('healthMediaDetail');
     if (healthMedia) {
@@ -4216,6 +6400,7 @@ function showAnalyticsSubtab(name) {
 function renderAnalyticsSummary(data) {
   const container = document.getElementById('analyticsSummaryCards');
   const identity = document.getElementById('analyticsIdentityCards');
+  const trackingCards = document.getElementById('analyticsTrackingCards');
   const recentBody = document.getElementById('analyticsRecentBody');
   const src = document.getElementById('analyticsSources');
   const cmp = document.getElementById('analyticsCampaigns');
@@ -4223,10 +6408,17 @@ function renderAnalyticsSummary(data) {
   const pages = document.getElementById('analyticsPageTypes');
   const devices = document.getElementById('analyticsDevices');
   const browsers = document.getElementById('analyticsBrowsers');
+  const originSurfaces = document.getElementById('analyticsOriginSurfaces');
+  const clickSurfaces = document.getElementById('analyticsClickSurfaces');
+  const storeChannels = document.getElementById('analyticsStoreChannels');
+  const lowEngagement = document.getElementById('analyticsLowEngagement');
+  const surfaceMatrix = document.getElementById('analyticsSurfaceMatrix');
+  const strategicInsights = document.getElementById('analyticsStrategicInsights');
   const hours = document.getElementById('analyticsHours')?.value || '24';
   const hoursLabel = Number.parseInt(hours, 10) >= 24 && Number.parseInt(hours, 10) % 24 === 0
     ? `${Number.parseInt(hours, 10) / 24} dia(s)`
     : `${hours}h`;
+  const tracking = data.summary?.tracking || data.tracking || {};
 
   const categorized = Array.isArray(data.categorized)
     ? data.categorized.reduce((acc, item) => {
@@ -4249,20 +6441,86 @@ function renderAnalyticsSummary(data) {
   ];
 
   const formatBreakdown = (items) => {
+      const list = Array.isArray(items) ? items : [];
+      if (list.length === 0) return 'Sem dados.';
+      return list.map(x => `${x.key}: ${x.count}`).join('\n');
+  };
+
+  const formatStoreChannel = (items) => {
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) return 'Sem dados.';
-    return list.map(x => `${x.key}: ${x.count}`).join('\n');
+    return list.map(x => `${x.store} -> ${x.channel}: ${x.clicks}`).join('\n');
+  };
+
+  const formatLinkList = (items) => {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return 'Sem dados.';
+    return list.map(x => `${x.originSurface} | ${x.store} | ${x.clicks} clique(s) | ${x.trackingSlug || x.trackingId}`).join('\n');
+  };
+
+  const formatMatrix = (items) => {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return 'Sem dados.';
+    return list.map(x => `${x.originSurface} -> ${x.clickSurface}: ${x.count}`).join('\n');
+  };
+
+  const formatInsights = (items) => {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return 'Sem insights ainda.';
+    return list.map(x => `[${x.strength || 'sinal_fraco'}] ${x.title}: ${x.message}`).join('\n\n');
+  };
+
+  const formatAnalyticsRecentLinks = (item) => {
+    const trackedUrl = String(item?.trackedUrl || '').trim();
+    const targetUrl = String(item?.targetUrl || '').trim();
+    const pageUrl = String(item?.pageUrl || '').trim();
+    const parts = [];
+
+    if (trackedUrl) {
+      parts.push(`
+        <div><strong>Rastreado:</strong> <a href="${escapeHtml(trackedUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(shortAnalyticsUrl(trackedUrl))}</a></div>
+      `);
+    }
+
+    if (targetUrl) {
+      parts.push(`
+        <div><strong>Convertido:</strong> <a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(shortAnalyticsUrl(targetUrl))}</a></div>
+      `);
+    }
+
+    if (pageUrl) {
+      parts.push(`
+        <div><strong>Origem:</strong> <a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(shortAnalyticsUrl(pageUrl))}</a></div>
+      `);
+    }
+
+    if (parts.length === 0) {
+      return '<span class="muted">Sem link</span>';
+    }
+
+    const actions = [];
+    const encodedTargetUrl = encodeURIComponent(targetUrl);
+    const encodedTrackedUrl = encodeURIComponent(trackedUrl);
+    if (trackedUrl) {
+      actions.push(`<a href="${escapeHtml(trackedUrl)}" target="_blank" rel="noopener noreferrer" class="secondary" style="padding:4px 8px; font-size:11px;">Abrir rastreado</a>`);
+    }
+    if (targetUrl) {
+      actions.push(`<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" class="secondary" style="padding:4px 8px; font-size:11px;">Abrir convertido</a>`);
+      actions.push(`<button class="secondary" style="padding:4px 8px; font-size:11px;" onclick="showAnalyticsProductInfoFromEncoded('${encodedTargetUrl}','${encodedTrackedUrl}')">Ver produto</button>`);
+    }
+
+    return `<div class="analytics-recent-links">${parts.join('')}<div class="analytics-recent-actions">${actions.join('')}</div></div>`;
   };
 
   if (container) {
     container.innerHTML = categories.map(cat => {
       const val = (cat.key === 'total') ? data.totalClicks : (categorized[cat.key] || 0);
       return `
-        <div class="card" style="padding:16px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+        <div class="card analytics-card">
           <div style="font-size:24px; margin-bottom:8px;">${cat.iconHtml}</div>
-          <div class="muted" style="font-size:12px; font-weight:600; text-transform:uppercase;">${cat.label}</div>
-          <div style="font-size:28px; font-weight:800; color:var(--accent); margin-top:4px;">${val}</div>
-          <div class="muted" style="font-size:11px; margin-top:4px;">eventos em ${hoursLabel}</div>
+          <div class="eyebrow">${cat.label}</div>
+          <div class="metric">${val}</div>
+          <div class="hint">eventos em ${hoursLabel}</div>
         </div>
       `;
     }).join('');
@@ -4270,10 +6528,26 @@ function renderAnalyticsSummary(data) {
 
   if (identity) {
     identity.innerHTML = identityCards.map(card => `
-      <div class="card" style="padding:16px; text-align:center;">
-        <div class="muted" style="font-size:12px; font-weight:600; text-transform:uppercase;">${card.label}</div>
-        <div style="font-size:26px; font-weight:800; color:var(--accent); margin-top:6px;">${card.value}</div>
-        <div class="muted" style="font-size:11px; margin-top:4px;">${card.hint}</div>
+      <div class="card analytics-card">
+        <div class="eyebrow">${card.label}</div>
+        <div class="metric">${card.value}</div>
+        <div class="hint">${card.hint}</div>
+      </div>
+    `).join('');
+  }
+
+  if (trackingCards) {
+    trackingCards.innerHTML = [
+      { label: 'Links gerados', value: tracking.totalLinksCreated || 0, hint: `novos links curtos em ${hoursLabel}` },
+      { label: 'Emitidos', value: tracking.funnel?.publishedOrEmitted || 0, hint: `links fora do conversor puro` },
+      { label: 'Links clicados', value: tracking.linksWithClicks || 0, hint: `links com pelo menos um clique` },
+      { label: 'Cliques rastreados', value: tracking.totalLinksClicked || 0, hint: `eventos via redirect /r/...` },
+      { label: 'Media por link', value: `${tracking.avgClicksPerLink || 0}`, hint: `media de cliques por link criado` }
+    ].map(card => `
+      <div class="card analytics-card">
+        <div class="eyebrow">${card.label}</div>
+        <div class="metric">${card.value}</div>
+        <div class="hint">${card.hint}</div>
       </div>
     `).join('');
   }
@@ -4284,23 +6558,192 @@ function renderAnalyticsSummary(data) {
   if (pages) pages.textContent = formatBreakdown(data.topPageTypes);
   if (devices) devices.textContent = formatBreakdown(data.topDevices);
   if (browsers) browsers.textContent = formatBreakdown(data.topBrowsers);
+  if (originSurfaces) originSurfaces.textContent = formatBreakdown(tracking.topOriginSurfaces);
+  if (clickSurfaces) clickSurfaces.textContent = formatBreakdown(tracking.topClickSurfaces);
+  if (storeChannels) storeChannels.textContent = formatStoreChannel(tracking.storeChannelPerformance);
+  if (lowEngagement) lowEngagement.textContent = formatLinkList(tracking.lowEngagementLinks);
+  if (surfaceMatrix) surfaceMatrix.textContent = formatMatrix(tracking.surfaceMatrix);
+  if (strategicInsights) strategicInsights.textContent = formatInsights(tracking.strategicInsights);
+
+  // Stats de conversão
+  const conv = data.summary?.conversions || {};
+  const convStats = document.getElementById('analyticsConversionStats');
+  if (convStats) {
+      convStats.innerHTML = `
+          <div class="metric">${conv.success || 0} / ${conv.total || 0}</div>
+          <div class="muted">Sucesso: ${conv.successRate || 0}% | Latência: ${conv.avgElapsedMs || 0}ms</div>
+      `;
+  }
+
+  // Stats de IA
+  const ai = data.summary?.instagramAi || {};
+  const aiStats = document.getElementById('analyticsAiStats');
+  if (aiStats) {
+      aiStats.innerHTML = `
+          <div class="metric">${ai.success || 0} / ${ai.total || 0}</div>
+          <div class="muted">Sucesso: ${ai.successRate || 0}% | Latência: ${ai.avgLatencyMs || 0}ms</div>
+      `;
+  }
 
   if (recentBody) {
     const items = data.recentItems || [];
     if (items.length === 0) {
-      recentBody.innerHTML = '<tr><td colspan="5" class="muted">Nenhum clique recente.</td></tr>';
+      recentBody.innerHTML = '<tr><td colspan="6" class="muted">Nenhum clique recente.</td></tr>';
     } else {
       recentBody.innerHTML = items.map(i => `
         <tr>
           <td>${formatTs(i.timestamp)}</td>
           <td><span class="badge muted">${escapeHtml(i.category || 'default')}</span></td>
           <td>${escapeHtml(i.eventType || '-')}</td>
-          <td>${escapeHtml(i.source || '-')}</td>
-          <td title="${escapeHtml(i.targetUrl)}">${escapeHtml((i.targetUrl || '').substring(0, 60))}${(i.targetUrl || '').length > 60 ? '...' : ''}</td>
+          <td>${escapeHtml(i.originSurface || i.source || '-')}</td>
+          <td>${escapeHtml(i.clickSurface || '-')}</td>
+          <td>${formatAnalyticsRecentLinks(i)}</td>
         </tr>
       `).join('');
     }
   }
+
+  // Também carrega as ofertas em alta
+  loadHotDeals(hours);
+}
+
+function shortAnalyticsUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  return text.length > 64 ? `${text.substring(0, 64)}...` : text;
+}
+
+function setAnalyticsModalLink(elementId, url, fallbackLabel = '-') {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const safeUrl = String(url || '').trim();
+  if (safeUrl) {
+    el.href = safeUrl;
+    el.removeAttribute('aria-disabled');
+    el.style.pointerEvents = '';
+    el.style.opacity = '';
+    el.title = '';
+    return;
+  }
+
+  el.href = '#';
+  el.setAttribute('aria-disabled', 'true');
+  el.style.pointerEvents = 'none';
+  el.style.opacity = '0.5';
+  el.title = fallbackLabel;
+}
+
+function openAnalyticsProductModal() {
+  const modal = document.getElementById('analyticsProductModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('show'));
+}
+
+function closeAnalyticsProductModal() {
+  const modal = document.getElementById('analyticsProductModal');
+  if (!modal) return;
+  modal.classList.remove('show');
+  setTimeout(() => {
+    if (!modal.classList.contains('show')) {
+      modal.style.display = 'none';
+    }
+  }, 280);
+}
+
+async function showAnalyticsProductInfo(targetUrl, trackedUrl = '') {
+  const normalizedTarget = String(targetUrl || '').trim();
+  if (!normalizedTarget) {
+    showToast('Sem link convertido para inspecionar.', 'error');
+    return;
+  }
+
+  try {
+    const info = await api('/api/conversor', 'POST', {
+      url: normalizedTarget,
+      source: 'analytics_review'
+    });
+
+    const titleEl = document.getElementById('analyticsProductModalTitle');
+    const storeEl = document.getElementById('analyticsProductModalStore');
+    const priceEl = document.getElementById('analyticsProductModalPrice');
+    const prevPriceEl = document.getElementById('analyticsProductModalPrevPrice');
+    const discountEl = document.getElementById('analyticsProductModalDiscount');
+    const descriptionEl = document.getElementById('analyticsProductModalDescription');
+    const imageEl = document.getElementById('analyticsProductModalImage');
+
+    if (titleEl) titleEl.textContent = info?.title || 'Produto nao identificado';
+    if (storeEl) storeEl.textContent = info?.store || '-';
+    if (priceEl) priceEl.textContent = info?.price || '-';
+    if (prevPriceEl) prevPriceEl.textContent = info?.previousPrice || '-';
+    if (discountEl) {
+      const discount = Number(info?.discountPercent || 0);
+      discountEl.textContent = discount > 0 ? `${discount}%` : '-';
+    }
+
+    if (descriptionEl) {
+      const rawDescription = String(info?.description || '').trim();
+      descriptionEl.textContent = rawDescription || 'Sem descricao disponivel.';
+    }
+
+    const imageUrl = String(info?.imageUrl || '').trim();
+    if (imageEl) {
+      imageEl.src = imageUrl || 'img/placeholder.png';
+      imageEl.onerror = () => {
+        imageEl.src = 'img/placeholder.png';
+      };
+    }
+
+    const trackedFinal = String(info?.trackedUrl || trackedUrl || '').trim();
+    const convertedFinal = String(info?.convertedUrl || normalizedTarget).trim();
+    const originalFinal = String(info?.originalUrl || info?.input || normalizedTarget).trim();
+
+    setAnalyticsModalLink('analyticsProductModalTracked', trackedFinal, 'Sem link rastreado');
+    setAnalyticsModalLink('analyticsProductModalConverted', convertedFinal, 'Sem link convertido');
+    setAnalyticsModalLink('analyticsProductModalOriginal', originalFinal, 'Sem link original');
+
+    openAnalyticsProductModal();
+  } catch (error) {
+    showToast(error?.data?.error || error?.message || 'Falha ao carregar dados do produto.', 'error');
+  }
+}
+
+function showAnalyticsProductInfoFromEncoded(targetUrlEncoded = '', trackedUrlEncoded = '') {
+  const targetUrl = decodeURIComponent(String(targetUrlEncoded || ''));
+  const trackedUrl = decodeURIComponent(String(trackedUrlEncoded || ''));
+  return showAnalyticsProductInfo(targetUrl, trackedUrl);
+}
+
+async function loadHotDeals(hours = 24) {
+    const container = document.getElementById('analyticsHotDeals');
+    if (!container) return;
+    
+    try {
+        const res = await api(`/api/analytics/hot-deals?hours=${hours}&limit=6`);
+        const deals = res.deals || [];
+        
+        if (deals.length === 0) {
+            container.innerHTML = '<div class="muted">Nenhuma oferta em alta no momento.</div>';
+            return;
+        }
+
+        container.innerHTML = deals.map(d => `
+            <div class="card analytics-hot-card">
+                <div class="analytics-hot-media">
+                    <img src="${d.imageUrl || 'img/placeholder.png'}" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='img/placeholder.png'">
+                </div>
+                <div class="analytics-hot-title">${escapeHtml(d.productName)}</div>
+                <div class="analytics-hot-meta">
+                    <div class="analytics-hot-price">${d.price || 'Consultar'}</div>
+                    <div class="badge ok" style="font-size: 10px;">${d.viewCount || 0} ??</div>
+                </div>
+                <div class="muted" style="font-size: 11px;">Loja: ${escapeHtml(d.store || 'Geral')}</div>
+                <a href="${d.affiliateUrl}" target="_blank" class="secondary analytics-link">Ver Oferta</a>
+            </div>
+        `).join('');
+    } catch (e) {
+        container.innerHTML = `<div class="bad">Erro ao carregar hot deals: ${e.message}</div>`;
+    }
 }
 
 loadTheme();
@@ -4412,9 +6855,9 @@ const sectionGuides = {
   'analytics': `
     <h3>Analytics Dashboard</h3>
     <ul>
-      <li><strong>Vis�o Geral:</strong> Veja o total de cliques capturados nas �ltimas 24h em cada parte do sistema (Bio, Cat�logo, Conversor).</li>
+      <li><strong>Vis?o Geral:</strong> Veja o total de cliques capturados nas ?ltimas 24h em cada parte do sistema (Bio, Cat?logo, Conversor).</li>
       <li><strong>Origens e Campanhas:</strong> Identifique de onde vem seus cliques mais quentes para otimizar suas ofertas.</li>
-      <li><strong>Logs em Tempo Real:</strong> Monitore cada clique individualmente para garantir que o rastreamento est� funcionando perfeitamente.</li>
+      <li><strong>Logs em Tempo Real:</strong> Monitore cada clique individualmente para garantir que o rastreamento est? funcionando perfeitamente.</li>
     </ul>`
 };
 
@@ -4469,13 +6912,83 @@ Object.defineProperty(Node.prototype, 'textContent', {
 
 document.addEventListener('DOMContentLoaded', () => {
   hydrateAgentUiState().then(() => restoreAgentUiState());
+  ['waMessageScheduleName', 'waMessageScheduleTargetGroup', 'waMessageScheduleText', 'waMessageScheduleImageUrl'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', renderScheduledMessagePreview);
+    el.addEventListener('change', renderScheduledMessagePreview);
+  });
+
+  const flowEndpointsSearch = document.getElementById('flowEndpointsMapSearch');
+  if (flowEndpointsSearch) {
+    flowEndpointsSearch.addEventListener('input', renderFlowEndpointsMap);
+    flowEndpointsSearch.addEventListener('change', renderFlowEndpointsMap);
+  }
+  renderFlowEndpointsMap();
+
+  ['engCurrentParticipants', 'engTarget120', 'engTarget1000', 'engDailyGoal', 'engActionsWeek1', 'engActionsWeek2To4', 'engActionsScale', 'engRetentionMessages'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', refreshEngagementPlanSummary);
+    el.addEventListener('change', refreshEngagementPlanSummary);
+  });
+
+  const waFooter = document.getElementById('waFooter');
+  if (waFooter) {
+    waFooter.addEventListener('input', scheduleWhatsAppFooterSave);
+    waFooter.addEventListener('blur', () => saveWhatsAppFooter(true));
+  }
+
+  const monitorInstanceInput = document.getElementById('waInstanceName');
+  if (monitorInstanceInput) {
+    monitorInstanceInput.addEventListener('change', async () => {
+      try {
+        await loadMonitorGroups(true);
+      } catch (err) {
+        console.error('Erro ao recarregar grupos por instância principal', err);
+      }
+    });
+  }
+
+  [
+    'waCopyParticipantsInstanceName',
+    'waOutreachInstanceName',
+    'waScheduleCopyInstanceName',
+    'legacyWaScheduleCopyInstanceName',
+    'waMessageScheduleInstanceName',
+    'legacyWaMessageScheduleInstanceName'
+  ].forEach(id => {
+    const select = document.getElementById(id);
+    if (!select) return;
+    select.addEventListener('change', async () => {
+      try {
+        if (id === 'waCopyParticipantsInstanceName') {
+          resetManualCopyParticipantsState();
+        }
+        if (id === 'waOutreachInstanceName') {
+          resetOutreachParticipantsState();
+        }
+        await refreshInstanceBoundGroupSelectors(true);
+      } catch (err) {
+        console.error('Erro ao recarregar grupos por instância selecionada', err);
+      }
+    });
+  });
+
+  const waSafetyInstanceSelect = document.getElementById('waSafetyInstanceName');
+  if (waSafetyInstanceSelect) {
+    waSafetyInstanceSelect.addEventListener('change', () => {
+      renderWhatsAppSafetyPanel(waSafetyInstanceSelect.value || '');
+    });
+  }
+
   document.querySelectorAll('section[id^="section-"]').forEach(section => {
     const firstH2 = section.querySelector('.card:first-child h2:first-of-type, div:first-child > .card:first-child h2:first-of-type');
     if (firstH2 && !firstH2.querySelector('.icon-btn')) {
       const tabId = section.id.replace('section-', '');
       const btn = document.createElement('button');
       btn.className = 'icon-btn';
-      btn.innerHTML = '❔ Ajuda';
+      btn.innerHTML = '? Ajuda';
       btn.onclick = (e) => { e.preventDefault(); openDoc(tabId); };
 
       if (firstH2.style.display !== 'flex') {
@@ -4489,14 +7002,2540 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.onclick = function (event) {
     const modal = document.getElementById('docModal');
+    const scheduleModal = document.getElementById('waScheduleEditModal');
+    const analyticsProductModal = document.getElementById('analyticsProductModal');
     if (event.target == modal) closeDoc();
+    if (event.target == scheduleModal) closeWaScheduleEditor();
+    if (event.target == analyticsProductModal) closeAnalyticsProductModal();
   }
 });
 
-setTimeout(() => {
-  document.dispatchEvent(new Event('DOMContentLoaded'));
-}, 500);
 
 
 
+
+// WhatsApp Monitoring
+function buildGroupOptions(groups, placeholder = 'Selecione o grupo...') {
+  let options = `<option value="">${placeholder}</option>`;
+  if (groups && groups.length > 0) {
+    options += groups.map(g => `<option value="${g.id}">${escapeHtml(g.name || g.id)}</option>`).join('');
+  }
+  return options;
+}
+
+function buildWaInstanceOptions(selectedValue = '') {
+  const allInstances = Array.isArray(waInstancesCache) ? waInstancesCache : [];
+  const activeStates = ['open', 'connected', 'online'];
+  const knownNames = ['ZapOfertas', 'ZapOfertas2'];
+  const instanceMap = new Map();
+
+  allInstances.forEach(inst => {
+    const name = String(inst?.name || inst?.Name || '').trim();
+    if (!name) return;
+    instanceMap.set(name.toLowerCase(), {
+      name,
+      state: getWaInstanceStateValue(inst),
+      connected: activeStates.includes(getWaInstanceStateValue(inst))
+    });
+  });
+
+  const configuredNames = [];
+  try {
+    const s = window.__settingsCache || {};
+    configuredNames.push(
+      s?.whatsAppForwarding?.instanceName,
+      s?.linkResponder?.welcomeInstanceName,
+      s?.instagramStory?.approvalWhatsAppInstance,
+      s?.instagramPublish?.autoPilotWhatsAppInstance,
+      s?.whatsAppAdminAutomation?.instanceName
+    );
+    (s?.whatsAppAdminAutomation?.participantCopySchedules || []).forEach(item => configuredNames.push(item?.instanceName));
+    (s?.whatsAppAdminAutomation?.scheduledGroupMessages || []).forEach(item => configuredNames.push(item?.instanceName));
+  } catch (error) {
+    console.debug('Falha ao ler instâncias configuradas no cache de settings', error);
+  }
+
+  [...knownNames, ...configuredNames]
+    .map(name => String(name || '').trim())
+    .filter(Boolean)
+    .forEach(name => {
+    const key = name.toLowerCase();
+    if (!instanceMap.has(key)) {
+      instanceMap.set(key, { name, state: 'configured', connected: false });
+    }
+  });
+
+  const normalizedSelected = String(selectedValue || '').trim();
+  if (normalizedSelected && !instanceMap.has(normalizedSelected.toLowerCase())) {
+    instanceMap.set(normalizedSelected.toLowerCase(), {
+      name: normalizedSelected,
+      state: 'configured',
+      connected: false
+    });
+  }
+
+  const rankedInstances = Array.from(instanceMap.values())
+    .sort((a, b) => {
+      if (a.connected !== b.connected) return a.connected ? -1 : 1;
+      return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+    });
+
+  let options = '<option value="">Padrão do servidor</option>';
+  rankedInstances.forEach(inst => {
+    const name = inst.name;
+    const stateLabel = inst.state || 'configured';
+    const selected = String(name) === String(selectedValue || '') ? ' selected' : '';
+    options += `<option value="${escapeHtml(String(name))}"${selected}>${escapeHtml(String(name))} (${escapeHtml(stateLabel)})</option>`;
+  });
+  return options;
+}
+
+function populateWaInstanceSelect(selectId, selectedValue = '') {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const previousValue = selectedValue || select.dataset.selectedValue || select.value || '';
+  select.innerHTML = buildWaInstanceOptions(previousValue);
+  select.value = previousValue;
+  delete select.dataset.selectedValue;
+}
+
+const _schedulingBadgeMap = {
+  'waCopyParticipantsInstanceName': 'waCopyParticipantsInstanceBadge',
+  'waScheduleCopyInstanceName': 'waScheduleCopyInstanceBadge',
+  'waMessageScheduleInstanceName': 'waMessageScheduleInstanceBadge',
+};
+
+function populateAllInstanceSelects(selectedValue = '') {
+  [
+    'waScheduleCopyInstanceName',
+    'legacyWaScheduleCopyInstanceName',
+    'waMessageScheduleInstanceName',
+    'legacyWaMessageScheduleInstanceName',
+    'waScheduleEditInstanceName',
+    'waCopyParticipantsInstanceName',
+    'waOutreachInstanceName',
+    'waSafetyInstanceName',
+    'responderWelcomeInstanceName'
+  ].forEach(id => {
+    populateWaInstanceSelect(id, selectedValue);
+    if (_schedulingBadgeMap[id]) updateSchedulingInstanceBadge(id, _schedulingBadgeMap[id]);
+  });
+}
+
+function toggleResponderWelcomeTargetConfig() {
+  const mode = String(document.getElementById('responderWelcomeTargetMode')?.value || 'private').trim();
+  const wrap = document.getElementById('responderWelcomeCustomTargetWrap');
+  const input = document.getElementById('responderWelcomeTargetChatId');
+  if (wrap) {
+    wrap.style.display = mode === 'custom' ? '' : 'none';
+  }
+  if (input) {
+    input.disabled = mode !== 'custom';
+  }
+}
+
+function isWaInstanceConnected(instance) {
+  const stateRaw = getWaInstanceStateValue(instance);
+  return stateRaw === 'open' || stateRaw === 'connected' || stateRaw === 'online';
+}
+
+function getWaInstanceStateTone(instance) {
+  const stateRaw = getWaInstanceStateValue(instance);
+  if (stateRaw === 'open' || stateRaw === 'connected' || stateRaw === 'online') return 'ok';
+  if (stateRaw === 'connecting') return 'warn';
+  return 'bad';
+}
+
+function getWaInstanceStateLabel(instance) {
+  const stateRaw = getWaInstanceStateValue(instance);
+  if (stateRaw === 'open' || stateRaw === 'connected' || stateRaw === 'online') return 'Conectada';
+  if (stateRaw === 'connecting') return 'Conectando';
+  return stateRaw || 'Desconectada';
+}
+
+function getWaInstanceStateValue(instance) {
+  return (
+    instance?.state ||
+    instance?.State ||
+    instance?.connectionStatus ||
+    instance?.ConnectionStatus ||
+    instance?.status ||
+    instance?.Status ||
+    ''
+  ).toString().trim().toLowerCase();
+}
+
+function getResolvedWaInstanceName(instanceName) {
+  return (instanceName || document.getElementById('waInstanceName')?.value || '').trim() || 'Padrão do servidor';
+}
+
+function buildWaInstanceBadge(instanceName, label = 'Instância') {
+  const resolved = getResolvedWaInstanceName(instanceName);
+  const tone = resolved === 'Padrão do servidor' ? 'muted' : 'ok';
+  return `<span class="badge ${tone}">${escapeHtml(label)}: ${escapeHtml(resolved)}</span>`;
+}
+
+function getAutomationSafetyProfile(instanceName = '') {
+  const automation = waAutomationCache || {};
+  const normalizedInstanceName = normalizeInstanceName(instanceName);
+  const instanceConfigs = Array.isArray(automation.instanceParticipantAddSafety)
+    ? automation.instanceParticipantAddSafety
+    : [];
+  const matchedConfig = normalizedInstanceName
+    ? instanceConfigs.find(item => normalizeInstanceName(item?.instanceName) === normalizedInstanceName)
+    : null;
+
+  const maxParticipantsAddedPerDay = Number(
+    matchedConfig?.maxParticipantsAddedPerDay
+      ?? automation.maxParticipantsAddedPerDay
+      ?? 120);
+  const minMinutesBetweenParticipantAdds = Number(
+    matchedConfig?.minMinutesBetweenParticipantAdds
+      ?? automation.minMinutesBetweenParticipantAdds
+      ?? 10);
+  const participantsAddedToday = Number(
+    matchedConfig?.participantsAddedToday
+      ?? automation.participantsAddedToday
+      ?? 0);
+
+  return {
+    instanceName: normalizedInstanceName,
+    resolvedInstanceName: normalizedInstanceName || '',
+    usesDefaultSettings: !matchedConfig,
+    maxParticipantsAddedPerDay: Number.isFinite(maxParticipantsAddedPerDay) && maxParticipantsAddedPerDay > 0
+      ? maxParticipantsAddedPerDay
+      : 120,
+    minMinutesBetweenParticipantAdds: Number.isFinite(minMinutesBetweenParticipantAdds) && minMinutesBetweenParticipantAdds > 0
+      ? minMinutesBetweenParticipantAdds
+      : 10,
+    participantsAddedToday: Number.isFinite(participantsAddedToday) && participantsAddedToday >= 0
+      ? participantsAddedToday
+      : 0
+  };
+}
+
+function renderWhatsAppSafetyPanel(preferredInstanceName = null) {
+  const select = document.getElementById('waSafetyInstanceName');
+  const pauseState = document.getElementById('waParticipantCopyPauseState');
+  const togglePauseBtn = document.getElementById('btnToggleWaCopyPause');
+  const isParticipantCopyAutomationEnabled = waAutomationCache?.participantCopyAutomationEnabled === true;
+
+  let selectedInstanceName = normalizeInstanceName(preferredInstanceName ?? select?.value);
+  const availableValues = Array.from(select?.options || []).map(option => normalizeInstanceName(option.value));
+  if (selectedInstanceName && !availableValues.includes(selectedInstanceName)) {
+    selectedInstanceName = '';
+  }
+
+  if (select) {
+    select.value = selectedInstanceName || '';
+  }
+
+  const safetyProfile = getAutomationSafetyProfile(selectedInstanceName);
+  const remainingQuota = Math.max(0, safetyProfile.maxParticipantsAddedPerDay - safetyProfile.participantsAddedToday);
+
+  setSafeVal('waSafetyDailyLimit', safetyProfile.maxParticipantsAddedPerDay);
+  setSafeVal('waSafetyCooldownMinutes', safetyProfile.minMinutesBetweenParticipantAdds);
+  setSafeText('waSafetyParticipantsAddedToday', String(safetyProfile.participantsAddedToday));
+  setSafeText('waSafetyRemainingQuota', String(remainingQuota));
+  setSafeText('waParticipantCopyPauseState', isParticipantCopyAutomationEnabled ? 'Pausa desativada' : 'Pausa ativada');
+
+  const badge = document.getElementById('waSafetyInstanceBadge');
+  if (badge) {
+    const label = selectedInstanceName || 'Padrão do servidor';
+    badge.textContent = safetyProfile.usesDefaultSettings && selectedInstanceName
+      ? `${label} usando padrão`
+      : label;
+    badge.className = `badge ${safetyProfile.usesDefaultSettings ? 'muted' : 'ok'}`;
+  }
+
+  if (pauseState) pauseState.className = `badge ${isParticipantCopyAutomationEnabled ? 'ok' : 'warn'}`;
+
+  if (togglePauseBtn) {
+    togglePauseBtn.textContent = isParticipantCopyAutomationEnabled ? 'Ativar pausa' : 'Desativar pausa';
+    togglePauseBtn.disabled = (currentRole !== 'admin');
+  }
+
+  return {
+    ...safetyProfile,
+    remainingQuota,
+    isParticipantCopyAutomationEnabled
+  };
+}
+
+function renderWaConnectionInstanceList() {
+  const host = document.getElementById('waConnectionInstanceList');
+  if (!host) return;
+  const instances = (waInstancesCache || []).filter(isWaInstanceConnected);
+  if (!instances.length) {
+    host.innerHTML = '<span class="muted">Nenhuma instância online no Evolution.</span>';
+    return;
+  }
+  host.innerHTML = instances.map(instance => {
+    const name = escapeHtml(String(instance?.name || instance?.Name || '?'));
+    const tone = getWaInstanceStateTone(instance);
+    const label = getWaInstanceStateLabel(instance);
+    return `<div class="wa-connected-instance-item"><strong>${name}</strong><span class="badge ${tone}">${label}</span></div>`;
+  }).join('');
+}
+
+function syncWaConnectionSummary() {
+  const instances = waInstancesCache || [];
+  const connected = instances.filter(isWaInstanceConnected);
+  if (connected.length > 0) {
+    const names = connected
+      .map(instance => String(instance?.name || instance?.Name || '').trim())
+      .filter(Boolean)
+      .join(', ');
+    setSafeText('connectionSummaryWhatsApp', `${connected.length} conectada${connected.length > 1 ? 's' : ''}`);
+    setSafeText('connectionSummaryWhatsAppDetail', `Instâncias online: ${names}`);
+    return;
+  }
+
+  setSafeText('connectionSummaryWhatsApp', '0 conectadas');
+  setSafeText('connectionSummaryWhatsAppDetail', 'Nenhuma instância online no momento.');
+}
+
+async function loadWaInstances(force = false) {
+  if (waInstancesCache && !force) {
+    populateAllInstanceSelects();
+    renderWhatsAppSafetyPanel();
+    updateWaInstancesBoardFromCache();
+    renderWaConnectionInstanceList();
+    syncWaConnectionSummary();
+    return waInstancesCache;
+  }
+
+  try {
+    const response = await api('/api/integrations/whatsapp/instances');
+    const instances = Array.isArray(response)
+      ? response
+      : (Array.isArray(response?.instances)
+        ? response.instances
+        : (Array.isArray(response?.items)
+          ? response.items
+          : (Array.isArray(response?.data) ? response.data : [])));
+    waInstancesCache = instances;
+  } catch (err) {
+    console.error('Erro ao carregar instâncias WhatsApp', err);
+    waInstancesCache = [];
+  }
+
+  if (!waInstancesCache.length) {
+    // Fallback operacional para não bloquear os seletores por falha de payload.
+    waInstancesCache = ['ZapOfertas', 'ZapOfertas2'].map(name => ({ name, state: 'configured' }));
+  }
+
+  populateAllInstanceSelects();
+  renderWhatsAppSafetyPanel();
+  updateWaInstancesBoardFromCache();
+  renderWaConnectionInstanceList();
+  syncWaConnectionSummary();
+  return waInstancesCache;
+}
+
+function updateWaInstancesBoardFromCache() {
+  const board = document.getElementById('waInstanceStatusBoard');
+  if (!board) return;
+  const instances = waInstancesCache || [];
+  if (!instances.length) {
+    board.innerHTML = '<span class="muted">Nenhuma instância disponível.</span>';
+    return;
+  }
+  board.innerHTML = instances.map(inst => {
+    const name = escapeHtml(String(inst?.name || inst?.Name || '?'));
+    const tone = getWaInstanceStateTone(inst);
+    const label = getWaInstanceStateLabel(inst);
+    return `<div class="wa-instance-status-row"><strong>${name}</strong><span class="badge ${tone}">${label}</span></div>`;
+  }).join('');
+}
+
+async function renderWaInstancesStatusCard(force = false) {
+  const board = document.getElementById('waInstanceStatusBoard');
+  if (!board) return;
+  board.innerHTML = '<span class="muted">Verificando...</span>';
+  await loadWaInstances(force);
+  updateWaInstancesBoardFromCache();
+}
+
+function updateSchedulingInstanceBadge(selectId, badgeId) {
+  const select = document.getElementById(selectId);
+  const badge = document.getElementById(badgeId);
+  if (!badge) return;
+  const val = (select?.value || '').trim();
+  badge.textContent = val || 'Padrão';
+  badge.className = 'badge ' + (val ? 'ok' : 'muted');
+}
+
+function normalizeInstanceName(value) {
+  return String(value || '').trim();
+}
+
+function normalizeWhatsAppGroupsResponse(payload) {
+  const rawGroups = Array.isArray(payload)
+    ? payload
+    : (Array.isArray(payload?.groups) ? payload.groups : []);
+
+  return rawGroups
+    .map(g => {
+      const id = String(g?.id || g?.Id || '').trim();
+      if (!id) return null;
+      const name = String(g?.name || g?.Name || id).trim();
+      return { id, name };
+    })
+    .filter(Boolean);
+}
+
+function extractKnownGroupIdsFromSettings(settings) {
+  if (!settings || typeof settings !== 'object') return [];
+
+  const ids = new Set();
+  const add = (value) => {
+    const id = String(value || '').trim();
+    if (id) ids.add(id);
+  };
+
+  (settings.monitoredGroupIds || []).forEach(add);
+  (settings.whatsAppForwarding?.destinationGroupIds || []).forEach(add);
+  (settings.whatsAppForwarding?.sourceChatIds || []).forEach(add);
+
+  (settings.whatsAppForwardingRoutes || []).forEach(route => {
+    (route?.destinationGroupIds || []).forEach(add);
+    (route?.sourceChatIds || []).forEach(add);
+  });
+
+  (settings.whatsAppAdminAutomation?.participantCopySchedules || []).forEach(item => {
+    add(item?.sourceGroupId);
+    add(item?.targetGroupId);
+  });
+
+  (settings.whatsAppAdminAutomation?.scheduledGroupMessages || []).forEach(item => {
+    add(item?.targetGroupId);
+  });
+
+  return Array.from(ids);
+}
+
+function mergeGroupLists(primaryGroups, fallbackIds) {
+  const merged = [];
+  const seen = new Set();
+
+  (primaryGroups || []).forEach(g => {
+    const id = String(g?.id || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    merged.push({ id, name: String(g?.name || id).trim() || id });
+  });
+
+  (fallbackIds || []).forEach(idRaw => {
+    const id = String(idRaw || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    merged.push({ id, name: id });
+  });
+
+  return merged;
+}
+
+async function fetchGroupsByInstance(instanceName, forceRefresh = false) {
+  const normalized = normalizeInstanceName(instanceName);
+  const cacheKey = normalized || '__default__';
+
+  if (!forceRefresh && waAdminGroupsByInstanceCache.has(cacheKey)) {
+    return waAdminGroupsByInstanceCache.get(cacheKey) || [];
+  }
+
+  const query = normalized ? `?instanceName=${encodeURIComponent(normalized)}` : '';
+  const groupsResponse = await api(`/api/admin/whatsapp/groups${query}`);
+  const safeGroups = normalizeWhatsAppGroupsResponse(groupsResponse);
+  waAdminGroupsByInstanceCache.set(cacheKey, safeGroups);
+  return safeGroups;
+}
+
+function syncSourceTargetGroupSelectors(sourceId, targetId, groups, sourcePlaceholder = 'Selecione o grupo origem...', targetPlaceholder = 'Selecione o grupo destino...') {
+  const sourceSelect = document.getElementById(sourceId);
+  const targetSelect = document.getElementById(targetId);
+  if (!sourceSelect && !targetSelect) return;
+
+  const sourcePrev = sourceSelect?.value || '';
+  const targetPrev = targetSelect?.value || '';
+
+  if (sourceSelect) sourceSelect.innerHTML = buildGroupOptions(groups, sourcePlaceholder);
+  if (targetSelect) targetSelect.innerHTML = buildGroupOptions(groups, targetPlaceholder);
+
+  if (!groups || groups.length === 0) return;
+
+  const sourceFallback = String(groups[0].id);
+  const targetFallback = String((groups.find(g => String(g.id) !== sourceFallback) || groups[0]).id);
+
+  if (sourceSelect) {
+    sourceSelect.value = groups.some(g => String(g.id) === sourcePrev) ? sourcePrev : sourceFallback;
+  }
+  if (targetSelect) {
+    targetSelect.value = groups.some(g => String(g.id) === targetPrev) ? targetPrev : targetFallback;
+  }
+}
+
+function syncSingleGroupSelector(selectId, groups, placeholder = 'Selecione o grupo destino...') {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const previous = select.value || '';
+  select.innerHTML = buildGroupOptions(groups, placeholder);
+  if (!groups || groups.length === 0) return;
+  select.value = groups.some(g => String(g.id) === previous) ? previous : String(groups[0].id);
+}
+
+function syncMultiGroupSelector(selectId, groups) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+
+  const previous = new Set(Array.from(select.selectedOptions || []).map(x => String(x.value)));
+  select.innerHTML = '';
+
+  if (!groups || groups.length === 0) {
+    return;
+  }
+
+  groups.forEach(group => {
+    const option = document.createElement('option');
+    option.value = String(group.id);
+    option.textContent = group.name || group.id;
+    if (previous.has(String(group.id))) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  });
+}
+
+function getSelectedOutreachSourceGroupIds() {
+  const multi = document.getElementById('waOutreachSourceGroups');
+  const selectedFromMulti = Array.from(multi?.selectedOptions || []).map(x => String(x.value).trim()).filter(Boolean);
+  if (selectedFromMulti.length > 0) {
+    return Array.from(new Set(selectedFromMulti));
+  }
+
+  const single = String(document.getElementById('waOutreachSourceGroup')?.value || '').trim();
+  return single ? [single] : [];
+}
+
+function resetManualCopyParticipantsState() {
+  waCurrentGroupParticipants = [];
+  setSafeText('waCopySelectionCount', '0');
+  setSafeText('waCopyTotalCount', '0');
+  const listContainer = document.getElementById('waCopyParticipantList');
+  if (listContainer) listContainer.innerHTML = '<span class="muted">Aguardando carregamento...</span>';
+  const selectionArea = document.getElementById('waCopySelectionArea');
+  if (selectionArea) selectionArea.classList.add('hidden');
+}
+
+function resetOutreachParticipantsState() {
+  setSafeText('waOutreachSelectionCount', '0');
+  setSafeText('waOutreachTotalCount', '0');
+  const listContainer = document.getElementById('waOutreachParticipantList');
+  if (listContainer) listContainer.innerHTML = '<span class="muted">Aguardando carregamento...</span>';
+  const selectionArea = document.getElementById('waOutreachSelectionArea');
+  if (selectionArea) selectionArea.classList.add('hidden');
+}
+
+function getDefaultEngagementPlan() {
+  return {
+    currentParticipants: 0,
+    target120: 120,
+    target1000: 1000,
+    dailyGoal: 8,
+    actionsWeek1: '- Configurar 2 disparos por dia para participantes de grupos fonte\n- Publicar convite no Instagram Stories todos os dias\n- Rodar copy gradual de participantes com limite seguro',
+    actionsWeek2To4: '- Testar 3 mensagens diferentes de convite\n- Criar oferta exclusiva semanal para membros do grupo oficial\n- Medir taxa de entrada por grupo origem',
+    actionsScale: '- Criar calendário fixo de campanhas (WhatsApp + IG + Telegram)\n- Automatizar convite por segmentação de grupo\n- Escalar com metas por semana até 1000 participantes',
+    retentionMessages: '- Boas-vindas com regras e benefício principal\n- 1 oferta premium por dia exclusiva do grupo oficial\n- Lembrete de indicação para amigos com prova social'
+  };
+}
+
+function readEngagementPlanFromForm() {
+  return {
+    currentParticipants: parseInt(document.getElementById('engCurrentParticipants')?.value || '0', 10) || 0,
+    target120: parseInt(document.getElementById('engTarget120')?.value || '120', 10) || 120,
+    target1000: parseInt(document.getElementById('engTarget1000')?.value || '1000', 10) || 1000,
+    dailyGoal: parseInt(document.getElementById('engDailyGoal')?.value || '8', 10) || 8,
+    actionsWeek1: document.getElementById('engActionsWeek1')?.value || '',
+    actionsWeek2To4: document.getElementById('engActionsWeek2To4')?.value || '',
+    actionsScale: document.getElementById('engActionsScale')?.value || '',
+    retentionMessages: document.getElementById('engRetentionMessages')?.value || ''
+  };
+}
+
+function writeEngagementPlanToForm(plan) {
+  const effective = plan || getDefaultEngagementPlan();
+  setSafeVal('engCurrentParticipants', String(effective.currentParticipants ?? 0));
+  setSafeVal('engTarget120', String(effective.target120 ?? 120));
+  setSafeVal('engTarget1000', String(effective.target1000 ?? 1000));
+  setSafeVal('engDailyGoal', String(effective.dailyGoal ?? 8));
+  setSafeVal('engActionsWeek1', effective.actionsWeek1 || '');
+  setSafeVal('engActionsWeek2To4', effective.actionsWeek2To4 || '');
+  setSafeVal('engActionsScale', effective.actionsScale || '');
+  setSafeVal('engRetentionMessages', effective.retentionMessages || '');
+}
+
+function loadEngagementPlan() {
+  let plan = getDefaultEngagementPlan();
+  try {
+    const raw = localStorage.getItem(WA_ENGAGEMENT_PLAN_STORAGE_KEY);
+    if (raw) {
+      plan = { ...plan, ...JSON.parse(raw) };
+    }
+  } catch (err) {
+    console.warn('Falha ao carregar plano de engajamento', err);
+  }
+
+  writeEngagementPlanToForm(plan);
+}
+
+function saveEngagementPlan() {
+  const status = document.getElementById('engagementPlanStatus');
+  try {
+    const plan = readEngagementPlanFromForm();
+    localStorage.setItem(WA_ENGAGEMENT_PLAN_STORAGE_KEY, JSON.stringify(plan));
+    if (status) {
+      status.textContent = 'Plano salvo localmente com sucesso.';
+      status.className = 'status ok';
+    }
+    refreshEngagementPlanSummary();
+  } catch (err) {
+    console.error('Erro ao salvar plano de engajamento', err);
+    if (status) {
+      status.textContent = 'Erro ao salvar plano.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+function resetEngagementPlan() {
+  writeEngagementPlanToForm(getDefaultEngagementPlan());
+  saveEngagementPlan();
+}
+
+async function copyEngagementPlanJson() {
+  const status = document.getElementById('engagementPlanStatus');
+  const payload = JSON.stringify(readEngagementPlanFromForm(), null, 2);
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+      if (status) {
+        status.textContent = 'JSON copiado para a área de transferência.';
+        status.className = 'status ok';
+      }
+    } else {
+      throw new Error('Clipboard indisponível');
+    }
+  } catch {
+    if (status) {
+      status.textContent = 'Não foi possível copiar automaticamente. Salve e copie manualmente dos campos.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+function refreshEngagementPlanSummary() {
+  const summaryEl = document.getElementById('engagementPlanSummary');
+  if (!summaryEl) return;
+
+  const plan = readEngagementPlanFromForm();
+  const remainingTo120 = Math.max(0, (plan.target120 || 0) - (plan.currentParticipants || 0));
+  const remainingTo1000 = Math.max(0, (plan.target1000 || 0) - (plan.currentParticipants || 0));
+  const dailyGoal = Math.max(1, plan.dailyGoal || 1);
+  const daysTo120 = Math.ceil(remainingTo120 / dailyGoal);
+  const daysTo1000 = Math.ceil(remainingTo1000 / dailyGoal);
+
+  summaryEl.innerHTML = `
+    <div style="display:grid; gap:6px;">
+      <div><strong>Meta 120:</strong> faltam ${remainingTo120} participantes (estimativa ${daysTo120} dia(s) com meta diária ${dailyGoal}).</div>
+      <div><strong>Meta 1000:</strong> faltam ${remainingTo1000} participantes (estimativa ${daysTo1000} dia(s) com meta diária ${dailyGoal}).</div>
+      <div><strong>Execução:</strong> foque em 1 ação de aquisição + 1 ação de retenção por dia para manter crescimento consistente.</div>
+    </div>
+  `;
+}
+
+async function refreshInstanceBoundGroupSelectors(forceRefresh = false) {
+  const fallbackInstance = normalizeInstanceName(document.getElementById('waInstanceName')?.value);
+
+  const manualInstance = normalizeInstanceName(document.getElementById('waCopyParticipantsInstanceName')?.value) || fallbackInstance;
+  const outreachInstance = normalizeInstanceName(document.getElementById('waOutreachInstanceName')?.value) || fallbackInstance;
+  const scheduleCopyInstance = normalizeInstanceName(document.getElementById('waScheduleCopyInstanceName')?.value) || fallbackInstance;
+  const legacyScheduleCopyInstance = normalizeInstanceName(document.getElementById('legacyWaScheduleCopyInstanceName')?.value) || scheduleCopyInstance;
+  const messageInstance = normalizeInstanceName(document.getElementById('waMessageScheduleInstanceName')?.value) || fallbackInstance;
+  const legacyMessageInstance = normalizeInstanceName(document.getElementById('legacyWaMessageScheduleInstanceName')?.value) || messageInstance;
+
+  const [manualGroups, outreachGroups, scheduleCopyGroups, legacyScheduleCopyGroups, messageGroups, legacyMessageGroups] = await Promise.all([
+    fetchGroupsByInstance(manualInstance, forceRefresh),
+    fetchGroupsByInstance(outreachInstance, forceRefresh),
+    fetchGroupsByInstance(scheduleCopyInstance, forceRefresh),
+    fetchGroupsByInstance(legacyScheduleCopyInstance, forceRefresh),
+    fetchGroupsByInstance(messageInstance, forceRefresh),
+    fetchGroupsByInstance(legacyMessageInstance, forceRefresh)
+  ]);
+
+  const settings = window.__settingsCache || await api('/api/settings');
+  window.__settingsCache = settings;
+  const knownGroupIds = extractKnownGroupIdsFromSettings(settings);
+
+  const safeManualGroups = mergeGroupLists(manualGroups, knownGroupIds);
+  const safeOutreachGroups = mergeGroupLists(outreachGroups, knownGroupIds);
+  const safeScheduleCopyGroups = mergeGroupLists(scheduleCopyGroups, knownGroupIds);
+  const safeLegacyScheduleCopyGroups = mergeGroupLists(legacyScheduleCopyGroups, knownGroupIds);
+  const safeMessageGroups = mergeGroupLists(messageGroups, knownGroupIds);
+  const safeLegacyMessageGroups = mergeGroupLists(legacyMessageGroups, knownGroupIds);
+
+  syncSourceTargetGroupSelectors('waCopySourceGroup', 'waCopyTargetGroup', safeManualGroups);
+  syncSingleGroupSelector('waOutreachSourceGroup', safeOutreachGroups, 'Selecione o grupo origem...');
+  syncMultiGroupSelector('waOutreachSourceGroups', safeOutreachGroups);
+  syncSourceTargetGroupSelectors('waScheduleCopySourceGroup', 'waScheduleCopyTargetGroup', safeScheduleCopyGroups);
+  syncSourceTargetGroupSelectors('legacyWaScheduleCopySourceGroup', 'legacyWaScheduleCopyTargetGroup', safeLegacyScheduleCopyGroups);
+  syncSingleGroupSelector('waMessageScheduleTargetGroup', safeMessageGroups);
+  syncSingleGroupSelector('legacyWaMessageScheduleTargetGroup', safeLegacyMessageGroups);
+
+  waAdminGroupsCache = safeManualGroups;
+}
+
+async function loadMonitorGroups(forceRefresh = false) {
+  const picker = document.getElementById('waMonitorGroupPicker');
+  const monitorInstance = normalizeInstanceName(document.getElementById('waInstanceName')?.value);
+  
+  if (picker) picker.innerHTML = '<span class="muted">Carregando grupos...</span>';
+  
+  try {
+    const groupsPromise = fetchGroupsByInstance(monitorInstance, forceRefresh);
+    const settingsPromise = window.__settingsCache
+      ? Promise.resolve(window.__settingsCache)
+      : api('/api/settings');
+    const [groups, settings] = await Promise.all([groupsPromise, settingsPromise]);
+    waAdminGroupsCache = groups || [];
+    window.__settingsCache = settings;
+    const selectedIds = settings.monitoredGroupIds || [];
+    renderMonitorGroups(groups, selectedIds);
+    await refreshInstanceBoundGroupSelectors(forceRefresh);
+  } catch (err) {
+    console.error('Erro ao carregar grupos para monitoramento', err);
+    if (picker) picker.innerHTML = '<span class="warn">Erro ao carregar grupos. Verifique a conexão com WhatsApp.</span>';
+  }
+}
+
+async function loadGroupParticipantsForCopy(silent = false) {
+  const srcSelect = document.getElementById('waCopySourceGroup');
+  const selectionArea = document.getElementById('waCopySelectionArea');
+  const listContainer = document.getElementById('waCopyParticipantList');
+  const statusSpan = document.getElementById('waCopyStatus');
+  const instanceName = (document.getElementById('waCopyParticipantsInstanceName')?.value || document.getElementById('waInstanceName')?.value || '').trim();
+  
+  const sourceGroupId = srcSelect?.value;
+  const cacheKey = `${instanceName || 'default'}::${sourceGroupId || ''}`;
+  if (!sourceGroupId) {
+    if (!silent) alert('Selecione um grupo de origem primeiro.');
+    return;
+  }
+
+  if (statusSpan) statusSpan.textContent = 'Carregando membros...';
+  if (listContainer) listContainer.innerHTML = '<span class="muted">Carregando membros...</span>';
+  if (selectionArea) selectionArea.classList.remove('hidden');
+
+  try {
+    if (waParticipantsCache.has(cacheKey)) {
+      waCurrentGroupParticipants = waParticipantsCache.get(cacheKey) || [];
+      renderParticipantList(waCurrentGroupParticipants);
+      if (statusSpan) statusSpan.textContent = '';
+      return;
+    }
+
+    const participantsQuery = instanceName
+      ? `&instanceName=${encodeURIComponent(instanceName)}`
+      : '';
+    const participants = await api(`/api/admin/whatsapp/groups/participants?groupId=${encodeURIComponent(sourceGroupId)}${participantsQuery}`);
+    waCurrentGroupParticipants = participants || [];
+    waParticipantsCache.set(cacheKey, waCurrentGroupParticipants);
+    renderParticipantList(waCurrentGroupParticipants);
+    if (statusSpan) statusSpan.textContent = '';
+  } catch (err) {
+    console.error('Erro ao carregar participantes', err);
+    if (listContainer) listContainer.innerHTML = '<span class="warn">Erro ao carregar participantes.</span>';
+    if (statusSpan) statusSpan.textContent = 'Erro ao carregar membros.';
+  }
+}
+
+function handleCopySourceGroupChange() {
+  loadGroupParticipantsForCopy(true);
+}
+
+function renderParticipantList(participants) {
+  const container = document.getElementById('waCopyParticipantList');
+  const totalSpan = document.getElementById('waCopyTotalCount');
+  if (!container) return;
+
+  if (totalSpan) totalSpan.textContent = participants.length;
+
+  if (participants.length === 0) {
+    container.innerHTML = '<span class="muted">Nenhum membro encontrado.</span>';
+    return;
+  }
+
+  container.innerHTML = participants.map(p => `
+    <label class="participant-item">
+      <input type="checkbox" class="wa-participant-checkbox" value="${p}" onchange="updateSelectionCount()">
+      <span title="${p}">${shortId(p)}</span>
+    </label>
+  `).join('');
+  
+  updateSelectionCount();
+}
+
+function toggleSelectAllParticipants(checked) {
+  const checkboxes = document.querySelectorAll('.wa-participant-checkbox');
+  checkboxes.forEach(cb => {
+    if (cb.parentElement.style.display !== 'none') {
+      cb.checked = checked;
+    }
+  });
+  updateSelectionCount();
+}
+
+function applyParticipantLimit(limit) {
+  const n = parseInt(limit);
+  const checkboxes = document.querySelectorAll('.wa-participant-checkbox');
+  
+  // First uncheck all
+  checkboxes.forEach(cb => cb.checked = false);
+  
+  if (isNaN(n) || n <= 0) {
+    updateSelectionCount();
+    return;
+  }
+
+  let count = 0;
+  checkboxes.forEach(cb => {
+    if (count < n && cb.parentElement.style.display !== 'none') {
+      cb.checked = true;
+      count++;
+    }
+  });
+  updateSelectionCount();
+}
+
+function filterParticipantsList(query) {
+  const q = query.toLowerCase();
+  const checkboxes = document.querySelectorAll('.wa-participant-checkbox');
+  checkboxes.forEach(cb => {
+    const label = cb.parentElement;
+    const text = label.textContent.toLowerCase();
+    if (text.includes(q)) {
+      label.style.display = 'flex';
+    } else {
+      label.style.display = 'none';
+      cb.checked = false; // Uncheck hidden ones to avoid confusion
+    }
+  });
+  updateSelectionCount();
+}
+
+function updateSelectionCount() {
+  const selected = document.querySelectorAll('.wa-participant-checkbox:checked').length;
+  const countSpan = document.getElementById('waCopySelectionCount');
+  if (countSpan) countSpan.textContent = selected;
+}
+
+async function copyGroupParticipants() {
+  const srcSelect = document.getElementById('waCopySourceGroup');
+  const tgtSelect = document.getElementById('waCopyTargetGroup');
+  const statusSpan = document.getElementById('waCopyStatus');
+  const btn = document.getElementById('btnStartCopy');
+  
+  const sourceGroupId = srcSelect?.value;
+  const targetGroupId = tgtSelect?.value;
+  const instanceName = (document.getElementById('waCopyParticipantsInstanceName')?.value || document.getElementById('waInstanceName')?.value || '').trim();
+  
+  if (!sourceGroupId || !targetGroupId) {
+    if (statusSpan) {
+        statusSpan.textContent = 'Selecione ambos os grupos.';
+        statusSpan.className = 'status warn';
+    }
+    return;
+  }
+  
+  if (sourceGroupId === targetGroupId) {
+    if (statusSpan) {
+        statusSpan.textContent = 'O grupo de origem e destino não podem ser iguais.';
+        statusSpan.className = 'status warn';
+    }
+    return;
+  }
+
+  // Get selected participants
+  const selectedCheckboxes = document.querySelectorAll('.wa-participant-checkbox:checked');
+  const participantIds = Array.from(selectedCheckboxes).map(cb => cb.value);
+
+  if (participantIds.length === 0) {
+    if (statusSpan) {
+        statusSpan.textContent = 'Selecione pelo menos 1 participante antes de iniciar a copia.';
+        statusSpan.className = 'status warn';
+    }
+    return;
+  }
+
+  if (participantIds.length > WA_MANUAL_COPY_MAX_PARTICIPANTS) {
+    if (statusSpan) {
+        statusSpan.textContent = `Selecione no maximo ${WA_MANUAL_COPY_MAX_PARTICIPANTS} participantes por copia manual.`;
+        statusSpan.className = 'status warn';
+    }
+    return;
+  }
+
+  if (!confirm(`Confirmar copia manual de ${participantIds.length} participante(s) para o grupo de destino?`)) {
+    return;
+  }
+  
+  if (statusSpan) {
+      statusSpan.textContent = 'Copiando participantes... Aguarde.';
+      statusSpan.className = 'status muted';
+  }
+  if (btn) btn.disabled = true;
+  
+  try {
+    const res = await api('/api/admin/whatsapp/groups/copy-participants', 'POST', { 
+        sourceGroupId, 
+        targetGroupId,
+      participantIds,
+      instanceName: instanceName || null
+    });
+    if (statusSpan) {
+        statusSpan.textContent = res.queued
+          ? `Enfileirado: ${res.count || 0} participante(s). Ignorados repetidos: ${res.skipped || 0}.`
+          : res.success
+          ? `Sucesso! ${res.count || 0} participantes copiados. Ignorados repetidos: ${res.skipped || 0}.`
+          : (res.message || 'Falha ao copiar.');
+        statusSpan.className = (res.success || res.queued) ? 'status ok' : 'status warn';
+    }
+  } catch(err) {
+      console.error('Erro ao copiar contatos', err);
+      if (statusSpan) {
+          statusSpan.textContent = err.message || 'Erro ao conectar com servidor.';
+          statusSpan.className = 'status warn';
+      }
+  } finally {
+      if (btn) btn.disabled = false;
+  }
+}
+
+async function loadGroupParticipantsForOutreach(silent = false) {
+  const selectionArea = document.getElementById('waOutreachSelectionArea');
+  const listContainer = document.getElementById('waOutreachParticipantList');
+  const statusSpan = document.getElementById('waOutreachStatus');
+  const instanceName = (document.getElementById('waOutreachInstanceName')?.value || document.getElementById('waInstanceName')?.value || '').trim();
+  const useAll = document.getElementById('waOutreachUseAllParticipants')?.checked === true;
+
+  const sourceGroupIds = getSelectedOutreachSourceGroupIds();
+  const cacheKey = `${instanceName || 'default'}::${sourceGroupIds.slice().sort().join(',')}`;
+  if (sourceGroupIds.length === 0) {
+    if (!silent) alert('Selecione um grupo de origem primeiro.');
+    return;
+  }
+
+  if (useAll) {
+    if (selectionArea) selectionArea.classList.add('hidden');
+    if (statusSpan) {
+      statusSpan.textContent = 'Modo grupo inteiro ativo. O backend vai carregar todos os participantes dos grupos selecionados.';
+      statusSpan.className = 'status ok';
+    }
+    return;
+  }
+
+  if (statusSpan) {
+    statusSpan.textContent = sourceGroupIds.length > 1
+      ? 'Carregando participantes dos grupos selecionados...'
+      : 'Carregando participantes do grupo origem...';
+    statusSpan.className = 'status muted';
+  }
+  if (listContainer) listContainer.innerHTML = '<span class="muted">Carregando participantes...</span>';
+  if (selectionArea) selectionArea.classList.remove('hidden');
+
+  try {
+    if (waParticipantsCache.has(cacheKey)) {
+      renderOutreachParticipantList(waParticipantsCache.get(cacheKey) || []);
+      if (statusSpan) statusSpan.textContent = '';
+      return;
+    }
+
+    const participantsQuery = instanceName ? `&instanceName=${encodeURIComponent(instanceName)}` : '';
+    const allResults = await Promise.all(sourceGroupIds.map(groupId =>
+      api(`/api/admin/whatsapp/groups/participants?groupId=${encodeURIComponent(groupId)}${participantsQuery}`)
+    ));
+
+    const union = [];
+    allResults.forEach(list => {
+      (list || []).forEach(p => {
+        const id = String(p || '').trim();
+        if (id && !id.endsWith('@g.us')) union.push(id);
+      });
+    });
+
+    const filtered = Array.from(new Set(union));
+    waParticipantsCache.set(cacheKey, filtered);
+    renderOutreachParticipantList(filtered);
+    if (statusSpan) statusSpan.textContent = '';
+  } catch (err) {
+    console.error('Erro ao carregar participantes para disparo', err);
+    if (listContainer) listContainer.innerHTML = '<span class="warn">Erro ao carregar participantes.</span>';
+    if (statusSpan) {
+      statusSpan.textContent = 'Erro ao carregar participantes.';
+      statusSpan.className = 'status warn';
+    }
+  }
+}
+
+function handleOutreachSourceGroupChange() {
+  loadGroupParticipantsForOutreach(true);
+}
+
+function renderOutreachParticipantList(participants) {
+  const container = document.getElementById('waOutreachParticipantList');
+  const totalSpan = document.getElementById('waOutreachTotalCount');
+  if (!container) return;
+
+  if (totalSpan) totalSpan.textContent = participants.length;
+
+  if (participants.length === 0) {
+    container.innerHTML = '<span class="muted">Nenhum participante encontrado.</span>';
+    updateOutreachSelectionCount();
+    return;
+  }
+
+  container.innerHTML = participants.map(p => `
+    <label style="display:flex; align-items:center; gap:8px; font-size:0.9em; cursor:pointer; padding:2px; border-bottom:1px solid var(--border-subtle);">
+      <input type="checkbox" class="wa-outreach-participant-checkbox" value="${p}" onchange="updateOutreachSelectionCount()">
+      <span title="${p}">${shortId(p)}</span>
+    </label>
+  `).join('');
+
+  updateOutreachSelectionCount();
+}
+
+function toggleSelectAllOutreachParticipants(checked) {
+  const checkboxes = document.querySelectorAll('.wa-outreach-participant-checkbox');
+  checkboxes.forEach(cb => {
+    if (cb.parentElement.style.display !== 'none') {
+      cb.checked = checked;
+    }
+  });
+  updateOutreachSelectionCount();
+}
+
+function applyOutreachParticipantLimit(limit) {
+  const n = parseInt(limit, 10);
+  const checkboxes = document.querySelectorAll('.wa-outreach-participant-checkbox');
+  checkboxes.forEach(cb => cb.checked = false);
+
+  if (isNaN(n) || n <= 0) {
+    updateOutreachSelectionCount();
+    return;
+  }
+
+  let count = 0;
+  checkboxes.forEach(cb => {
+    if (count < n && cb.parentElement.style.display !== 'none') {
+      cb.checked = true;
+      count++;
+    }
+  });
+  updateOutreachSelectionCount();
+}
+
+function filterOutreachParticipantsList(query) {
+  const q = String(query || '').toLowerCase();
+  const checkboxes = document.querySelectorAll('.wa-outreach-participant-checkbox');
+  checkboxes.forEach(cb => {
+    const label = cb.parentElement;
+    const text = label.textContent.toLowerCase();
+    if (text.includes(q)) {
+      label.style.display = 'flex';
+    } else {
+      label.style.display = 'none';
+      cb.checked = false;
+    }
+  });
+  updateOutreachSelectionCount();
+}
+
+function updateOutreachSelectionCount() {
+  const selected = document.querySelectorAll('.wa-outreach-participant-checkbox:checked').length;
+  const countSpan = document.getElementById('waOutreachSelectionCount');
+  if (countSpan) countSpan.textContent = selected;
+}
+
+function formatOutreachProgressTs(value) {
+  if (!value) return '-';
+  try {
+    return new Date(value).toLocaleString('pt-BR');
+  } catch {
+    return String(value);
+  }
+}
+
+function getOutreachProgressLevelClass(level) {
+  const normalized = String(level || '').toLowerCase();
+  if (normalized === 'ok') return 'ok';
+  if (normalized === 'warn' || normalized === 'error') return 'warn';
+  return 'muted';
+}
+
+function formatSecondsDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function renderOutreachProgressMetrics(items) {
+  const progressEl = document.getElementById('waOutreachMetricProgress');
+  const successEl = document.getElementById('waOutreachMetricSuccess');
+  const failEl = document.getElementById('waOutreachMetricFail');
+  const etaEl = document.getElementById('waOutreachMetricEta');
+  if (!progressEl || !successEl || !failEl || !etaEl) return;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    progressEl.textContent = '-';
+    progressEl.className = 'muted';
+    successEl.textContent = '-';
+    successEl.className = 'muted';
+    failEl.textContent = '-';
+    failEl.className = 'muted';
+    etaEl.textContent = '-';
+    etaEl.className = 'muted';
+    return;
+  }
+
+  const ordered = [...items]
+    .filter(x => x && x.timestamp)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  const total = ordered.reduce((max, item) => Math.max(max, Number(item.total) || 0), 0);
+  const processed = ordered.reduce((max, item) => Math.max(max, Number(item.processed) || 0), 0);
+
+  const successStages = new Set(['participant-success', 'participant-message-sent']);
+  const failStages = new Set(['participant-failed', 'participant-message-failed']);
+
+  const successParticipants = new Set();
+  const failParticipants = new Set();
+  let successEvents = 0;
+  let failEvents = 0;
+
+  ordered.forEach(item => {
+    const stage = String(item.stage || '').toLowerCase();
+    const pid = String(item.participantId || '').trim();
+    if (successStages.has(stage)) {
+      successEvents++;
+      if (pid) successParticipants.add(pid);
+    }
+    if (failStages.has(stage)) {
+      failEvents++;
+      if (pid) failParticipants.add(pid);
+    }
+  });
+
+  const successCount = Math.max(successParticipants.size, successEvents);
+  const failCount = Math.max(failParticipants.size, failEvents);
+  const done = Math.max(processed, successCount + failCount);
+  const denom = total > 0 ? total : Math.max(done, 1);
+  const pct = Math.min(100, Math.round((Math.max(0, done) / denom) * 100));
+
+  progressEl.textContent = `${Math.max(0, done)}/${total || '-'} (${pct}%)`;
+  progressEl.className = pct >= 100 ? 'ok' : 'muted';
+
+  const successRate = done > 0 ? Math.round((successCount / done) * 100) : 0;
+  successEl.textContent = `${successCount} (${successRate}%)`;
+  successEl.className = successCount > 0 ? 'ok' : 'muted';
+
+  failEl.textContent = `${failCount}`;
+  failEl.className = failCount > 0 ? 'warn' : 'ok';
+
+  let etaText = 'Concluído';
+  let etaClass = 'ok';
+  if (total <= 0 || done <= 0 || done >= total) {
+    if (done <= 0) {
+      etaText = 'Calculando...';
+      etaClass = 'muted';
+    }
+  } else if (ordered.length >= 2) {
+    const firstTs = new Date(ordered[0].timestamp).getTime();
+    const lastTs = new Date(ordered[ordered.length - 1].timestamp).getTime();
+    const elapsedSeconds = Math.max(1, Math.floor((lastTs - firstTs) / 1000));
+    const ratePerSec = done / elapsedSeconds;
+    const remaining = Math.max(0, total - done);
+    if (ratePerSec > 0) {
+      etaText = formatSecondsDuration(remaining / ratePerSec);
+      etaClass = 'muted';
+    } else {
+      etaText = 'Calculando...';
+      etaClass = 'muted';
+    }
+  } else {
+    etaText = 'Calculando...';
+    etaClass = 'muted';
+  }
+
+  etaEl.textContent = etaText;
+  etaEl.className = etaClass;
+}
+
+async function loadOutreachProgressLogs(silent = false) {
+  const body = document.getElementById('waOutreachLogsBody');
+  const summary = document.getElementById('waOutreachLogsSummary');
+  const opInput = document.getElementById('waOutreachOperationId');
+  const limitInput = document.getElementById('waOutreachLogsLimit');
+  if (!body || !summary) return;
+
+  const requestedOperationId = String(opInput?.value || waOutreachLastOperationId || '').trim();
+  const limit = parseInt(limitInput?.value || '200', 10) || 200;
+  const qs = new URLSearchParams();
+  qs.set('limit', String(Math.max(1, Math.min(2000, limit))));
+  if (requestedOperationId) {
+    qs.set('operationId', requestedOperationId);
+  }
+
+  try {
+    if (!silent) {
+      summary.textContent = 'Carregando log de andamento...';
+      summary.className = 'status muted';
+    }
+
+    const res = await api(`/api/admin/whatsapp/groups/blast-participants/logs?${qs.toString()}`);
+    const items = Array.isArray(res.items) ? res.items : [];
+    const operationFromApi = String(res.operationId || requestedOperationId || '').trim();
+    if (operationFromApi) {
+      waOutreachLastOperationId = operationFromApi;
+      if (opInput && !opInput.value) {
+        opInput.value = operationFromApi;
+      }
+    }
+
+    if (items.length === 0) {
+      renderOutreachProgressMetrics([]);
+      body.innerHTML = '<tr><td colspan="6" class="muted">Sem eventos para os filtros atuais.</td></tr>';
+      summary.textContent = operationFromApi
+        ? `Sem eventos encontrados para a operação ${operationFromApi}.`
+        : 'Sem eventos recentes de disparo.';
+      summary.className = 'status muted';
+      return;
+    }
+
+    body.innerHTML = items.map(item => {
+      const levelClass = getOutreachProgressLevelClass(item.level);
+      const progress = (item.processed != null && item.total != null)
+        ? `${item.processed}/${item.total}`
+        : '-';
+      return `
+        <tr>
+          <td>${escapeHtml(formatOutreachProgressTs(item.timestamp))}</td>
+          <td><span class="badge ${levelClass}">${escapeHtml(String(item.stage || '-'))}</span></td>
+          <td>${escapeHtml(String(item.participantId || '-'))}</td>
+          <td>${escapeHtml(progress)}</td>
+          <td>${escapeHtml(String(item.message || '-'))}</td>
+          <td>${escapeHtml(String(item.operationId || '-'))}</td>
+        </tr>
+      `;
+    }).join('');
+
+    renderOutreachProgressMetrics(items);
+
+    summary.textContent = operationFromApi
+      ? `Mostrando ${items.length} evento(s) da operação ${operationFromApi}.`
+      : `Mostrando ${items.length} evento(s) recentes.`;
+    summary.className = 'status ok';
+  } catch (err) {
+    console.error('Erro ao carregar log de andamento do disparo', err);
+    renderOutreachProgressMetrics([]);
+    if (!silent) {
+      summary.textContent = err?.data?.error || err?.message || 'Erro ao carregar log de andamento.';
+      summary.className = 'status warn';
+    }
+  }
+}
+
+async function loadOutreachScheduleList() {
+  const sel = document.getElementById('waConversionScheduleId');
+  if (!sel) return;
+  try {
+    const res = await api('/api/admin/whatsapp/groups/blast-participants/schedules');
+    const schedules = Array.isArray(res.schedules) ? res.schedules : [];
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— selecione um disparo —</option>' +
+      schedules.map(s => {
+        const label = `${s.name} (${s.status}) — ${s.sentParticipants ?? s.successParticipants} enviados`;
+        return `<option value="${escapeHtml(s.id)}">${escapeHtml(label)} [${s.id.substring(0, 8)}]</option>`;
+      }).join('');
+    if (current) sel.value = current;
+  } catch (err) {
+    console.warn('Erro ao carregar lista de disparos', err);
+  }
+}
+
+async function loadOutreachConversion() {
+  const scheduleId = String(document.getElementById('waConversionScheduleId')?.value || '').trim();
+  const groupId = String(document.getElementById('waConversionGroupId')?.value || '').trim();
+  const summary = document.getElementById('waConversionSummary');
+  const body = document.getElementById('waConversionBody');
+  if (!scheduleId) {
+    if (summary) { summary.textContent = 'Selecione um disparo antes de calcular.'; summary.className = 'status warn'; }
+    return;
+  }
+  if (summary) { summary.textContent = 'Calculando...'; summary.className = 'status muted'; }
+  try {
+    const qs = new URLSearchParams({ scheduleId });
+    if (groupId) qs.set('groupId', groupId);
+    const res = await api(`/api/admin/whatsapp/groups/blast-participants/conversion?${qs.toString()}`);
+
+    document.getElementById('waConvMetricSent').textContent = res.totalSent ?? '-';
+    document.getElementById('waConvMetricJoined').textContent = res.converted ?? '-';
+    document.getElementById('waConvMetricRate').textContent = res.conversionRate != null ? `${res.conversionRate}%` : '-';
+    document.getElementById('waConvMetricEvents').textContent = res.totalJoinEvents ?? '-';
+
+    const converters = Array.isArray(res.converters) ? res.converters : [];
+    if (converters.length === 0) {
+      body.innerHTML = '<tr><td colspan="5" class="muted">Nenhum participante confirmado como convertido ainda.</td></tr>';
+    } else {
+      body.innerHTML = converters.map(c => `
+        <tr>
+          <td>${escapeHtml(c.participantId || '-')}</td>
+          <td style="font-size:11px;">${escapeHtml(c.groupId || '-')}</td>
+          <td>${escapeHtml(c.groupName || '-')}</td>
+          <td><span class="badge ok">${escapeHtml(c.action || '-')}</span></td>
+          <td>${escapeHtml(formatOutreachProgressTs(c.joinedAt))}</td>
+        </tr>
+      `).join('');
+    }
+    summary.textContent = `Disparo "${res.scheduleName}": ${res.totalSent} enviados → ${res.converted} entradas confirmadas (${res.conversionRate}% de conversão).`;
+    summary.className = 'status ok';
+  } catch (err) {
+    if (summary) { summary.textContent = err?.data?.error || err?.message || 'Erro ao calcular conversão.'; summary.className = 'status warn'; }
+  }
+}
+
+function prefillOutreachMessageTemplate() {
+  const linkInput = document.getElementById('waOutreachLinkUrl');
+  const el = document.getElementById('waOutreachMessage');
+  if (!el) return;
+  if (linkInput && !linkInput.value) {
+    linkInput.value = 'https://chat.whatsapp.com/SEU_LINK_AQUI';
+  }
+  el.value = 'Nosso grupo oficial e moderado, com ofertas validadas e links revisados para mais seguranca e menos ruido no seu WhatsApp.';
+  setSafeVal('waOutreachWaitTimeoutSeconds', '120');
+  setSafeVal('waOutreachPreLinkMessages', '3');
+  setSafeVal('waOutreachWaitMode', 'response-or-timeout');
+  setSafeVal('waOutreachPitchPreset', 'amigavel');
+  setSafeVal('waOutreachMinIntervalMs', '1200');
+  setSafeVal('waOutreachMaxIntervalMs', '2600');
+  setSafeVal('waOutreachBatchSize', '25');
+  setSafeVal('waOutreachBatchPauseSeconds', '90');
+  setSafeChecked('waOutreachSendLinkOnTimeout', true);
+  const status = document.getElementById('waOutreachStatus');
+  if (status) {
+    status.textContent = 'Template aplicado. Ajuste pitch e link antes de disparar.';
+    status.className = 'status muted';
+  }
+}
+
+function applyOutreachPitchPreset() {
+  const preset = String(document.getElementById('waOutreachPitchPreset')?.value || 'amigavel');
+  const pitch = WA_OUTREACH_PITCH_PRESETS[preset] || WA_OUTREACH_PITCH_PRESETS.amigavel;
+  setSafeVal('waOutreachMessage', pitch);
+  const status = document.getElementById('waOutreachStatus');
+  if (status) {
+    status.textContent = `Pitch base aplicado: ${preset}. Você pode editar o texto antes de disparar.`;
+    status.className = 'status ok';
+  }
+}
+
+function insertOutreachEmoji(emoji) {
+  const textarea = document.getElementById('waOutreachMessage');
+  if (!textarea || !emoji) return;
+
+  const start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : textarea.value.length;
+  const end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : textarea.value.length;
+  const before = textarea.value.slice(0, start);
+  const after = textarea.value.slice(end);
+  const needsLeadingSpace = before.length > 0 && !/\s$/.test(before);
+  const needsTrailingSpace = after.length > 0 && !/^\s/.test(after);
+  const insertion = `${needsLeadingSpace ? ' ' : ''}${emoji}${needsTrailingSpace ? ' ' : ''}`;
+
+  textarea.value = `${before}${insertion}${after}`;
+  const caret = before.length + insertion.length;
+  textarea.focus();
+  if (typeof textarea.setSelectionRange === 'function') {
+    textarea.setSelectionRange(caret, caret);
+  }
+
+  const status = document.getElementById('waOutreachStatus');
+  if (status) {
+    status.textContent = `Emoji ${emoji} inserido na mensagem do disparo.`;
+    status.className = 'status muted';
+  }
+}
+
+function confirmOutreachInviteLink(linkUrl, intendedCount) {
+  const normalizedLink = String(linkUrl || '').trim();
+  if (!normalizedLink) return null;
+
+  let inviteCode = '';
+  try {
+    const parsed = new URL(normalizedLink);
+    if (!/chat\.whatsapp\.com$/i.test(parsed.hostname)) {
+      alert('Link de convite invalido: use um link oficial do chat.whatsapp.com.');
+      return null;
+    }
+    inviteCode = parsed.pathname.replace(/^\/+/, '').trim();
+  } catch (_) {
+    alert('Link de convite invalido: revise o link antes de disparar.');
+    return null;
+  }
+
+  const overview = [
+    `Voce esta prestes a iniciar um disparo para ${intendedCount}.`,
+    '',
+    `Link de convite configurado: ${normalizedLink}`,
+    '',
+    'Confirme para continuar.'
+  ].join('\n');
+
+  if (!confirm(overview)) {
+    return null;
+  }
+
+  const expectedValue = inviteCode || normalizedLink;
+  const promptText = inviteCode
+    ? `Confirmacao de seguranca:\nDigite o codigo do convite exatamente como abaixo para liberar o disparo:\n${inviteCode}`
+    : `Confirmacao de seguranca:\nDigite o link completo exatamente como abaixo para liberar o disparo:\n${normalizedLink}`;
+
+  const typedValue = prompt(promptText, '');
+  if (typedValue === null) {
+    return null;
+  }
+
+  const finalConfirmation = typedValue.trim();
+  if (finalConfirmation !== expectedValue) {
+    alert('Confirmacao nao confere. Disparo cancelado para evitar envio com link incorreto.');
+    return null;
+  }
+
+  return finalConfirmation;
+}
+
+async function sendOutreachMessages() {
+  const sourceGroupIds = getSelectedOutreachSourceGroupIds();
+  const sourceGroupId = sourceGroupIds[0] || '';
+  const instanceName = (document.getElementById('waOutreachInstanceName')?.value || document.getElementById('waInstanceName')?.value || '').trim();
+  const useAllParticipants = document.getElementById('waOutreachUseAllParticipants')?.checked === true;
+  const message = (document.getElementById('waOutreachMessage')?.value || '').trim();
+  const linkUrl = (document.getElementById('waOutreachLinkUrl')?.value || '').trim();
+  const intervalMs = parseInt(document.getElementById('waOutreachIntervalMs')?.value || '1500', 10) || 1500;
+  const minUserIntervalMs = parseInt(document.getElementById('waOutreachMinIntervalMs')?.value || '1200', 10) || 1200;
+  const maxUserIntervalMs = parseInt(document.getElementById('waOutreachMaxIntervalMs')?.value || '2600', 10) || 2600;
+  const batchSize = parseInt(document.getElementById('waOutreachBatchSize')?.value || '25', 10) || 25;
+  const batchPauseSeconds = parseInt(document.getElementById('waOutreachBatchPauseSeconds')?.value || '90', 10) || 90;
+  const preLinkMessages = parseInt(document.getElementById('waOutreachPreLinkMessages')?.value || '3', 10) || 3;
+  const waitMode = (document.getElementById('waOutreachWaitMode')?.value || 'response-or-timeout').trim();
+  const waitTimeoutSeconds = parseInt(document.getElementById('waOutreachWaitTimeoutSeconds')?.value || '120', 10) || 120;
+  const sendLinkOnTimeout = document.getElementById('waOutreachSendLinkOnTimeout')?.checked !== false;
+  const status = document.getElementById('waOutreachStatus');
+  const btn = document.getElementById('btnOutreachSend');
+
+  const selectedCheckboxes = document.querySelectorAll('.wa-outreach-participant-checkbox:checked');
+  const participantIds = Array.from(selectedCheckboxes).map(cb => cb.value);
+
+  if (!sourceGroupId || sourceGroupIds.length === 0) {
+    if (status) {
+      status.textContent = 'Selecione ao menos um grupo origem.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (!linkUrl) {
+    if (status) {
+      status.textContent = 'Informe o link do grupo oficial.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (!message) {
+    if (status) {
+      status.textContent = 'Informe o pitch de segurança para o diálogo.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (!waitMode || (waitMode !== 'response-or-timeout' && waitMode !== 'timeout')) {
+    if (status) {
+      status.textContent = 'Selecione um modo de espera válido.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (waitTimeoutSeconds < 10 || waitTimeoutSeconds > 600) {
+    if (status) {
+      status.textContent = 'Timeout deve ficar entre 10 e 600 segundos.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (!useAllParticipants && participantIds.length === 0) {
+    if (status) {
+      status.textContent = 'Selecione pelo menos 1 participante ou ative o modo grupo inteiro.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  const intendedCount = useAllParticipants
+    ? 'todos participantes dos grupos selecionados'
+    : `${participantIds.length} participante(s)`;
+  const linkConfirmation = confirmOutreachInviteLink(linkUrl, intendedCount);
+  if (!linkConfirmation) {
+    if (status) {
+      status.textContent = 'Disparo cancelado na confirmacao do link de convite.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (status) {
+    status.textContent = 'Enfileirando disparo...';
+    status.className = 'status muted';
+  }
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await api('/api/admin/whatsapp/groups/blast-participants/scheduled', 'POST', {
+      sourceGroupId,
+      sourceGroupIds,
+      participantIds,
+      useAllParticipantsFromSources: useAllParticipants,
+      message,
+      linkUrl,
+      intervalMs,
+      minUserIntervalMs,
+      maxUserIntervalMs,
+      batchSize,
+      batchPauseSeconds,
+      useAiDialogue: true,
+      preLinkMessages,
+      waitMode,
+      waitTimeoutSeconds,
+      sendLinkOnTimeout,
+      securityPitch: message,
+      linkConfirmation,
+      instanceName: instanceName || null
+    });
+
+    if (status) {
+      status.textContent = res.queued
+        ? `Disparo enfileirado para ${res.count || participantIds.length} participante(s). Fila: ${res.queueId || 'n/d'}.`
+        : (res.message || 'Disparo processado.');
+      status.className = res.success ? 'status ok' : 'status warn';
+    }
+
+    waOutreachLastOperationId = String(res.operationId || '').trim() || waOutreachLastOperationId;
+    const opInput = document.getElementById('waOutreachOperationId');
+    if (opInput && waOutreachLastOperationId) {
+      opInput.value = waOutreachLastOperationId;
+    }
+
+    await loadOutreachProgressLogs();
+
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao disparar mensagens para participantes', err);
+    if (status) {
+      status.textContent = err?.data?.error || err?.message || 'Erro ao disparar mensagens.';
+      status.className = 'status warn';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function formatWaAutomationStatus(item) {
+  if (!item) return '<span class="muted">Sem status.</span>';
+
+  const messages = [];
+  if (item.lastResultMessage) messages.push(escapeHtml(item.lastResultMessage));
+  if (item.nextRunAt) messages.push(`Próxima: ${escapeHtml(formatTs(item.nextRunAt))}`);
+  if (item.lastRunAt) messages.push(`Última execução: ${escapeHtml(formatTs(item.lastRunAt))}`);
+  if (item.lastSentAt) messages.push(`Último envio: ${escapeHtml(formatTs(item.lastSentAt))}`);
+  if (item.completedAt) messages.push(`Concluído: ${escapeHtml(formatTs(item.completedAt))}`);
+  if (item.pausedAt) messages.push(`Pausado: ${escapeHtml(formatTs(item.pausedAt))}`);
+  if (item.cancelledAt) messages.push(`Cancelado: ${escapeHtml(formatTs(item.cancelledAt))}`);
+  return messages.length > 0 ? messages.join(' | ') : '<span class="muted">Aguardando primeira execução.</span>';
+}
+
+function getGroupNameById(groupId) {
+  if (!groupId || !Array.isArray(waAdminGroupsCache)) return shortId(groupId || '');
+  const found = waAdminGroupsCache.find(g => String(g.id) === String(groupId));
+  return found?.name || shortId(groupId);
+}
+
+function notifyCompletedCopySchedules(copySchedules) {
+  if (!Array.isArray(copySchedules) || copySchedules.length === 0) return;
+
+  copySchedules.forEach(item => {
+    if (!item || item.enabled || !item.completedAt || item.cancelledAt) return;
+    const storageKey = `waCopyScheduleCompleted:${item.id}:${item.completedAt}`;
+    if (localStorage.getItem(storageKey)) return;
+    localStorage.setItem(storageKey, '1');
+    const groupName = getGroupNameById(item.targetGroupId);
+    alert(`Agendamento concluido: ${item.name || 'Copia gradual'}\nGrupo destino: ${groupName}\nProcessados: ${Number(item.processedParticipants || 0)}\nIgnorados: ${Number(item.skippedParticipants || 0)}`);
+  });
+}
+
+function getCopyScheduleBadge(item) {
+  if (item?.cancelledAt) return '<span class="badge bad">Cancelado</span>';
+  if (item?.completedAt) return '<span class="badge muted">Concluído</span>';
+  if (item?.enabled) return '<span class="badge ok">Ativo</span>';
+  return '<span class="badge warn">Pausado</span>';
+}
+
+function getMessageScheduleBadge(item) {
+  if (item?.cancelledAt) return '<span class="badge bad">Cancelado</span>';
+  if (item?.enabled) return '<span class="badge ok">Ativo</span>';
+  return '<span class="badge warn">Pausado</span>';
+}
+
+function formatAutomationQueueItem(item) {
+  if (!item) return '';
+  const parts = [
+    `${escapeHtml(item.label || item.kind || 'Operação')}`,
+    `<span class="badge ${item.status === 'running' ? 'warn' : item.status === 'done' ? 'ok' : item.status === 'failed' ? 'bad' : 'muted'}">${escapeHtml(item.status || 'queued')}</span>`
+  ];
+  const detail = item.detail ? `<div class="muted" style="margin-top:4px;">${escapeHtml(item.detail)}</div>` : '';
+  const times = [];
+  if (item.enqueuedAt) times.push(`Fila: ${escapeHtml(formatTs(item.enqueuedAt))}`);
+  if (item.startedAt) times.push(`Início: ${escapeHtml(formatTs(item.startedAt))}`);
+  if (item.completedAt) times.push(`Fim: ${escapeHtml(formatTs(item.completedAt))}`);
+  return `
+    <div class="card" style="padding:12px; margin-bottom:10px;">
+      <div class="row" style="justify-content:space-between; align-items:flex-start; gap:12px;">
+        <div>
+          <strong>${parts[0]}</strong>
+          <div class="muted" style="margin-top:4px; font-size:0.9em;">${times.join(' | ')}</div>
+          ${detail}
+        </div>
+        <div>${parts[1]}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderWhatsAppAutomationQueue(queueState) {
+  waAutomationQueueCache = queueState || { items: [], pendingCount: 0 };
+  const queueList = document.getElementById('waAutomationQueueList');
+  if (!queueList) return;
+
+  const items = waAutomationQueueCache.items || [];
+  const pendingCount = Number(waAutomationQueueCache.pendingCount || 0);
+  const currentJobId = waAutomationQueueCache.currentJobId || '';
+
+  if (items.length === 0) {
+    queueList.innerHTML = '<span class="muted">Nenhuma operação enfileirada no momento.</span>';
+    return;
+  }
+
+  const header = `
+    <div class="badge ${pendingCount > 0 ? 'warn' : 'ok'}" style="margin-bottom:10px;">Pendentes: ${pendingCount}</div>
+    ${currentJobId ? `<div class="badge warn" style="margin-bottom:10px;">Em execução: ${escapeHtml(shortId(currentJobId))}</div>` : ''}
+  `;
+
+  queueList.innerHTML = header + items.map(formatAutomationQueueItem).join('');
+}
+
+async function runCopyScheduleNow(id) {
+  if (!id) return;
+  if (!confirm('Executar este agendamento de cópia agora?')) return;
+
+  try {
+    const res = await api(`/api/admin/whatsapp/copy-schedules/${encodeURIComponent(id)}/run-now`, 'POST', {});
+    showToast(res?.message || 'Agendamento de cópia enfileirado.', 'success');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao executar agendamento de cópia agora', err);
+    alert(err?.data?.error || 'Erro ao executar agendamento agora.');
+  }
+}
+
+async function reactivateParticipantCopySchedule(id) {
+  if (!id) return;
+
+  const schedule = (waAutomationCache?.participantCopySchedules || []).find(item => item?.id === id);
+  if (!schedule) {
+    alert('Agendamento não encontrado na tela. Atualize o painel e tente novamente.');
+    return;
+  }
+
+  if (!confirm('Reativar este agendamento de inclusão de participantes?')) return;
+
+  try {
+    const instanceName = (schedule.instanceName || document.getElementById('waInstanceName')?.value || '').trim();
+    const payload = {
+      name: schedule.name || null,
+      sourceGroupId: schedule.sourceGroupId,
+      targetGroupId: schedule.targetGroupId,
+      batchSize: Number(schedule.batchSize || 1),
+      intervalMinutes: Number(schedule.intervalMinutes || 1),
+      enabled: true,
+      refreshQueue: false,
+      instanceName: instanceName || null,
+      startAt: new Date().toISOString()
+    };
+
+    const res = await api(`/api/admin/whatsapp/copy-schedules/${encodeURIComponent(id)}`, 'PUT', payload);
+    showToast(res?.message || 'Agendamento reativado com sucesso.', 'success');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao reativar agendamento de cópia', err);
+    alert(err?.data?.error || 'Erro ao reativar agendamento.');
+  }
+}
+
+async function pauseParticipantCopySchedule(id) {
+  if (!id) return;
+  if (!confirm('Pausar este agendamento individualmente?')) return;
+
+  try {
+    const res = await api(`/api/admin/whatsapp/copy-schedules/${encodeURIComponent(id)}/pause`, 'POST', {});
+    showToast(res?.message || 'Agendamento pausado.', 'success');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao pausar agendamento de cópia', err);
+    alert(err?.data?.error || 'Erro ao pausar agendamento.');
+  }
+}
+
+async function cancelParticipantCopySchedule(id) {
+  if (!id) return;
+  if (!confirm('Cancelar este agendamento? Esta ação zera a fila pendente e não é reversível pelo botão de reativar.')) return;
+
+  try {
+    const res = await api(`/api/admin/whatsapp/copy-schedules/${encodeURIComponent(id)}/cancel`, 'POST', {});
+    showToast(res?.message || 'Agendamento cancelado.', 'success');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao cancelar agendamento de cópia', err);
+    alert(err?.data?.error || 'Erro ao cancelar agendamento.');
+  }
+}
+
+async function runMessageScheduleNow(id) {
+  if (!id) return;
+  if (!confirm('Enviar esta mensagem agendada agora?')) return;
+
+  try {
+    const res = await api(`/api/admin/whatsapp/message-schedules/${encodeURIComponent(id)}/run-now`, 'POST', {});
+    showToast(res?.message || 'Mensagem enfileirada para envio.', 'success');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao enviar mensagem agendada agora', err);
+    alert(err?.data?.error || 'Erro ao enviar mensagem agora.');
+  }
+}
+
+async function pauseMessageSchedule(id) {
+  if (!id) return;
+  if (!confirm('Pausar esta mensagem agendada individualmente?')) return;
+
+  try {
+    const res = await api(`/api/admin/whatsapp/message-schedules/${encodeURIComponent(id)}/pause`, 'POST', {});
+    showToast(res?.message || 'Agendamento pausado.', 'success');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao pausar mensagem agendada', err);
+    alert(err?.data?.error || 'Erro ao pausar mensagem agendada.');
+  }
+}
+
+async function cancelMessageSchedule(id) {
+  if (!id) return;
+  if (!confirm('Cancelar esta mensagem agendada? Esta ação é tratada como terminal.')) return;
+
+  try {
+    const res = await api(`/api/admin/whatsapp/message-schedules/${encodeURIComponent(id)}/cancel`, 'POST', {});
+    showToast(res?.message || 'Agendamento cancelado.', 'success');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao cancelar mensagem agendada', err);
+    alert(err?.data?.error || 'Erro ao cancelar mensagem agendada.');
+  }
+}
+
+function toggleWaScheduleEditorFieldGroup(type) {
+  const isCopy = type === 'copy';
+  const copyIds = [
+    'waScheduleEditCopySourceWrap',
+    'waScheduleEditCopyTargetWrap',
+    'waScheduleEditCopyBatchWrap',
+    'waScheduleEditCopyIntervalWrap',
+    'waScheduleEditCopyStartWrap',
+    'waScheduleEditCopyRefreshWrap'
+  ];
+  const messageIds = [
+    'waScheduleEditMessageTargetWrap',
+    'waScheduleEditMessageIntervalWrap',
+    'waScheduleEditMessageStartWrap',
+    'waScheduleEditMessageImageWrap',
+    'waScheduleEditMessageText'
+  ];
+
+  copyIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isCopy ? '' : 'none';
+  });
+
+  messageIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isCopy ? 'none' : '';
+  });
+}
+
+function closeWaScheduleEditor() {
+  const modal = document.getElementById('waScheduleEditModal');
+  if (modal) modal.classList.remove('show');
+  waScheduleEditState = null;
+}
+
+function editWaSchedule(type, id) {
+  if (!id) return;
+  const schedules = type === 'copy'
+    ? (waAutomationCache?.participantCopySchedules || [])
+    : (waAutomationCache?.scheduledGroupMessages || []);
+  const item = schedules.find(x => String(x.id) === String(id));
+  if (!item) return;
+  openWaScheduleEditor(type, item);
+}
+
+function openWaScheduleEditor(type, item) {
+  const modal = document.getElementById('waScheduleEditModal');
+  const title = document.getElementById('waScheduleEditTitle');
+  const status = document.getElementById('waScheduleEditStatus');
+  if (!modal || !item) return;
+
+  waScheduleEditState = { type, id: item.id };
+  const isCopy = type === 'copy';
+  if (title) title.textContent = isCopy ? 'Editar agendamento de adição' : 'Editar mensagem agendada';
+  if (status) {
+    status.textContent = 'Edite os campos e salve para reativar/corrigir o agendamento.';
+    status.className = 'status muted';
+  }
+
+  setSafeVal('waScheduleEditId', item.id);
+  setSafeVal('waScheduleEditType', type);
+  setSafeVal('waScheduleEditName', normalizeDashboardText(item.name || ''));
+  setSafeChecked('waScheduleEditEnabled', !!item.enabled);
+  setSafeVal('waScheduleEditCopySourceGroup', item.sourceGroupId || '');
+  setSafeVal('waScheduleEditCopyTargetGroup', item.targetGroupId || '');
+  setSafeVal('waScheduleEditCopyBatchSize', Number(item.batchSize || 1));
+  setSafeVal('waScheduleEditCopyInterval', Number(item.intervalMinutes || 1));
+  setSafeVal('waScheduleEditCopyStartAt', toLocalDateTimeInputValue(item.nextRunAt || item.createdAt || new Date().toISOString()));
+  setSafeChecked('waScheduleEditCopyRefreshQueue', true);
+  setSafeVal('waScheduleEditInstanceName', item.instanceName || '');
+
+  setSafeVal('waScheduleEditMessageTargetGroup', item.targetGroupId || '');
+  setSafeVal('waScheduleEditMessageInterval', Number(item.intervalMinutes || 1));
+  setSafeVal('waScheduleEditMessageStartAt', toLocalDateTimeInputValue(item.nextRunAt || item.createdAt || new Date().toISOString()));
+  setSafeVal('waScheduleEditMessageImageUrl', item.imageUrl || '');
+  setSafeVal('waScheduleEditMessageText', normalizeDashboardText(item.text || ''));
+
+  const sourceSelect = document.getElementById('waScheduleEditCopySourceGroup');
+  const targetSelect = document.getElementById('waScheduleEditCopyTargetGroup');
+  const messageSelect = document.getElementById('waScheduleEditMessageTargetGroup');
+  const options = buildGroupOptions(waAdminGroupsCache || [], 'Selecione o grupo...');
+  if (sourceSelect) sourceSelect.innerHTML = options;
+  if (targetSelect) targetSelect.innerHTML = options;
+  if (messageSelect) messageSelect.innerHTML = options;
+  populateWaInstanceSelect('waScheduleEditInstanceName', item.instanceName || '');
+  setSafeVal('waScheduleEditCopySourceGroup', item.sourceGroupId || '');
+  setSafeVal('waScheduleEditCopyTargetGroup', item.targetGroupId || '');
+  setSafeVal('waScheduleEditMessageTargetGroup', item.targetGroupId || '');
+
+  toggleWaScheduleEditorFieldGroup(type);
+  modal.classList.add('show');
+}
+
+async function saveWaScheduleEditor() {
+  const status = document.getElementById('waScheduleEditStatus');
+  const btn = document.getElementById('btnSaveWaScheduleEdit');
+  const id = document.getElementById('waScheduleEditId')?.value?.trim();
+  const type = document.getElementById('waScheduleEditType')?.value?.trim();
+  const name = document.getElementById('waScheduleEditName')?.value?.trim() || '';
+  const enabled = !!document.getElementById('waScheduleEditEnabled')?.checked;
+  const startAtCopy = document.getElementById('waScheduleEditCopyStartAt')?.value || '';
+  const startAtMessage = document.getElementById('waScheduleEditMessageStartAt')?.value || '';
+
+  if (!id || !type) {
+    if (status) {
+      status.textContent = 'Não foi possível identificar o agendamento.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (status) {
+    status.textContent = 'Salvando alterações...';
+    status.className = 'status muted';
+  }
+
+  try {
+    if (type === 'copy') {
+      const sourceGroupId = document.getElementById('waScheduleEditCopySourceGroup')?.value || '';
+      const targetGroupId = document.getElementById('waScheduleEditCopyTargetGroup')?.value || '';
+      const batchSize = Number(document.getElementById('waScheduleEditCopyBatchSize')?.value || 0);
+      const intervalMinutes = Number(document.getElementById('waScheduleEditCopyInterval')?.value || 0);
+      const refreshQueue = !!document.getElementById('waScheduleEditCopyRefreshQueue')?.checked;
+      const instanceName = (document.getElementById('waScheduleEditInstanceName')?.value || '').trim();
+
+      if (!sourceGroupId || !targetGroupId) {
+        throw { data: { error: 'Selecione os grupos de origem e destino.' } };
+      }
+
+      if (sourceGroupId === targetGroupId) {
+        throw { data: { error: 'Grupo de origem e destino não podem ser o mesmo.' } };
+      }
+
+      const payload = {
+        name,
+        sourceGroupId,
+        targetGroupId,
+        batchSize,
+        intervalMinutes,
+        enabled,
+        refreshQueue,
+        instanceName: instanceName || null,
+        startAt: startAtCopy ? new Date(startAtCopy).toISOString() : null
+      };
+
+      const res = await api(`/api/admin/whatsapp/copy-schedules/${encodeURIComponent(id)}`, 'PUT', payload);
+      if (status) {
+        status.textContent = res?.message || 'Agendamento atualizado com sucesso.';
+        status.className = 'status ok';
+      }
+    } else {
+      const targetGroupId = document.getElementById('waScheduleEditMessageTargetGroup')?.value || '';
+      const text = document.getElementById('waScheduleEditMessageText')?.value || '';
+      const intervalMinutes = Number(document.getElementById('waScheduleEditMessageInterval')?.value || 0);
+      const imageUrl = document.getElementById('waScheduleEditMessageImageUrl')?.value?.trim() || '';
+      const instanceName = (document.getElementById('waScheduleEditInstanceName')?.value || '').trim();
+
+      if (!targetGroupId || !text.trim()) {
+        throw { data: { error: 'Selecione o grupo e preencha a mensagem.' } };
+      }
+
+      if (imageUrl) {
+        try {
+          const parsed = new URL(imageUrl);
+          if (!isPublicAbsoluteUrl(imageUrl) || looksLikeInternalHost(parsed.hostname)) {
+            throw { data: { error: 'A imagem precisa ser uma URL pública do domínio.' } };
+          }
+        } catch {
+          throw { data: { error: 'A imagem precisa ser uma URL pública válida.' } };
+        }
+      }
+
+      const payload = {
+        name,
+        targetGroupId,
+        text,
+        intervalMinutes,
+        enabled,
+        imageUrl: imageUrl || null,
+        instanceName: instanceName || null,
+        startAt: startAtMessage ? new Date(startAtMessage).toISOString() : null
+      };
+
+      const res = await api(`/api/admin/whatsapp/message-schedules/${encodeURIComponent(id)}`, 'PUT', payload);
+      if (status) {
+        status.textContent = res?.message || 'Mensagem agendada atualizada com sucesso.';
+        status.className = 'status ok';
+      }
+    }
+
+    await loadWhatsAppAutomation();
+    closeWaScheduleEditor();
+  } catch (err) {
+    console.error('Erro ao salvar agendamento editado', err);
+    if (status) {
+      status.textContent = err?.data?.error || err?.message || 'Erro ao salvar alterações.';
+      status.className = 'status warn';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderWhatsAppAutomation(automation) {
+  waAutomationCache = automation || { participantCopySchedules: [], scheduledGroupMessages: [] };
+
+  const selectedSafetyProfile = renderWhatsAppSafetyPanel();
+  const isParticipantCopyAutomationEnabled = selectedSafetyProfile.isParticipantCopyAutomationEnabled;
+
+  const copyList = document.getElementById('waCopySchedulesList');
+  const messageList = document.getElementById('waMessageSchedulesList');
+  const copySchedules = waAutomationCache.participantCopySchedules || [];
+  const messageSchedules = waAutomationCache.scheduledGroupMessages || [];
+  notifyCompletedCopySchedules(copySchedules);
+
+  if (copyList) {
+    if (copySchedules.length === 0) {
+      copyList.innerHTML = '<span class="muted">Nenhum agendamento criado.</span>';
+    } else {
+      copyList.innerHTML = copySchedules.map(item => `
+        ${(() => {
+          const scheduleSafetyProfile = getAutomationSafetyProfile(item.instanceName || '');
+          const remainingQuota = Math.max(
+            0,
+            scheduleSafetyProfile.maxParticipantsAddedPerDay - scheduleSafetyProfile.participantsAddedToday);
+          const requestedBatch = Number(item.batchSize || 0);
+          const effectiveBatch = Math.min(requestedBatch > 0 ? requestedBatch : 1, remainingQuota);
+          const quotaWarning = item.enabled && requestedBatch > 0 && remainingQuota > 0 && effectiveBatch < requestedBatch
+            ? `<div class="badge warn" style="margin-top:8px;">Lote atual limitado pela quota diária: ${effectiveBatch}/${requestedBatch}</div>`
+            : '';
+          const quotaExhausted = item.enabled && remainingQuota <= 0
+            ? `<div class="badge warn" style="margin-top:8px;">Quota diária esgotada: o próximo lote só roda na próxima janela.</div>`
+            : '';
+          const globalPauseWarning = !isParticipantCopyAutomationEnabled
+            ? `<div class="badge warn" style="margin-top:8px;">Pausa global ativa: este agendamento não executa até a pausa ser desativada.</div>`
+            : '';
+          return `
+          <div class="card" style="padding:12px; margin-bottom:10px;">
+            <div class="row" style="justify-content:space-between; align-items:flex-start; gap:12px;">
+              <div>
+                <strong>${escapeHtml(item.name || 'Agendamento de cópia')}</strong><br />
+                <small class="muted">${escapeHtml(getGroupNameById(item.sourceGroupId))} -> ${escapeHtml(getGroupNameById(item.targetGroupId))}</small>
+                <div class="wa-schedule-meta-row">
+                  ${buildWaInstanceBadge(item.instanceName)}
+                </div>
+            </div>
+            <div class="row" style="gap:8px;">
+              ${getCopyScheduleBadge(item)}
+              <button class="secondary" onclick="editWaSchedule('copy', '${escapeHtml(item.id)}')">Editar</button>
+              ${!item.enabled && !item.cancelledAt && !item.completedAt ? `<button class="secondary" onclick="reactivateParticipantCopySchedule('${escapeHtml(item.id)}')">Reativar</button>` : ''}
+              ${item.enabled ? `<button class="secondary" onclick="pauseParticipantCopySchedule('${escapeHtml(item.id)}')">Pausar</button>` : ''}
+              ${!item.cancelledAt ? `<button class="secondary" onclick="runCopyScheduleNow('${escapeHtml(item.id)}')">Executar agora</button>` : ''}
+              ${!item.cancelledAt ? `<button class="secondary" onclick="cancelParticipantCopySchedule('${escapeHtml(item.id)}')">Cancelar</button>` : ''}
+              <button class="secondary" onclick="deleteParticipantCopySchedule('${item.id}')">Excluir</button>
+              </div>
+            </div>
+            <div class="muted" style="margin-top:8px;">
+              Processados: ${Number(item.processedParticipants || 0)} / ${Number(item.totalParticipants || 0)} | Ignorados: ${Number(item.skippedParticipants || 0)} | Lote: ${Number(item.batchSize || 0)} | Intervalo: ${Number(item.intervalMinutes || 0)} min
+            </div>
+            ${globalPauseWarning}
+            ${quotaWarning}
+            ${quotaExhausted}
+            <div class="muted" style="margin-top:6px; font-size:0.9em;">${formatWaAutomationStatus(item)}</div>
+          </div>
+          `;
+        })()}
+      `).join('');
+    }
+  }
+
+  if (messageList) {
+    if (messageSchedules.length === 0) {
+      messageList.innerHTML = '<span class="muted">Nenhuma mensagem agendada.</span>';
+    } else {
+      messageList.innerHTML = messageSchedules.map(item => `
+        <div class="card" style="padding:12px; margin-bottom:10px;">
+          <div class="row" style="justify-content:space-between; align-items:flex-start; gap:12px;">
+            <div>
+              <strong>${escapeHtml(item.name || 'Mensagem agendada')}</strong><br />
+              <small class="muted">${escapeHtml(getGroupNameById(item.targetGroupId))}</small>
+              <div class="wa-schedule-meta-row">
+                ${buildWaInstanceBadge(item.instanceName)}
+              </div>
+            </div>
+            <div class="row" style="gap:8px;">
+              ${getMessageScheduleBadge(item)}
+              <button class="secondary" onclick="editWaSchedule('message', '${escapeHtml(item.id)}')">Editar</button>
+              ${item.enabled ? `<button class="secondary" onclick="pauseMessageSchedule('${escapeHtml(item.id)}')">Pausar</button>` : ''}
+              ${!item.cancelledAt ? `<button class="secondary" onclick="runMessageScheduleNow('${escapeHtml(item.id)}')">Enviar agora</button>` : ''}
+              ${!item.cancelledAt ? `<button class="secondary" onclick="cancelMessageSchedule('${escapeHtml(item.id)}')">Cancelar</button>` : ''}
+              <button class="secondary" onclick="deleteScheduledGroupMessage('${item.id}')">Excluir</button>
+            </div>
+          </div>
+          ${item.imageUrl ? `
+            <div style="margin-top:10px;">
+              <small class="muted">Imagem pública:</small><br />
+              <a href="${escapeHtml(item.imageUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.imageUrl)}</a>
+            </div>
+          ` : ''}
+          <div style="margin-top:8px; white-space:pre-wrap;">${escapeHtml(item.text || '')}</div>
+          <div class="muted" style="margin-top:6px;">Intervalo: ${Number(item.intervalMinutes || 0)} min</div>
+          <div class="muted" style="margin-top:6px; font-size:0.9em;">${formatWaAutomationStatus(item)}</div>
+        </div>
+      `).join('');
+    }
+  }
+
+  renderWhatsAppAutomationQueue(waAutomationQueueCache);
+  renderScheduledMessagePreview();
+}
+
+async function loadWhatsAppAutomation() {
+  const copyList = document.getElementById('waCopySchedulesList');
+  const messageList = document.getElementById('waMessageSchedulesList');
+  const queueList = document.getElementById('waAutomationQueueList');
+  if (copyList) copyList.innerHTML = '<span class="muted">Carregando agendamentos...</span>';
+  if (messageList) messageList.innerHTML = '<span class="muted">Carregando mensagens agendadas...</span>';
+  if (queueList) queueList.innerHTML = '<span class="muted">Carregando fila...</span>';
+
+  try {
+    const [automation, queue] = await Promise.all([
+      api('/api/admin/whatsapp/automation'),
+      api('/api/admin/whatsapp/automation/queue')
+    ]);
+    renderWhatsAppAutomation(automation);
+    renderWhatsAppAutomationQueue(queue);
+  } catch (err) {
+    console.error('Erro ao carregar automações do WhatsApp', err);
+    if (copyList) copyList.innerHTML = '<span class="warn">Erro ao carregar agendamentos.</span>';
+    if (messageList) messageList.innerHTML = '<span class="warn">Erro ao carregar mensagens agendadas.</span>';
+    if (queueList) queueList.innerHTML = '<span class="warn">Erro ao carregar fila.</span>';
+  }
+}
+
+async function saveWhatsAppAutomationSafetySettings() {
+  const btn = document.getElementById('btnSaveWaSafetySettings');
+  const status = document.getElementById('waSafetySettingsStatus');
+  const instanceName = (document.getElementById('waSafetyInstanceName')?.value || '').trim();
+  const maxParticipantsAddedPerDay = Number(document.getElementById('waSafetyDailyLimit')?.value || 0);
+  const minMinutesBetweenParticipantAdds = Number(document.getElementById('waSafetyCooldownMinutes')?.value || 0);
+  const participantCopyAutomationEnabled = waAutomationCache?.participantCopyAutomationEnabled === true;
+
+  if (!Number.isFinite(maxParticipantsAddedPerDay) || maxParticipantsAddedPerDay <= 0) {
+    if (status) {
+      status.textContent = 'Informe um limite diário maior que zero.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (!Number.isFinite(minMinutesBetweenParticipantAdds) || minMinutesBetweenParticipantAdds <= 0) {
+    if (status) {
+      status.textContent = 'Informe um cooldown mínimo maior que zero.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (status) {
+    status.textContent = 'Salvando travas...';
+    status.className = 'status muted';
+  }
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await api('/api/admin/whatsapp/automation/safety', 'PUT', {
+      instanceName: instanceName || null,
+      maxParticipantsAddedPerDay,
+      minMinutesBetweenParticipantAdds,
+      participantCopyAutomationEnabled
+    });
+
+    if (status) {
+      status.textContent = res?.message || 'Travas atualizadas com sucesso.';
+      status.className = 'status ok';
+    }
+
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao salvar travas de segurança do WhatsApp', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao salvar travas de segurança.';
+      status.className = 'status warn';
+    }
+  } finally {
+    if (btn) btn.disabled = (currentRole !== 'admin');
+  }
+}
+
+async function createParticipantCopySchedule() {
+  const btn = document.getElementById('btnCreateCopySchedule');
+  const status = document.getElementById('waScheduleCopyStatus');
+  const sourceGroupId = document.getElementById('waScheduleCopySourceGroup')?.value;
+  const targetGroupId = document.getElementById('waScheduleCopyTargetGroup')?.value;
+  const name = document.getElementById('waScheduleCopyName')?.value || '';
+  const batchSize = Number(document.getElementById('waScheduleCopyBatchSize')?.value || 0);
+  const intervalMinutes = Number(document.getElementById('waScheduleCopyInterval')?.value || 0);
+  const instanceName = (document.getElementById('waScheduleCopyInstanceName')?.value || document.getElementById('waInstanceName')?.value || '').trim();
+
+  if (!sourceGroupId || !targetGroupId) {
+    if (status) {
+      status.textContent = 'Selecione os grupos.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (sourceGroupId === targetGroupId) {
+    if (status) {
+      status.textContent = 'Origem e destino não podem ser iguais.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (batchSize <= 0 || intervalMinutes <= 0) {
+    if (status) {
+      status.textContent = 'Informe lote e intervalo válidos.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  const participantIds = Array.from(document.querySelectorAll('.wa-participant-checkbox:checked')).map(cb => cb.value);
+  if (participantIds.length === 0) {
+    if (status) {
+      status.textContent = 'Nenhum participante selecionado. O agendamento vai usar todos os membros do grupo de origem.';
+      status.className = 'status muted';
+    }
+  }
+
+  if (status) {
+    status.textContent = 'Criando agendamento...';
+    status.className = 'status muted';
+  }
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await api('/api/admin/whatsapp/copy-schedules', 'POST', {
+      name,
+      sourceGroupId,
+      targetGroupId,
+      batchSize,
+      intervalMinutes,
+      participantIds,
+      instanceName: instanceName || null
+    });
+    if (status) {
+      status.textContent = res?.message || `Agendamento criado. Repetidos ignorados: ${Number(res?.skippedParticipants || 0)}.`;
+      status.className = 'status ok';
+    }
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao criar agendamento de cópia', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao criar agendamento.';
+      status.className = 'status warn';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deleteParticipantCopySchedule(id) {
+  if (!id) return;
+  if (!confirm('Excluir este agendamento de adição?')) return;
+
+  try {
+    await api(`/api/admin/whatsapp/copy-schedules/${encodeURIComponent(id)}`, 'DELETE');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao excluir agendamento de cópia', err);
+    alert(err?.data?.error || 'Erro ao excluir agendamento.');
+  }
+}
+
+async function toggleWhatsAppParticipantCopyPause() {
+  const btn = document.getElementById('btnToggleWaCopyPause');
+  const status = document.getElementById('waSafetySettingsStatus');
+  const instanceName = (document.getElementById('waSafetyInstanceName')?.value || '').trim();
+  const maxParticipantsAddedPerDay = Number(document.getElementById('waSafetyDailyLimit')?.value || 0);
+  const minMinutesBetweenParticipantAdds = Number(document.getElementById('waSafetyCooldownMinutes')?.value || 0);
+  const currentlyEnabled = waAutomationCache?.participantCopyAutomationEnabled === true;
+  const nextEnabled = !currentlyEnabled;
+  const confirmationMessage = nextEnabled
+    ? 'Desativar a pausa global e permitir novamente a cópia de participantes?'
+    : 'Ativar a pausa global e impedir qualquer nova cópia de participantes?';
+
+  if (!confirm(confirmationMessage)) {
+    return;
+  }
+
+  if (!Number.isFinite(maxParticipantsAddedPerDay) || maxParticipantsAddedPerDay <= 0 || !Number.isFinite(minMinutesBetweenParticipantAdds) || minMinutesBetweenParticipantAdds <= 0) {
+    if (status) {
+      status.textContent = 'Revise os valores de limite diário e cooldown antes de alterar a pausa.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (status) {
+    status.textContent = nextEnabled ? 'Desativando pausa global...' : 'Ativando pausa global...';
+    status.className = 'status muted';
+  }
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await api('/api/admin/whatsapp/automation/safety', 'PUT', {
+      instanceName: instanceName || null,
+      maxParticipantsAddedPerDay,
+      minMinutesBetweenParticipantAdds,
+      participantCopyAutomationEnabled: nextEnabled
+    });
+
+    if (status) {
+      status.textContent = nextEnabled
+        ? (res?.message || 'Pausa global desativada com sucesso.')
+        : (res?.message || 'Pausa global ativada com sucesso.');
+      status.className = 'status ok';
+    }
+
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao alternar pausa global da cópia de participantes', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao alterar a pausa global.';
+      status.className = 'status warn';
+    }
+  } finally {
+    if (btn) btn.disabled = (currentRole !== 'admin');
+  }
+}
+
+function getPublicRouteUrl(path) {
+  try {
+    return new URL(path, window.location.origin).toString();
+  } catch {
+    return path;
+  }
+}
+
+function applyScheduledMessageTemplate(templateKey) {
+  const textEl = document.getElementById('waMessageScheduleText');
+  const nameEl = document.getElementById('waMessageScheduleName');
+  const imageEl = document.getElementById('waMessageScheduleImageUrl');
+  const conversorUrl = buildPublicUrl('/conversor');
+  const bioUrl = buildPublicUrl('/bio');
+  const conversorImageUrl = buildPublicUrl('/assets/messages/conversor-vip-banner.svg');
+  const bioImageUrl = buildPublicUrl('/assets/messages/bio-vip-banner.svg');
+  const silentImageUrl = buildPublicUrl('/assets/messages/silenciar-template.png');
+  if (!conversorUrl || !bioUrl || !conversorImageUrl || !bioImageUrl || !silentImageUrl) {
+    const status = document.getElementById('waMessageScheduleStatus');
+    if (status) {
+      status.textContent = 'Configure BioHub.PublicBaseUrl com o dominio publico antes de usar os modelos.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  const templates = {
+    conversor: {
+      name: 'Aviso conversor',
+      text: `Use nosso conversor para transformar qualquer link em link pronto para oferta:\n${conversorUrl}\n\nAbra quando precisar e compartilhe com quem quiser.`,
+      imageUrl: conversorImageUrl
+    },
+    bio: {
+      name: 'Aviso bio',
+      text: `Nossa bio está atualizada com os principais atalhos e destaques:\n${bioUrl}\n\nSalve o link para acessar sempre que quiser.`,
+      imageUrl: bioImageUrl
+    },
+    silent: {
+      name: 'Aviso silenciar grupo',
+      text: `Para não perder as ofertas e evitar excesso de notificações, deixe este grupo silenciado.\n\nNo WhatsApp: abra o grupo -> toque no nome -> Silenciar notificações -> Sempre.\n\nEnquanto isso, acompanhe o conversor aqui:\n${conversorUrl}`,
+      imageUrl: silentImageUrl
+    }
+  };
+
+  const preset = templates[templateKey];
+  if (!preset) return;
+  if (nameEl) nameEl.value = preset.name;
+  if (textEl) textEl.value = preset.text;
+  if (imageEl) imageEl.value = preset.imageUrl || '';
+  renderScheduledMessagePreview();
+
+  const status = document.getElementById('waMessageScheduleStatus');
+  if (status) {
+    status.textContent = `Modelo "${preset.name}" aplicado. Ajuste o texto se quiser.`;
+    status.className = 'status ok';
+  }
+}
+
+async function createScheduledGroupMessage() {
+  const btn = document.getElementById('btnCreateMessageSchedule');
+  const status = document.getElementById('waMessageScheduleStatus');
+  const name = document.getElementById('waMessageScheduleName')?.value || '';
+  const targetGroupId = document.getElementById('waMessageScheduleTargetGroup')?.value;
+  const text = document.getElementById('waMessageScheduleText')?.value || '';
+  const imageUrl = document.getElementById('waMessageScheduleImageUrl')?.value || '';
+  const intervalMinutes = Number(document.getElementById('waMessageScheduleInterval')?.value || 0);
+  const instanceName = (document.getElementById('waMessageScheduleInstanceName')?.value || '').trim();
+
+  if (!targetGroupId || !text.trim()) {
+    if (status) {
+      status.textContent = 'Selecione o grupo e escreva a mensagem.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (intervalMinutes <= 0) {
+    if (status) {
+      status.textContent = 'Informe um intervalo válido.';
+      status.className = 'status warn';
+    }
+    return;
+  }
+
+  if (status) {
+    status.textContent = 'Criando mensagem agendada...';
+    status.className = 'status muted';
+  }
+  if (btn) btn.disabled = true;
+
+  try {
+    if (imageUrl) {
+      try {
+        const parsed = new URL(imageUrl);
+        if (!isPublicAbsoluteUrl(imageUrl) || looksLikeInternalHost(parsed.hostname)) {
+          if (status) {
+            status.textContent = 'A imagem precisa ser uma URL publica do dominio.';
+            status.className = 'status warn';
+          }
+          return;
+        }
+      } catch {
+        if (status) {
+          status.textContent = 'ImageUrl precisa ser uma URL publica valida.';
+          status.className = 'status warn';
+        }
+        return;
+      }
+    }
+
+    await api('/api/admin/whatsapp/message-schedules', 'POST', {
+      name,
+      targetGroupId,
+      text,
+      intervalMinutes,
+      imageUrl,
+      instanceName: instanceName || null
+    });
+    if (status) {
+      status.textContent = 'Mensagem agendada criada.';
+      status.className = 'status ok';
+    }
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao criar mensagem agendada', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao criar mensagem agendada.';
+      status.className = 'status warn';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deleteScheduledGroupMessage(id) {
+  if (!id) return;
+  if (!confirm('Excluir esta mensagem agendada?')) return;
+
+  try {
+    await api(`/api/admin/whatsapp/message-schedules/${encodeURIComponent(id)}`, 'DELETE');
+    await loadWhatsAppAutomation();
+  } catch (err) {
+    console.error('Erro ao excluir mensagem agendada', err);
+    alert(err?.data?.error || 'Erro ao excluir mensagem agendada.');
+  }
+}
+
+function renderMonitorGroups(groups, selectedIds) {
+  const picker = document.getElementById('waMonitorGroupPicker');
+  if (!picker) return;
+  
+  if (!groups || groups.length === 0) {
+    if (picker.children.length <= 1) {
+      picker.innerHTML = '<span class="muted">Nenhum grupo encontrado ou carregado. Clique em Atualizar.</span>';
+    }
+    return;
+  }
+
+  picker.innerHTML = groups.map(g => `
+    <div class="chat-item">
+      <input type="checkbox" id="chk-mon-${g.id}" value="${g.id}" ${selectedIds.includes(g.id) ? 'checked' : ''} />
+      <label for="chk-mon-${g.id}" class="chat-item-label">
+        <strong>${escapeHtml(g.name || 'Sem nome')}</strong><br/>
+        <small class="muted">${g.id}</small>
+      </label>
+    </div>
+  `).join('');
+}
+
+async function saveMonitorSelection() {
+  const status = document.getElementById('waMonitorSaveStatus');
+  if (status) status.textContent = 'Salvando...';
+  
+  try {
+    const picker = document.getElementById('waMonitorGroupPicker');
+    const selectedIds = Array.from(picker.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    
+    // Load existing settings to avoid overwriting other automation flags
+    const settings = await api('/api/settings');
+    settings.monitoredGroupIds = selectedIds;
+    
+    await api('/api/settings', 'PUT', settings);
+    if (status) {
+      status.textContent = 'Salvo com sucesso!';
+      status.className = 'status ok';
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    }
+  } catch (err) {
+    console.error('Erro ao salvar seleção de monitoramento', err);
+    if (status) {
+      status.textContent = 'Erro ao salvar.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+async function loadMembershipEvents(forceSync = false) {
+  const tbody = document.getElementById('waMonitorEventBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="muted">Carregando eventos...</td></tr>';
+  
+  try {
+    if (forceSync) {
+      await api('/api/admin/whatsapp/membership-events/sync', 'POST', {});
+    }
+    const events = await api('/api/admin/whatsapp/membership-events');
+    if (!tbody) return;
+    
+    if (!events || events.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="muted">Nenhum evento registrado ainda.</td></tr>';
+      return;
+    }
+    
+    tbody.innerHTML = events.map(e => `
+      <tr>
+        <td>${formatTs(e.timestamp)}</td>
+        <td title="${escapeHtml(e.groupId)}">${escapeHtml(e.groupName || shortId(e.groupId))}</td>
+        <td title="${escapeHtml(e.participantId)}">${escapeHtml(e.participantName || shortId(e.participantId))}</td>
+        <td>
+          <span class="badge ${e.action === 'join' ? 'ok' : 'danger'}">
+            ${e.action === 'join' ? 'Entrou' : 'Saiu'}
+          </span>
+        </td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    console.error('Erro ao carregar eventos de adesão', err);
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="warn">Erro ao carregar eventos.</td></tr>';
+  }
+}
 

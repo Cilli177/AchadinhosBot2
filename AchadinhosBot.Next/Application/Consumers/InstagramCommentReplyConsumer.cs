@@ -37,39 +37,63 @@ public sealed class InstagramCommentReplyConsumer : IConsumer<ReplyInstagramComm
     public async Task Consume(ConsumeContext<ReplyInstagramCommentCommand> context)
     {
         var command = context.Message;
+        var dedupeKey = $"ig-comment-reply:{command.DeduplicationKey}";
         var ttl = TimeSpan.FromSeconds(Math.Max(30, _messagingOptions.OutboundDeduplicationWindowSeconds));
-        if (!_idempotencyStore.TryBegin($"ig-comment-reply:{command.DeduplicationKey}", ttl))
+        if (!_idempotencyStore.TryBegin(dedupeKey, ttl))
         {
             _logger.LogInformation("Resposta de comentario Instagram duplicada ignorada. CommentId={CommentId}", command.CommentId);
             return;
         }
 
-        var settings = await _settingsStore.GetAsync(context.CancellationToken);
-        var publishSettings = settings.InstagramPublish ?? new Domain.Settings.InstagramPublishSettings();
-        var result = await _metaGraphClient.ReplyToCommentAsync(publishSettings, command.CommentId, command.ReplyText, context.CancellationToken);
-
-        var comment = string.IsNullOrWhiteSpace(command.CommentStoreId)
-            ? null
-            : await _commentStore.GetAsync(command.CommentStoreId, context.CancellationToken);
-        if (comment is not null)
+        var releaseDedupeOnFailure = true;
+        try
         {
-            comment.Status = result.Success ? "approved" : "failed";
-            comment.ApprovedReply = result.Success ? command.ReplyText : comment.ApprovedReply;
-            await _commentStore.UpdateAsync(comment, context.CancellationToken);
+            var settings = await _settingsStore.GetAsync(context.CancellationToken);
+            var publishSettings = settings.InstagramPublish ?? new Domain.Settings.InstagramPublishSettings();
+            var result = await _metaGraphClient.ReplyToCommentAsync(publishSettings, command.CommentId, command.ReplyText, context.CancellationToken);
+
+            if (!result.Success && !result.IsTransient)
+            {
+                releaseDedupeOnFailure = false;
+            }
+
+            if (result.Success)
+            {
+                releaseDedupeOnFailure = false;
+            }
+
+            var comment = string.IsNullOrWhiteSpace(command.CommentStoreId)
+                ? null
+                : await _commentStore.GetAsync(command.CommentStoreId, context.CancellationToken);
+            if (comment is not null)
+            {
+                comment.Status = result.Success ? "approved" : "failed";
+                comment.ApprovedReply = result.Success ? command.ReplyText : comment.ApprovedReply;
+                await _commentStore.UpdateAsync(comment, context.CancellationToken);
+            }
+
+            await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+            {
+                Action = "comment_reply",
+                Success = result.Success,
+                MediaId = command.MediaId,
+                Error = result.Success ? null : result.Error,
+                Details = $"CommentId={command.CommentId},Keyword={command.Keyword}"
+            }, context.CancellationToken);
+
+            if (!result.Success && result.IsTransient)
+            {
+                throw new InvalidOperationException(result.Error ?? "Falha transiente ao responder comentario do Instagram.");
+            }
         }
-
-        await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        catch
         {
-            Action = "comment_reply",
-            Success = result.Success,
-            MediaId = command.MediaId,
-            Error = result.Success ? null : result.Error,
-            Details = $"CommentId={command.CommentId},Keyword={command.Keyword}"
-        }, context.CancellationToken);
+            if (releaseDedupeOnFailure)
+            {
+                _idempotencyStore.RemoveByPrefix(dedupeKey);
+            }
 
-        if (!result.Success && result.IsTransient)
-        {
-            throw new InvalidOperationException(result.Error ?? "Falha transiente ao responder comentario do Instagram.");
+            throw;
         }
     }
 }

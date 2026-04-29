@@ -25,9 +25,7 @@ public sealed class DeliverySafetyPolicy
         }
 
         var normalized = chatId.Trim();
-        var isOfficial = _options.OfficialWhatsAppGroupIds
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Any(x => string.Equals(normalized, x.Trim(), StringComparison.OrdinalIgnoreCase));
+        var isOfficial = IsOfficialWhatsAppDestination(normalized);
 
         if (_options.BlockOfficialWhatsAppAlways && isOfficial)
         {
@@ -35,26 +33,32 @@ public sealed class DeliverySafetyPolicy
             return false;
         }
 
-        if (!ShouldRestrictOutsideProduction())
+        if (isOfficial)
         {
             return true;
         }
 
-        foreach (var official in _options.OfficialWhatsAppGroupIds)
-        {
-            if (string.IsNullOrWhiteSpace(official))
-            {
-                continue;
-            }
+        return true;
+    }
 
-            if (string.Equals(normalized, official.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                reason = $"Bloqueado por seguranca: destino oficial WhatsApp '{normalized}' em ambiente '{_environment.EnvironmentName}'.";
-                return false;
-            }
+    public bool IsOfficialWhatsAppDestination(string? chatId)
+    {
+        if (string.IsNullOrWhiteSpace(chatId))
+        {
+            return false;
         }
 
-        return true;
+        var normalized = chatId.Trim();
+        if (_options.OfficialWhatsAppGroupIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Any(x => string.Equals(normalized, x.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        var configured = Environment.GetEnvironmentVariable("OFFICIAL_WHATSAPP_GROUP_ID");
+        return !string.IsNullOrWhiteSpace(configured) &&
+               string.Equals(configured.Trim(), normalized, StringComparison.OrdinalIgnoreCase);
     }
 
     public bool IsTelegramDestinationAllowed(long chatId, out string? reason)

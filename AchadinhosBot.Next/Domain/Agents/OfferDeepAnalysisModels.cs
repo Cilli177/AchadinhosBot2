@@ -6,6 +6,7 @@ public sealed class ChannelOfferDeepAnalysisRequest
     public string SourceChannel { get; set; } = "telegram";
     public bool CreateDraft { get; set; } = true;
     public bool UseAiReasoning { get; set; } = true;
+    public AchadinhosBot.Next.Domain.Settings.AutomationSettings? OverrideSettings { get; set; }
 }
 
 public sealed class ChannelOfferDeepAnalysisResult
@@ -55,6 +56,11 @@ public sealed class ChannelOfferDeepAnalysisResult
     public string SourceText { get; set; } = string.Empty;
     public string? DraftId { get; set; }
     public string? EditorUrl { get; set; }
+    public string? PreviewMessage { get; set; }
+    public bool SendToCatalog { get; set; }
+    public string? CatalogTarget { get; set; }
+    public string? AutoReplyMessage { get; set; }
+    public string? SourceDataOrigin { get; set; }
     public string OfferType { get; set; } = "catalog";
     public string? LastOperatorFeedback { get; set; }
     public string? LastOperatorNote { get; set; }

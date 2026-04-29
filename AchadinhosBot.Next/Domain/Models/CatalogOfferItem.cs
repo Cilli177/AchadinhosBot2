@@ -10,9 +10,11 @@ public sealed class CatalogOfferItem
     public string Store { get; set; } = "Loja";
     public string OfferUrl { get; set; } = string.Empty;
     public string? ImageUrl { get; set; }
+    public List<string> SecondaryImageUrls { get; set; } = new();
     public string? PriceText { get; set; }
     public string PostType { get; set; } = "feed";
     public string CatalogTarget { get; set; } = CatalogTargets.Prod;
+    public string? Niche { get; set; }
     public bool Active { get; set; } = true;
     public bool IsLightningDeal { get; set; }
     public DateTimeOffset? LightningDealExpiry { get; set; }
@@ -20,6 +22,10 @@ public sealed class CatalogOfferItem
     public string? CouponDescription { get; set; }
     public DateTimeOffset PublishedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Number of consecutive price-fetch failures. Resets to 0 when price is successfully fetched.</summary>
+    public int PriceEnrichFailCount { get; set; }
+    /// <summary>When set, the fast-retry scheduler will check this item at this time. Null = standard 12h cycle.</summary>
+    public DateTimeOffset? NextPriceCheckAt { get; set; }
 }
 
 public sealed class CatalogSyncResult

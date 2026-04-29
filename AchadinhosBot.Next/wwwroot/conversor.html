@@ -30,682 +30,851 @@
                     },
                     animation: {
                         'float': 'float 20s infinite ease-in-out alternate',
-                        'count-up': 'countUp 0.5s ease-out forwards',
+                        'pulse-glow': 'pulseGlow 2s infinite',
+                        'slide-up': 'slideUp 0.5s ease-out forwards',
+                        'fade-in': 'fadeIn 0.3s ease-out forwards'
                     },
                     keyframes: {
                         float: { '0%': { transform: 'translate(0,0) scale(1)' }, '100%': { transform: 'translate(50px,50px) scale(1.1)' } },
-                        countUp: { from: { opacity: 0, transform: 'translateY(8px)' }, to: { opacity: 1, transform: 'translateY(0)' } }
+                        pulseGlow: { '0%, 100%': { opacity: 0.5 }, '50%': { opacity: 1 } },
+                        slideUp: { from: { opacity: 0, transform: 'translateY(20px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
+                        fadeIn: { from: { opacity: 0 }, to: { opacity: 1 } }
                     }
                 }
             }
         }
     </script>
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3 { font-family: 'Montserrat', sans-serif; }
+        
+        .glass { background: rgba(30, 41, 59, 0.4); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .glass:hover { border-color: rgba(196, 164, 104, 0.3); }
+        
+        .step-inactive { opacity: 0.4; filter: grayscale(1); }
+        .step-active { opacity: 1; filter: grayscale(0); transform: scale(1.05); }
+        .step-complete { opacity: 1; color: #c4a468; }
 
-        h1,
-        h2,
-        h3 {
-            font-family: 'Montserrat', sans-serif;
-        }
+        #progressSteps { display: none; }
+
+        .comparison-card { transition: all 0.3s ease; }
+        .comparison-card:hover { transform: translateY(-4px); border-color: #c4a468; box-shadow: 0 10px 20px rgba(196, 164, 104, 0.1); }
 
         .spinner {
-            display: none;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255, 255, 255, 0.3);
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(196, 164, 104, 0.2);
+            border-top-color: #c4a468;
             border-radius: 50%;
-            border-top-color: white;
-            animation: spin 1s ease-in-out infinite;
+            animation: spin 1s linear infinite;
         }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        .result-container {
-            display: none;
-            animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         .toast {
-            position: fixed;
-            bottom: 2rem;
-            left: 50%;
-            transform: translateX(-50%) translateY(100px);
-            background: #f8fafc;
-            color: #0f172a;
-            padding: 1rem 2rem;
-            border-radius: 999px;
-            font-weight: 600;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-            z-index: 1000;
+            position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%) translateY(100px);
+            background: #c4a468; color: #0f172a; padding: 0.75rem 1.5rem; border-radius: 999px;
+            font-weight: 700; box-shadow: 0 10px 30px rgba(196, 164, 104, 0.4);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); z-index: 1000;
         }
-
-        .toast.show {
-            transform: translateX(-50%) translateY(0);
-        }
-
-        #errorAlert {
-            display: none;
-        }
-
-        #discountBadge {
-            display: none;
-        }
-
-        #deliveryInfo {
-            display: none;
-        }
-
-        .tilt-card {
-            transition: transform 0.1s ease, box-shadow 0.1s ease;
-            transform-style: preserve-3d;
-            will-change: transform;
-        }
-
-        /* QR Modal */
-        #qrModal {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(6px);
-            z-index: 500;
-            align-items: center;
-            justify-content: center;
-        }
-
-        #qrModal.show {
-            display: flex;
-        }
-
-        #qrCanvas canvas {
-            border-radius: 12px;
-        }
+        .toast.show { transform: translateX(-50%) translateY(0); }
+        
+        .tilt-card { transition: transform 0.1s ease; will-change: transform; }
     </style>
 </head>
 
-<body
-    class="bg-primary text-slate-100 min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-x-hidden">
+<body class="bg-primary text-slate-100 min-h-screen flex flex-col items-center justify-start p-4 md:p-8 relative overflow-x-hidden">
 
-    <!-- Background Orbs -->
-    <div
-        class="absolute w-[400px] h-[400px] bg-accent/10 rounded-full blur-[80px] -top-24 -left-24 animate-float -z-10">
-    </div>
-    <div class="absolute w-[500px] h-[500px] bg-sky-500/10 rounded-full blur-[80px] -bottom-48 -right-24 animate-float -z-10"
-        style="animation-delay:-5s"></div>
+    <!-- Background Decoration -->
+    <div class="absolute w-[600px] h-[600px] bg-accent/5 rounded-full blur-[120px] -top-48 -left-48 animate-float -z-10"></div>
+    <div class="absolute w-[600px] h-[600px] bg-sky-500/5 rounded-full blur-[120px] -bottom-48 -right-48 animate-float -z-10" style="animation-delay:-7s"></div>
 
-    <main
-        class="w-full max-w-3xl bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 md:p-12 shadow-2xl">
-
-        <!-- Header -->
-        <div class="text-center mb-10">
-            <div
-                class="w-12 h-12 bg-accent rounded-full flex items-center justify-center mx-auto shadow-[0_0_15px_rgba(196,164,104,0.4)] mb-4">
-                <span class="text-primary font-black text-sm tracking-tighter">VIP</span>
-            </div>
-            <h1
-                class="text-3xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-accent to-yellow-300 mb-3">
-                Conversor Mágico</h1>
-            <p class="text-slate-400 text-lg">Transforme links comuns em <span class="text-accent font-semibold">Ofertas
-                    Exclusivas</span> rastreáveis.</p>
-            <!-- Conversion Counter -->
-            <div id="counterBadge"
-                class="hidden mt-3 inline-flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-full px-4 py-1.5">
-                <svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                <span class="text-accent text-sm font-semibold"><span id="counterValue">0</span> links convertidos por
-                    você</span>
-            </div>
+    <!-- Nav / Header -->
+    <header class="w-full max-w-4xl flex items-center justify-between mb-8 animate-fade-in">
+        <div class="flex items-center gap-3">
+             <div class="w-10 h-10 bg-accent rounded-xl flex items-center justify-center shadow-lg shadow-accent/20">
+                <span class="text-primary font-black text-xs">VIP</span>
+             </div>
+             <span class="text-white font-bold tracking-tight text-xl">Rei das <span class="text-accent">Ofertas</span></span>
         </div>
-
-        <!-- Form -->
-        <form id="convertForm" class="flex flex-col gap-4" onsubmit="return false;">
-            <input type="text" id="urlInput"
-                class="w-full bg-primary/60 border border-white/10 rounded-2xl px-6 py-4 text-white text-lg placeholder-slate-500 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-                placeholder="Cole o link da Amazon, Shopee, Mercado Livre..." autocomplete="off">
-            <button type="button" id="submitBtn" onclick="handleConvert()"
-                class="w-full bg-accent hover:bg-accentHover text-primary font-bold text-lg px-6 py-4 rounded-2xl transition-all shadow-lg hover:shadow-accent/20 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
-                <span class="btn-text">✨ Gerar Link VIP Exclusivo</span>
-                <div class="spinner" id="spinner"></div>
-            </button>
-        </form>
-
-        <div id="errorAlert"
-            class="mt-6 bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl font-medium"></div>
-
-        <!-- Skeleton Loader -->
-        <div id="skeletonLoader" class="hidden mt-10">
-            <div
-                class="bg-[#151f32] border border-white/5 rounded-[20px] overflow-hidden flex flex-col md:flex-row shadow-xl animate-pulse">
-                <div
-                    class="w-full md:w-2/5 h-64 bg-white/5 flex items-center justify-center border-b md:border-b-0 md:border-r border-white/5">
-                    <div class="w-20 h-20 bg-white/10 rounded-full"></div>
-                </div>
-                <div class="w-full md:w-3/5 p-6 md:p-8 flex flex-col justify-between space-y-4">
-                    <div class="space-y-3">
-                        <div class="h-6 bg-white/10 rounded-lg w-1/4"></div>
-                        <div class="h-8 bg-white/10 rounded-lg w-3/4"></div>
-                        <div class="h-8 bg-white/10 rounded-lg w-1/2"></div>
-                    </div>
-                    <div class="grid grid-cols-5 gap-3 mt-4">
-                        <div class="h-10 bg-white/10 rounded-xl col-span-1"></div>
-                        <div class="h-10 bg-white/10 rounded-xl col-span-1"></div>
-                        <div class="h-10 bg-white/10 rounded-xl col-span-1"></div>
-                        <div class="h-10 bg-white/10 rounded-xl col-span-1"></div>
-                        <div class="h-10 bg-white/10 rounded-xl col-span-1"></div>
-                    </div>
-                </div>
-            </div>
+        <div id="counterBadge" class="hidden bg-white/5 border border-white/10 rounded-full px-4 py-1.5 flex items-center gap-2">
+            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span class="text-xs font-semibold text-slate-300 tracking-wide"><span id="counterValue">0</span> CONVERTIDOS</span>
         </div>
+    </header>
 
-        <!-- Result Card -->
-        <div id="resultArea" class="result-container mt-10">
-            <div id="vipResultCard"
-                class="bg-[#151f32] border border-white/10 rounded-[20px] overflow-hidden flex flex-col md:flex-row group shadow-xl tilt-card">
+    <main class="w-full max-w-4xl space-y-8 pb-20">
+        
+        <!-- Hero Section -->
+        <section class="text-center space-y-4 animate-slide-up">
+            <h1 class="text-4xl md:text-6xl font-black text-white leading-tight">
+                Conversor <span class="text-transparent bg-clip-text bg-gradient-to-r from-accent via-yellow-200 to-accent">Mágico</span>
+            </h1>
+            <p class="text-slate-400 text-lg md:text-xl max-w-2xl mx-auto">
+                Transforme qualquer link em uma <span class="text-slate-100 font-semibold">Oferta VIP</span> com comparativo de preços e busca automática de cupons.
+            </p>
+        </section>
 
-                <!-- Image -->
-                <div
-                    class="w-full md:w-2/5 md:min-w-[260px] h-64 md:h-auto bg-white relative flex items-center justify-center p-6 border-b md:border-b-0 md:border-r border-white/10">
-                    <span id="discountBadge"
-                        class="absolute top-4 right-4 bg-red-600 text-white px-3 py-1 rounded-full font-bold text-sm shadow-lg tracking-wider"></span>
-                    <img id="productImage" src="" alt="Produto"
-                        class="max-w-full max-h-full object-contain group-hover:scale-105 transition-transform duration-500"
-                        onerror="this.style.opacity='0.2'">
+        <!-- Main Input Card -->
+        <section class="glass rounded-[32px] p-2 md:p-3 animate-slide-up" style="animation-delay: 0.1s">
+            <div class="bg-primary/40 rounded-[28px] p-6 md:p-8 space-y-6">
+                <div class="relative group">
+                    <input type="text" id="urlInput" 
+                        class="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-5 pr-16 text-white text-lg placeholder-slate-500 focus:outline-none focus:border-accent focus:ring-4 focus:ring-accent/10 transition-all"
+                        placeholder="Cole o link (Amazon, ML, Shopee...)" autocomplete="off">
+                    <div class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 transition-colors group-focus-within:text-accent">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.826a4 4 0 010-5.656l4-4a4 4 0 015.656 5.656l-1.1 1.1"/></svg>
+                    </div>
                 </div>
 
-                <!-- Info -->
-                <div class="w-full md:w-3/5 p-6 md:p-8 flex flex-col justify-between">
-                    <div class="mb-4">
-                        <span id="storeBadge"
-                            class="inline-block px-3 py-1 bg-surface border border-white/10 rounded-lg text-xs font-bold uppercase tracking-widest text-slate-300 mb-3">Loja</span>
-                        <h2 id="productTitle" class="text-xl md:text-2xl font-semibold text-white leading-snug">
-                            Carregando...</h2>
+                <button id="submitBtn" onclick="handleConvert()" 
+                    class="w-full bg-accent hover:bg-accentHover text-primary font-extrabold text-lg px-8 py-5 rounded-2xl transition-all shadow-xl shadow-accent/20 hover:shadow-accent/30 flex items-center justify-center gap-3">
+                    <span id="btnText">✨ GERAR OFERTA VIP</span>
+                    <div id="btnSpinner" class="spinner hidden"></div>
+                </button>
+
+                <!-- Progress Steps -->
+                <div id="progressSteps" class="pt-4 border-t border-white/5 space-y-4">
+                    <p class="text-xs font-bold text-accent uppercase tracking-[0.2em] text-center mb-6">Processamento Inteligente</p>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div id="stepScrape" class="step-inactive flex items-center gap-3 transition-all duration-300">
+                            <div class="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-accent ring-1 ring-white/10 text-xs">1</div>
+                            <span class="text-xs font-medium uppercase tracking-wider">Extração</span>
+                        </div>
+                        <div id="stepXStore" class="step-inactive flex items-center gap-3 transition-all duration-300">
+                            <div class="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-accent ring-1 ring-white/10 text-xs">2</div>
+                            <span class="text-xs font-medium uppercase tracking-wider">Busca</span>
+                        </div>
+                        <div id="stepCoupon" class="step-inactive flex items-center gap-3 transition-all duration-300">
+                            <div class="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-accent ring-1 ring-white/10 text-xs">3</div>
+                            <span class="text-xs font-medium uppercase tracking-wider">Cupons</span>
+                        </div>
+                        <div id="stepFinalize" class="step-inactive flex items-center gap-3 transition-all duration-300">
+                            <div class="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-accent ring-1 ring-white/10 text-xs">4</div>
+                            <span class="text-xs font-medium uppercase tracking-wider">Resultado</span>
+                        </div>
                     </div>
 
-                    <div class="mt-auto space-y-4">
-                        <div class="flex items-baseline gap-3 flex-wrap">
-                            <span id="productPrice" class="text-3xl md:text-4xl font-extrabold text-accent">---</span>
-                            <span id="productOldPrice" class="text-lg text-slate-500 line-through font-medium"
-                                style="display:none;"></span>
+                    <!-- Dev Console Log -->
+                    <div id="devLogContainer" class="hidden mt-6 bg-black/40 rounded-xl p-4 border border-white/5 font-mono text-[10px] space-y-1.5 overflow-hidden transition-all duration-500 max-h-0">
+                        <div class="flex items-center justify-between mb-2">
+                             <span class="text-slate-500 font-bold uppercase tracking-widest">Dev Execution Log</span>
+                             <div class="flex gap-1">
+                                 <div class="w-2 h-2 rounded-full bg-red-500/50"></div>
+                                 <div class="w-2 h-2 rounded-full bg-yellow-500/50"></div>
+                                 <div class="w-2 h-2 rounded-full bg-green-500/50"></div>
+                             </div>
                         </div>
-
-                        <div id="deliveryInfo"
-                            class="inline-flex items-center gap-2 text-sm font-medium text-green-400 bg-green-400/10 border border-green-400/20 px-3 py-1.5 rounded-lg">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-                            </svg>
-                            <span id="deliveryText"></span>
-                        </div>
-
-                        <!-- Action Buttons (5 columns) -->
-                        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-4 border-t border-white/10">
-                            <button onclick="copyResult()"
-                                class="flex flex-col items-center justify-center gap-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 px-2 rounded-xl transition-colors">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                    stroke-width="2">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" />
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                </svg>
-                                <span class="text-xs">Copiar</span>
-                            </button>
-                            <button onclick="copyFormattedOffer()"
-                                class="flex flex-col items-center justify-center gap-1 bg-accent/20 hover:bg-accent/30 border border-accent/30 text-accent font-semibold py-3 px-2 rounded-xl transition-colors">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                    stroke-width="2">
-                                    <path
-                                        d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-                                    <rect x="9" y="3" width="6" height="4" rx="1" />
-                                    <path d="M9 12h6M9 16h4" />
-                                </svg>
-                                <span class="text-xs">Oferta</span>
-                            </button>
-                            <button onclick="openLink()"
-                                class="flex flex-col items-center justify-center gap-1 bg-green-600 hover:bg-green-500 text-white font-semibold py-3 px-2 rounded-xl transition-colors shadow-lg shadow-green-600/20">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                    stroke-width="2">
-                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                                    <polyline points="15 3 21 3 21 9" />
-                                    <line x1="10" y1="14" x2="21" y2="3" />
-                                </svg>
-                                <span class="text-xs">Abrir</span>
-                            </button>
-                            <button onclick="shareWhatsApp()"
-                                class="flex flex-col items-center justify-center gap-1 bg-transparent hover:bg-white/5 border border-white/20 text-white font-semibold py-3 px-2 rounded-xl transition-colors">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                    stroke-width="2">
-                                    <path
-                                        d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-                                </svg>
-                                <span class="text-xs">WhatsApp</span>
-                            </button>
-                            <button onclick="showQrCode()"
-                                class="flex flex-col items-center justify-center gap-1 bg-transparent hover:bg-white/5 border border-white/20 text-slate-300 font-semibold py-3 px-2 rounded-xl transition-colors">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                    stroke-width="2">
-                                    <rect x="3" y="3" width="7" height="7" />
-                                    <rect x="14" y="3" width="7" height="7" />
-                                    <rect x="3" y="14" width="7" height="7" />
-                                    <rect x="14" y="14" width="3" height="3" />
-                                    <rect x="18" y="14" width="3" height="3" />
-                                    <rect x="14" y="18" width="3" height="3" />
-                                    <rect x="18" y="18" width="3" height="3" />
-                                </svg>
-                                <span class="text-xs">QR Code</span>
-                            </button>
-                        </div>
-
-                        <!-- Report + Convert Another -->
-                        <div class="flex items-center justify-between pt-2">
-                            <button onclick="reportLink()"
-                                class="flex items-center gap-1.5 text-red-400/70 hover:text-red-400 text-xs transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                    stroke-width="2">
-                                    <circle cx="12" cy="12" r="10" />
-                                    <line x1="12" y1="8" x2="12" y2="12" />
-                                    <line x1="12" y1="16" x2="12.01" y2="16" />
-                                </svg>
-                                Informar Erro
-                            </button>
-                            <button onclick="convertAnother()"
-                                class="flex items-center gap-1.5 text-accent/70 hover:text-accent text-xs font-semibold transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                    stroke-width="2">
-                                    <polyline points="1 4 1 10 7 10" />
-                                    <path d="M3.51 15a9 9 0 1 0 .49-3" />
-                                </svg>
-                                Converter Outro
-                            </button>
-                        </div>
+                        <div id="devLogContent" class="space-y-1"></div>
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <!-- Recent History -->
-        <div id="historySection" class="hidden mt-12 w-full mx-auto">
-            <div class="flex items-center gap-2 mb-4">
-                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <h3 class="text-white font-semibold text-lg">Convertidos Recentemente</h3>
+        <!-- Result Area -->
+        <section id="resultArea" class="hidden space-y-8 animate-slide-up">
+            
+            <!-- Best Price Title -->
+            <div class="flex items-center gap-4">
+                <div class="h-[1px] flex-1 bg-gradient-to-r from-transparent to-white/10"></div>
+                <h3 class="text-xs font-bold text-accent uppercase tracking-[0.3em]">Melhor Oferta Encontrada</h3>
+                <div class="h-[1px] flex-1 bg-gradient-to-l from-transparent to-white/10"></div>
             </div>
-            <div id="historyGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"></div>
-        </div>
+
+            <!-- VIP Card -->
+            <div class="glass rounded-[32px] overflow-hidden flex flex-col md:flex-row tilt-card shadow-2xl">
+                <!-- Media Section -->
+                <div class="w-full md:w-2/5 aspect-square md:aspect-auto bg-white flex items-center justify-center p-8 relative">
+                    <div id="discountBadge" class="hidden absolute top-4 left-4 bg-red-600 text-white px-4 py-1.5 rounded-full font-black text-sm shadow-xl z-20">---</div>
+                    <div id="savingsBadge" class="hidden absolute bottom-4 right-4 bg-accent text-primary px-4 py-2 rounded-2xl font-black text-xs shadow-2xl z-20 animate-pulse-glow flex items-center gap-2">
+                         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                         <span id="savingsText">ECONOMIA VIP</span>
+                    </div>
+                    <div class="absolute inset-0 bg-gradient-to-br from-white to-slate-100 -z-10"></div>
+                    <img id="productImage" src="" alt="" class="max-w-full max-h-full object-contain mix-blend-multiply transition-transform duration-700 hover:scale-110">
+                </div>
+
+                <!-- Content Section -->
+                <div class="w-full md:w-3/5 p-8 md:p-10 flex flex-col justify-between space-y-8">
+                    <div class="space-y-4">
+                        <div class="flex items-center gap-3">
+                            <span id="storeBadge" class="px-3 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black uppercase text-accent tracking-widest leading-none">---</span>
+                            <span id="bestPriceTag" class="text-[10px] font-bold text-green-400 bg-green-400/10 px-2 py-1 rounded">MELHOR PREÇO</span>
+                        </div>
+                        <h2 id="productTitle" class="text-2xl md:text-3xl font-bold text-white leading-tight"></h2>
+                        
+                        <div class="flex items-baseline gap-4">
+                            <span id="productPrice" class="text-4xl md:text-5xl font-black text-white tracking-tighter"></span>
+                            <span id="productOldPrice" class="text-xl text-slate-500 line-through font-medium"></span>
+                        </div>
+
+                        <!-- Coupon Banner -->
+                        <div id="couponContainer" class="hidden bg-accent/20 border border-accent/40 rounded-2xl p-4 flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="text-accent animate-pulse-glow">
+                                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12.75 3a.75.75 0 00-1.5 0v1.5a.75.75 0 001.5 0V3zM12 21a9 9 0 100-18 9 9 0 000 18zM12 7a1 1 0 110 2 1 1 0 010-2zm1 4v6a1 1 0 11-2 0v-6a1 1 0 112 0z"/></svg>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] font-bold text-accent uppercase tracking-wider">CUPOM ATIVO</p>
+                                    <p id="couponCode" class="text-xl font-black text-white font-mono uppercase tracking-widest"></p>
+                                </div>
+                            </div>
+                            <button onclick="copyCoupon()" class="bg-accent/20 hover:bg-accent/40 text-accent font-bold px-4 py-2 rounded-xl text-sm transition-all">COPIAR</button>
+                        </div>
+                    </div>
+
+                    <!-- Main Actions -->
+                    <div class="flex flex-col sm:flex-row gap-3">
+                         <button onclick="copyFormattedOffer()" class="flex-1 bg-white text-primary font-black py-4 rounded-2xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2">
+                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                             <span>COPIAR OFERTA</span>
+                         </button>
+                         <button onclick="openLink()" class="flex-1 bg-accent text-primary font-black py-4 rounded-2xl hover:bg-accentHover transition-all flex items-center justify-center gap-2 shadow-lg shadow-accent/20">
+                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/></svg>
+                             <span>ABRIR LOJA</span>
+                         </button>
+                    </div>
+
+                    <!-- Secondary Actions -->
+                    <div class="flex items-center justify-between border-t border-white/5 pt-6">
+                        <button onclick="copyLinkOnly()" class="flex items-center gap-2 text-slate-400 hover:text-white text-xs font-semibold transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m7.156-1.656a4 4 0 010-5.656l3-3a4 4 0 115.656 5.656l-1.5 1.5"/></svg>
+                            COPIAR LINK
+                        </button>
+                        <button onclick="showQrCode()" class="flex items-center gap-2 text-slate-400 hover:text-white text-xs font-semibold transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/></svg>
+                            QR CODE
+                        </button>
+                        <button onclick="shareWhatsApp()" class="flex items-center gap-2 text-slate-400 hover:text-white text-xs font-semibold transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+                            WHATSAPP
+                        </button>
+                        <button onclick="convertAnother()" class="flex items-center gap-2 text-accent/80 hover:text-accent text-xs font-bold transition-all uppercase tracking-widest">
+                            Novo Link
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <section id="otherOffersArea" class="hidden mt-6 space-y-4">
+                <div class="flex items-center justify-between px-1">
+                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-[0.2em]">Outras ofertas encontradas</h4>
+                    <span class="text-[10px] font-bold text-accent bg-accent/10 px-2 py-0.5 rounded-full border border-accent/20 uppercase">Comparativo</span>
+                </div>
+                <p class="text-xs text-slate-500 px-1">Inclui opções mais caras para mostrar que a busca foi realizada em outros sites; o card principal mantém a melhor oferta.</p>
+                <section id="converterSearchAudit" class="hidden glass rounded-2xl p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <p class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Transparência da busca</p>
+                            <p id="converterSearchAuditTitle" class="text-sm font-bold text-white">Varredura concluída</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2 text-[10px]">
+                            <span id="converterStoresChecked" class="px-2 py-1 rounded-full border border-white/10 text-slate-300">0 lojas consultadas</span>
+                            <span id="converterOffersFound" class="px-2 py-1 rounded-full border border-accent/30 bg-accent/10 text-accent">0 ofertas válidas</span>
+                        </div>
+                    </div>
+                    <p id="converterStoresList" class="text-xs text-slate-400 mt-2">Lojas consultadas: --</p>
+                </section>
+                <div class="flex flex-col sm:flex-row gap-2 px-1">
+                    <select id="otherOffersSort" class="bg-white/5 border border-white/10 text-slate-200 text-xs rounded-lg px-3 py-2 outline-none">
+                        <option value="price_asc">Ordenar: menor preço</option>
+                        <option value="price_desc">Ordenar: maior preço</option>
+                        <option value="confidence">Ordenar: maior confiança</option>
+                        <option value="store">Ordenar: loja (A-Z)</option>
+                    </select>
+                    <select id="otherOffersFilter" class="bg-white/5 border border-white/10 text-slate-200 text-xs rounded-lg px-3 py-2 outline-none">
+                        <option value="all">Filtro: todas</option>
+                        <option value="coupon">Filtro: com cupom</option>
+                        <option value="high_confidence">Filtro: confiança alta</option>
+                    </select>
+                </div>
+                <div id="otherOffersGrid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    <!-- Additional offer cards injected here -->
+                </div>
+            </section>
+
+            <!-- Alternative Offers -->
+            <section id="converterInsightsArea" class="hidden space-y-4 mt-8">
+                <div class="flex items-center justify-between px-1">
+                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-[0.2em]">Skill de cupons e melhor preço</h4>
+                    <span class="text-[10px] font-bold text-accent bg-accent/10 px-2 py-0.5 rounded-full border border-accent/20 uppercase">Inteligência ativa</span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <article class="glass rounded-2xl p-5 space-y-2">
+                        <p class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Cupom detectado</p>
+                        <p id="converterInsightCoupon" class="text-xl font-black text-white">Sem cupom confirmado</p>
+                        <p id="converterInsightCouponHint" class="text-sm text-slate-400">A skill cruza a base oficial da loja e o CouponHub.</p>
+                        <p id="converterInsightPotentialCoupon" class="text-sm font-bold text-amber-300">Sem cupom potencial</p>
+                        <p id="converterInsightPotentialCouponHint" class="text-xs text-slate-500">Quando houver, mostramos sugestao de cupom ainda nao confirmado na pagina.</p>
+                    </article>
+                    <article class="glass rounded-2xl p-5 space-y-2">
+                        <p class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Melhor preço encontrado</p>
+                        <p id="converterInsightBestPrice" class="text-xl font-black text-white">Sem comparação suficiente</p>
+                        <p id="converterInsightBestStore" class="text-sm text-slate-400">Converta um link para comparar entre as lojas afiliadas.</p>
+                    </article>
+                    <article class="glass rounded-2xl p-5 space-y-2">
+                        <p class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Economia potencial</p>
+                        <p id="converterInsightSavings" class="text-xl font-black text-white">--</p>
+                        <p id="converterInsightSavingsHint" class="text-sm text-slate-400">Mostramos apenas quando o match do produto for confiável.</p>
+                    </article>
+                </div>
+            </section>
+
+            <section id="converterCommunityCta" class="hidden mt-8 glass rounded-2xl p-5 md:p-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Nao perca os proximos achados</p>
+                        <p class="text-white text-lg font-black">Entre no grupo VIP e acompanhe o site da bio</p>
+                        <p class="text-sm text-slate-400">Receba ofertas em primeira mao e veja os links atualizados em um so lugar.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <a id="converterWhatsappGroupBtn" href="#" target="_blank" rel="noopener noreferrer" class="bg-accent text-primary font-black py-3 px-4 rounded-xl text-center">Entrar no WhatsApp</a>
+                        <a id="converterBioBtn" href="#" target="_blank" rel="noopener noreferrer" class="bg-white/5 hover:bg-white/10 text-white font-black py-3 px-4 rounded-xl border border-white/10 text-center">Abrir site da bio</a>
+                    </div>
+                </div>
+            </section>
+
+            <section id="comparisonArea" class="hidden space-y-4 mt-8">
+                <div class="flex items-center justify-between px-1">
+                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-[0.2em]">Também disponível em</h4>
+                    <span class="text-[10px] font-bold text-accent bg-accent/10 px-2 py-0.5 rounded-full border border-accent/20 uppercase">Melhores Preços</span>
+                </div>
+                <div id="comparisonGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Alternative cards injected here -->
+                </div>
+            </section>
+        </section>
+
+        <!-- History -->
+        <section id="historySection" class="hidden space-y-6 pt-12 animate-fade-in">
+             <div class="flex items-center justify-between">
+                 <h3 class="text-white font-bold text-xl">Recentes</h3>
+                 <button onclick="clearHistory()" class="text-xs text-slate-500 hover:text-red-400 transition-colors uppercase font-bold tracking-widest">Limpar</button>
+             </div>
+             <div id="historyGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        </section>
     </main>
 
-    <!-- QR Code Modal -->
-    <div id="qrModal" onclick="if(event.target===this)closeQr()">
-        <div
-            class="bg-surface border border-white/10 rounded-[24px] p-8 flex flex-col items-center gap-5 shadow-2xl max-w-sm w-full mx-4">
-            <h3 class="text-white font-bold text-xl">QR Code do Link VIP</h3>
-            <div id="qrCanvas" class="bg-white p-3 rounded-2xl"></div>
-            <p class="text-slate-400 text-sm text-center">Escaneie para abrir a oferta no celular</p>
-            <button onclick="copyResult(); closeQr();"
-                class="w-full bg-accent hover:bg-accentHover text-primary font-bold py-3 rounded-xl transition-all">Copiar
-                Link</button>
-            <button onclick="closeQr()"
-                class="text-slate-500 hover:text-white text-sm transition-colors">Fechar</button>
+    <!-- Modals & Feedback -->
+    <div id="qrModal" class="hidden fixed inset-0 bg-primary/90 backdrop-blur-xl z-[2000] flex items-center justify-center p-6 animate-fade-in" onclick="if(event.target===this)closeQr()">
+        <div class="bg-surface border border-white/10 rounded-[40px] p-10 max-w-sm w-full flex flex-col items-center gap-8 shadow-2xl">
+            <h3 class="text-2xl font-black text-white text-center">Checkout VIP</h3>
+            <div id="qrCanvas" class="bg-white p-6 rounded-[24px] shadow-2xl"></div>
+            <p class="text-slate-400 text-sm text-center font-medium leading-relaxed">Escaneie para abrir a oferta diretamente no seu celular</p>
+            <button onclick="closeQr()" class="w-full bg-white/5 hover:bg-white/10 text-white font-bold py-4 rounded-2xl transition-all">FECHAR</button>
         </div>
     </div>
 
     <div id="toast" class="toast"></div>
 
     <script>
+        let currentData = null;
         let currentConvertedUrl = '';
         let currentShareText = '';
+        let currentOtherOffersRaw = [];
 
-        // --- Counter ---
-        function updateCounter() {
-            const h = loadHistory();
-            const badge = document.getElementById('counterBadge');
-            const val = document.getElementById('counterValue');
-            if (h.length > 0) {
-                val.textContent = h.length;
-                badge.classList.remove('hidden');
-            }
-        }
-
-        // --- Tilt Effect ---
+        // --- Design Interactions ---
         function applyTilt(el) {
             el.addEventListener('mousemove', e => {
                 const r = el.getBoundingClientRect();
-                const rx = ((e.clientY - r.top - r.height / 2) / (r.height / 2)) * -5;
-                const ry = ((e.clientX - r.left - r.width / 2) / (r.width / 2)) * 5;
-                el.style.transform = `perspective(1000px) rotateX(${rx}deg) rotateY(${ry}deg) scale3d(1.02,1.02,1.02)`;
+                const rx = ((e.clientY - r.top - r.height / 2) / (r.height / 2)) * -3;
+                const ry = ((e.clientX - r.left - r.width / 2) / (r.width / 2)) * 3;
+                el.style.transform = `perspective(1000px) rotateX(${rx}deg) rotateY(${ry}deg) scale3d(1.01,1.01,1.01)`;
             });
-            el.addEventListener('mouseleave', () => { el.style.transform = ''; });
+            el.addEventListener('mouseleave', () => el.style.transform = '');
         }
 
-        // --- History ---
-        function loadHistory() {
-            try { return JSON.parse(localStorage.getItem('vip_history')) || []; } catch { return []; }
-        }
-        function saveToHistory(data) {
-            let h = loadHistory().filter(x => x.url !== (data.trackedUrl || data.convertedUrl));
-            h.unshift({ title: data.title || 'Oferta', price: data.price || '', imageUrl: data.imageUrl || '', url: data.trackedUrl || data.convertedUrl });
-            localStorage.setItem('vip_history', JSON.stringify(h.slice(0, 5)));
-            renderHistory();
-            updateCounter();
-        }
-        function renderHistory() {
-            const h = loadHistory();
-            const section = document.getElementById('historySection');
-            const grid = document.getElementById('historyGrid');
-            if (!h.length) { section.classList.add('hidden'); return; }
-            section.classList.remove('hidden');
-            grid.innerHTML = h.map(item => `
-                <a href="${item.url}" target="_blank" rel="noopener" class="bg-surface/50 hover:bg-surface border border-white/5 hover:border-accent/30 rounded-xl p-3 flex gap-3 items-center transition-all group tilt-card">
-                    <div class="w-12 h-12 bg-white rounded-lg flex-shrink-0 flex items-center justify-center p-1 overflow-hidden">
-                        <img src="${item.imageUrl}" class="max-w-full max-h-full object-contain mix-blend-multiply group-hover:scale-110 transition-transform" onerror="this.style.display='none'">
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <p class="text-white text-xs font-semibold truncate">${item.title}</p>
-                        <p class="text-accent font-bold text-xs mt-0.5">${item.price}</p>
-                    </div>
-                </a>`).join('');
-
-            // Add telemetry to history links
-            grid.querySelectorAll('a').forEach(a => {
-                a.onclick = () => trackClick(a.href, 'Converter_History_Click', null, 'history_click');
+        function showProgress(stepId) {
+            const steps = ['Scrape', 'XStore', 'Coupon', 'Finalize'];
+            steps.forEach(s => {
+                const el = document.getElementById('step' + s);
+                el.className = 'step-inactive flex items-center gap-3 transition-all duration-300';
             });
-
-            document.querySelectorAll('#historyGrid .tilt-card').forEach(applyTilt);
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            trackPageView();
-            renderHistory();
-            updateCounter();
-            const card = document.getElementById('vipResultCard');
-            if (card) applyTilt(card);
-        });
-
-        // --- Telemetry ---
-        function getAnalyticsId(key, prefix) {
-            try {
-                const existing = localStorage.getItem(key);
-                if (existing) return existing;
-                const created = `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-                localStorage.setItem(key, created);
-                return created;
-            } catch {
-                return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+            
+            const currentIdx = steps.indexOf(stepId);
+            for(let i=0; i<=currentIdx; i++) {
+                const el = document.getElementById('step' + steps[i]);
+                if (i < currentIdx) el.classList.add('step-complete');
+                else el.classList.add('step-active');
             }
         }
 
-        function getSessionId() {
-            try {
-                const existing = sessionStorage.getItem('ard_session_id');
-                if (existing) return existing;
-                const created = `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-                sessionStorage.setItem('ard_session_id', created);
-                return created;
-            } catch {
-                return `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-            }
-        }
-
-        function getScrollDepth() {
-            const doc = document.documentElement;
-            const scrollTop = window.scrollY || doc.scrollTop || 0;
-            const height = Math.max((doc.scrollHeight || 0) - window.innerHeight, 1);
-            return Math.max(0, Math.min(100, Math.round((scrollTop / height) * 100)));
-        }
-
-        function getDeviceType() {
-            const ua = navigator.userAgent.toLowerCase();
-            if (ua.includes('ipad') || ua.includes('tablet')) return 'tablet';
-            if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) return 'mobile';
-            return 'desktop';
-        }
-
-        function getUtmContext() {
-            const params = new URLSearchParams(window.location.search);
-            return {
-                utmSource: params.get('utm_source'),
-                utmMedium: params.get('utm_medium'),
-                utmCampaign: params.get('utm_campaign'),
-                utmContent: params.get('utm_content'),
-                utmTerm: params.get('utm_term')
+        function addLog(msg, type = 'info') {
+            const container = document.getElementById('devLogContainer');
+            const content = document.getElementById('devLogContent');
+            container.classList.remove('hidden');
+            container.style.maxHeight = '300px';
+            
+            const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const colors = {
+                info: 'text-slate-400',
+                success: 'text-green-400',
+                warning: 'text-yellow-400',
+                error: 'text-red-400'
             };
+            
+            const line = document.createElement('div');
+            line.className = 'flex gap-2 animate-fade-in';
+            line.innerHTML = `<span class="text-slate-600">[${time}]</span> <span class="${colors[type]}">${msg}</span>`;
+            content.appendChild(line);
+            container.scrollTop = container.scrollHeight;
         }
 
-        function buildTelemetryPayload(targetUrl, source, campaign = null, eventType = null) {
-            const utm = getUtmContext();
-            return {
-                targetUrl,
-                source,
-                campaign: campaign || utm.utmCampaign,
-                category: 'converter',
-                trackingId: 'conv_' + Math.random().toString(36).substring(2, 9),
-                visitorId: getAnalyticsId('ard_visitor_id', 'visitor'),
-                sessionId: getSessionId(),
-                eventType,
-                pageType: 'converter',
-                pageUrl: window.location.href,
-                sourceComponent: source,
-                language: navigator.language || null,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
-                screenWidth: window.screen?.width || null,
-                screenHeight: window.screen?.height || null,
-                viewportWidth: window.innerWidth || null,
-                viewportHeight: window.innerHeight || null,
-                scrollDepth: getScrollDepth(),
-                timeOnPageMs: Math.max(0, Math.round(performance.now())),
-                utmSource: utm.utmSource,
-                utmMedium: utm.utmMedium,
-                utmCampaign: utm.utmCampaign,
-                utmContent: utm.utmContent,
-                utmTerm: utm.utmTerm,
-                deviceType: getDeviceType()
-            };
-        }
-
-        async function trackPageView() {
-            try {
-                await fetch('/api/analytics/click', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(buildTelemetryPayload(window.location.href, 'Converter_View', null, 'page_view')),
-                    keepalive: true
-                });
-            } catch (e) {
-                console.error('Telemetry failed', e);
-            }
-        }
-
-        async function trackClick(targetUrl, source = 'Converter', campaign = null, eventType = null) {
-            try {
-                await fetch('/api/analytics/click', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(buildTelemetryPayload(targetUrl, source, campaign, eventType)),
-                    keepalive: true
-                });
-            } catch (e) {
-                console.error('Telemetry failed', e);
-            }
-        }
-
-        // --- Main Convert ---
+        // --- Core Logic ---
         async function handleConvert() {
-            const urlInput = document.getElementById('urlInput').value.trim();
-            if (!urlInput) { showError('Cole um link para converter.'); return; }
-
-            trackClick(urlInput, 'Converter_Request', null, 'convert_request');
+            const input = document.getElementById('urlInput');
+            const urlInput = input.value.trim();
+            if (!urlInput) { showToast('⚠️ Cole um link primeiro!'); return; }
 
             const btn = document.getElementById('submitBtn');
-            const btnText = btn.querySelector('.btn-text');
-            const spinner = document.getElementById('spinner');
+            const btnText = document.getElementById('btnText');
+            const spinner = document.getElementById('btnSpinner');
+            const progress = document.getElementById('progressSteps');
             const resultArea = document.getElementById('resultArea');
-            const skeletonLoader = document.getElementById('skeletonLoader');
-            const errorAlert = document.getElementById('errorAlert');
+            const logContent = document.getElementById('devLogContent');
 
-            errorAlert.style.display = 'none';
-            resultArea.style.display = 'none';
-            skeletonLoader.classList.remove('hidden');
+            // Reset UI
+            resultArea.classList.add('hidden');
+            logContent.innerHTML = '';
             btn.disabled = true;
-            btnText.style.display = 'none';
-            spinner.style.display = 'block';
+            btnText.classList.add('hidden');
+            spinner.classList.remove('hidden');
+            progress.style.display = 'block';
+
+            addLog(`Solicitando conversão de link...`, 'info');
+
             try {
+                showProgress('Scrape');
+                addLog(`Iniciando extração de metadados...`, 'info');
+                await new Promise(r => setTimeout(r, 400));
+                
+                showProgress('XStore');
+                addLog(`Realizando busca em múltiplas lojas para comparação...`, 'info');
+                await new Promise(r => setTimeout(r, 400));
+
                 const response = await fetch('/api/conversor', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: urlInput })
+                    body: JSON.stringify({ url: urlInput, source: 'conversor_web' })
                 });
 
-                const text = await response.text();
-                let data;
-                try { data = JSON.parse(text); } catch { throw new Error('Resposta inválida do servidor.'); }
+                const data = await response.json();
+                if (!data.success) throw new Error(data.error || 'Falha na conversão.');
 
-                if (!response.ok || !data.success) {
-                    throw new Error(data.error || data.validationError || 'Não foi possível converter este link.');
+                // Render logs from backend
+                if (data.processingLogs && data.processingLogs.length > 0) {
+                    for(const log of data.processingLogs) {
+                        const type = log.toLowerCase().includes('erro') ? 'error' : 
+                                     log.toLowerCase().includes('encontrado') || log.toLowerCase().includes('resolvida') ? 'success' : 'info';
+                        addLog(log, type);
+                        await new Promise(r => setTimeout(r, 150));
+                    }
                 }
 
+                currentData = data;
                 currentConvertedUrl = data.trackedUrl || data.convertedUrl;
 
-                document.getElementById('productImage').src = data.imageUrl || '';
-                document.getElementById('storeBadge').textContent = data.store || 'Loja';
-                document.getElementById('productTitle').textContent = data.title || 'Oferta Imperdível';
-                document.getElementById('productPrice').textContent = data.price || 'Preço sob consulta';
+                showProgress('Coupon');
+                addLog(`Validando cupons e promoções ativas...`, 'info');
+                await new Promise(r => setTimeout(r, 400));
+                
+                showProgress('Finalize');
+                addLog(`Preparando card VIP final...`, 'success');
+                await new Promise(r => setTimeout(r, 400));
 
-                const oldPriceEl = document.getElementById('productOldPrice');
-                if (data.previousPrice && data.previousPrice !== data.price) {
-                    oldPriceEl.textContent = data.previousPrice;
-                    oldPriceEl.style.display = 'inline';
-                } else { oldPriceEl.style.display = 'none'; }
-
-                const discountBadge = document.getElementById('discountBadge');
-                if (data.discountPercent > 0) {
-                    discountBadge.textContent = `${data.discountPercent}% OFF`;
-                    discountBadge.style.display = 'block';
-                } else { discountBadge.style.display = 'none'; }
-
-                const deliveryEl = document.getElementById('deliveryInfo');
-                if (data.estimatedDelivery) {
-                    document.getElementById('deliveryText').textContent = data.estimatedDelivery;
-                    deliveryEl.style.display = 'flex';
-                } else { deliveryEl.style.display = 'none'; }
-
-                const couponText = data.hasCoupon && data.couponCode ? `\n🎟️ Cupom: ${data.couponCode}` : '';
-                const discountText = data.discountPercent > 0 ? ` 🏷️ -${data.discountPercent}%` : '';
-                const deliveryShare = data.estimatedDelivery ? `\n🚚 ${data.estimatedDelivery}` : '';
-                currentShareText = `*${data.title || 'Nova Oferta'}*${discountText}\n⚡ Por apenas: *${data.price || ''}*${couponText}${deliveryShare}\n\n🛒 Compre aqui: ${currentConvertedUrl}`;
-
-                skeletonLoader.classList.add('hidden');
-                resultArea.style.display = 'block';
+                renderResult(data);
                 saveToHistory(data);
+                updateCounter();
 
-                // Scroll card into view
-                document.getElementById('resultArea').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-            } catch (error) {
-                skeletonLoader.classList.add('hidden');
-                showError(error.message);
+            } catch (err) {
+                addLog(`ERRO: ${err.message}`, 'error');
+                showToast('❌ ' + err.message);
+                // progress.style.display = 'none';
             } finally {
                 btn.disabled = false;
-                btnText.style.display = 'block';
-                spinner.style.display = 'none';
+                btnText.classList.remove('hidden');
+                spinner.classList.add('hidden');
+                // progress.style.display = 'none';
             }
         }
 
+        function renderResult(data) {
+            document.getElementById('resultArea').classList.remove('hidden');
+            document.getElementById('productImage').src = data.imageUrl;
+            document.getElementById('storeBadge').textContent = data.store;
+            document.getElementById('productTitle').textContent = data.title;
+            document.getElementById('productPrice').textContent = data.price;
+            
+            const discount = document.getElementById('discountBadge');
+            if (data.discountPercent > 0 && data.discountPercent < 100) {
+                discount.textContent = `-${data.discountPercent}% OFF`;
+                discount.classList.remove('hidden');
+            } else discount.classList.add('hidden');
+
+            const oldPrice = document.getElementById('productOldPrice');
+            if (data.previousPrice && data.previousPrice !== data.price) {
+                oldPrice.textContent = data.previousPrice;
+                oldPrice.classList.remove('hidden');
+            } else oldPrice.classList.add('hidden');
+
+            const couponBar = document.getElementById('couponContainer');
+            const couponCode = document.getElementById('couponCode');
+            if(data.couponCode) {
+                couponCode.textContent = data.couponCode;
+                couponBar.classList.remove('hidden');
+            } else if(data.couponDescription && data.couponDescription.toLowerCase().includes('cupom')) {
+                couponCode.textContent = data.couponDescription.toUpperCase();
+                couponBar.classList.remove('hidden');
+            } else couponBar.classList.add('hidden');
+
+            // Savings Badge
+            const savings = document.getElementById('savingsBadge');
+            const savingsText = document.getElementById('savingsText');
+            if(data.savingsDisplay) {
+                savingsText.textContent = data.savingsDisplay.toUpperCase();
+                savings.classList.remove('hidden');
+            } else savings.classList.add('hidden');
+
+            const insights = document.getElementById('converterInsightsArea');
+            const insightCoupon = document.getElementById('converterInsightCoupon');
+            const insightCouponHint = document.getElementById('converterInsightCouponHint');
+            const insightPotentialCoupon = document.getElementById('converterInsightPotentialCoupon');
+            const insightPotentialCouponHint = document.getElementById('converterInsightPotentialCouponHint');
+            const insightBestPrice = document.getElementById('converterInsightBestPrice');
+            const insightBestStore = document.getElementById('converterInsightBestStore');
+            const insightSavings = document.getElementById('converterInsightSavings');
+            const insightSavingsHint = document.getElementById('converterInsightSavingsHint');
+            const comparisonResults = Array.isArray(data.searchResults) ? data.searchResults : [];
+            const bestComparison = comparisonResults.length > 0 ? comparisonResults[0] : null;
+            const hasCoupon = !!(data.couponCode || data.couponDescription);
+            const hasPotentialCoupon = !!(data.potentialCouponCode || data.potentialCouponDescription);
+            const hasInsights = hasCoupon || hasPotentialCoupon || !!bestComparison || !!data.savingsDisplay;
+            if (insights) {
+                insights.classList.toggle('hidden', !hasInsights);
+            }
+            if (insightCoupon) {
+                insightCoupon.textContent = data.couponCode || data.couponDescription || 'Sem cupom confirmado';
+            }
+            if (insightCouponHint) {
+                insightCouponHint.textContent = hasCoupon
+                    ? 'Cupom encontrado durante a conversão e pronto para uso.'
+                    : 'A skill não encontrou um cupom válido para esta oferta.';
+            }
+            if (insightPotentialCoupon) {
+                insightPotentialCoupon.textContent = data.potentialCouponCode || data.potentialCouponDescription || 'Sem cupom potencial';
+            }
+            if (insightPotentialCouponHint) {
+                insightPotentialCouponHint.textContent = hasPotentialCoupon
+                    ? 'Sugestao detectada em base auxiliar, sem confirmacao final na pagina do produto.'
+                    : 'Mostramos aqui apenas quando houver sugestao de cupom ainda nao confirmada.';
+            }
+            if (insightBestPrice) {
+                insightBestPrice.textContent = bestComparison?.price || data.price || 'Sem comparação suficiente';
+            }
+            if (insightBestStore) {
+                insightBestStore.textContent = bestComparison
+                    ? `${bestComparison.store} ${bestComparison.title ? '• ' + bestComparison.title : ''}`
+                    : 'Converta um link para comparar entre as lojas afiliadas.';
+            }
+            if (insightSavings) {
+                insightSavings.textContent = data.savingsDisplay || '--';
+            }
+            if (insightSavingsHint) {
+                insightSavingsHint.textContent = bestComparison
+                    ? 'Comparativo baseado em match do mesmo produto entre lojas afiliadas.'
+                    : 'Mostramos apenas quando o match do produto for confiável.';
+            }
+
+            renderSearchAudit(data, comparisonResults);
+
+            // Additional offers (shown right below the main card)
+            const otherOffersArea = document.getElementById('otherOffersArea');
+            const otherOffersGrid = document.getElementById('otherOffersGrid');
+            if (otherOffersGrid) otherOffersGrid.innerHTML = '';
+
+            let otherOffers = comparisonResults
+                .filter(res => !!res && !!res.url)
+                .slice(0, 6);
+
+            if (otherOffers.length === 0) {
+                const preferredStores = ['Amazon', 'Mercado Livre', 'Shopee', 'Shein'];
+                const currentStore = (data.store || '').toLowerCase();
+                const logs = Array.isArray(data.processingLogs) ? data.processingLogs.join(' ').toLowerCase() : '';
+
+                otherOffers = preferredStores
+                    .filter(store => store.toLowerCase() !== currentStore)
+                    .map(store => {
+                        const storeToken = store.toLowerCase();
+                        const found = logs.includes(storeToken) && (logs.includes('alternativa encontrada') || logs.includes('produto encontrado'));
+                        return {
+                            store,
+                            title: found ? 'Oferta candidata identificada' : 'Busca realizada sem match confiavel',
+                            price: found ? 'Preco detectado no comparativo' : 'Sem oferta validada nesta consulta',
+                            url: found ? (data.convertedUrl || data.originalUrl || '#') : '#',
+                            imageUrl: '',
+                            auditOnly: true,
+                            status: found ? 'encontrado' : 'sem_match'
+                        };
+                    })
+                    .slice(0, 4);
+            }
+
+            if (otherOffersArea) {
+                otherOffersArea.classList.toggle('hidden', otherOffers.length === 0);
+            }
+
+            if (otherOffersGrid && otherOffers.length > 0) {
+                currentOtherOffersRaw = otherOffers.map(o => ({ ...o }));
+                renderOtherOffersGrid(data);
+            }
+
+            const sortSelect = document.getElementById('otherOffersSort');
+            const filterSelect = document.getElementById('otherOffersFilter');
+            if (sortSelect) sortSelect.onchange = () => renderOtherOffersGrid(data);
+            if (filterSelect) filterSelect.onchange = () => renderOtherOffersGrid(data);
+
+            const communityCta = document.getElementById('converterCommunityCta');
+            const whatsappBtn = document.getElementById('converterWhatsappGroupBtn');
+            const bioBtn = document.getElementById('converterBioBtn');
+            const whatsAppGroupUrl = data.whatsAppGroupUrl || 'https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX';
+            const bioUrl = data.bioUrl || `${window.location.origin}/bio`;
+            if (whatsappBtn) whatsappBtn.href = whatsAppGroupUrl;
+            if (bioBtn) bioBtn.href = bioUrl;
+            if (communityCta) communityCta.classList.remove('hidden');
+
+            // Format Share Text
+            const couponTag = data.couponCode ? `\n🎟️ Cupom: *${data.couponCode}*` : '';
+            currentShareText = `🔥 *${data.title}*\n\n💰 Por apenas: *${data.price}*\n🛒 Compre aqui: ${currentConvertedUrl}${couponTag}\n\n📲 Grupo WhatsApp VIP: ${whatsAppGroupUrl}\n🌐 Site da bio: ${bioUrl}`;
+
+            window.scrollTo({ top: document.getElementById('resultArea').offsetTop - 50, behavior: 'smooth' });
+        }
+
+        function renderSearchAudit(data, comparisonResults) {
+            const audit = document.getElementById('converterSearchAudit');
+            const auditTitle = document.getElementById('converterSearchAuditTitle');
+            const storesChecked = document.getElementById('converterStoresChecked');
+            const offersFound = document.getElementById('converterOffersFound');
+            const storesList = document.getElementById('converterStoresList');
+
+            const logs = Array.isArray(data.processingLogs) ? data.processingLogs.join(' ').toLowerCase() : '';
+            const knownStores = ['Amazon', 'Mercado Livre', 'Shopee', 'Shein'];
+            const consulted = new Set(Array.isArray(data.storesConsulted) ? data.storesConsulted : []);
+            knownStores.forEach(store => {
+                const token = store.toLowerCase();
+                if (logs.includes(token) || (data.store || '').toLowerCase().includes(token)) {
+                    consulted.add(store);
+                }
+            });
+            if (consulted.size === 0) consulted.add(data.store || 'Loja principal');
+
+            const validOffers = Number.isFinite(data.matchesFound)
+                ? Number(data.matchesFound)
+                : (Array.isArray(comparisonResults) ? comparisonResults.length : 0);
+            if (audit) audit.classList.remove('hidden');
+            if (auditTitle) {
+                auditTitle.textContent = validOffers > 0
+                    ? 'Busca concluída com ofertas concorrentes'
+                    : 'Busca concluída sem match confiável nas demais lojas';
+            }
+            if (storesChecked) storesChecked.textContent = `${consulted.size} lojas consultadas`;
+            if (offersFound) offersFound.textContent = `${validOffers} ofertas válidas`;
+            if (storesList) storesList.textContent = `Lojas consultadas: ${Array.from(consulted).join(', ')}`;
+        }
+
+        function getOfferConfidenceScore(offer, baseData) {
+            if (offer.auditOnly) return 25;
+            let score = 40;
+            if (offer.url && offer.url !== '#') score += 20;
+            if (offer.price && !String(offer.price).toLowerCase().includes('indispon')) score += 20;
+            if (offer.title && baseData.title) {
+                const titleA = String(baseData.title).toLowerCase().split(' ');
+                const titleB = String(offer.title).toLowerCase().split(' ');
+                const overlap = titleA.filter(t => t.length > 3 && titleB.includes(t)).length;
+                score += Math.min(20, overlap * 4);
+            }
+            return Math.max(0, Math.min(100, score));
+        }
+
+        function renderOtherOffersGrid(data) {
+            const otherOffersGrid = document.getElementById('otherOffersGrid');
+            if (!otherOffersGrid) return;
+
+            const sortValue = document.getElementById('otherOffersSort')?.value || 'price_asc';
+            const filterValue = document.getElementById('otherOffersFilter')?.value || 'all';
+
+            let offers = (currentOtherOffersRaw || []).map(o => ({ ...o }));
+            offers = offers.map(o => {
+                o._confidence = getOfferConfidenceScore(o, data);
+                o._price = parseFloat(String(o.price || '').replace(/[^\d,\.]/g, '').replace(/\./g, '').replace(',', '.'));
+                if (Number.isNaN(o._price)) o._price = Number.POSITIVE_INFINITY;
+                return o;
+            });
+
+            if (filterValue === 'coupon') offers = offers.filter(o => !!o.couponCode);
+            if (filterValue === 'high_confidence') offers = offers.filter(o => o._confidence >= 70);
+
+            offers.sort((a, b) => {
+                if (sortValue === 'price_desc') return b._price - a._price;
+                if (sortValue === 'confidence') return b._confidence - a._confidence;
+                if (sortValue === 'store') return String(a.store || '').localeCompare(String(b.store || ''));
+                return a._price - b._price;
+            });
+
+            otherOffersGrid.innerHTML = '';
+            offers.forEach((res, idx) => {
+                const storeName = (res.store || 'Loja').trim();
+                const storePlaceholder = storeName.substring(0, 2).toUpperCase();
+                const offerTitle = (res.title || data.title || 'Oferta').trim();
+                const offerPrice = (res.price || 'Preco sob consulta').trim();
+                const offerImage = (res.imageUrl || data.imageUrl || '').trim();
+                const isAuditOnly = !!res.auditOnly;
+                const isLikelyHigher = !isAuditOnly && !!(data.price && offerPrice && data.price !== offerPrice);
+                const rankLabel = `#${idx + 2}`;
+                const confidenceLabel = res._confidence >= 75 ? 'alta' : (res._confidence >= 55 ? 'média' : 'baixa');
+                const confidenceColor = res._confidence >= 75 ? 'text-emerald-300' : (res._confidence >= 55 ? 'text-amber-300' : 'text-slate-400');
+                const priceHint = isAuditOnly
+                    ? (res.status === 'encontrado'
+                        ? '<span class="text-[9px] font-bold uppercase tracking-wider text-emerald-300">encontrado</span>'
+                        : '<span class="text-[9px] font-bold uppercase tracking-wider text-slate-500">sem match</span>')
+                    : (isLikelyHigher
+                        ? '<span class="text-[9px] font-bold uppercase tracking-wider text-slate-500">comparativo</span>'
+                        : '<span class="text-[9px] font-bold uppercase tracking-wider text-emerald-300">match</span>');
+                const imageBlock = offerImage
+                    ? `<img src="${offerImage}" alt="${offerTitle}" class="w-10 h-10 rounded-lg object-cover border border-white/10" loading="lazy">`
+                    : `<div class="w-10 h-10 bg-white/5 rounded-lg border border-white/10 flex items-center justify-center"><span class="text-accent font-black text-[10px]">${storePlaceholder}</span></div>`;
+
+                const hasValidUrl = !!res.url && res.url !== '#' && /^https?:\/\//i.test(res.url);
+                const tagName = hasValidUrl ? 'a' : 'div';
+                const linkAttrs = tagName === 'a'
+                    ? `href="${res.url}" target="_blank" rel="noopener noreferrer"`
+                    : '';
+
+                otherOffersGrid.innerHTML += `
+                    <${tagName} ${linkAttrs} class="glass rounded-xl p-3 group tilt-card border border-white/5 hover:border-accent/40 transition-all min-h-[124px] ${tagName === 'a' ? 'cursor-pointer' : 'opacity-90'}">
+                        <div class="flex items-center gap-2 mb-2">
+                            ${imageBlock}
+                            <div class="min-w-0">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-[0.14em] truncate">${rankLabel} ${storeName}</p>
+                                <p class="text-white font-bold text-xs truncate">${offerTitle}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between gap-2 pt-1 border-t border-white/5">
+                            <p class="text-accent font-black text-xs truncate">${offerPrice}</p>
+                            ${priceHint}
+                        </div>
+                        <p class="text-[9px] ${confidenceColor} font-bold uppercase tracking-wider mt-1">confiança ${confidenceLabel}</p>
+                        <p class="text-[9px] font-semibold uppercase tracking-wider mt-1 ${hasValidUrl ? 'text-sky-300' : 'text-slate-500'}">${hasValidUrl ? 'abrir oferta' : 'sem link validado'}</p>
+                    </${tagName}>
+                `;
+            });
+
+            document.querySelectorAll('#otherOffersGrid .tilt-card').forEach(applyTilt);
+        }
+
+        // --- Utility Functions ---
+        function copyFormattedOffer() {
+            navigator.clipboard.writeText(currentShareText).then(() => showToast('✅ Oferta copiada!'));
+        }
+
+        function copyLinkOnly() {
+            if (!currentConvertedUrl) {
+                showToast('⚠️ Converta uma oferta primeiro');
+                return;
+            }
+            navigator.clipboard.writeText(currentConvertedUrl).then(() => showToast('🔗 Link copiado!'));
+        }
+
+        function copyCoupon() {
+            if(currentData?.couponCode) {
+                navigator.clipboard.writeText(currentData.couponCode).then(() => showToast('🎟️ Cupom copiado!'));
+            }
+        }
+
+        function openLink() {
+            if(currentConvertedUrl) window.open(currentConvertedUrl, '_blank');
+        }
+
+        function shareWhatsApp() {
+            if(currentShareText) window.open(`https://wa.me/?text=${encodeURIComponent(currentShareText)}`, '_blank');
+        }
+
+        function showQrCode() {
+            if(!currentConvertedUrl) return;
+            const canvas = document.getElementById('qrCanvas');
+            canvas.innerHTML = '';
+            new QRCode(canvas, {
+                text: currentConvertedUrl,
+                width: 200, height: 200,
+                colorDark: "#0f172a", colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+            document.getElementById('qrModal').classList.remove('hidden');
+        }
+
+        function closeQr() {
+            document.getElementById('qrModal').classList.add('hidden');
+        }
+
         function convertAnother() {
-            document.getElementById('resultArea').style.display = 'none';
+            document.getElementById('resultArea').classList.add('hidden');
             document.getElementById('urlInput').value = '';
             document.getElementById('urlInput').focus();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        function showError(msg) {
-            const el = document.getElementById('errorAlert');
-            el.textContent = msg;
-            el.style.display = 'block';
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
         }
 
-        function copyResult() {
-            if (!currentConvertedUrl) return;
-            trackClick(currentConvertedUrl, 'Converter_Copy_Link', null, 'copy_action');
-            navigator.clipboard.writeText(currentConvertedUrl)
-                .then(() => showToast('🔗 Link copiado!'))
-                .catch(() => showToast('Erro ao copiar.'));
+        // --- History ---
+        function loadHistory() { try { return JSON.parse(localStorage.getItem('vip_history')) || []; } catch { return []; } }
+        function saveToHistory(data) {
+            let h = loadHistory().filter(x => x.url !== (data.trackedUrl || data.convertedUrl));
+            h.unshift({ title: data.title, price: data.price, imageUrl: data.imageUrl, url: data.trackedUrl || data.convertedUrl, store: data.store });
+            localStorage.setItem('vip_history', JSON.stringify(h.slice(0, 9)));
+            renderHistory();
+        }
+        function clearHistory() { localStorage.removeItem('vip_history'); renderHistory(); updateCounter(); }
+        function renderHistory() {
+            const h = loadHistory();
+            const grid = document.getElementById('historyGrid');
+            const section = document.getElementById('historySection');
+            if(!h.length) { section.classList.add('hidden'); return; }
+            section.classList.remove('hidden');
+            grid.innerHTML = h.map(i => `
+                <a href="${i.url}" target="_blank" class="glass rounded-2xl p-4 flex gap-4 items-center group tilt-card">
+                    <div class="w-14 h-14 bg-white rounded-xl overflow-hidden flex items-center justify-center p-1">
+                        <img src="${i.imageUrl}" class="max-w-full max-h-full object-contain mix-blend-multiply group-hover:scale-110 transition-transform">
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-[10px] font-bold text-accent uppercase tracking-wider">${i.store}</p>
+                        <p class="text-white font-bold text-sm truncate uppercase">${i.title}</p>
+                        <p class="text-accent font-black text-sm">${i.price}</p>
+                    </div>
+                </a>
+            `).join('');
+            document.querySelectorAll('#historyGrid .tilt-card').forEach(applyTilt);
         }
 
-        function copyFormattedOffer() {
-            if (!currentShareText) return;
-            trackClick(currentConvertedUrl, 'Converter_Copy_Offer', null, 'copy_action');
-            navigator.clipboard.writeText(currentShareText)
-                .then(() => showToast('📋 Oferta copiada com formatação!'))
-                .catch(() => showToast('Erro ao copiar.'));
-        }
-
-        function openLink() {
-            if (currentConvertedUrl) {
-                trackClick(currentConvertedUrl, 'Converter_Open_Link', null, 'checkout_intent');
-                window.open(currentConvertedUrl, '_blank', 'noopener,noreferrer');
+        function updateCounter() {
+            const h = loadHistory();
+            const badge = document.getElementById('counterBadge');
+            const val = document.getElementById('counterValue');
+            if(h.length > 0) {
+                val.textContent = h.length;
+                badge.classList.remove('hidden');
             }
         }
 
-        function shareWhatsApp() {
-            if (!currentShareText) return;
-            trackClick(currentConvertedUrl, 'Converter_WhatsApp_Share', null, 'share_action');
-            window.open(`https://wa.me/?text=${encodeURIComponent(currentShareText)}`, '_blank');
-        }
-
-        function reportLink() {
-            const originalUrl = document.getElementById('urlInput').value.trim();
-            const msg = `Olá! Meu link deu problema.\n\n🔗 Original: ${originalUrl}\n🔗 Convertido: ${currentConvertedUrl}`;
-            window.open(`https://wa.me/5513996877283?text=${encodeURIComponent(msg)}`, '_blank');
-        }
-
-        // --- QR Code ---
-        let qrInstance = null;
-        function showQrCode() {
-            if (!currentConvertedUrl) return;
-            const modal = document.getElementById('qrModal');
-            const canvas = document.getElementById('qrCanvas');
-            canvas.innerHTML = '';
-            qrInstance = new QRCode(canvas, {
-                text: currentConvertedUrl,
-                width: 220, height: 220,
-                colorDark: '#0f172a', colorLight: '#ffffff',
-                correctLevel: QRCode.CorrectLevel.H
-            });
-            modal.classList.add('show');
-        }
-        function closeQr() {
-            document.getElementById('qrModal').classList.remove('show');
-        }
-
-        function showToast(message) {
-            const toast = document.getElementById('toast');
-            toast.textContent = message;
-            toast.classList.add('show');
-            setTimeout(() => toast.classList.remove('show'), 3000);
-        }
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+             renderHistory();
+             updateCounter();
+               const firstTiltCard = document.querySelector('.tilt-card');
+               if (firstTiltCard) applyTilt(firstTiltCard);
+        });
     </script>
 </body>
-
 </html>

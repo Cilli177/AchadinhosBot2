@@ -4,9 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin VIP - Publicar Oferta</title>
+    <title>Studio de Ofertas</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="/flow-endpoints-map.js?v=20260422-flow-map"></script>
     <link
         href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;800&family=Inter:wght@300;400;600&display=swap"
         rel="stylesheet">
@@ -434,11 +435,11 @@
             <div class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 md:p-10 shadow-2xl">
                 <div
                     class="w-12 h-12 bg-accent rounded-full flex items-center justify-center mx-auto shadow-[0_0_15px_rgba(196,164,104,0.4)] mb-4">
-                    <span class="text-primary font-black text-sm tracking-tighter">VIP</span>
+                    <span class="text-primary font-black text-sm tracking-tighter">STUDIO</span>
                 </div>
                 <h1
                     class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-accent to-yellow-300 mb-2">
-                    Publicar Oferta VIP</h1>
+                    Studio de Ofertas</h1>
                 <p class="text-slate-400">Converta, gere o card e publique no Instagram ou envie no WhatsApp.</p>
                 <div class="mt-5 flex flex-col sm:flex-row gap-3 justify-center">
                     <button type="button" onclick="focusConvertInput()"
@@ -452,6 +453,206 @@
                 </div>
             </div>
         </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
+            <section class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-5 md:p-6 shadow-2xl">
+                <div class="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                        <p class="text-[10px] font-bold uppercase tracking-[0.35em] text-slate-500">Blindagem</p>
+                        <h2 class="text-xl font-bold text-white mt-1">Snapshots de settings</h2>
+                        <p class="text-sm text-slate-400 mt-1">Restaure a ultima configuracao boa sem perder o ritmo.</p>
+                    </div>
+                    <button type="button" onclick="loadSettingsVersions()"
+                        class="shrink-0 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-[11px] px-3 py-2 rounded-xl transition-all">
+                        Atualizar
+                    </button>
+                </div>
+
+                <div id="settingsVersionsStatus" class="text-xs text-slate-400 mb-3">Carregando snapshots...</div>
+                <div id="settingsVersionsList" class="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    <div class="text-xs text-slate-500 bg-black/20 border border-white/5 rounded-xl px-3 py-3">Carregando snapshots...</div>
+                </div>
+
+                <div class="mt-4 flex flex-col sm:flex-row gap-2">
+                    <button type="button" onclick="restoreLatestSettingsSnapshot()"
+                        class="flex-1 bg-accent hover:bg-accentHover text-primary font-bold text-sm px-4 py-3 rounded-xl transition-all shadow-lg hover:shadow-accent/20">
+                        Restaurar ultimo snapshot
+                    </button>
+                </div>
+            </section>
+
+            <section class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-5 md:p-6 shadow-2xl">
+                <div class="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                        <p class="text-[10px] font-bold uppercase tracking-[0.35em] text-slate-500">Autopilot</p>
+                        <h2 class="text-xl font-bold text-white mt-1">Gerar reels automaticamente</h2>
+                        <p class="text-sm text-slate-400 mt-1">Executa o ranking automatico e cria drafts de reels para aprovacao.</p>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-[0.35em] text-emerald-300 font-bold">Reels</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label class="block">
+                        <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Top count</span>
+                        <input id="autopilotTopCount" type="number" min="1" max="10" value="1"
+                            class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent">
+                    </label>
+                    <label class="block">
+                        <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Lookback (h)</span>
+                        <input id="autopilotLookbackHours" type="number" min="6" max="168" value="72"
+                            class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent">
+                    </label>
+                    <label class="block">
+                        <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Repeat window (h)</span>
+                        <input id="autopilotRepeatWindowHours" type="number" min="6" max="240" value="72"
+                            class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent">
+                    </label>
+                    <label class="block">
+                        <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Link manual opcional</span>
+                        <input id="autopilotManualUrl" type="url" placeholder="Deixe em branco para ranking automatico"
+                            class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent placeholder-slate-500">
+                    </label>
+                </div>
+
+                <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label class="inline-flex items-center gap-2 text-sm text-slate-300 bg-black/20 border border-white/10 rounded-xl px-3 py-3">
+                        <input type="checkbox" id="autopilotDryRun" class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
+                        Dry-run
+                    </label>
+                    <label class="inline-flex items-center gap-2 text-sm text-slate-300 bg-black/20 border border-white/10 rounded-xl px-3 py-3">
+                        <input type="checkbox" id="autopilotSendForApproval" checked class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
+                        Enviar aprovacao
+                    </label>
+                    <label class="inline-flex items-center gap-2 text-sm text-slate-300 bg-black/20 border border-white/10 rounded-xl px-3 py-3">
+                        <input type="checkbox" id="autopilotForceExisting" class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
+                        Incluir existentes
+                    </label>
+                </div>
+
+                <div class="mt-4 flex flex-col sm:flex-row gap-2">
+                    <button type="button" id="runReelAutopilotBtn" onclick="runReelAutopilot()"
+                        class="flex-1 bg-accent hover:bg-accentHover text-primary font-bold text-sm px-4 py-3 rounded-xl transition-all shadow-lg hover:shadow-accent/20">
+                        Rodar reels agora
+                    </button>
+                    <button type="button" id="runReelDryRunBtn" onclick="runReelAutopilotDryRun()"
+                        class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-sm px-4 py-3 rounded-xl transition-all">
+                        Dry-run reels
+                    </button>
+                </div>
+
+                <div id="autopilotStatus" class="mt-3 text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                    Pronto para rodar.
+                </div>
+                <pre id="autopilotResult" class="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-[11px] text-slate-200 bg-black/20 border border-white/10 rounded-xl p-3"></pre>
+            </section>
+        </div>
+
+        <section class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-5 md:p-6 shadow-2xl mb-6">
+            <div class="flex items-start justify-between gap-3 mb-4">
+                <div>
+                    <p class="text-[10px] font-bold uppercase tracking-[0.35em] text-slate-500">Telegram</p>
+                    <h2 class="text-xl font-bold text-white mt-1">Concluir login do userbot</h2>
+                    <p class="text-sm text-slate-400 mt-1">Use este bloco para enviar o cÃ³digo e retomar a sessÃ£o do Telegram.</p>
+                </div>
+                <span class="text-[10px] uppercase tracking-[0.35em] text-sky-300 font-bold">Userbot</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <label class="block">
+                    <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Telefone</span>
+                    <input id="telegramUserbotPhone" type="tel" placeholder="+5511999999999"
+                        class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent placeholder-slate-500">
+                </label>
+                <label class="block">
+                    <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">CÃ³digo</span>
+                    <input id="telegramUserbotCode" type="text" placeholder="12345"
+                        class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent placeholder-slate-500">
+                </label>
+                <label class="block">
+                    <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Senha 2FA</span>
+                    <input id="telegramUserbotPassword" type="password" placeholder="Opcional"
+                        class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent placeholder-slate-500">
+                </label>
+                <label class="inline-flex items-center gap-2 text-sm text-slate-300 bg-black/20 border border-white/10 rounded-xl px-3 py-3 mt-5 md:mt-0">
+                    <input id="telegramUserbotForceReconnect" type="checkbox" checked class="rounded border-white/10 bg-primary/50 text-accent focus:ring-accent">
+                    ForÃ§ar reconexÃ£o
+                </label>
+            </div>
+
+            <div class="mt-4 flex flex-col sm:flex-row gap-2">
+                <button type="button" onclick="sendTelegramUserbotAuth()"
+                    class="flex-1 bg-sky-500 hover:bg-sky-400 text-primary font-bold text-sm px-4 py-3 rounded-xl transition-all shadow-lg">
+                    Enviar credenciais
+                </button>
+                <button type="button" onclick="refreshTelegramUserbotStatus()"
+                    class="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold text-sm px-4 py-3 rounded-xl transition-all">
+                    Atualizar status
+                </button>
+            </div>
+
+            <div id="telegramUserbotAuthStatus" class="mt-3 text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                Pronto para receber o cÃ³digo.
+            </div>
+            <pre id="telegramUserbotAuthResult" class="mt-3 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[11px] text-slate-200 bg-black/20 border border-white/10 rounded-xl p-3"></pre>
+
+            <div class="mt-6 border-t border-white/10 pt-5">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="text-[10px] font-bold uppercase tracking-[0.35em] text-slate-500">Reel</p>
+                        <h3 class="text-lg font-bold text-white mt-1">Gerar reel do ultimo post do grupo travado</h3>
+                        <p class="text-sm text-slate-400 mt-1">Puxa o post mais recente com video e link do grupo AE-IA 3000 - VÍDEOS VIRAIS e abre o draft para revisao.</p>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-[0.35em] text-amber-300 font-bold">Telegram -> Draft</span>
+                </div>
+                <div class="mt-4 flex flex-col sm:flex-row gap-2">
+                    <button type="button" onclick="runLatestTelegramReelDraft()"
+                        class="flex-1 bg-amber-500 hover:bg-amber-400 text-primary font-bold text-sm px-4 py-3 rounded-xl transition-all shadow-lg">
+                        Gerar reel agora
+                    </button>
+                </div>
+                <div id="telegramUserbotReelStatus" class="mt-3 text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                    Pronto para puxar o ultimo post do grupo.
+                </div>
+                <pre id="telegramUserbotReelResult" class="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-[11px] text-slate-200 bg-black/20 border border-white/10 rounded-xl p-3"></pre>
+
+                <div class="mt-5 border-t border-white/10 pt-5">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="text-[10px] font-bold uppercase tracking-[0.35em] text-slate-500">Selecao manual</p>
+                            <h4 class="text-base font-bold text-white mt-1">Escolher mensagem do grupo</h4>
+                            <p class="text-sm text-slate-400 mt-1">Carrega as mensagens recentes do chat selecionado e permite criar o reel a partir de um card especifico.</p>
+                        </div>
+                        <span class="text-[10px] uppercase tracking-[0.35em] text-cyan-300 font-bold">Cards</span>
+                    </div>
+
+                    <div class="mt-4 grid grid-cols-1 md:grid-cols-[1.2fr_0.6fr_auto] gap-3">
+                        <label class="block">
+                            <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Grupo de origem</span>
+                            <select id="telegramReelSourceChatSelect"
+                                class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent">
+                                <option value="">Carregando grupos...</option>
+                            </select>
+                        </label>
+                        <label class="block">
+                            <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Qtd. itens</span>
+                            <input id="telegramReelRecentLimit" type="number" min="5" max="50" value="12"
+                                class="w-full bg-primary/60 border border-white/10 rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:border-accent">
+                        </label>
+                        <div class="flex items-end">
+                            <button type="button" onclick="loadTelegramReelRecentOffers()"
+                                class="w-full bg-cyan-500 hover:bg-cyan-400 text-primary font-bold text-sm px-4 py-3 rounded-xl transition-all shadow-lg">
+                                Carregar cards
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="telegramReelOffersStatus" class="mt-3 text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                        Selecione um grupo para ver as mensagens recentes.
+                    </div>
+                    <div id="telegramReelOffersGrid" class="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+                </div>
+            </div>
+        </section>
 
         <div class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 md:p-10 shadow-2xl">
 
@@ -498,6 +699,16 @@
                         <div>
                             <span id="storeBadge"
                                 class="inline-block px-2 py-0.5 bg-surface border border-white/10 rounded text-xs font-bold uppercase tracking-widest text-slate-300 mb-2">Loja</span>
+                            <div id="draftOriginBadge"
+                                class="hidden inline-flex items-center gap-1 px-2 py-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 text-[10px] font-bold uppercase tracking-widest mb-2">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-300"></span>
+                                <span id="draftOriginBadgeText"></span>
+                            </div>
+                            <div id="draftProcessBadge"
+                                class="hidden inline-flex items-center gap-1 px-2 py-1 rounded-full border border-amber-400/30 bg-amber-400/10 text-amber-200 text-[10px] font-bold uppercase tracking-widest mb-2">
+                                <span class="w-1.5 h-1.5 rounded-full bg-amber-300"></span>
+                                <span id="draftProcessBadgeText"></span>
+                            </div>
                             <h2 id="productTitle" class="text-lg font-semibold text-white leading-snug">-</h2>
                         </div>
                         <div class="mt-3 space-y-2">
@@ -648,6 +859,57 @@
                                             class="whitespace-pre-line text-slate-200">Convertendo dados do
                                             produto...</span>
                                         <span id="instaPreviewHashtags" class="insta-hashtags"></span>
+                                    </div>
+                                </div>
+
+                                <div class="mt-6 bg-primary/30 p-4 rounded-2xl border border-white/5">
+                                    <div class="flex flex-wrap gap-2 mb-4">
+                                        <button type="button" id="draftCardTabSummaryBtn" onclick="switchDraftCardTab('summary')"
+                                            class="px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-accent text-primary">Resumo</button>
+                                        <button type="button" id="draftCardTabMediaBtn" onclick="switchDraftCardTab('media')"
+                                            class="px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-white/5 text-white border border-white/10">Mídia</button>
+                                        <button type="button" id="draftCardTabRawBtn" onclick="switchDraftCardTab('raw')"
+                                            class="px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-white/5 text-white border border-white/10">Dados brutos</button>
+                                    </div>
+
+                                    <div id="draftCardTabSummary" class="space-y-3">
+                                        <div class="bg-black/20 border border-white/10 rounded-xl p-3">
+                                            <div class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Produto</div>
+                                            <div id="draftCardSummaryTitle" class="mt-1 text-sm font-bold text-white">-</div>
+                                            <div id="draftCardSummaryStore" class="mt-1 text-xs text-slate-400">Loja: -</div>
+                                        </div>
+                                        <div class="bg-black/20 border border-white/10 rounded-xl p-3">
+                                            <div class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Link</div>
+                                            <a id="draftCardSummaryLink" href="#" target="_blank" rel="noopener noreferrer"
+                                                class="mt-1 block text-xs text-accent break-all">-</a>
+                                        </div>
+                                        <div class="bg-black/20 border border-white/10 rounded-xl p-3">
+                                            <div class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Midia</div>
+                                            <div id="draftCardSummaryMedia" class="mt-1 text-xs text-slate-300">-</div>
+                                        </div>
+                                    </div>
+
+                                    <div id="draftCardTabMedia" class="hidden space-y-3">
+                                        <div class="bg-black/20 border border-white/10 rounded-xl p-3">
+                                            <div class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Imagem principal</div>
+                                            <div class="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/30">
+                                                <img id="draftCardMediaImage" alt="Imagem principal do draft" class="w-full max-h-72 object-contain bg-black/40" />
+                                            </div>
+                                        </div>
+                                        <div class="bg-black/20 border border-white/10 rounded-xl p-3">
+                                            <div class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Video principal</div>
+                                            <div class="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/30">
+                                                <video id="draftCardMediaVideo" controls loop playsinline class="w-full max-h-72 bg-black/40"></video>
+                                            </div>
+                                        </div>
+                                        <div class="bg-black/20 border border-white/10 rounded-xl p-3">
+                                            <div class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Processo</div>
+                                            <div id="draftCardMediaProcess" class="mt-1 text-xs text-slate-300">Fluxo Reel Assistido</div>
+                                        </div>
+                                    </div>
+
+                                    <div id="draftCardTabRaw" class="hidden">
+                                        <pre id="draftCardRawJson" class="text-[11px] leading-5 text-slate-300 bg-black/20 border border-white/10 rounded-xl p-3 overflow-x-auto max-h-72">Carregando...</pre>
                                     </div>
                                 </div>
 
@@ -949,6 +1211,10 @@
                                         class="bg-white/5 hover:bg-white/10 text-white/80 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all">
                                         MODELO 2
                                     </button>
+                                    <button type="button" onclick="applyDefaultCaptionTemplate(2)"
+                                        class="bg-white/5 hover:bg-white/10 text-white/80 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all">
+                                        MODELO 3
+                                    </button>
                                     <button onclick="generateCaption()" id="genCaptionBtn"
                                         class="bg-accent/10 hover:bg-accent/20 text-accent px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -962,15 +1228,14 @@
                                 forte sem depender da IA.</p>
                             <!-- Caption Splitter Container (Hidden by default) -->
                             <div id="captionOptionsContainer" class="hidden mb-4">
-                                <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">✨
-                                    Opções Sugeridas pela IA (Escolha uma)</label>
+                                <label class="block text-[10px] font-bold text-accent uppercase tracking-widest mb-3">Opcoes sugeridas pela IA (escolha uma)</label>
                                 <div id="captionCardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     <!-- Cards will be injected here -->
                                 </div>
                             </div>
                             <textarea id="captionText" rows="12"
                                 class="w-full bg-primary/40 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600 leading-relaxed"
-                                placeholder="Sua legenda aparecerá aqui. Você pode editar livremente..."></textarea>
+                                placeholder="Sua legenda aparecera aqui. Voce pode editar livremente..."></textarea>
 
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                                 <div class="bg-primary/20 p-3 rounded-xl border border-white/5">
@@ -1001,12 +1266,12 @@
                                             do Post</label>
                                         <button onclick="suggestHashtags()" id="suggestTagsBtn"
                                             class="text-[9px] text-accent font-bold uppercase transition-all flex items-center gap-1 hover:text-white">
-                                            ✨ Sugerir
+                                            Sugerir
                                         </button>
                                     </div>
                                     <input id="hashtagInput"
                                         class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent"
-                                        placeholder="#oferta #achadinhos #promoção">
+                                        placeholder="#oferta #achadinhos #promocao">
                                 </div>
                                 <div class="bg-primary/20 p-4 rounded-xl border border-white/5">
                                     <label
@@ -1063,7 +1328,7 @@
                                         do Direct (DM)</label>
                                     <textarea id="autoReplyMessage" rows="2" oninput="markAutoReplyManual(this)"
                                         class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent resize-none placeholder-slate-600"
-                                        placeholder="Aqui está o link do produto que você pediu:"></textarea>
+                                        placeholder="Aqui esta o link do produto que voce pediu:"></textarea>
                                 </div>
                                 <div>
                                     <label
@@ -1078,6 +1343,40 @@
 
                         <!-- TAB 3: PUBLISH (LOGS & STATUS) -->
                         <div id="tab-publish" class="tab-content space-y-4">
+                            <div class="bg-primary/20 rounded-2xl border border-white/5 p-4">
+                                <div class="flex items-center justify-between gap-3 mb-3">
+                                    <div>
+                                        <h3 class="text-sm font-bold text-slate-300">Mapa de Origens e Destinos</h3>
+                                        <p class="text-xs text-slate-500 mt-1">Visao descritiva dos grupos e chats do fluxo. Nao altera roteamento.</p>
+                                    </div>
+                                    <button onclick="renderFlowEndpointsMap()"
+                                        class="bg-white/5 hover:bg-white/10 text-white/70 px-3 py-1.5 rounded-lg text-[10px] font-extrabold transition-all flex items-center gap-1.5">
+                                        ATUALIZAR
+                                    </button>
+                                </div>
+                                <input id="flowEndpointsMapSearch"
+                                    class="w-full bg-surface border border-white/5 rounded-lg px-4 py-2 text-xs text-white focus:outline-none focus:border-accent placeholder-slate-600"
+                                    placeholder="Filtrar por nome, canal, id ou destino">
+                                <div class="mt-3 overflow-auto rounded-xl border border-white/5">
+                                    <table class="min-w-full text-left text-xs">
+                                        <thead class="bg-surface/70 text-slate-400 uppercase tracking-widest">
+                                            <tr>
+                                                <th class="px-3 py-2">Canal</th>
+                                                <th class="px-3 py-2">Nome amigavel</th>
+                                                <th class="px-3 py-2">ID(s)</th>
+                                                <th class="px-3 py-2">Papel no fluxo</th>
+                                                <th class="px-3 py-2">Destino</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="flowEndpointsMapBody" class="divide-y divide-white/5">
+                                            <tr>
+                                                <td colspan="5" class="px-3 py-4 text-slate-500">Carregando mapa...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
                             <div class="flex items-center justify-between mb-4">
                                 <h3 class="text-sm font-bold text-slate-300">Historico de Publicacoes</h3>
                                 <button onclick="loadDraftsHistory()"
@@ -1277,7 +1576,7 @@
                             </button>
                             <button onclick="addEditorBadge('frete')"
                                 class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
-                                Frete Grátis
+                                Frete Gratis
                             </button>
                         </div>
                     </div>
@@ -1307,7 +1606,7 @@
 
                     <div class="pt-4 border-t border-white/10">
                         <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
-                            para reposicioná-los.</p>
+                            para reposiciona-los.</p>
                     </div>
                 </div>
 
@@ -1315,7 +1614,7 @@
                 <div class="mt-6 pt-4 sm:pt-6 border-t border-white/10 flex flex-col gap-3 sticky bottom-0 bg-surface">
                     <button onclick="applyEditorChanges()"
                         class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
-                        Aplicar Alterações
+                        Aplicar Alteracoes
                     </button>
                     <button onclick="closeEditorModal()"
                         class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
@@ -1370,14 +1669,14 @@
                             </button>
                             <button onclick="addEditorBadge('frete')"
                                 class="bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-xl py-2.5 text-xs font-bold transition-all">
-                                Frete Grátis
+                                Frete Gratis
                             </button>
                         </div>
                     </div>
 
                     <div class="pt-4 border-t border-white/10">
                         <p class="text-[10px] text-slate-500 leading-relaxed text-center">Arraste os elementos no canvas
-                            para reposicioná-los.</p>
+                            para reposiciona-los.</p>
                     </div>
                 </div>
 
@@ -1385,7 +1684,7 @@
                 <div class="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
                     <button onclick="applyEditorChanges()"
                         class="w-full bg-accent hover:bg-accent-light text-[#0f1115] rounded-xl py-3 text-sm font-bold transition-all shadow-lg shadow-accent/20">
-                        Aplicar Alterações
+                        Aplicar Alteracoes
                     </button>
                     <button onclick="closeEditorModal()"
                         class="w-full bg-transparent hover:bg-white/5 text-slate-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-all">
@@ -1400,13 +1699,25 @@
 
     <script>
         // === Auth ===
+        const savedAdminKeyStorageKey = 'achadinhos.adminKey';
         let savedAdminKey = '';
+        try {
+            savedAdminKey = localStorage.getItem(savedAdminKeyStorageKey) || '';
+        } catch (error) {
+            savedAdminKey = '';
+        }
         let currentSession = null;
         let currentCaptionOptions = [];
         const rawFetch = window.fetch.bind(window);
         window.fetch = function (input, init = {}) {
             const url = typeof input === 'string' ? input : (input?.url || '');
-            const protectedPath = url.startsWith('/api/admin/') || url.startsWith('/auth/');
+            const protectedPath = url.startsWith('/api/admin/') ||
+                url.startsWith('/auth/') ||
+                url.startsWith('/api/settings') ||
+                url.startsWith('/api/telegram/userbot/') ||
+                url.startsWith('/telegram/userbot/') ||
+                url.startsWith('/instagram/autopilot/run') ||
+                url.startsWith('/instagram/autostory/run');
             if (!protectedPath) {
                 return rawFetch(input, init);
             }
@@ -1441,6 +1752,13 @@
             maybeOpenDraftFromUrl();
             maybeOpenChannelOfferContextFromUrl();
             maybeOpenStoredAgentAdminContext();
+            loadSettingsVersions({ silent: true });
+            const reelChatSelect = document.getElementById('telegramReelSourceChatSelect');
+            if (reelChatSelect && !reelChatSelect.dataset.bound) {
+                reelChatSelect.addEventListener('change', () => loadTelegramReelRecentOffers());
+                reelChatSelect.dataset.bound = '1';
+            }
+            refreshTelegramUserbotStatus();
         }
         function showLoggedOutState(message = '') {
             currentSession = null;
@@ -1484,8 +1802,18 @@
                     return;
                 }
                 const session = await res.json();
+                savedAdminKey = session?.username || username || '';
+                try {
+                    if (savedAdminKey) {
+                        localStorage.setItem(savedAdminKeyStorageKey, savedAdminKey);
+                    } else {
+                        localStorage.removeItem(savedAdminKeyStorageKey);
+                    }
+                } catch (error) {
+                    // Ignore storage failures and keep the session cookie as fallback.
+                }
                 showAuthenticatedState(session);
-            } catch {
+            } catch (error) {
                 showLoggedOutState('Erro de conexao com o servidor.');
             } finally {
                 btn.disabled = false;
@@ -1499,6 +1827,12 @@
                     headers: { 'Content-Type': 'application/json' }
                 });
             } finally {
+                savedAdminKey = '';
+                try {
+                    localStorage.removeItem(savedAdminKeyStorageKey);
+                } catch (error) {
+                    // Ignore storage failures on logout.
+                }
                 showLoggedOutState();
             }
         }
@@ -1511,7 +1845,7 @@
                 }
                 const session = await res.json();
                 showAuthenticatedState(session);
-            } catch {
+            } catch (error) {
                 showLoggedOutState('Erro ao validar a sessao.');
             }
         });
@@ -1528,6 +1862,27 @@
             img.style.mixBlendMode = 'normal';
         }
 
+        async function fetchJsonSafe(url, init = {}) {
+            const res = await fetch(url, init);
+            const contentType = (res.headers?.get?.('content-type') || '').toLowerCase();
+            const text = await res.text();
+            const trimmed = text.trim();
+            if (!trimmed) {
+                return { response: res, data: null, rawText: '' };
+            }
+            if (contentType.includes('application/json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                try {
+                    return { response: res, data: JSON.parse(trimmed), rawText: text };
+                } catch (error) {
+                    throw new Error(`Resposta invalida do servidor (${res.status}).`);
+                }
+            }
+            if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.startsWith('<')) {
+                throw new Error('O servidor retornou uma pagina HTML em vez de JSON. Verifique login/sessao.');
+            }
+            throw new Error(`Resposta inesperada do servidor (${res.status}).`);
+        }
+
         function getAnalyticsId(key, prefix) {
             try {
                 const existing = localStorage.getItem(key);
@@ -1535,7 +1890,7 @@
                 const created = `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
                 localStorage.setItem(key, created);
                 return created;
-            } catch {
+            } catch (error) {
                 return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
             }
         }
@@ -1547,7 +1902,7 @@
                 const created = `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
                 sessionStorage.setItem('ard_session_id', created);
                 return created;
-            } catch {
+            } catch (error) {
                 return `sess_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
             }
         }
@@ -1565,6 +1920,8 @@
 
         let initialDraftLoaded = false;
         let initialOfferContextLoaded = false;
+        let settingsVersionsCache = [];
+        let autopilotBusy = false;
 
         function getDraftIdFromUrl() {
             const params = new URLSearchParams(window.location.search);
@@ -1600,7 +1957,7 @@
             try {
                 const raw = localStorage.getItem('achadinhos.agent.adminContext');
                 return raw ? JSON.parse(raw) : null;
-            } catch {
+            } catch (error) {
                 return null;
             }
         }
@@ -1608,7 +1965,7 @@
         function clearStoredAgentAdminContext() {
             try {
                 localStorage.removeItem('achadinhos.agent.adminContext');
-            } catch {
+            } catch (error) {
             }
         }
 
@@ -1624,7 +1981,7 @@
 
                 const raw = localStorage.getItem('achadinhos.agent.analysisSelection');
                 return raw ? JSON.parse(raw) : null;
-            } catch {
+            } catch (error) {
                 return null;
             }
         }
@@ -1636,7 +1993,7 @@
                     localStorage.removeItem(selectionKey);
                 }
                 localStorage.removeItem('achadinhos.agent.analysisSelection');
-            } catch {
+            } catch (error) {
             }
         }
 
@@ -1705,6 +2062,7 @@
             if (selection.productName) {
                 document.getElementById('productTitle').textContent = selection.productName;
             }
+            renderDraftOriginBadge('');
 
             if (selection.imageUrl || selection.videoUrl) {
                 currentData = currentData || {};
@@ -1791,7 +2149,741 @@
             }
         }
 
-        trackClick(window.location.href, 'admin_view', 'page_view');
+        trackClick(window.location.href, 'conversor_admin', 'page_view');
+
+        function getVersionLabel(version) {
+            if (!version) return 'Snapshot';
+            return version.fileName || version.FileName || version.name || 'Snapshot';
+        }
+
+        function getVersionTimestamp(version) {
+            const raw = version?.capturedAtUtc || version?.CapturedAtUtc || version?.timestamp || version?.Timestamp;
+            const parsed = raw ? new Date(raw) : null;
+            if (!parsed || Number.isNaN(parsed.getTime())) {
+                return 'data indisponivel';
+            }
+            return parsed.toLocaleString('pt-BR');
+        }
+
+        function getVersionSize(version) {
+            const raw = version?.sizeBytes ?? version?.SizeBytes ?? 0;
+            if (!raw) return '0 KB';
+            return `${Math.max(1, Math.round(raw / 1024))} KB`;
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function setSettingsVersionsStatus(message, isError = false) {
+            const el = document.getElementById('settingsVersionsStatus');
+            if (!el) return;
+            el.textContent = normalizeUiText(message || '');
+            el.className = isError
+                ? 'text-xs text-red-400'
+                : 'text-xs text-slate-400';
+        }
+
+        function setAutopilotStatus(message, isError = false) {
+            const el = document.getElementById('autopilotStatus');
+            if (!el) return;
+            el.textContent = normalizeUiText(message || '');
+            el.className = isError
+                ? 'mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2'
+                : 'mt-3 text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl px-3 py-2';
+        }
+
+        function renderSettingsVersions(versions) {
+            const list = document.getElementById('settingsVersionsList');
+            if (!list) return;
+
+            settingsVersionsCache = Array.isArray(versions) ? versions.slice() : [];
+            list.innerHTML = '';
+
+            if (!settingsVersionsCache.length) {
+                setSettingsVersionsStatus('Nenhum snapshot encontrado. O sistema cria o primeiro automaticamente ao salvar settings.');
+                list.innerHTML = '<div class="text-xs text-slate-500 bg-black/20 border border-white/5 rounded-xl px-3 py-3">Sem snapshots disponiveis.</div>';
+                return;
+            }
+
+            setSettingsVersionsStatus(`${settingsVersionsCache.length} snapshot(s) disponivel(is).`);
+            settingsVersionsCache.slice(0, 5).forEach((version, index) => {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'w-full text-left bg-black/20 hover:bg-black/30 border border-white/10 rounded-xl px-3 py-3 transition-all';
+                item.innerHTML = `
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <div class="text-sm font-bold text-white truncate">${escapeHtml(normalizeUiText(getVersionLabel(version)))}</div>
+                            <div class="text-[11px] text-slate-400 mt-1">${escapeHtml(normalizeUiText(getVersionTimestamp(version)))}</div>
+                        </div>
+                        <div class="shrink-0 text-[10px] uppercase tracking-widest text-accent font-bold">${index === 0 ? 'ULTIMO' : 'SNAP'}</div>
+                    </div>
+                    <div class="mt-2 flex items-center justify-between gap-2">
+                        <span class="text-[11px] text-slate-500">${escapeHtml(getVersionSize(version))}</span>
+                        <span class="text-[10px] text-slate-400">Restaurar</span>
+                    </div>
+                `;
+                item.addEventListener('click', () => restoreSettingsSnapshot(getVersionLabel(version)));
+                list.appendChild(item);
+            });
+        }
+
+        async function loadSettingsVersions(options = {}) {
+            const { silent = false } = options || {};
+            const list = document.getElementById('settingsVersionsList');
+            if (!silent) {
+                setSettingsVersionsStatus('Carregando snapshots...');
+            }
+            if (list) {
+                list.innerHTML = '<div class="text-xs text-slate-500 bg-black/20 border border-white/5 rounded-xl px-3 py-3">Carregando snapshots...</div>';
+            }
+
+            try {
+                const { response: res, data } = await fetchJsonSafe('/api/settings/versions');
+                if (!res.ok || !data?.success) {
+                    throw new Error(data?.error || 'Nao foi possivel carregar snapshots.');
+                }
+                renderSettingsVersions(data.versions || []);
+            } catch (error) {
+                settingsVersionsCache = [];
+                if (list) {
+                    list.innerHTML = '<div class="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-3">Falha ao carregar snapshots.</div>';
+                }
+                setSettingsVersionsStatus(error?.message || 'Falha ao carregar snapshots.', true);
+            }
+        }
+
+        function renderDraftOriginBadge(origin) {
+            const badge = document.getElementById('draftOriginBadge');
+            const badgeText = document.getElementById('draftOriginBadgeText');
+            if (!badge || !badgeText) {
+                return;
+            }
+
+            const normalized = (origin || '').trim();
+            if (!normalized) {
+                badge.classList.add('hidden');
+                badgeText.textContent = '';
+                return;
+            }
+
+            badgeText.textContent = normalized;
+            badge.classList.remove('hidden');
+        }
+
+        function renderDraftProcessBadge(processName) {
+            const badge = document.getElementById('draftProcessBadge');
+            const badgeText = document.getElementById('draftProcessBadgeText');
+            if (!badge || !badgeText) {
+                return;
+            }
+
+            const normalized = (processName || '').trim() || 'Legado';
+            badgeText.textContent = normalized;
+            badge.classList.remove('hidden');
+        }
+
+        function getDraftProcessLabel(draft) {
+            return (draft?.processName || draft?.ProcessName || '').trim() || 'Legado';
+        }
+
+        function firstNonEmpty(...values) {
+            for (const value of values) {
+                if (typeof value === 'string' && value.trim()) return value.trim();
+            }
+            return '';
+        }
+
+        function normalizeDraftPreviewData(draft) {
+            const imageCandidates = [
+                draft?.imageUrl,
+                ...(Array.isArray(draft?.imageUrls) ? draft.imageUrls : []),
+                ...(Array.isArray(draft?.suggestedImageUrls) ? draft.suggestedImageUrls : [])
+            ].filter(Boolean);
+            const videoCandidates = [
+                draft?.videoUrl,
+                ...(Array.isArray(draft?.suggestedVideoUrls) ? draft.suggestedVideoUrls : []),
+                draft?.mediaUrl
+            ].filter(Boolean);
+
+            return {
+                title: firstNonEmpty(draft?.productName, draft?.title, draft?.offerTitle, 'Carregado') || 'Carregado',
+                store: firstNonEmpty(draft?.store, draft?.storeName, draft?.shopName, draft?.merchantName, 'Loja'),
+                offerUrl: firstNonEmpty(draft?.offerUrl, draft?.originalOfferUrl, draft?.link, ''),
+                imageUrl: imageCandidates[0] || firstNonEmpty(draft?.videoCoverUrl, '', ''),
+                videoUrl: videoCandidates[0] || '',
+                imageCandidates,
+                videoCandidates,
+                currentPrice: firstNonEmpty(draft?.currentPrice, draft?.price, ''),
+                previousPrice: firstNonEmpty(draft?.previousPrice, ''),
+                discountPercent: draft?.discountPercent ?? 0,
+                caption: firstNonEmpty(draft?.caption, ''),
+                sourceDataOrigin: firstNonEmpty(draft?.sourceDataOrigin, draft?.SourceDataOrigin, ''),
+                processName: getDraftProcessLabel(draft)
+            };
+        }
+
+        let draftCardTab = 'summary';
+
+        function updateDraftCardTabButtons() {
+            const tabs = {
+                summary: document.getElementById('draftCardTabSummaryBtn'),
+                media: document.getElementById('draftCardTabMediaBtn'),
+                raw: document.getElementById('draftCardTabRawBtn')
+            };
+            Object.entries(tabs).forEach(([name, btn]) => {
+                if (!btn) return;
+                const active = name === draftCardTab;
+                btn.className = active
+                    ? 'px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-accent text-primary'
+                    : 'px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-white/5 text-white border border-white/10';
+            });
+            document.getElementById('draftCardTabSummary')?.classList.toggle('hidden', draftCardTab !== 'summary');
+            document.getElementById('draftCardTabMedia')?.classList.toggle('hidden', draftCardTab !== 'media');
+            document.getElementById('draftCardTabRaw')?.classList.toggle('hidden', draftCardTab !== 'raw');
+        }
+
+        function switchDraftCardTab(tab) {
+            draftCardTab = ['summary', 'media', 'raw'].includes(tab) ? tab : 'summary';
+            updateDraftCardTabButtons();
+        }
+
+        function renderDraftCardDetails(draft) {
+            const normalized = normalizeDraftPreviewData(draft);
+            const titleEl = document.getElementById('draftCardSummaryTitle');
+            const storeEl = document.getElementById('draftCardSummaryStore');
+            const linkEl = document.getElementById('draftCardSummaryLink');
+            const mediaEl = document.getElementById('draftCardSummaryMedia');
+            const imageEl = document.getElementById('draftCardMediaImage');
+            const videoEl = document.getElementById('draftCardMediaVideo');
+            const processEl = document.getElementById('draftCardMediaProcess');
+            const rawEl = document.getElementById('draftCardRawJson');
+
+            if (titleEl) titleEl.textContent = normalized.title;
+            if (storeEl) storeEl.textContent = `Loja: ${normalized.store}`;
+            if (linkEl) {
+                linkEl.textContent = normalized.offerUrl || '-';
+                linkEl.href = normalized.offerUrl || '#';
+            }
+            if (mediaEl) {
+                const imageBits = normalized.imageCandidates.length ? `${normalized.imageCandidates.length} imagem(ns)` : 'Sem imagem';
+                const videoBits = normalized.videoCandidates.length ? `${normalized.videoCandidates.length} video(s)` : 'Sem video';
+                mediaEl.textContent = `${imageBits} | ${videoBits}`;
+            }
+            if (imageEl) {
+                if (normalized.imageUrl) {
+                    imageEl.src = normalized.imageUrl;
+                    imageEl.classList.remove('hidden');
+                } else {
+                    imageEl.removeAttribute('src');
+                    imageEl.classList.add('hidden');
+                }
+            }
+            if (videoEl) {
+                if (normalized.videoUrl) {
+                    videoEl.src = normalized.videoUrl;
+                    videoEl.classList.remove('hidden');
+                } else {
+                    videoEl.removeAttribute('src');
+                    videoEl.classList.add('hidden');
+                }
+            }
+            if (processEl) processEl.textContent = normalized.processName;
+            if (rawEl) {
+                rawEl.textContent = JSON.stringify({
+                    title: normalized.title,
+                    store: normalized.store,
+                    offerUrl: normalized.offerUrl,
+                    imageUrl: normalized.imageUrl,
+                    videoUrl: normalized.videoUrl,
+                    currentPrice: normalized.currentPrice,
+                    previousPrice: normalized.previousPrice,
+                    discountPercent: normalized.discountPercent,
+                    sourceDataOrigin: normalized.sourceDataOrigin,
+                    processName: normalized.processName
+                }, null, 2);
+            }
+            updateDraftCardTabButtons();
+        }
+
+        const FLOW_ENDPOINTS_MAP_ROWS = [
+            {
+                canal: 'Telegram',
+                nome: 'AE-IA 3000 - VÍDEOS VIRAIS',
+                ids: ['2425105459'],
+                papel: 'Origem de reels e vídeo do produto',
+                destino: 'Instagram - preview e publicação'
+            },
+            {
+                canal: 'Telegram',
+                nome: 'Rota Telegram principal',
+                ids: ['1871121243', '1271986083', '2775581964', '3703804341', '1569488789', '3632436217'],
+                papel: 'Origem Telegram para WhatsApp',
+                destino: 'Grupo oficial WhatsApp'
+            },
+            {
+                canal: 'WhatsApp',
+                nome: 'Rota Nova Oficial',
+                ids: ['120363399495595930@g.us', '120363216142767996@g.us', '120363390817589999@g.us', '120363401464158461@g.us', '120363403893859078@g.us', '120363027285871635@g.us', '120363421220620042@g.us', '120363343810565726@g.us', '120363296924962892@g.us', '120363421418282703@g.us'],
+                papel: 'Origem WhatsApp principal',
+                destino: 'Grupo oficial WhatsApp'
+            },
+            {
+                canal: 'WhatsApp',
+                nome: 'Ponte Mercado Livre Scout',
+                ids: ['120363409272515351@g.us'],
+                papel: 'Ponte e triagem de ofertas do Mercado Livre',
+                destino: 'Grupo oficial WhatsApp'
+            },
+            {
+                canal: 'WhatsApp',
+                nome: 'Rei das Ofertas Oficial',
+                ids: ['120363405661434395@g.us'],
+                papel: 'Destino final',
+                destino: 'Publicacao e recebimento de ofertas'
+            }
+        ];
+
+        function renderFlowEndpointsMap() {
+            window.FlowEndpointsMap?.renderTable('flowEndpointsMapBody', 'flowEndpointsMapSearch');
+        }
+
+        const flowEndpointsMapSearch = document.getElementById('flowEndpointsMapSearch');
+        if (flowEndpointsMapSearch) {
+            flowEndpointsMapSearch.addEventListener('input', renderFlowEndpointsMap);
+            flowEndpointsMapSearch.addEventListener('change', renderFlowEndpointsMap);
+        }
+        renderFlowEndpointsMap();
+
+        async function restoreSettingsSnapshot(versionFileName) {
+            const versionName = (versionFileName || '').trim();
+            if (!versionName) {
+                showToast('Snapshot invalido.', true);
+                return;
+            }
+
+            if (!confirm(`Restaurar o snapshot ${versionName}? Essa acao sobrescreve as settings atuais.`)) {
+                return;
+            }
+
+            setSettingsVersionsStatus(`Restaurando ${versionName}...`);
+            try {
+                const { response: res, data } = await fetchJsonSafe('/api/settings/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ versionFileName: versionName })
+                });
+                if (!res.ok || !data?.success) {
+                    throw new Error(data?.error || 'Falha ao restaurar snapshot.');
+                }
+
+                window.__settingsCache = data.settings || window.__settingsCache || null;
+                showToast(`Snapshot restaurado: ${versionName}`);
+                await loadSettingsVersions({ silent: true });
+            } catch (error) {
+                setSettingsVersionsStatus(error?.message || 'Falha ao restaurar snapshot.', true);
+                showToast(error?.message || 'Falha ao restaurar snapshot.', true);
+            }
+        }
+
+        async function restoreLatestSettingsSnapshot() {
+            if (!settingsVersionsCache.length) {
+                await loadSettingsVersions();
+                if (!settingsVersionsCache.length) {
+                    showToast('Nenhum snapshot disponivel.', true);
+                    return;
+                }
+            }
+
+            await restoreSettingsSnapshot(getVersionLabel(settingsVersionsCache[0]));
+        }
+
+        function setTelegramUserbotAuthStatus(message, isError = false) {
+            const el = document.getElementById('telegramUserbotAuthStatus');
+            if (!el) return;
+            el.textContent = normalizeUiText(message || '');
+            el.className = isError
+                ? 'mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2'
+                : 'mt-3 text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl px-3 py-2';
+        }
+
+        function buildTelegramUserbotAuthRequest() {
+            const phoneNumber = document.getElementById('telegramUserbotPhone')?.value?.trim() || '';
+            const verificationCode = document.getElementById('telegramUserbotCode')?.value?.trim() || '';
+            const password = document.getElementById('telegramUserbotPassword')?.value?.trim() || '';
+            const forceReconnect = !!document.getElementById('telegramUserbotForceReconnect')?.checked;
+
+            return {
+                phoneNumber: phoneNumber || undefined,
+                verificationCode: verificationCode || undefined,
+                password: password || undefined,
+                forceReconnect
+            };
+        }
+
+        function renderTelegramUserbotAuthResult(data) {
+            const box = document.getElementById('telegramUserbotAuthResult');
+            if (!box) return;
+
+            if (!data) {
+                box.textContent = '';
+                return;
+            }
+
+            box.textContent = JSON.stringify(data, null, 2);
+        }
+
+        async function sendTelegramUserbotAuth() {
+            setTelegramUserbotAuthStatus('Enviando credenciais do userbot...');
+            const payload = buildTelegramUserbotAuthRequest();
+
+            try {
+                const { response: res, data } = await fetchJsonSafe('/api/telegram/userbot/auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                renderTelegramUserbotAuthResult(data);
+
+                if (!res.ok || !data?.success) {
+                    throw new Error(data?.message || data?.error || 'Falha ao atualizar auth do userbot.');
+                }
+
+                setTelegramUserbotAuthStatus(data.message || 'Credenciais enviadas com sucesso.');
+                showToast('Credenciais do userbot enviadas.');
+            } catch (error) {
+                const message = error?.message || 'Falha ao atualizar auth do userbot.';
+                setTelegramUserbotAuthStatus(message, true);
+                showToast(message, true);
+            }
+        }
+
+        async function refreshTelegramUserbotStatus() {
+            try {
+                const { response: res, data } = await fetchJsonSafe('/api/telegram/userbot/chats');
+                renderTelegramUserbotAuthResult(data);
+                renderTelegramReelChatOptions(data?.chats || []);
+                setTelegramUserbotAuthStatus(data?.ready ? 'Userbot pronto.' : 'Userbot aguardando login.');
+                if ((data?.chats || []).length > 0 && !document.getElementById('telegramReelSourceChatSelect')?.value) {
+                    document.getElementById('telegramReelSourceChatSelect').value = String((data.chats.find((chat) => String(chat.id) === '2425105459') || data.chats[0]).id);
+                }
+                if ((data?.chats || []).length > 0) {
+                    await loadTelegramReelRecentOffers();
+                }
+            } catch (error) {
+                setTelegramUserbotAuthStatus(error?.message || 'Falha ao consultar status do userbot.', true);
+            }
+        }
+
+        function setTelegramUserbotReelStatus(message, isError = false) {
+            const el = document.getElementById('telegramUserbotReelStatus');
+            if (!el) return;
+            el.textContent = message;
+            el.className = isError
+                ? 'mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2'
+                : 'mt-3 text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl px-3 py-2';
+        }
+
+        function renderTelegramUserbotReelResult(data) {
+            const box = document.getElementById('telegramUserbotReelResult');
+            if (!box) return;
+            box.textContent = data ? JSON.stringify(data, null, 2) : '';
+        }
+
+        function getTelegramReelChatLabel(chat) {
+            if (!chat) return 'Grupo';
+            const title = (chat.title || '').trim();
+            const id = chat.id ?? '';
+            return title ? `${title} (${id})` : String(id);
+        }
+
+        function normalizeTelegramReelOfferText(text) {
+            return String(text || '').replace(/\s+/g, ' ').trim();
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function isTelegramReelOfferEligible(offer) {
+            const text = normalizeTelegramReelOfferText(offer?.text);
+            const hasLink = /https?:\/\/\S+/i.test(text);
+            const blocked = /cupom radar|automatize 100%|modo fila|top afiliados|faça seu cadastro agora mesmo|faca seu cadastro agora mesmo|utilize até 10 postagens por dia gratuitamente/i.test(text);
+            return String(offer?.mediaKind || '').toLowerCase() === 'video'
+                && !!offer?.mediaUrl
+                && hasLink
+                && !blocked;
+        }
+
+        function renderTelegramReelOfferCards(offers, chatId) {
+            const grid = document.getElementById('telegramReelOffersGrid');
+            if (!grid) return;
+
+            if (!Array.isArray(offers) || offers.length === 0) {
+                grid.innerHTML = '<div class="col-span-full text-center py-8 text-slate-500 text-xs bg-black/20 border border-white/5 rounded-xl">Nenhuma mensagem recente encontrada para este grupo.</div>';
+                return;
+            }
+
+            grid.innerHTML = offers.map((offer) => {
+                const eligible = isTelegramReelOfferEligible(offer);
+                const date = offer.createdAtUtc ? new Date(offer.createdAtUtc).toLocaleString('pt-BR') : 'data indisponivel';
+                const text = normalizeTelegramReelOfferText(offer.text);
+                const excerpt = text.length > 180 ? `${text.slice(0, 180)}...` : text;
+                const mediaKind = String(offer.mediaKind || '').toLowerCase();
+                const mediaHtml = mediaKind === 'video'
+                    ? `<div class="relative w-full h-44 rounded-xl border border-white/10 bg-black/40 overflow-hidden"><video class="w-full h-full object-cover" src="${escapeHtml(offer.mediaUrl || '')}" autoplay loop muted playsinline preload="metadata"></video><div class="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/35 via-transparent to-transparent"></div><div class="absolute bottom-2 right-2 pointer-events-none px-2 py-1 rounded-full bg-black/55 text-white text-[9px] font-bold uppercase tracking-widest">Video</div></div>`
+                    : `<img class="w-full h-44 object-cover rounded-xl border border-white/10 bg-black/40" src="${escapeHtml(offer.mediaUrl || '')}" alt="Mídia do Telegram">`;
+                const badge = eligible
+                    ? '<span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[9px] font-bold uppercase">Elegivel para reel</span>'
+                    : '<span class="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[9px] font-bold uppercase">Revisar</span>';
+                return `
+                    <article class="bg-primary/40 border border-white/10 rounded-2xl p-3 flex flex-col gap-3">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <h5 class="text-sm font-bold text-white truncate">${escapeHtml(offer.chatTitle || 'Grupo')}</h5>
+                                <p class="text-[10px] uppercase tracking-[0.3em] text-slate-500">Mensagem ${escapeHtml(offer.messageId || '-')}</p>
+                            </div>
+                            ${badge}
+                        </div>
+                        <div class="text-[10px] text-slate-500">${escapeHtml(date)}</div>
+                        ${mediaHtml}
+                        <div class="text-xs text-slate-300 whitespace-pre-wrap leading-5">${escapeHtml(excerpt || 'Sem texto')}</div>
+                        <div class="flex items-center justify-between gap-2 pt-1">
+                            <span class="text-[10px] uppercase tracking-widest text-slate-500">${escapeHtml(offer.mediaKind || 'midia')}</span>
+                            <button type="button" onclick="createTelegramReelDraftFromOffer('${String(chatId)}', '${String(offer.messageId || '')}', ${eligible ? 'true' : 'false'})"
+                                class="px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest ${eligible ? 'bg-accent text-primary hover:bg-accentHover' : 'bg-white/5 text-white border border-white/10 hover:bg-white/10'}">
+                                Usar no reel
+                            </button>
+                        </div>
+                    </article>
+                `;
+            }).join('');
+        }
+
+        function renderTelegramReelChatOptions(chats) {
+            const select = document.getElementById('telegramReelSourceChatSelect');
+            if (!select) return;
+
+            const items = Array.isArray(chats) ? chats : [];
+            const currentValue = select.value;
+            select.innerHTML = items.length
+                ? items.map((chat) => `<option value="${chat.id}">${getTelegramReelChatLabel(chat)}</option>`).join('')
+                : '<option value="">Nenhum grupo encontrado</option>';
+
+            if (currentValue && items.some((chat) => String(chat.id) === currentValue)) {
+                select.value = currentValue;
+            } else if (items.length > 0) {
+                const preferred = items.find((chat) => String(chat.id) === '2425105459') || items[0];
+                select.value = String(preferred.id);
+            }
+        }
+
+        async function loadTelegramReelRecentOffers() {
+            const select = document.getElementById('telegramReelSourceChatSelect');
+            const limitInput = document.getElementById('telegramReelRecentLimit');
+            const chatId = select?.value?.trim() || '';
+            const limit = Number.parseInt(limitInput?.value || '12', 10);
+            const status = document.getElementById('telegramReelOffersStatus');
+            const grid = document.getElementById('telegramReelOffersGrid');
+
+            if (!chatId) {
+                if (status) status.textContent = 'Selecione um grupo para carregar os cards.';
+                if (grid) grid.innerHTML = '';
+                return;
+            }
+
+            if (status) status.textContent = 'Carregando cards recentes do grupo...';
+            if (grid) grid.innerHTML = '';
+
+            try {
+                const params = new URLSearchParams({
+                    chatId,
+                    limit: Number.isFinite(limit) ? String(limit) : '12'
+                });
+                const { response: res, data } = await fetchJsonSafe(`/api/telegram/userbot/recent-offers?${params.toString()}`);
+                if (!res.ok) {
+                    throw new Error(data?.error || data?.message || 'Falha ao carregar cards recentes.');
+                }
+
+                renderTelegramReelOfferCards(data.offers || [], chatId);
+                if (status) {
+                    status.textContent = data.offers?.length
+                        ? `Exibindo ${data.offers.length} mensagens recentes de ${getTelegramReelChatLabel({ id: chatId })}.`
+                        : 'Nenhuma mensagem encontrada para este grupo.';
+                }
+            } catch (error) {
+                if (status) status.textContent = error?.message || 'Falha ao carregar cards recentes.';
+                showToast(error?.message || 'Falha ao carregar cards recentes.', true);
+            }
+        }
+
+        async function createTelegramReelDraftFromOffer(chatId, messageId, isEligible = true) {
+            if (!chatId) {
+                showToast('Selecione um card valido para criar o reel.', true);
+                return;
+            }
+            if (messageId && !isEligible) {
+                showToast('Este card nao parece elegivel para reel. Revise a midia e o link antes de criar.', true);
+                return;
+            }
+
+            setTelegramUserbotReelStatus(messageId
+                ? `Criando reel para a mensagem ${messageId}...`
+                : 'Criando reel com o ultimo post elegivel do grupo...');
+            try {
+                const { response: res, data } = await fetchJsonSafe('/api/telegram/userbot/reel/latest-draft', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sourceChatId: Number(chatId),
+                        sourceMessageId: messageId ? String(messageId) : undefined,
+                        limit: 25
+                    })
+                });
+                renderTelegramUserbotReelResult(data);
+
+                if (!res.ok || !data?.success) {
+                    throw new Error(data?.message || data?.error || 'Falha ao gerar o reel.');
+                }
+
+                const editorUrl = data.editorUrl || (data.draftId ? `/studio-ofertas?draftId=${encodeURIComponent(data.draftId)}` : null);
+                setTelegramUserbotReelStatus(data.message || 'Reel criado com sucesso.');
+                showToast('Reel criado no Studio de Ofertas.');
+                if (data.draftId) {
+                    await loadDraftIntoEditor(data.draftId);
+                } else if (editorUrl) {
+                    window.history.replaceState({}, '', editorUrl);
+                }
+            } catch (error) {
+                const message = error?.message || 'Falha ao gerar o reel.';
+                setTelegramUserbotReelStatus(message, true);
+                showToast(message, true);
+            }
+        }
+
+        async function runLatestTelegramReelDraft() {
+            const select = document.getElementById('telegramReelSourceChatSelect');
+            const chatId = select?.value?.trim() || '';
+            if (!chatId) {
+                showToast('Escolha um grupo antes de gerar o reel.', true);
+                return;
+            }
+
+            setTelegramUserbotReelStatus('Buscando o ultimo post elegivel do grupo selecionado...');
+            renderTelegramUserbotReelResult(null);
+            await createTelegramReelDraftFromOffer(chatId, null, true);
+        }
+
+        function buildReelAutopilotRequest() {
+            const manualUrl = document.getElementById('autopilotManualUrl')?.value?.trim() || '';
+            const topCount = Number.parseInt(document.getElementById('autopilotTopCount')?.value || '1', 10);
+            const lookbackHours = Number.parseInt(document.getElementById('autopilotLookbackHours')?.value || '72', 10);
+            const repeatWindowHours = Number.parseInt(document.getElementById('autopilotRepeatWindowHours')?.value || '72', 10);
+            const dryRun = !!document.getElementById('autopilotDryRun')?.checked;
+            const sendForApproval = !!document.getElementById('autopilotSendForApproval')?.checked;
+            const forceIncludeExisting = !!document.getElementById('autopilotForceExisting')?.checked;
+
+            return {
+                postType: 'reels',
+                topCount: Number.isFinite(topCount) ? topCount : 1,
+                lookbackHours: Number.isFinite(lookbackHours) ? lookbackHours : 72,
+                repeatWindowHours: Number.isFinite(repeatWindowHours) ? repeatWindowHours : 72,
+                sendForApproval,
+                dryRun,
+                forceIncludeExisting,
+                manualUrl: manualUrl || undefined
+            };
+        }
+
+        function formatAutopilotSelection(item, index) {
+            const title = item.productName || item.store || 'Produto';
+            const draft = item.draftId ? item.draftId.slice(0, 8) : 'sem draft';
+            const score = typeof item.finalScore === 'number' ? item.finalScore : 0;
+            return `${index + 1}. ${title}\n   Loja: ${item.store || 'n/a'} | Score: ${score} | Draft: ${draft}\n   Url: ${item.productUrl || 'n/a'}`;
+        }
+
+        async function runReelAutopilot() {
+            if (autopilotBusy) return;
+            autopilotBusy = true;
+            const runBtn = document.getElementById('runReelAutopilotBtn');
+            const dryRunBtn = document.getElementById('runReelDryRunBtn');
+            if (runBtn) runBtn.disabled = true;
+            if (dryRunBtn) dryRunBtn.disabled = true;
+
+            const request = buildReelAutopilotRequest();
+            setAutopilotStatus('Rodando autopilot de reels...');
+            const resultBox = document.getElementById('autopilotResult');
+            if (resultBox) {
+                resultBox.textContent = '';
+            }
+
+            try {
+                const res = await fetch('/instagram/autopilot/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(request)
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data?.error || data?.message || 'Falha ao rodar autopilot.');
+                }
+
+                const summary = [
+                    `Sucesso: ${data.success ? 'sim' : 'nao'}`,
+                    `Tipo: ${data.postType || request.postType}`,
+                    `Candidatos: ${data.candidatesEvaluated ?? 0}`,
+                    `Selecionados: ${data.selectedCount ?? 0}`,
+                    `Drafts criados: ${data.draftsCreated ?? 0}`,
+                    `Aprovacao: ${data.approvalSent ? 'enviada' : 'nao enviada'}`,
+                    data.message ? `Mensagem: ${data.message}` : null
+                ].filter(Boolean).join('\n');
+
+                const selections = Array.isArray(data.selected) && data.selected.length > 0
+                    ? '\n\nSelecionados:\n' + data.selected.map((item, index) => formatAutopilotSelection(item, index)).join('\n\n')
+                    : '\n\nNenhum item selecionado.';
+
+                if (resultBox) {
+                    resultBox.textContent = `${summary}${selections}\n\nPayload:\n${JSON.stringify(data, null, 2)}`;
+                }
+
+                setAutopilotStatus(data.message || 'Autopilot concluido com sucesso.');
+                showToast('Autopilot de reels executado.');
+            } catch (error) {
+                const message = error?.message || 'Falha ao rodar autopilot.';
+                if (resultBox) {
+                    resultBox.textContent = message;
+                }
+                setAutopilotStatus(message, true);
+                showToast(message, true);
+            } finally {
+                autopilotBusy = false;
+                if (runBtn) runBtn.disabled = false;
+                if (dryRunBtn) dryRunBtn.disabled = false;
+            }
+        }
+
+        async function runReelAutopilotDryRun() {
+            if (autopilotBusy) return;
+            const dryRunCheck = document.getElementById('autopilotDryRun');
+            const previous = dryRunCheck?.checked ?? false;
+            if (dryRunCheck) dryRunCheck.checked = true;
+            try {
+                await runReelAutopilot();
+            } finally {
+                if (dryRunCheck) dryRunCheck.checked = previous;
+            }
+        }
 
         // === Convert ===
         async function handleConvert() {
@@ -1829,12 +2921,12 @@
                 const response = await fetch('/api/conversor', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: urlInput })
+                    body: JSON.stringify({ url: urlInput, source: 'conversor_admin' })
                 });
                 const data = await response.json();
-                if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversÃ£o.');
+                if (!response.ok || !data.success) throw new Error(data.error || 'Falha na conversao.');
 
-                trackClick(data.trackedUrl || urlInput, 'admin_convert_success', 'convert_action');
+                trackClick(data.trackedUrl || urlInput, 'conversor_admin', 'convert_action');
 
                 currentData = data;
                 currentConvertedUrl = data.trackedUrl || data.convertedUrl || data.originalUrl || urlInput;
@@ -1846,7 +2938,7 @@
                 document.getElementById('productImage').src = data.imageUrl || '';
                 document.getElementById('storeBadge').textContent = data.store || 'Loja';
                 document.getElementById('productTitle').textContent = data.title || 'Oferta';
-                document.getElementById('productPrice').textContent = data.price || 'Preço sob consulta';
+                document.getElementById('productPrice').textContent = data.price || 'Preco sob consulta';
 
                 const oldPriceEl = document.getElementById('productOldPrice');
                 if (data.previousPrice && data.previousPrice !== data.price) {
@@ -1854,7 +2946,7 @@
                 } else { oldPriceEl.style.display = 'none'; }
 
                 const discountBadge = document.getElementById('discountBadge');
-                if (data.discountPercent > 0) {
+                if (data.discountPercent > 0 && data.discountPercent < 100) {
                     discountBadge.textContent = `${data.discountPercent}% OFF`; discountBadge.style.display = 'block';
                 } else { discountBadge.style.display = 'none'; }
 
@@ -1864,8 +2956,8 @@
                     deliveryEl.style.display = 'flex';
                 } else { deliveryEl.style.display = 'none'; }
 
-                const couponText = data.hasCoupon && data.couponCode ? `\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Cupom: ${data.couponCode}` : '';
-                currentShareText = `*${data.title}*\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ Por apenas: *${data.price}*${couponText}\n\n🛍️ Compre aqui: ${currentConvertedUrl}`;
+                const couponText = data.hasCoupon && data.couponCode ? `\nCupom: ${data.couponCode}` : '';
+                currentShareText = `*${data.title}*\nOferta por: *${data.price}*${couponText}\n\nCompre aqui: ${currentConvertedUrl}`;
 
                 skeletonLoader.classList.add('hidden');
                 setHistoryMode(false);
@@ -1940,6 +3032,7 @@
             document.getElementById(`tab-${tab}`).classList.add('active');
 
             if (tab === 'publish') {
+                renderFlowEndpointsMap();
                 loadDraftsHistory();
             }
         }
@@ -1998,9 +3091,9 @@
         function updatePublishBtnText(dateVal) {
             const btn = document.getElementById('pubInstaBtn');
             if (dateVal) {
-                btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ AGENDAR NO INSTAGRAM';
+                btn.innerHTML = 'AGENDAR NO INSTAGRAM';
             } else {
-                btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ PUBLICAR NO INSTAGRAM';
+                btn.innerHTML = 'PUBLICAR NO INSTAGRAM';
             }
         }
 
@@ -2008,7 +3101,7 @@
             if (!currentData) return;
             const btn = document.getElementById('genCardBtn');
             btn.disabled = true;
-            btn.textContent = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Gerando...';
+            btn.textContent = 'Gerando...';
 
             try {
                 const res = await fetch('/api/admin/generate-card', {
@@ -2032,7 +3125,7 @@
                 }
             } finally {
                 btn.disabled = false;
-                btn.textContent = '✨ Atualizar Card';
+                btn.textContent = 'Atualizar Card';
             }
         }
 
@@ -2054,12 +3147,14 @@
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
                     body: JSON.stringify({
                         productName: productName,
-                        offerContext: offerContext
+                        offerContext: offerContext,
+                        stylePreset: 'modelo3'
                     })
                 });
                 const data = await res.json();
                 if (data.success) {
-                    const parsedCaptions = parseAiCaptionOutput(data.caption);
+                    const normalizedCaption = stripCaptionHashtags(data.caption || '');
+                    const parsedCaptions = parseAiCaptionOutput(normalizedCaption);
 
                     if (parsedCaptions.length > 1) {
                         // We have multiple options, display the selector UI
@@ -2069,10 +3164,12 @@
                     } else {
                         // Standard fallback, dump everything into the textbox
                         document.getElementById('captionOptionsContainer').classList.add('hidden');
-                        document.getElementById('captionText').value = data.caption;
+                        document.getElementById('captionText').value = normalizedCaption;
                     }
 
-                    document.getElementById('hashtagInput').value = "#achadinhos #ofertas #promoção #dicas #compras";
+                    if (!document.getElementById('ctaInput').value.trim()) {
+                        document.getElementById('ctaInput').value = 'Comente EU QUERO para receber o link.';
+                    }
                     syncPreview();
                     // Auto-switch to caption tab for review after generation
                     setTimeout(() => switchTab('caption'), 800);
@@ -2086,7 +3183,7 @@
             if (!rawText) return [];
 
             // Try to split by "Legenda X" markers
-            const regex = /Legenda \d+.*?:\s*([\s\S]*?)(?=Legenda \d+.*?:|Hashtags sugeridas:|Melhor variação|$)/gi;
+            const regex = /Legenda \d+.*?:\s*([\s\S]*?)(?=Legenda \d+.*?:|Hashtags sugeridas:|Melhor variacao|$)/gi;
             const matches = [...rawText.matchAll(regex)];
 
             if (matches && matches.length > 0) {
@@ -2094,10 +3191,22 @@
             }
 
             // Fallback: If no strict markers, try splitting by double breaks if it looks like discrete blocks
-            const blocks = rawText.split(/\n\s*\n/).filter(b => b.trim().length > 30 && !b.toLowerCase().includes('formato obrigatório'));
+            const blocks = rawText.split(/\n\s*\n/).filter(b => b.trim().length > 30 && !b.toLowerCase().includes('formato obrigatorio'));
             if (blocks.length > 1) return blocks;
 
             return [rawText.trim()];
+        }
+
+        function stripCaptionHashtags(text) {
+            if (!text) return '';
+
+            return String(text)
+                .replace(/\r/g, '')
+                .split('\n')
+                .filter(line => !line.trim().startsWith('#'))
+                .join('\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
         }
 
         function normalizeDisplayPrice(price) {
@@ -2117,10 +3226,15 @@
             const price = normalizeDisplayPrice(currentData?.price);
             const store = currentData?.store || 'Loja oficial';
             const link = resolveCatalogCtaLink();
+            const whatsAppGroupUrl = 'https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX';
+            const bioUrl = isDevRuntime()
+                ? 'https://achadinhos-dev.reidasofertas.ia.br/bio'
+                : 'https://reidasofertas.ia.br/bio';
 
             return [
-                `OFERTA QUE VALE O CLIQUE\n\n${title}\n\n💰 Valor atual: ${price}\n🏬 Loja: ${store}\n✅ Produto com potencial de alta procura\n🚚 Confira disponibilidade e condicoes atualizadas no catalogo\n\nSe voce estava esperando uma boa oportunidade para garantir esse item, esse e o momento de entrar antes que o preco mude.\n\n👉 Acesse o nosso catalogo VIP para abrir a oferta completa:\n${link}\n\nEntre tambem no WhatsApp para receber os melhores achados em primeira mao.\n\n#achadinhos #ofertas #promocao #desconto #catalogovip`,
-                `ACHADINHO DO DIA\n\n${title}\n\n💸 Preco em destaque: ${price}\n🛒 Disponivel em: ${store}\n⭐ Se fizer sentido para voce, vale checar agora porque esse tipo de oferta costuma girar rapido\n\nNo nosso catalogo voce encontra o link atualizado, mais ofertas selecionadas e os achadinhos que estao performando melhor.\n\n🔥 Toque no link do catalogo e veja os detalhes:\n${link}\n\nSalve esta oferta e compartilhe com quem tambem gosta de comprar bem.\n\n#achadinho #ofertadodia #promocoes #comprasinteligentes #reidasofertas`
+                `OFERTA QUE VALE O CLIQUE\n\n${title}\n\nValor atual: ${price}\nLoja: ${store}\nProduto com potencial de alta procura.\n\nSe voce estava esperando uma boa oportunidade para garantir esse item, vale abrir agora antes que o preco mude.\n\nAcesse o nosso catalogo VIP para ver a oferta completa:\n${link}\n\nEntre no grupo VIP do WhatsApp:\n${whatsAppGroupUrl}\n\nSite da bio:\n${bioUrl}`,
+                `ACHADINHO DO DIA\n\n${title}\n\nPreco em destaque: ${price}\nDisponivel em: ${store}\n\nOferta boa costuma girar rapido. Se fizer sentido para voce, vale conferir agora.\n\nNo catalogo voce encontra o link atualizado e outros achados que estao performando bem.\n\nToque no link e veja os detalhes:\n${link}\n\nGrupo VIP no WhatsApp:\n${whatsAppGroupUrl}\n\nBio oficial:\n${bioUrl}`,
+                `COPY MODELO 3\n\n${title}\n\nEsse item chama atencao por entregar mais valor sem complicar a compra. O preco atual em ${store} deixa a oferta bem competitiva para quem ja estava pesquisando algo nessa linha.\n\nSe voce quer receber o link certo e aproveitar enquanto a oferta estiver ativa, comente EU QUERO ou me chama no direct.\n\nLink de apoio:\n${link}`
             ];
         }
 
@@ -2130,10 +3244,14 @@
             selectCaptionOption(index);
             const defaultHashtags = index === 0
                 ? '#achadinhos #ofertas #promocao #desconto #catalogovip'
-                : '#achadinho #ofertadodia #promocoes #comprasinteligentes #reidasofertas';
+                : index === 1
+                    ? '#achadinho #ofertadodia #promocoes #comprasinteligentes #reidasofertas'
+                    : '#achadinhos #ofertasimperdiveis #promocoesdodia #comprasonline #descontos';
             document.getElementById('hashtagInput').value = defaultHashtags;
             if (!document.getElementById('ctaInput').value.trim()) {
-                document.getElementById('ctaInput').value = 'Acesse o catalogo VIP e veja a oferta completa';
+                document.getElementById('ctaInput').value = index === 2
+                    ? 'Comente EU QUERO para receber o link.'
+                    : 'Acesse o catalogo VIP e veja a oferta completa.';
             }
             switchTab('caption');
             syncPreview();
@@ -2145,7 +3263,7 @@
                 showToast('Nenhuma legenda para copiar.', true);
                 return;
             }
-            trackClick(currentConvertedUrl, 'admin_copy_caption', 'copy_action');
+            trackClick(currentConvertedUrl, 'conversor_admin', 'copy_action');
             navigator.clipboard.writeText(text)
                 .then(() => showToast('Legenda copiada.'))
                 .catch(() => showToast('Falha ao copiar legenda.', true));
@@ -2153,15 +3271,19 @@
 
         function applyCtaPreset(type) {
             const catalogLink = resolveCatalogCtaLink();
+            const whatsAppGroupUrl = 'https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX';
+            const bioUrl = isDevRuntime()
+                ? 'https://achadinhos-dev.reidasofertas.ia.br/bio'
+                : 'https://reidasofertas.ia.br/bio';
             const ctaInput = document.getElementById('ctaInput');
             if (!ctaInput) return;
 
             if (type === 'catalog') {
-                ctaInput.value = `Acesse o catalogo VIP e veja a oferta completa: ${catalogLink}`;
+                ctaInput.value = `Acesse o catalogo VIP: ${catalogLink}\nEntre no grupo VIP: ${whatsAppGroupUrl}\nSite da bio: ${bioUrl}`;
             } else if (type === 'whatsapp') {
-                ctaInput.value = 'Comente EU QUERO ou entre no WhatsApp para receber os melhores achadinhos primeiro.';
+                ctaInput.value = `Comente EU QUERO ou entre no grupo VIP agora: ${whatsAppGroupUrl}\nSite da bio: ${bioUrl}`;
             } else {
-                ctaInput.value = 'Confira agora no catalogo porque esse tipo de oferta pode mudar rapidamente.';
+                ctaInput.value = `Confira agora no catalogo porque esse tipo de oferta pode mudar rapidamente: ${catalogLink}\nSite da bio: ${bioUrl}`;
             }
 
             syncPreview();
@@ -2180,7 +3302,7 @@
                 const items = [
                     caption.trim().length > 40 ? 'Legenda ok' : 'Legenda curta',
                     cta.trim().length > 10 ? 'CTA ok' : 'CTA pendente',
-                    hashtags.trim().length > 0 ? 'Hashtags ok' : 'Hashtags pendentes'
+                    hashtags.trim().length > 0 ? 'Hashtags no bloco separado' : 'Hashtags pendentes'
                 ];
                 checklist.textContent = items.join(' • ');
             }
@@ -2199,7 +3321,7 @@
                 grid.innerHTML += `
                     <button type="button" id="capCard_${index}" data-caption-index="${index}" class="caption-card w-full bg-surface border border-white/10 p-4 rounded-xl cursor-pointer hover:border-accent/50 hover:bg-surface/80 transition-all text-left group">
                         <div class="flex justify-between items-center mb-2">
-                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest group-[.selected]:text-accent group-hover:text-accent">Opção ${index + 1}</span>
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest group-[.selected]:text-accent group-hover:text-accent">Opcao ${index + 1}</span>
                             <div class="w-4 h-4 rounded-full border border-white/20 flex items-center justify-center group-[.selected]:bg-accent group-[.selected]:border-accent transition-colors">
                                 <svg class="w-2.5 h-2.5 text-primary opacity-0 group-[.selected]:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
                             </div>
@@ -2426,7 +3548,7 @@
             if (!currentData) return;
             const btn = document.getElementById('suggestTagsBtn');
             const originalText = btn.innerHTML;
-            btn.innerHTML = 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³';
+            btn.innerHTML = 'Sugerindo...';
             btn.disabled = true;
 
             try {
@@ -2441,12 +3563,12 @@
                 if (data.success && data.hashtags) {
                     document.getElementById('hashtagInput').value = data.hashtags;
                     syncPreview();
-                    showToast('✨ Hashtags Sugeridas!');
+                    showToast('Hashtags sugeridas!');
                 } else {
-                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha ao sugerir hashtags.', true);
+                    showToast('Falha ao sugerir hashtags.', true);
                 }
-            } catch {
-                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro de rede.', true);
+            } catch (error) {
+                showToast('Erro de rede.', true);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalText;
@@ -2572,7 +3694,7 @@
             if (!file) return;
 
             const status = document.getElementById('mediaStatus');
-            status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Subindo ${type}...`;
+            status.textContent = `Subindo ${type}...`;
             status.classList.remove('hidden');
 
             const formData = new FormData();
@@ -2586,7 +3708,7 @@
                 });
                 const data = await res.json();
                 if (data.success) {
-                    status.textContent = `✅ ${type.toUpperCase()} carregado!`;
+                    status.textContent = `${type.toUpperCase()} carregado!`;
                     if (type === 'photo') {
                         currentData.imageUrl = data.url;
                         currentData.videoCoverUrl = data.url;
@@ -2616,10 +3738,10 @@
                     }
                     syncVideoTools();
                 } else {
-                    status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro no upload.`;
+                    status.textContent = 'Erro no upload.';
                 }
-            } catch {
-                status.textContent = `ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha de rede.`;
+            } catch (error) {
+                status.textContent = 'Falha de rede.';
             }
         }
 
@@ -2627,8 +3749,8 @@
             if (text === null || text === undefined) return '';
             let normalized = String(text);
             const knownBrokenMessages = [
-                ['Selecione pelo menos uma ação.', 'Selecione pelo menos uma acao.'],
-                ['Lançando Campanha...', 'Lancando campanha...'],
+                ['Selecione pelo menos uma aáƒÆ’á†â€™áƒâ€šá‚Â§áƒÆ’á†â€™áƒâ€šá‚Â£o.', 'Selecione pelo menos uma acao.'],
+                ['LanáƒÆ’á†â€™áƒâ€šá‚Â§ando Campanha...', 'Lancando campanha...'],
                 ['Erro no Rascunho', 'Erro no rascunho'],
                 ['Parcial/Erro', 'Parcial ou erro'],
                 ['Falha de Rede', 'Falha de rede'],
@@ -2637,9 +3759,9 @@
                 ['Carregando Rascunho...', 'Carregando rascunho...'],
                 ['Falha ao sugerir hashtags.', 'Falha ao sugerir hashtags.'],
                 ['Erro de rede.', 'Erro de rede.'],
-                ['Distribuição Concluída!', 'Distribuicao concluida!'],
+                ['DistribuiáƒÆ’á†â€™áƒâ€šá‚Â§áƒÆ’á†â€™áƒâ€šá‚Â£o ConcluáƒÆ’á†â€™áƒâ€šá‚Â­da!', 'Distribuicao concluida!'],
                 ['Hashtags Sugeridas!', 'Hashtags sugeridas!'],
-                ['Salvando edição...', 'Salvando edicao...'],
+                ['Salvando ediáƒÆ’á†â€™áƒâ€šá‚Â§áƒÆ’á†â€™áƒâ€šá‚Â£o...', 'Salvando edicao...'],
                 ['Arte aplicada visualmente, mas falhou salvar no servidor.', 'Arte aplicada visualmente, mas falhou ao salvar no servidor.'],
                 ['Arte aplicada visualmente, erro de rede.', 'Arte aplicada visualmente, mas houve erro de rede ao salvar.'],
                 ['AGENDAR NO INSTAGRAM', 'AGENDAR NO INSTAGRAM'],
@@ -2647,7 +3769,7 @@
                 ['Gerando...', 'Gerando...']
             ];
 
-            const maybeBroken = /[ÃÂâ€¢žœš€™]/.test(normalized);
+            const maybeBroken = /[áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¾áƒÆ’á¢â‚¬Â¦áƒÂ¢á¢â€šÂ¬á…â€œáƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢]/.test(normalized);
             if (!maybeBroken) {
                 return normalized;
             }
@@ -2660,7 +3782,7 @@
                     }
 
                     normalized = repaired;
-                } catch {
+                } catch (error) {
                     break;
                 }
             }
@@ -2712,8 +3834,8 @@
 
         function getCatalogLinkForTarget(target) {
             if (target === 'dev') return 'https://achadinhos-dev.reidasofertas.ia.br/catalogo';
-            if (target === 'prod') return 'https://achadinhos.reidasofertas.ia.br/catalogo';
-            return 'https://achadinhos.reidasofertas.ia.br/catalogo';
+            if (target === 'prod') return 'https://reidasofertas.ia.br/catalogo';
+            return 'https://reidasofertas.ia.br/catalogo';
         }
 
         function applyAutoReplyDefaults(force = false) {
@@ -2749,11 +3871,11 @@
             const catalogTarget = resolveCatalogTargetSelection(btnCat);
 
             if (!btnIg && !btnWa && !btnTg && !btnCat) {
-                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Selecione pelo menos uma ação.');
+                showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¯áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¸áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â Selecione pelo menos uma aáƒÆ’á†â€™áƒâ€šá‚Â§áƒÆ’á†â€™áƒâ€šá‚Â£o.');
                 return;
             }
 
-            updateStatus('pubMasterBtn', 'loading', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Lançando Campanha...');
+            updateStatus('pubMasterBtn', 'loading', 'áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â³ LanáƒÆ’á†â€™áƒâ€šá‚Â§ando Campanha...');
 
             try {
                 const cap = document.getElementById('captionText').value + "\n\n" + document.getElementById('hashtagInput').value;
@@ -2768,7 +3890,7 @@
                     scheduledFor = new Date(scheduledEl.value).toISOString();
                 }
 
-                // 1. Sempre criamos o Draft primeiro (Registro de Histórico Central)
+                // 1. Sempre criamos o Draft primeiro (Registro de HistáƒÆ’á†â€™áƒâ€šá‚Â³rico Central)
                 const draftRes = await fetch('/api/admin/create-draft', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
@@ -2801,13 +3923,13 @@
 
                 const draftData = await draftRes.json();
                 if (!draftData.success) {
-                    updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro no Rascunho');
+                    updateStatus('pubMasterBtn', 'error', 'áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¾áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢ Erro no Rascunho');
                     return;
                 }
 
                 currentDraftId = draftData.draftId;
 
-                // 2. Se for agendado, parar por aqui, pois o worker de back-end cuidará do disparo.
+                // 2. Se for agendado, parar por aqui, pois o worker de back-end cuidaráƒÆ’á†â€™áƒâ€šá‚Â¡ do disparo.
                 if (scheduledFor) {
                     const scheduledForLabel = new Date(scheduledFor).toLocaleString('pt-BR');
                     updateStatus('pubMasterBtn', 'success', 'Campanha agendada');
@@ -2816,10 +3938,10 @@
                     return;
                 }
 
-                updateStatus('pubMasterBtn', 'loading', '🚀 Distribuindo Redes...');
+                updateStatus('pubMasterBtn', 'loading', 'áƒÆ’á‚Â°áƒâ€¦á‚Â¸áƒâ€¦á‚Â¡áƒÂ¢á¢â‚¬Å¡á‚Â¬ Distribuindo Redes...');
 
                 // 3. Disparar Omnichannel API
-                const contentWaTg = document.getElementById('captionText').value + "\n\n🛍️ Compre aqui: " + currentConvertedUrl;
+                const contentWaTg = document.getElementById('captionText').value + "\n\náƒÆ’á‚Â°áƒâ€¦á‚Â¸áƒÂ¢á¢â€šÂ¬á‚Âºáƒâ€šá‚ÂáƒÆ’á‚Â¯áƒâ€šá‚Â¸áƒâ€šá‚Â Compre aqui: " + currentConvertedUrl;
                 const pubRes = await fetch('/api/admin/publish-master', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Admin-Key': savedAdminKey },
@@ -2839,22 +3961,22 @@
 
                 const pubData = await pubRes.json();
                 if (pubData.success) {
-                    updateStatus('pubMasterBtn', 'success', '🚀 Campanha no Ar!');
-                    showToast('✅ Distribuição Concluída!');
+                    updateStatus('pubMasterBtn', 'success', 'áƒÆ’á‚Â°áƒâ€¦á‚Â¸áƒâ€¦á‚Â¡áƒÂ¢á¢â‚¬Å¡á‚Â¬ Campanha no Ar!');
+                    showToast('áƒÆ’á‚Â¢áƒâ€¦á¢â‚¬Å“áƒÂ¢á¢â€šÂ¬á‚Â¦ DistribuiáƒÆ’á†â€™áƒâ€šá‚Â§áƒÆ’á†â€™áƒâ€šá‚Â£o ConcluáƒÆ’á†â€™áƒâ€šá‚Â­da!');
                 } else {
-                    updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Parcial/Erro');
+                    updateStatus('pubMasterBtn', 'error', 'áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¯áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¸áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â Parcial/Erro');
                     console.error("Master Publish Errors: ", pubData.channels);
-                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro em alguns canais (veja o console).', true);
+                    showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¾áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢ Erro em alguns canais (veja o console).', true);
                 }
             } catch (err) {
-                updateStatus('pubMasterBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha de Rede');
+                updateStatus('pubMasterBtn', 'error', 'áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¾áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢ Falha de Rede');
                 console.error(err);
             }
-        }
 
+        }
         async function syncCatalog() {
             if (!currentDraftId) { showToast('Poste no Instagram primeiro.'); return; }
-            updateStatus('pubCatalogBtn', 'loading', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Sincronizando...');
+            updateStatus('pubCatalogBtn', 'loading', 'áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â³ Sincronizando...');
             try {
                 const res = await fetch('/api/admin/add-to-catalog', {
                     method: 'POST',
@@ -2865,9 +3987,9 @@
                     })
                 });
                 const data = await res.json();
-                if (data.success) updateStatus('pubCatalogBtn', 'success', '✅ No Catálogo!');
-                else updateStatus('pubCatalogBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro');
-            } catch { updateStatus('pubCatalogBtn', 'error', 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Falha'); }
+                if (data.success) updateStatus('pubCatalogBtn', 'success', 'áƒÆ’á‚Â¢áƒâ€¦á¢â‚¬Å“áƒÂ¢á¢â€šÂ¬á‚Â¦ No CatáƒÆ’á†â€™áƒâ€šá‚Â¡logo!');
+                else updateStatus('pubCatalogBtn', 'error', 'áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¾áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢ Erro');
+            } catch (error) { updateStatus('pubCatalogBtn', 'error', 'áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¾áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢ Falha'); }
         }
 
         // === Utils ===
@@ -2882,7 +4004,7 @@
         function copyCaption() {
             const txt = document.getElementById('captionText').value;
             navigator.clipboard.writeText(txt);
-            showToast('📋 Legenda copiada!');
+            showToast('áƒÆ’á‚Â°áƒâ€¦á‚Â¸áƒÂ¢á¢â€šÂ¬á…â€œáƒÂ¢á¢â€šÂ¬á‚Â¹ Legenda copiada!');
         }
 
         function openConvertedOffer() {
@@ -2891,7 +4013,7 @@
                 return;
             }
 
-            trackClick(currentConvertedUrl, 'admin_open_offer', 'checkout_intent');
+            trackClick(currentConvertedUrl, 'conversor_admin', 'checkout_intent');
             window.open(currentConvertedUrl, '_blank', 'noopener,noreferrer');
         }
 
@@ -2901,7 +4023,7 @@
                 return;
             }
 
-            trackClick(currentConvertedUrl, 'admin_copy_converted_link', 'copy_action');
+            trackClick(currentConvertedUrl, 'conversor_admin', 'copy_action');
             navigator.clipboard.writeText(currentConvertedUrl)
                 .then(() => showToast('Link convertido copiado.'))
                 .catch(() => showToast('Falha ao copiar link convertido.', true));
@@ -2936,6 +4058,7 @@
 
                         const metaBits = [];
                         if (scheduledDate) metaBits.push(`Agendado: ${scheduledDate}`);
+                        metaBits.push(`Processo: ${getDraftProcessLabel(draft)}`);
                         if (draft.mediaId) metaBits.push(`Media ID: ${draft.mediaId}`);
                         if (draft.catalogTarget && draft.catalogTarget !== 'none') metaBits.push(`Catalogo sugerido: ${String(draft.catalogTarget).toUpperCase()}`);
                         if (draft.inCatalog && Array.isArray(draft.catalogTargets) && draft.catalogTargets.length) metaBits.push(`No catalogo: ${draft.catalogTargets.map(x => String(x).toUpperCase()).join(', ')}`);
@@ -2964,6 +4087,7 @@
                                             <span class="px-2 py-0.5 rounded-full ${statusColor}/20 text-${statusColor.split('-')[1]}-400 text-[9px] font-bold uppercase">${statusText}</span>
                                             <span class="text-[9px] text-slate-500 uppercase">${draft.postType}</span>
                                         </div>
+                                        <p class="text-[9px] font-bold uppercase tracking-widest text-amber-300 mb-1">${getDraftProcessLabel(draft)}</p>
                                         <p class="text-[9px] text-slate-600">${date}</p>
                                         ${detailText ? `<p class="mt-1 text-[10px] text-slate-400 leading-relaxed">${detailText}</p>` : ''}
                                         ${errorText ? `<p class="mt-2 text-[10px] text-red-300 leading-relaxed break-words">${errorText}</p>` : ''}
@@ -2998,7 +4122,7 @@
                     return;
                 }
                 showToast(data.error || 'Falha ao finalizar rascunho.', true);
-            } catch {
+            } catch (error) {
                 showToast('Falha de rede ao finalizar rascunho.', true);
             }
         }
@@ -3025,7 +4149,7 @@
                     return;
                 }
                 showToast(data.error || 'Falha ao enviar para o catalogo.', true);
-            } catch {
+            } catch (error) {
                 showToast('Falha de rede ao enviar para o catalogo.', true);
             }
         }
@@ -3129,23 +4253,37 @@
             }
         }
         async function loadDraftIntoEditor(draftId) {
-            showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Carregando Rascunho...');
+            showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â³ Carregando Rascunho...');
             try {
                 const res = await fetch(`/api/admin/draft/${draftId}`, {
                     headers: { 'X-Admin-Key': savedAdminKey }
                 });
-                const data = await res.json();
+                const raw = await res.text();
+                let data;
+                try {
+                    data = raw ? JSON.parse(raw) : null;
+                } catch (error) {
+                    throw new Error('Resposta invalida ao carregar rascunho.');
+                }
+
+                if (!res.ok || !data?.success || !data?.draft) {
+                    throw new Error(data?.error || 'Falha ao carregar rascunho.');
+                }
+
                 if (data.success && data.draft) {
                     const draft = data.draft;
                     setHistoryMode(false);
+                    currentDraftId = draft.id || draftId;
 
-                    // Fill mock data so the editor "thinks" a product is loaded
+                    const normalized = normalizeDraftPreviewData(draft);
+
+                    // Fill the editor with normalized draft data so preview, cards and tabs stay in sync
                     currentData = {
-                        title: draft.productName || 'Carregado',
-                        offerUrl: draft.offerUrl || '',
-                        imageUrl: draft.imageUrls?.[0] || draft.suggestedImageUrls?.[0] || '',
-                        videoUrl: draft.videoUrl || null,
-                        videoCoverUrl: draft.videoCoverUrl || draft.imageUrls?.[0] || draft.suggestedImageUrls?.[0] || '',
+                        title: normalized.title,
+                        offerUrl: normalized.offerUrl,
+                        imageUrl: normalized.imageUrl,
+                        videoUrl: normalized.videoUrl || null,
+                        videoCoverUrl: draft.videoCoverUrl || normalized.imageUrl || '',
                         videoCoverAtSeconds: draft.videoCoverAtSeconds ?? 0,
                         videoTrimStartSeconds: draft.videoTrimStartSeconds ?? 0,
                         videoTrimEndSeconds: draft.videoTrimEndSeconds ?? null,
@@ -3155,21 +4293,19 @@
                         musicEndSeconds: draft.musicEndSeconds ?? null,
                         musicVolume: draft.musicVolume ?? 0.7,
                         originalAudioVolume: draft.originalAudioVolume ?? 0.25,
-                        images: draft.imageUrls?.length
-                            ? draft.imageUrls.filter(Boolean)
-                            : (draft.suggestedImageUrls?.length ? draft.suggestedImageUrls.filter(Boolean) : []),
-                        price: draft.currentPrice || draft.price || 'R$ 0,00',
-                        previousPrice: draft.previousPrice || '',
-                        discountPercent: draft.discountPercent || 0,
+                        images: normalized.imageCandidates,
+                        price: normalized.currentPrice || draft.price || 'R$ 0,00',
+                        previousPrice: normalized.previousPrice || '',
+                        discountPercent: normalized.discountPercent || 0,
                         estimatedDelivery: draft.estimatedDelivery || '',
-                        videoCandidates: draft.suggestedVideoUrls || [],
-                        imageCandidates: draft.suggestedImageUrls || [],
-                        store: draft.store || ''
+                        videoCandidates: normalized.videoCandidates,
+                        imageCandidates: normalized.imageCandidates,
+                        store: normalized.store
                     };
-                    currentConvertedUrl = draft.offerUrl || '';
-                    document.getElementById('urlInput').value = draft.offerUrl || '';
+                    currentConvertedUrl = normalized.offerUrl || '';
+                    document.getElementById('urlInput').value = normalized.offerUrl || '';
 
-                    document.getElementById('captionText').value = draft.caption || '';
+                    document.getElementById('captionText').value = draft.caption || normalized.caption || '';
                     document.getElementById('postType').value = draft.postType || 'feed';
                     document.getElementById('autoReplyCheck').checked = draft.autoReplyEnabled;
                     document.getElementById('autoReplySettings').classList.toggle('hidden', !draft.autoReplyEnabled);
@@ -3199,8 +4335,13 @@
                         document.getElementById('productImage').src = currentData.imageUrl;
                         document.getElementById('instaPreviewImg').src = currentData.imageUrl;
                         document.getElementById('instaPreviewImg').classList.remove('hidden');
+                    } else {
+                        document.getElementById('productImage').src = '';
+                        document.getElementById('instaPreviewImg').src = '';
                     }
                     document.getElementById('productTitle').textContent = currentData.title;
+                    renderDraftOriginBadge(normalized.sourceDataOrigin || draft.sourceDataOrigin || draft.SourceDataOrigin || '');
+                    renderDraftProcessBadge(normalized.processName || getDraftProcessLabel(draft));
                     if (currentData.videoUrl) {
                         const previewVideo = document.getElementById('instaPreviewVid');
                         previewVideo.src = currentData.videoUrl;
@@ -3210,6 +4351,8 @@
                     } else {
                         document.getElementById('instaPreviewVid').classList.add('hidden');
                     }
+                    renderDraftCardDetails(draft);
+                    switchDraftCardTab('summary');
                     syncVideoTools();
 
                     setFormat(draft.postType || 'feed');
@@ -3218,10 +4361,13 @@
 
                     // Switch to Visual tab to start working on it
                     switchTab('visual');
-                    showToast('✅ Rascunho Carregado!');
+                    showToast('áƒÆ’á‚Â¢áƒâ€¦á¢â‚¬Å“áƒÂ¢á¢â€šÂ¬á‚Â¦ Rascunho Carregado!');
                 }
-            } catch {
-                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Erro ao ler rascunho', true);
+            } catch (error) {
+                const message = error?.message || 'Erro ao ler rascunho';
+                console.error('Falha ao carregar rascunho', { draftId, error });
+                showToast(message, true);
+                showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¾áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢ Erro ao ler rascunho', true);
             }
         }
 
@@ -3249,7 +4395,7 @@
 
         function openEditorModal() {
             if (!currentData || !currentData.imageUrl) {
-                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Precisa de uma imagem base para editar.', true);
+                showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¯áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¸áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â Precisa de uma imagem base para editar.', true);
                 return;
             }
             if (!editorCanvas) initEditor();
@@ -3327,7 +4473,7 @@
                         editorCtx.fillStyle = '#ffffff';
                         editorCtx.font = `bold ${rh * 0.5}px sans-serif`;
                         editorCtx.textAlign = 'center';
-                        editorCtx.fillText('FRETE GRÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂTIS', el.x + rw / 2, el.y + rh * 0.7);
+                        editorCtx.fillText('FRETE GRáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¾áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂTIS', el.x + rw / 2, el.y + rh * 0.7);
                         editorCtx.textAlign = 'left'; // reset
                     }
 
@@ -3420,7 +4566,7 @@
             document.getElementById('productImage').src = dataUrl;
 
             closeEditorModal();
-            showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ Salvando edição...', false);
+            showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚ÂáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â³ Salvando ediáƒÆ’á†â€™áƒâ€šá‚Â§áƒÆ’á†â€™áƒâ€šá‚Â£o...', false);
 
             try {
                 const res = await fetch(dataUrl);
@@ -3441,13 +4587,13 @@
                     if (currentData.images && currentData.images.length > 0) {
                         currentData.images[0] = uploadData.url;
                     }
-                    showToast('✅ Arte atualizada e salva!');
+                    showToast('áƒÆ’á‚Â¢áƒâ€¦á¢â‚¬Å“áƒÂ¢á¢â€šÂ¬á‚Â¦ Arte atualizada e salva!');
                     syncPreview();
                 } else {
-                    showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Arte aplicada visualmente, mas falhou salvar no servidor.', true);
+                    showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¯áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¸áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â Arte aplicada visualmente, mas falhou salvar no servidor.', true);
                 }
-            } catch {
-                showToast('ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Arte aplicada visualmente, erro de rede.', true);
+            } catch (error) {
+                showToast('áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¦áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¾áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¯áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¸áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¾áƒâ€šá‚Â¢âáƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€šá‚Â¦áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒÂ¢á¢â‚¬Å¾á‚Â¢áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¬áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á‚Â¦áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á¢â‚¬Â áƒÂ¢á¢â€šÂ¬á¢â€žÂ¢áƒÆ’á†â€™áƒâ€šá‚Â¢áƒÆ’á‚Â¢áƒÂ¢á¢â€šÂ¬á…Â¡áƒâ€šá‚Â¬áƒÆ’á¢â‚¬Â¦áƒâ€šá‚Â¡áƒÆ’á†â€™áƒâ€ á¢â‚¬â„¢áƒÆ’á‚Â¢áƒÂ¢á¢â‚¬Å¡á‚Â¬áƒâ€¦á‚Â¡áƒÆ’á†â€™áƒÂ¢á¢â€šÂ¬á…Â¡áƒÆ’á¢â‚¬Å¡áƒâ€šá‚Â Arte aplicada visualmente, erro de rede.', true);
             }
         }
 
@@ -3789,7 +4935,7 @@
                 } else {
                     showToast('Arte aplicada visualmente, mas falhou ao salvar no servidor.', true);
                 }
-            } catch {
+            } catch (error) {
                 showToast('Arte aplicada visualmente, mas houve erro de rede ao salvar.', true);
             }
         };
@@ -3830,6 +4976,35 @@
             observer.observe(target, { childList: true, characterData: true, subtree: true });
         }
 
+        function repairBrokenUiDom(root = document.body) {
+            if (!root) return;
+
+            const shouldRepair = value => /[áƒÆ•â€]/.test(value || '');
+            const fix = value => normalizeUiText(value || '');
+            const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+
+            while (textWalker.nextNode()) {
+                const node = textWalker.currentNode;
+                if (node?.nodeValue && shouldRepair(node.nodeValue)) {
+                    node.nodeValue = fix(node.nodeValue);
+                }
+            }
+
+            root.querySelectorAll('input[placeholder], textarea[placeholder], button, label, span, p, div, h1, h2, h3, h4, h5').forEach(el => {
+                if ('placeholder' in el && el.placeholder && shouldRepair(el.placeholder)) {
+                    el.placeholder = fix(el.placeholder);
+                }
+
+                if (el.childElementCount === 0) {
+                    const text = el.textContent || '';
+                    if (text && shouldRepair(text)) {
+                        el.textContent = fix(text);
+                    }
+                }
+            });
+        }
+
+
         let qrInstance = null;
         function showQrCode() {
             if (!currentConvertedUrl) return;
@@ -3849,11 +5024,17 @@
         attachNormalizedTextObserver('toast');
         attachNormalizedTextObserver('errorAlert');
         attachNormalizedTextObserver('mediaStatus');
+        repairBrokenUiDom();
         toggleCatalogTargetState();
     </script>
 </body>
 
 </html>
+
+
+
+
+
 
 
 

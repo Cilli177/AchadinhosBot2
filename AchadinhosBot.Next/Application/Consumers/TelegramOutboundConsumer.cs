@@ -39,38 +39,60 @@ public sealed class TelegramOutboundConsumer : IConsumer<SendTelegramMessageComm
             return;
         }
 
-        TelegramSendResult result;
-        if (!string.IsNullOrWhiteSpace(command.ImageUrl))
+        var releaseDedupeOnFailure = true;
+        try
         {
-            result = await _transport.SendPhotoAsync(
-                command.BotToken,
-                command.ChatId,
-                command.ImageUrl,
-                command.Text,
-                context.CancellationToken);
-
-            if (!result.Success && command.TextFallbackAllowed && !string.IsNullOrWhiteSpace(command.Text))
+            TelegramSendResult result;
+            if (!string.IsNullOrWhiteSpace(command.ImageUrl))
             {
-                result = await _transport.SendTextAsync(command.BotToken, command.ChatId, command.Text, context.CancellationToken);
+                result = await _transport.SendPhotoAsync(
+                    command.BotToken,
+                    command.ChatId,
+                    command.ImageUrl,
+                    command.Text,
+                    context.CancellationToken);
+
+                if (!result.Success && command.TextFallbackAllowed && !string.IsNullOrWhiteSpace(command.Text))
+                {
+                    result = await _transport.SendTextAsync(command.BotToken, command.ChatId, command.Text, context.CancellationToken);
+                }
+            }
+            else
+            {
+                result = await _transport.SendTextAsync(command.BotToken, command.ChatId, command.Text ?? string.Empty, context.CancellationToken);
+            }
+
+            if (!result.Success)
+            {
+                throw new InvalidOperationException(result.Message ?? "Falha no envio outbound do Telegram.");
+            }
+
+            releaseDedupeOnFailure = false;
+
+            try
+            {
+                await _outboundLogStore.AppendAsync(new TelegramOutboundLogEntry
+                {
+                    MessageId = command.MessageId,
+                    CreatedAtUtc = command.CreatedAtUtc,
+                    ChatId = command.ChatId,
+                    Text = command.Text,
+                    ImageUrl = command.ImageUrl
+                }, context.CancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao registrar log outbound do Telegram apos envio concluido. MessageId={MessageId}", command.MessageId);
             }
         }
-        else
+        catch
         {
-            result = await _transport.SendTextAsync(command.BotToken, command.ChatId, command.Text ?? string.Empty, context.CancellationToken);
-        }
+            if (releaseDedupeOnFailure)
+            {
+                _idempotencyStore.RemoveByPrefix(dedupeKey);
+            }
 
-        if (!result.Success)
-        {
-            throw new InvalidOperationException(result.Message ?? "Falha no envio outbound do Telegram.");
+            throw;
         }
-
-        await _outboundLogStore.AppendAsync(new TelegramOutboundLogEntry
-        {
-            MessageId = command.MessageId,
-            CreatedAtUtc = command.CreatedAtUtc,
-            ChatId = command.ChatId,
-            Text = command.Text,
-            ImageUrl = command.ImageUrl
-        }, context.CancellationToken);
     }
 }

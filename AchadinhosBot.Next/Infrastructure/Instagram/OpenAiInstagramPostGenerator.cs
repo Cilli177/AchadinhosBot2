@@ -85,7 +85,7 @@ public sealed class OpenAiInstagramPostGenerator
             model,
             input = new[]
             {
-                new { role = "system", content = "Voce cria posts profissionais para Instagram em portugues do Brasil." },
+                new { role = "system", content = "Voce cria posts profissionais para Instagram em portugues do Brasil. Nao mostre pensamento, raciocinio, planejamento ou explicacoes extras. Responda apenas com a copy final." },
                 new { role = "user", content = prompt }
             },
             temperature = aiSettings.Temperature,
@@ -130,7 +130,7 @@ public sealed class OpenAiInstagramPostGenerator
             model,
             input = new[]
             {
-                new { role = "system", content = "Responda em portugues do Brasil com clareza e sem formatacao extra desnecessaria." },
+                new { role = "system", content = "Responda em portugues do Brasil com clareza. Nao mostre pensamento, raciocinio, planejamento ou explicacoes extras. Responda apenas com o resultado final." },
                 new { role = "user", content = prompt.Trim() }
             },
             temperature = aiSettings.Temperature,
@@ -270,6 +270,34 @@ public sealed class OpenAiInstagramPostGenerator
             productInput = ShortenProductName(productInput);
         }
 
+        var promptPreset = instaSettings.PromptPreset?.Trim().ToLowerInvariant();
+        if (promptPreset is "modelo3" or "model3" or "caption_model_3")
+        {
+            var adminPrompt = new StringBuilder();
+            adminPrompt.AppendLine("Voce e um copywriter senior de afiliados no Brasil.");
+            adminPrompt.AppendLine("Crie uma unica legenda profissional para Instagram, pronta para publicar, em portugues do Brasil.");
+            adminPrompt.AppendLine("A legenda principal NAO deve conter hashtags.");
+            adminPrompt.AppendLine("Use um gancho forte, vivo e visual na abertura, beneficios reais, leitura escaneavel e CTA simples no fechamento.");
+            adminPrompt.AppendLine("A copy precisa soar humana, vibrante e comercial, com energia de descoberta e desejo imediato.");
+            adminPrompt.AppendLine("Prefira CTAs naturais como: Comente EU QUERO, Link no direct, Link na bio, Me chama no direct.");
+            adminPrompt.AppendLine("Nao invente preco, urgencia, estoque, frete, cupom, parcelamento ou beneficio nao informado.");
+            adminPrompt.AppendLine("Nao inclua cabecalhos, numeracao, observacoes internas, sugestoes de imagem, blocos de hashtags ou texto explicando o que fez.");
+            adminPrompt.AppendLine("Nao mostre pensamento, raciocinio, planejamento, analise ou notas internas. Entregue somente a copy final.");
+            adminPrompt.AppendLine("Entregue apenas a copy final.");
+            adminPrompt.AppendLine();
+            adminPrompt.AppendLine($"Produto: {productInput}");
+            adminPrompt.AppendLine($"Link afiliado: {affiliateLink ?? string.Empty}");
+            adminPrompt.AppendLine($"Contexto da oferta: {offerContext ?? string.Empty}");
+            adminPrompt.AppendLine($"Titulo de apoio: {title ?? string.Empty}");
+            adminPrompt.AppendLine($"Descricao de apoio: {description ?? string.Empty}");
+            if (!string.IsNullOrWhiteSpace(instaSettings.FooterText))
+            {
+                adminPrompt.AppendLine($"Rodape opcional: {instaSettings.FooterText}");
+            }
+
+            return adminPrompt.ToString().Trim();
+        }
+
         var format = new StringBuilder();
         format.AppendLine("Formato obrigatório (sem texto extra):");
         format.AppendLine("POST PARA INSTAGRAM");
@@ -325,7 +353,7 @@ public sealed class OpenAiInstagramPostGenerator
         }
 
         var template = string.IsNullOrWhiteSpace(instaSettings.PromptTemplate)
-            ? "{{format}}\n\nDiretrizes obrigatorias:\n- Escreva como um copywriter premium de ofertas no Brasil.\n- Entregue na area de legenda apenas copy publicavel. Nao inclua titulos como \"POST PARA INSTAGRAM\", \"Legenda 1\", \"Hashtags sugeridas\", \"Sugestoes de imagem\", observacoes internas ou explicacoes.\n- Gere legendas mais profissionais, com gancho forte na abertura e CTA claro no final.\n- Use beneficios concretos, preco, desconto, cupom e prazo somente quando estiverem no contexto.\n- Nao invente urgencia, estoque, frete gratis, parcelamento ou condicoes nao informadas.\n- Cada legenda deve ter angulo diferente: autoridade, oportunidade, desejo, praticidade ou comparacao.\n- Evite texto generico. Nada de introducoes vazias como \"olha isso\" ou \"imperdivel\" sem contexto.\n- Evite excesso de emojis. No maximo 3 bem colocados.\n- Deixe a leitura pronta para Instagram, com blocos curtos e escaneaveis.\n- Inclua CTA de comentario ou direct de forma natural.\n- Se precisar registrar comentarios, riscos ou sugestoes, deixe isso fora da legenda.\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\nRodape: {{footer}}\n"
+            ? "{{format}}\n\nDiretrizes obrigatorias:\n- Escreva como um copywriter premium de ofertas no Brasil.\n- Entregue na area de legenda apenas copy publicavel. Nao inclua titulos como \"POST PARA INSTAGRAM\", \"Legenda 1\", \"Hashtags sugeridas\", \"Sugestoes de imagem\", observacoes internas ou explicacoes.\n- Gere legendas mais profissionais, com gancho forte, vivo e visual na abertura e CTA claro no final.\n- Use uma linguagem humana, vibrante e comercial, com energia de descoberta e desejo imediato.\n- Use beneficios concretos, preco, desconto, cupom e prazo somente quando estiverem no contexto.\n- Nao invente urgencia, estoque, frete gratis, parcelamento ou condicoes nao informadas.\n- Cada legenda deve ter angulo diferente: autoridade, oportunidade, desejo, praticidade ou comparacao.\n- Evite texto generico. Nada de introducoes vazias como \"olha isso\" ou \"imperdivel\" sem contexto.\n- Evite excesso de emojis. No maximo 3 bem colocados.\n- Deixe a leitura pronta para Instagram, com blocos curtos e escaneaveis.\n- Se o post for para catalogo, nao use link bruto na legenda: oriente a pessoa a acessar a bio e entrar no catalogo.\n- Inclua CTA de comentario ou direct de forma natural.\n- Se precisar registrar comentarios, riscos ou sugestoes, deixe isso fora da legenda.\n\nDados:\nEntrada: {{input}}\nLink afiliado: {{link}}\nContexto da oferta: {{context}}\nRodape: {{footer}}\n"
             : instaSettings.PromptTemplate;
 
         var prompt = template
@@ -342,6 +370,8 @@ public sealed class OpenAiInstagramPostGenerator
         {
             prompt = "Voc\u00ea \u00e9 um expert em growth e copywriter premium de afiliados no Brasil, n\u00edvel autoridade.\n" +
                      "Crie um post de alt\u00edssima qualidade, elegante, comercialmente forte e pronto para conversao.\n" +
+                     "Nao mostre pensamento, raciocinio, planejamento, analise ou notas internas. Entregue somente a legenda/copy final pronta para publicar.\n" +
+                     "A copy deve parecer viva, chamativa e naturalmente persuasiva, nunca neutra ou morna.\n" +
                      "Nas hashtags, inclua obrigatoriamente padr\u00f5es de alto n\u00edvel como #achadinhos #ofertas #promo\u00e7\u00e3o #compras #dicas e varia\u00e7\u00f5es virais.\n" +
                      "Evite genericidade e use um tom que gere desejo imediato sem parecer spam. Linguagem humana, comercial e engajadora.\n" +
                      "Crie legendas CLARAMENTE diferentes entre si, cada uma com angulo proprio e CTA forte.\n" +

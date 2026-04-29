@@ -198,7 +198,7 @@
         </div>
 
         <!-- PRIMARY CTA - Orange Style -->
-        <a href="https://chat.whatsapp.com/seu-grupo-aqui"
+        <a href="https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX"
             class="btn-orange p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center reveal"
             style="transition-delay: 600ms;">
             <span class="text-[10px] font-black uppercase tracking-[0.5em] mb-2 opacity-70 font-display">Acesso</span>
@@ -278,7 +278,7 @@
 
     <script>
         // --- Telemetry ---
-        async function trackClick(targetUrl, source = 'BioHub', campaign = null) {
+        async function trackClick(targetUrl, source = 'instagram_bio', campaign = null) {
             try {
                 await fetch('/api/analytics/click', {
                     method: 'POST',
@@ -300,7 +300,7 @@
         document.addEventListener('click', (e) => {
             const link = e.target.closest('a');
             if (link && link.href) {
-                const source = link.dataset.source || 'BioHub_Link';
+                const source = link.dataset.source || 'instagram_bio';
                 trackClick(link.href, source);
             }
         });
@@ -343,7 +343,7 @@
         function handleSearch() {
             const query = document.getElementById('catalogSearch').value.trim();
             if (query) {
-                trackClick('/conversor?q=' + encodeURIComponent(query), 'BioHub_Search');
+                trackClick('/conversor?q=' + encodeURIComponent(query), 'instagram_bio');
                 window.location.href = '/conversor?q=' + encodeURIComponent(query);
             }
         }
