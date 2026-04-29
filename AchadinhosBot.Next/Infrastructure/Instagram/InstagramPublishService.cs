@@ -25,6 +25,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
     private readonly IInstagramOutboundPublisher _publisher;
     private readonly IInstagramOutboundOutboxStore _outboxStore;
     private readonly ICatalogOfferStore _catalogOfferStore;
+    private readonly IIdempotencyStore _idempotencyStore;
     private readonly string? _publicBaseUrl;
     private readonly ILogger<InstagramPublishService> _logger;
 
@@ -39,6 +40,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         IInstagramOutboundPublisher publisher,
         IInstagramOutboundOutboxStore outboxStore,
         ICatalogOfferStore catalogOfferStore,
+        IIdempotencyStore idempotencyStore,
         IOptions<WebhookOptions> webhookOptions,
         ILogger<InstagramPublishService> logger)
     {
@@ -52,6 +54,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         _publisher = publisher;
         _outboxStore = outboxStore;
         _catalogOfferStore = catalogOfferStore;
+        _idempotencyStore = idempotencyStore;
         _publicBaseUrl = webhookOptions.Value.PublicBaseUrl;
         _logger = logger;
     }
@@ -82,7 +85,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         try
         {
             await _publisher.PublishAsync(command, cancellationToken);
-            await AppendLogAsync("publish_queued", true, draftId, null, null, $"Mode=rabbitmq,Actor={actor}", cancellationToken);
+            await AppendLogAsync("publish_queued", true, draftId, null, null, $"Mode=rabbitmq,Actor={actor}", draft.ProcessName, cancellationToken);
             return new InstagramPublishDispatchResult(true, "rabbitmq", command.MessageId, false, StatusCodes.Status202Accepted);
         }
         catch (Exception publishException)
@@ -96,7 +99,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
                     MessageType = nameof(PublishInstagramPostCommand),
                     PayloadJson = JsonSerializer.Serialize(command)
                 }, cancellationToken);
-                await AppendLogAsync("publish_queued", true, draftId, null, null, $"Mode=local-outbox,Actor={actor}", cancellationToken);
+                await AppendLogAsync("publish_queued", true, draftId, null, null, $"Mode=local-outbox,Actor={actor}", draft.ProcessName, cancellationToken);
                 return new InstagramPublishDispatchResult(true, "local-outbox", command.MessageId, true, StatusCodes.Status202Accepted);
             }
             catch (Exception outboxException)
@@ -109,23 +112,66 @@ public sealed class InstagramPublishService : IInstagramPublishService
 
     public async Task<InstagramPublishExecutionOutcome> ExecutePublishAsync(string draftId, CancellationToken cancellationToken)
     {
+        var normalizedDraftId = draftId.Trim();
+        var dedupeKey = $"instagram:publish:{normalizedDraftId.ToLowerInvariant()}";
+        if (!_idempotencyStore.TryBegin(dedupeKey, TimeSpan.FromHours(6)))
+        {
+            var existingDraft = await _publishStore.GetAsync(normalizedDraftId, cancellationToken);
+            if (existingDraft is not null &&
+                string.Equals(existingDraft.Status, "published", StringComparison.OrdinalIgnoreCase))
+            {
+                return new InstagramPublishExecutionOutcome(
+                    true,
+                    StatusCodes.Status200OK,
+                    existingDraft.MediaId,
+                    null,
+                    existingDraft.Id,
+                    false);
+            }
+
+            return new InstagramPublishExecutionOutcome(
+                false,
+                StatusCodes.Status409Conflict,
+                null,
+                "Publicacao ja em andamento para este draft.",
+                normalizedDraftId,
+                false);
+        }
+
         var settings = await _settingsStore.GetAsync(cancellationToken);
         var publishSettings = settings.InstagramPublish ?? new InstagramPublishSettings();
         var settingsError = ValidateSettings(publishSettings);
         if (settingsError is not null)
         {
-            await AppendLogAsync("publish", false, draftId, null, settingsError, null, cancellationToken);
+            await AppendLogAsync("publish", false, draftId, null, settingsError, null, null, cancellationToken);
             return new InstagramPublishExecutionOutcome(false, StatusCodes.Status400BadRequest, null, settingsError, draftId);
         }
 
-        var draft = await _publishStore.GetAsync(draftId, cancellationToken);
+        var draft = await _publishStore.GetAsync(normalizedDraftId, cancellationToken);
         if (draft is null)
         {
-            await AppendLogAsync("publish", false, draftId, null, "Rascunho nao encontrado.", null, cancellationToken);
-            return new InstagramPublishExecutionOutcome(false, StatusCodes.Status404NotFound, null, "Rascunho nao encontrado.", draftId);
+            await AppendLogAsync("publish", false, normalizedDraftId, null, "Rascunho nao encontrado.", null, null, cancellationToken);
+            return new InstagramPublishExecutionOutcome(false, StatusCodes.Status404NotFound, null, "Rascunho nao encontrado.", normalizedDraftId);
         }
 
+        var isReel = string.Equals(InstagramWorkflowSupport.NormalizePostType(draft.PostType), "reel", StringComparison.OrdinalIgnoreCase);
+        if (isReel)
+        {
+            EnsureCatalogIntentForReel(draft, publishSettings);
+        }
+
+        var effectiveCatalogTarget = CatalogTargets.ResolveEffectiveTarget(draft, publishSettings);
+        if (isReel && !CatalogTargets.IsEnabled(effectiveCatalogTarget))
+        {
+            effectiveCatalogTarget = CatalogTargets.Prod;
+            draft.CatalogTarget = effectiveCatalogTarget;
+            draft.SendToCatalog = true;
+        }
         var effectiveCaption = ResolveEffectiveCaption(draft);
+        if (CatalogTargets.IsEnabled(effectiveCatalogTarget))
+        {
+            effectiveCaption = InstagramWorkflowSupport.PrepareCatalogCaption(effectiveCaption);
+        }
         draft.PostType = InstagramWorkflowSupport.NormalizePostType(draft.PostType);
         draft.SelectedImageIndexes = InstagramWorkflowSupport.SanitizeSelectedIndexes(draft.SelectedImageIndexes, draft.ImageUrls.Count);
 
@@ -154,7 +200,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
                 draft.MediaId = null;
                 draft.Error = error;
                 await _publishStore.UpdateAsync(draft, cancellationToken);
-                await AppendLogAsync("publish", false, draft.Id, null, error, "quality=video-processing", cancellationToken);
+                await AppendLogAsync("publish", false, draft.Id, null, error, "quality=video-processing", draft.ProcessName, cancellationToken);
                 return new InstagramPublishExecutionOutcome(false, StatusCodes.Status400BadRequest, null, error, draft.Id);
             }
 
@@ -177,12 +223,11 @@ public sealed class InstagramPublishService : IInstagramPublishService
             draft.MediaId = null;
             draft.Error = validationError;
             await _publishStore.UpdateAsync(draft, cancellationToken);
-            await AppendLogAsync("publish", false, draft.Id, null, validationError, "quality=validation", cancellationToken);
+            await AppendLogAsync("publish", false, draft.Id, null, validationError, "quality=validation", draft.ProcessName, cancellationToken);
             return new InstagramPublishExecutionOutcome(false, StatusCodes.Status400BadRequest, null, validationError, draft.Id);
         }
 
         var caption = InstagramWorkflowSupport.BuildCaption(effectiveCaption, draft.Hashtags, draft.Ctas);
-        var effectiveCatalogTarget = CatalogTargets.ResolveEffectiveTarget(draft, publishSettings);
         var publishResult = await _metaGraphClient.PublishAsync(publishSettings, draft.PostType, publishMediaUrls, caption, cancellationToken);
         if (!publishResult.Success &&
             normalized.Count > 0 &&
@@ -213,6 +258,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
             publishResult.MediaId,
             publishResult.Success ? null : publishResult.Error,
             publishResult.Success ? $"Publicado com sucesso (AutoReply={draft.AutoReplyEnabled})" : "Falha ao publicar",
+            draft.ProcessName,
             cancellationToken);
 
         if (publishResult.Success && CatalogTargets.IsEnabled(effectiveCatalogTarget))
@@ -229,7 +275,29 @@ public sealed class InstagramPublishService : IInstagramPublishService
             publishResult.IsTransient);
     }
 
-    private async Task AppendLogAsync(string action, bool success, string? draftId, string? mediaId, string? error, string? details, CancellationToken cancellationToken)
+    private static void EnsureCatalogIntentForReel(InstagramPublishDraft draft, InstagramPublishSettings publishSettings)
+    {
+        if (!string.IsNullOrWhiteSpace(draft.OriginalOfferUrl))
+        {
+            draft.OriginalOfferUrl = draft.OriginalOfferUrl.Trim();
+        }
+        else if (!string.IsNullOrWhiteSpace(draft.OfferUrl))
+        {
+            draft.OriginalOfferUrl = draft.OfferUrl.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(draft.CatalogTarget) || string.Equals(draft.CatalogTarget, CatalogTargets.None, StringComparison.OrdinalIgnoreCase))
+        {
+            draft.CatalogTarget = CatalogTargets.IsEnabled(publishSettings.CatalogTarget)
+                ? CatalogTargets.Normalize(publishSettings.CatalogTarget, CatalogTargets.Prod)
+                : CatalogTargets.Prod;
+        }
+
+        draft.SendToCatalog = true;
+        draft.CatalogIntentLocked = true;
+    }
+
+    private async Task AppendLogAsync(string action, bool success, string? draftId, string? mediaId, string? error, string? details, string? processName, CancellationToken cancellationToken)
     {
         await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
         {
@@ -238,7 +306,8 @@ public sealed class InstagramPublishService : IInstagramPublishService
             DraftId = draftId,
             MediaId = mediaId,
             Error = error,
-            Details = details
+            Details = details,
+            ProcessName = processName
         }, cancellationToken);
     }
 
@@ -311,6 +380,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
                 draft.MediaId,
                 null,
                 $"Created={result.Created};Updated={result.Updated};Deactivated={result.Deactivated}",
+                draft.ProcessName,
                 cancellationToken);
         }
         catch (Exception ex)
@@ -323,6 +393,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
                 draft.MediaId,
                 ex.Message,
                 "sync_failed",
+                draft.ProcessName,
                 cancellationToken);
         }
     }

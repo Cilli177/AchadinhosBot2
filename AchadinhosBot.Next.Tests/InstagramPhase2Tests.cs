@@ -183,6 +183,7 @@ public sealed class InstagramPhase2Tests
                 new ThrowingInstagramPublisher(),
                 outbox,
                 new StubCatalogOfferStore(),
+                new StubIdempotencyStore(),
                 Options.Create(new WebhookOptions { PublicBaseUrl = "https://bot.example.com" }),
                 NullLogger<InstagramPublishService>.Instance);
 
@@ -235,6 +236,7 @@ public sealed class InstagramPhase2Tests
             new RecordingInstagramPublisher(),
             new InMemoryInstagramOutboxStore(),
             catalogStore,
+            new StubIdempotencyStore(),
             Options.Create(new WebhookOptions { PublicBaseUrl = "https://bot.example.com" }),
             NullLogger<InstagramPublishService>.Instance);
 
@@ -243,6 +245,64 @@ public sealed class InstagramPhase2Tests
         Assert.True(result.Success);
         Assert.Single(catalogStore.SyncedDraftIds);
         Assert.Equal("draft-2", catalogStore.SyncedDraftIds[0]);
+    }
+
+    [Fact]
+    public async Task InstagramPublishService_ExecutePublishAsync_ReelCatalogCaption_RemovesLinkAndPointsToBio()
+    {
+        var catalogStore = new StubCatalogOfferStore();
+        var metaGraphClient = new RecordingMetaGraphClient();
+        var publishStore = new StubPublishStore(new InstagramPublishDraft
+        {
+            Id = "draft-3",
+            ProductName = "Lava-Loucas Praxis Portatil",
+            PostType = "reel",
+            Caption = "A Lava-Loucas Praxis Portatil resolve a rotina. Veja aqui: https://example.com/oferta",
+            Hashtags = "#cozinha #achadinhos",
+            VideoUrl = "https://cdn.example.com/reel.mp4",
+            OriginalOfferUrl = "https://example.com/oferta-original",
+            OfferUrl = "https://reidasofertas.ia.br/r/SP-000999",
+            SendToCatalog = false,
+            CatalogTarget = CatalogTargets.None
+        });
+
+        var service = new InstagramPublishService(
+            new StubSettingsStore(new AutomationSettings
+            {
+                InstagramPublish = new InstagramPublishSettings
+                {
+                    Enabled = true,
+                    AccessToken = "token-123",
+                    InstagramUserId = "ig-user"
+                }
+            }),
+            publishStore,
+            new StubPublishLogStore(),
+            new FakeHttpClientFactory(new RecordingHandler()),
+            new InMemoryMediaStore(),
+            metaGraphClient,
+            new StubVideoProcessingService(),
+            new RecordingInstagramPublisher(),
+            new InMemoryInstagramOutboxStore(),
+            catalogStore,
+            new StubIdempotencyStore(),
+            Options.Create(new WebhookOptions { PublicBaseUrl = "https://bot.example.com" }),
+            NullLogger<InstagramPublishService>.Instance);
+
+        var result = await service.ExecutePublishAsync("draft-3", CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Single(catalogStore.SyncedDraftIds);
+        Assert.Equal("draft-3", catalogStore.SyncedDraftIds[0]);
+        Assert.Equal("reel", metaGraphClient.LastPostType);
+        Assert.DoesNotContain("https://example.com/oferta", metaGraphClient.LastCaption ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Acesse a bio e entre no catalogo", metaGraphClient.LastCaption ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        var savedDraft = await publishStore.GetAsync("draft-3", CancellationToken.None);
+        Assert.NotNull(savedDraft);
+        Assert.True(savedDraft!.SendToCatalog);
+        Assert.Equal(CatalogTargets.Prod, savedDraft.CatalogTarget);
+        Assert.Equal("https://example.com/oferta-original", savedDraft.OriginalOfferUrl);
     }
 
     private static HttpResponseMessage Json(string body)
@@ -392,6 +452,33 @@ public sealed class InstagramPhase2Tests
 
         public Task<MetaGraphPublishResult> PublishAsync(InstagramPublishSettings settings, string postType, IReadOnlyList<string> mediaUrls, string caption, CancellationToken cancellationToken)
             => Task.FromResult(new MetaGraphPublishResult(true, "media-1"));
+
+        public Task<MetaGraphOperationResult> ReplyToCommentAsync(InstagramPublishSettings settings, string commentId, string message, CancellationToken cancellationToken)
+            => Task.FromResult(new MetaGraphOperationResult(true));
+
+        public Task<MetaGraphOperationResult> SendDirectMessageAsync(InstagramPublishSettings settings, string recipientId, string message, CancellationToken cancellationToken)
+            => Task.FromResult(new MetaGraphOperationResult(true));
+    }
+
+    private sealed class RecordingMetaGraphClient : IMetaGraphClient
+    {
+        public string? LastPostType { get; private set; }
+        public string? LastCaption { get; private set; }
+        public IReadOnlyList<string> LastMediaUrls { get; private set; } = Array.Empty<string>();
+
+        public Task<MetaGraphOperationResult> ValidateConfigurationAsync(InstagramPublishSettings settings, CancellationToken cancellationToken)
+            => Task.FromResult(new MetaGraphOperationResult(true));
+
+        public Task<MetaGraphOperationResult> GetMediaStatusAsync(InstagramPublishSettings settings, string mediaId, CancellationToken cancellationToken)
+            => Task.FromResult(new MetaGraphOperationResult(true, RawResponse: "{}"));
+
+        public Task<MetaGraphPublishResult> PublishAsync(InstagramPublishSettings settings, string postType, IReadOnlyList<string> mediaUrls, string caption, CancellationToken cancellationToken)
+        {
+            LastPostType = postType;
+            LastCaption = caption;
+            LastMediaUrls = mediaUrls.ToList();
+            return Task.FromResult(new MetaGraphPublishResult(true, "media-1"));
+        }
 
         public Task<MetaGraphOperationResult> ReplyToCommentAsync(InstagramPublishSettings settings, string commentId, string message, CancellationToken cancellationToken)
             => Task.FromResult(new MetaGraphOperationResult(true));

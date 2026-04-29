@@ -66,7 +66,10 @@ public sealed class FfmpegVideoProcessingService : IVideoProcessingService
             }
 
             var trimStart = Clamp(draft.VideoTrimStartSeconds ?? 0d, 0d, probe.DurationSeconds);
-            var trimEndCandidate = draft.VideoTrimEndSeconds ?? probe.DurationSeconds;
+            var defaultReelDuration = string.Equals(draft.PostType, "reel", StringComparison.OrdinalIgnoreCase)
+                ? Math.Min(probe.DurationSeconds, 30d)
+                : probe.DurationSeconds;
+            var trimEndCandidate = draft.VideoTrimEndSeconds ?? defaultReelDuration;
             var trimEnd = Clamp(trimEndCandidate, trimStart, probe.DurationSeconds);
             var outputDuration = Math.Max(0.1d, trimEnd - trimStart);
 
@@ -145,6 +148,13 @@ public sealed class FfmpegVideoProcessingService : IVideoProcessingService
 
     private static bool RequiresRender(InstagramPublishDraft draft)
     {
+        if (string.Equals(draft.PostType, "reel", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(draft.SourceDataOrigin) &&
+            draft.SourceDataOrigin.Contains("telegram", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         return (draft.VideoTrimStartSeconds ?? 0d) > 0d
                || (draft.VideoTrimEndSeconds ?? 0d) > 0d
                || !string.IsNullOrWhiteSpace(draft.MusicTrackUrl)
@@ -181,6 +191,21 @@ public sealed class FfmpegVideoProcessingService : IVideoProcessingService
         using var response = await client.GetAsync(absoluteUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
+            var localFallback = TryBuildLocalMediaFallbackUrl(absoluteUrl);
+            if (!string.IsNullOrWhiteSpace(localFallback))
+            {
+                using var fallbackResponse = await client.GetAsync(localFallback, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (fallbackResponse.IsSuccessStatusCode)
+                {
+                    var fallbackFileExtension = TryInferExtension(localFallback, fallbackExtension);
+                    var fallbackPath = Path.Combine(tempRoot, prefix + fallbackFileExtension);
+                    await using var fallbackOutput = new FileStream(fallbackPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await using var fallbackInput = await fallbackResponse.Content.ReadAsStreamAsync(cancellationToken);
+                    await fallbackInput.CopyToAsync(fallbackOutput, cancellationToken);
+                    return fallbackPath;
+                }
+            }
+
             return null;
         }
 
@@ -190,6 +215,21 @@ public sealed class FfmpegVideoProcessingService : IVideoProcessingService
         await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
         await input.CopyToAsync(output, cancellationToken);
         return filePath;
+    }
+
+    private static string? TryBuildLocalMediaFallbackUrl(string absoluteUrl)
+    {
+        if (!Uri.TryCreate(absoluteUrl, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        if (!uri.AbsolutePath.StartsWith("/media/", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return $"http://127.0.0.1:5005{uri.AbsolutePath}";
     }
 
     private static string? TryResolveLocalAdminMediaPath(string source)
@@ -254,9 +294,17 @@ public sealed class FfmpegVideoProcessingService : IVideoProcessingService
         double? musicWindow)
     {
         var trimArgs = $"-y -ss {FormatSeconds(trimStart)} -i {Quote(inputVideoPath)}";
+        var reelVideoFilter = string.Equals(draft.PostType, "reel", StringComparison.OrdinalIgnoreCase)
+            ? "scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p"
+            : string.Empty;
+
         if (string.IsNullOrWhiteSpace(inputMusicPath))
         {
-            return $"{trimArgs} -t {FormatSeconds(outputDuration)} -map 0:v:0 -map 0:a? -c:v libx264 -preset veryfast -c:a aac -movflags +faststart {Quote(outputPath)}";
+            var videoArgs = string.IsNullOrWhiteSpace(reelVideoFilter)
+                ? "-map 0:v:0"
+                : $"-vf {Quote(reelVideoFilter)} -map 0:v:0";
+
+            return $"{trimArgs} -t {FormatSeconds(outputDuration)} {videoArgs} -map 0:a? -c:v libx264 -preset veryfast -c:a aac -movflags +faststart {Quote(outputPath)}";
         }
 
         var musicStart = Math.Max(0d, draft.MusicStartSeconds ?? 0d);
@@ -267,12 +315,28 @@ public sealed class FfmpegVideoProcessingService : IVideoProcessingService
 
         if (hasOriginalAudio)
         {
-            var filter = $"[0:a]volume={FormatNumber(originalVolume)}[base];[1:a]volume={FormatNumber(musicVolume)}[music];[base][music]amix=inputs=2:duration=first:dropout_transition=2[aout]";
-            return $"{trimArgs} {secondInputArgs} -t {FormatSeconds(outputDuration)} -filter_complex {Quote(filter)} -map 0:v:0 -map [aout] -c:v libx264 -preset veryfast -c:a aac -shortest -movflags +faststart {Quote(outputPath)}";
+            var filter = string.IsNullOrWhiteSpace(reelVideoFilter)
+                ? $"[0:a]volume={FormatNumber(originalVolume)}[base];[1:a]volume={FormatNumber(musicVolume)}[music];[base][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+                : $"[0:v]{reelVideoFilter}[vout];[0:a]volume={FormatNumber(originalVolume)}[base];[1:a]volume={FormatNumber(musicVolume)}[music];[base][music]amix=inputs=2:duration=first:dropout_transition=2[aout]";
+
+            if (string.IsNullOrWhiteSpace(reelVideoFilter))
+            {
+                return $"{trimArgs} {secondInputArgs} -t {FormatSeconds(outputDuration)} -filter_complex {Quote(filter)} -map 0:v:0 -map [aout] -c:v libx264 -preset veryfast -c:a aac -shortest -movflags +faststart {Quote(outputPath)}";
+            }
+
+            return $"{trimArgs} {secondInputArgs} -t {FormatSeconds(outputDuration)} -filter_complex {Quote(filter)} -map [vout] -map [aout] -c:v libx264 -preset veryfast -c:a aac -shortest -movflags +faststart {Quote(outputPath)}";
         }
 
-        var musicOnlyFilter = $"[1:a]volume={FormatNumber(musicVolume)}[aout]";
-        return $"{trimArgs} {secondInputArgs} -t {FormatSeconds(outputDuration)} -filter_complex {Quote(musicOnlyFilter)} -map 0:v:0 -map [aout] -c:v libx264 -preset veryfast -c:a aac -shortest -movflags +faststart {Quote(outputPath)}";
+        var musicOnlyFilter = string.IsNullOrWhiteSpace(reelVideoFilter)
+            ? $"[1:a]volume={FormatNumber(musicVolume)}[aout]"
+            : $"[0:v]{reelVideoFilter}[vout];[1:a]volume={FormatNumber(musicVolume)}[aout]";
+
+        if (string.IsNullOrWhiteSpace(reelVideoFilter))
+        {
+            return $"{trimArgs} {secondInputArgs} -t {FormatSeconds(outputDuration)} -filter_complex {Quote(musicOnlyFilter)} -map 0:v:0 -map [aout] -c:v libx264 -preset veryfast -c:a aac -shortest -movflags +faststart {Quote(outputPath)}";
+        }
+
+        return $"{trimArgs} {secondInputArgs} -t {FormatSeconds(outputDuration)} -filter_complex {Quote(musicOnlyFilter)} -map [vout] -map [aout] -c:v libx264 -preset veryfast -c:a aac -shortest -movflags +faststart {Quote(outputPath)}";
     }
 
     private async Task<VideoProbeInfo?> ProbeVideoAsync(string inputPath, CancellationToken cancellationToken)

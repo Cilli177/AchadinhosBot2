@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Consumers;
 using AchadinhosBot.Next.Application.Services;
@@ -8,7 +10,10 @@ using AchadinhosBot.Next.Domain.Agents;
 using AchadinhosBot.Next.Infrastructure.Security;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Models;
+using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Settings;
+using AchadinhosBot.Next.Infrastructure.Instagram;
+using AchadinhosBot.Next.Infrastructure.Safety;
 using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Endpoints;
@@ -224,7 +229,7 @@ public static class AdminEndpoints
                 return Results.NotFound(new { success = false, error = "Mensagem do WhatsApp nao encontrada." });
 
             var offerUrl = ExtractFirstUrl(message.Text);
-            var sourceCaption = (message.Text ?? string.Empty).Trim();
+            var sourceCaption = AutomationSettingsSanitizer.Normalize((message.Text ?? string.Empty).Trim());
             var productName = BuildDraftProductName(sourceCaption, offerUrl);
             var caption = sourceCaption;
             if (req.UseAiCaption)
@@ -233,7 +238,7 @@ public static class AdminEndpoints
                 var aiCaption = await composer.BuildAsync(productName, sourceCaption, settings.InstagramPosts, ct);
                 if (!string.IsNullOrWhiteSpace(aiCaption))
                 {
-                    caption = aiCaption.Trim();
+                    caption = AutomationSettingsSanitizer.Normalize(aiCaption.Trim());
                 }
             }
 
@@ -244,7 +249,7 @@ public static class AdminEndpoints
 
             var draft = new InstagramPublishDraft
             {
-                ProductName = productName,
+                ProductName = AutomationSettingsSanitizer.Normalize(productName),
                 PostType = "feed",
                 Caption = caption,
                 OfferUrl = offerUrl,
@@ -317,7 +322,7 @@ public static class AdminEndpoints
                     return Results.NotFound(new { success = false, error = "Mensagem do WhatsApp nao encontrada." });
 
                 var offerUrl = ExtractFirstUrl(message.Text);
-                var sourceCaption = (message.Text ?? string.Empty).Trim();
+                var sourceCaption = AutomationSettingsSanitizer.Normalize((message.Text ?? string.Empty).Trim());
                 var productName = BuildDraftProductName(sourceCaption, offerUrl);
                 var caption = sourceCaption;
                 if (req.UseAiCaption)
@@ -326,7 +331,7 @@ public static class AdminEndpoints
                     var aiCaption = await composer.BuildAsync(productName, sourceCaption, settings.InstagramPosts, ct);
                     if (!string.IsNullOrWhiteSpace(aiCaption))
                     {
-                        caption = aiCaption.Trim();
+                        caption = AutomationSettingsSanitizer.Normalize(aiCaption.Trim());
                     }
                 }
 
@@ -734,6 +739,11 @@ public static class AdminEndpoints
             AdminPublishToChannelRequest req,
             HttpContext context,
             IWhatsAppGateway whatsapp,
+            WhatsAppPublishContentService whatsAppPublishContent,
+            IIdempotencyStore idempotencyStore,
+            IOfficialWhatsAppBlockedOfferStore blockedOfferStore,
+            DeliverySafetyPolicy deliverySafetyPolicy,
+            IOptions<MessagingOptions> messagingOptions,
             IOptions<WebhookOptions> opts,
             IAuditTrail audit,
             CancellationToken ct) =>
@@ -742,20 +752,72 @@ public static class AdminEndpoints
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
             WhatsAppSendResult result;
-            if (!string.IsNullOrWhiteSpace(req.ImageUrl))
+            var effectiveWhatsAppInstance = string.IsNullOrWhiteSpace(req.WhatsAppInstanceName) ? null : req.WhatsAppInstanceName.Trim();
+            var sanitizedContent = AutomationSettingsSanitizer.NormalizeNullable(req.Content) ?? string.Empty;
+            var prepared = await whatsAppPublishContent.PrepareForSendAsync(sanitizedContent, req.ImageUrl, req.TargetId, ct);
+            var isOfficialDestination = deliverySafetyPolicy.IsOfficialWhatsAppDestination(req.TargetId);
+            var hasActualImage = prepared.ResolvedImageBytes is { Length: > 0 } || !string.IsNullOrWhiteSpace(prepared.ResolvedImageUrl);
+            var officialGuard = OfficialWhatsAppGroupGuard.Validate(isOfficialDestination, prepared.Content, prepared.HasImageCandidate, hasActualImage);
+            if (!officialGuard.Allowed)
             {
-                result = await whatsapp.SendImageUrlAsync(null, req.TargetId, req.ImageUrl, req.Content, null, "card.jpg", ct);
+                await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                {
+                    Source = "AdminPublish",
+                    InstanceName = effectiveWhatsAppInstance,
+                    DestinationChatRef = req.TargetId,
+                    Reason = $"official_group_{officialGuard.Reason}",
+                    Detail = officialGuard.Detail,
+                    Text = prepared.Content,
+                    HasImageCandidate = prepared.HasImageCandidate,
+                    ImageSource = prepared.ImageSource,
+                    Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractFirstUrl(prepared.Content)),
+                    OfferUrl = ExtractFirstUrl(prepared.Content),
+                    TrackingUrl = ExtractFirstTrackedUrl(prepared.Content)
+                }, ct);
+                return Results.BadRequest(new { success = false, error = $"Envio bloqueado: {officialGuard.Reason}" });
+            }
+
+            var dedupeKey = BuildWhatsAppAdminDedupeKey(effectiveWhatsAppInstance, req.TargetId, prepared.Content, prepared.HasImageCandidate);
+            var dedupeWindow = WhatsAppOutboundDeduplicationPolicy.ResolveWindow(isOfficialDestination, messagingOptions.Value);
+            if (!idempotencyStore.TryBegin(dedupeKey, dedupeWindow))
+            {
+                await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                {
+                    Source = "AdminPublish",
+                    InstanceName = effectiveWhatsAppInstance,
+                    DestinationChatRef = req.TargetId,
+                    Reason = "duplicate_blocked",
+                    Detail = $"Mensagem duplicada bloqueada por idempotencia de outbound (janela {Math.Round(dedupeWindow.TotalHours, 2)}h).",
+                    Text = prepared.Content,
+                    HasImageCandidate = prepared.HasImageCandidate,
+                    ImageSource = prepared.ImageSource,
+                    Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractFirstUrl(prepared.Content)),
+                    OfferUrl = ExtractFirstUrl(prepared.Content),
+                    TrackingUrl = ExtractFirstTrackedUrl(prepared.Content)
+                }, ct);
+                return Results.Ok(new { success = true, message = "Envio duplicado bloqueado." });
+            }
+
+            if (prepared.ResolvedImageBytes is { Length: > 0 })
+            {
+                result = await whatsapp.SendImageAsync(effectiveWhatsAppInstance, req.TargetId, prepared.ResolvedImageBytes, prepared.Content, prepared.ResolvedMimeType, ct);
+            }
+            else if (!string.IsNullOrWhiteSpace(prepared.ResolvedImageUrl))
+            {
+                result = await whatsapp.SendImageUrlAsync(effectiveWhatsAppInstance, req.TargetId, prepared.ResolvedImageUrl, prepared.Content, prepared.ResolvedMimeType, "card.jpg", ct);
             }
             else
             {
-                result = await whatsapp.SendTextAsync(null, req.TargetId, req.Content, ct);
+                result = await whatsapp.SendTextAsync(effectiveWhatsAppInstance, req.TargetId, prepared.Content, ct);
             }
 
             await audit.WriteAsync("admin.publish.whatsapp", ResolveActor(context), new
             {
                 req.TargetId,
                 result.Success,
-                result.Message
+                result.Message,
+                prepared.ImageSource,
+                prepared.ImageFailureReason
             }, ct);
             return Results.Ok(new { success = result.Success, message = result.Message });
         });
@@ -775,9 +837,10 @@ public static class AdminEndpoints
             try
             {
                 var chatId = long.Parse(req.TargetId);
+                var sanitizedContent = AutomationSettingsSanitizer.NormalizeNullable(req.Content) ?? string.Empty;
                 var result = !string.IsNullOrWhiteSpace(req.ImageUrl)
-                    ? await telegram.SendPhotoAsync(null, chatId, req.ImageUrl, req.Content, ct)
-                    : await telegram.SendTextAsync(null, chatId, req.Content, ct);
+                    ? await telegram.SendPhotoAsync(null, chatId, req.ImageUrl, sanitizedContent, ct)
+                    : await telegram.SendTextAsync(null, chatId, sanitizedContent, ct);
                 await audit.WriteAsync("admin.publish.telegram", ResolveActor(context), new
                 {
                     chatId,
@@ -799,8 +862,13 @@ public static class AdminEndpoints
             IInstagramPublishService publishService,
             IWhatsAppGateway whatsapp,
             ITelegramGateway telegram,
+            WhatsAppPublishContentService whatsAppPublishContent,
             IInstagramPublishStore draftStore,
             ICatalogOfferStore catalogStore,
+            IIdempotencyStore idempotencyStore,
+            IOfficialWhatsAppBlockedOfferStore blockedOfferStore,
+            DeliverySafetyPolicy deliverySafetyPolicy,
+            IOptions<MessagingOptions> messagingOptions,
             IOptions<WebhookOptions> opts,
             IAuditTrail audit,
             CancellationToken ct) =>
@@ -818,7 +886,8 @@ public static class AdminEndpoints
                 await draftStore.UpdateAsync(draft, ct);
             }
 
-            var content = req.Content ?? draft?.Caption ?? string.Empty;
+            var instagramContent = AutomationSettingsSanitizer.NormalizeNullable(req.Content ?? draft?.Caption ?? string.Empty) ?? string.Empty;
+            var whatsappContent = AutomationSettingsSanitizer.NormalizeNullable(req.Content ?? draft?.AutoReplyMessage ?? draft?.Caption ?? string.Empty) ?? string.Empty;
             var imageUrl = req.ImageUrl ?? draft?.ImageUrls.FirstOrDefault();
 
             var results = new Dictionary<string, object>();
@@ -830,8 +899,8 @@ public static class AdminEndpoints
                 {
                     var chatId = long.Parse(req.TelegramChatId);
                     var tgResult = !string.IsNullOrWhiteSpace(imageUrl)
-                        ? await telegram.SendPhotoAsync(null, chatId, imageUrl, content, ct)
-                        : await telegram.SendTextAsync(null, chatId, content, ct);
+                        ? await telegram.SendPhotoAsync(null, chatId, imageUrl, instagramContent, ct)
+                        : await telegram.SendTextAsync(null, chatId, instagramContent, ct);
                     results["telegram"] = new { success = tgResult.Success, message = tgResult.Message };
                     allSucceeded &= tgResult.Success;
                 }
@@ -846,14 +915,64 @@ public static class AdminEndpoints
             {
                 try
                 {
-                    WhatsAppSendResult waResult;
-                    if (!string.IsNullOrWhiteSpace(imageUrl))
+                    var effectiveWhatsAppInstance = string.IsNullOrWhiteSpace(req.WhatsAppInstanceName) ? null : req.WhatsAppInstanceName.Trim();
+                    var prepared = await whatsAppPublishContent.PrepareForSendAsync(whatsappContent, imageUrl, req.WhatsAppTargetId, ct);
+                    var isOfficialDestination = deliverySafetyPolicy.IsOfficialWhatsAppDestination(req.WhatsAppTargetId);
+                    var hasActualImage = prepared.ResolvedImageBytes is { Length: > 0 } || !string.IsNullOrWhiteSpace(prepared.ResolvedImageUrl);
+                    var officialGuard = OfficialWhatsAppGroupGuard.Validate(isOfficialDestination, prepared.Content, prepared.HasImageCandidate, hasActualImage);
+                    if (!officialGuard.Allowed)
                     {
-                        waResult = await whatsapp.SendImageUrlAsync(null, req.WhatsAppTargetId, imageUrl, content, null, "card.jpg", ct);
+                        await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                        {
+                            Source = "AdminMasterPublish",
+                            InstanceName = effectiveWhatsAppInstance,
+                            DestinationChatRef = req.WhatsAppTargetId,
+                            Reason = $"official_group_{officialGuard.Reason}",
+                            Detail = officialGuard.Detail,
+                            Text = prepared.Content,
+                            HasImageCandidate = prepared.HasImageCandidate,
+                            ImageSource = prepared.ImageSource,
+                            Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractFirstUrl(prepared.Content)),
+                            OfferUrl = ExtractFirstUrl(prepared.Content),
+                            TrackingUrl = ExtractFirstTrackedUrl(prepared.Content)
+                        }, ct);
+                        throw new InvalidOperationException($"Envio bloqueado: {officialGuard.Reason}");
+                    }
+
+                    var dedupeKey = BuildWhatsAppAdminDedupeKey(effectiveWhatsAppInstance, req.WhatsAppTargetId, prepared.Content, prepared.HasImageCandidate);
+                    var dedupeWindow = WhatsAppOutboundDeduplicationPolicy.ResolveWindow(isOfficialDestination, messagingOptions.Value);
+                    if (!idempotencyStore.TryBegin(dedupeKey, dedupeWindow))
+                    {
+                        await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                        {
+                            Source = "AdminMasterPublish",
+                            InstanceName = effectiveWhatsAppInstance,
+                            DestinationChatRef = req.WhatsAppTargetId,
+                            Reason = "duplicate_blocked",
+                            Detail = $"Mensagem duplicada bloqueada por idempotencia de outbound (janela {Math.Round(dedupeWindow.TotalHours, 2)}h).",
+                            Text = prepared.Content,
+                            HasImageCandidate = prepared.HasImageCandidate,
+                            ImageSource = prepared.ImageSource,
+                            Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractFirstUrl(prepared.Content)),
+                            OfferUrl = ExtractFirstUrl(prepared.Content),
+                            TrackingUrl = ExtractFirstTrackedUrl(prepared.Content)
+                        }, ct);
+                        results["whatsapp"] = new { success = true, error = "Envio duplicado bloqueado." };
+                        goto publish_instagram_label;
+                    }
+
+                    WhatsAppSendResult waResult;
+                    if (prepared.ResolvedImageBytes is { Length: > 0 })
+                    {
+                        waResult = await whatsapp.SendImageAsync(effectiveWhatsAppInstance, req.WhatsAppTargetId, prepared.ResolvedImageBytes, prepared.Content, prepared.ResolvedMimeType, ct);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(prepared.ResolvedImageUrl))
+                    {
+                        waResult = await whatsapp.SendImageUrlAsync(effectiveWhatsAppInstance, req.WhatsAppTargetId, prepared.ResolvedImageUrl, prepared.Content, prepared.ResolvedMimeType, "card.jpg", ct);
                     }
                     else
                     {
-                        waResult = await whatsapp.SendTextAsync(null, req.WhatsAppTargetId, content, ct);
+                        waResult = await whatsapp.SendTextAsync(effectiveWhatsAppInstance, req.WhatsAppTargetId, prepared.Content, ct);
                     }
                     results["whatsapp"] = new { success = waResult.Success, error = waResult.Message };
                     allSucceeded &= waResult.Success;
@@ -865,6 +984,7 @@ public static class AdminEndpoints
                 }
             }
 
+publish_instagram_label:
             if (req.PublishInstagram)
             {
                 try
@@ -886,43 +1006,19 @@ public static class AdminEndpoints
                     allSucceeded = false;
                 }
             }
-
-            if (!req.PublishInstagram && draft != null && allSucceeded && (req.PublishTelegram || req.PublishWhatsApp || req.PublishCatalog))
-            {
-                draft.Status = "published";
-                draft.Error = null;
-                draft.ScheduledFor = null;
-                await draftStore.UpdateAsync(draft, ct);
-                results["draft"] = new
-                {
-                    success = true,
-                    finalized = true,
-                    status = draft.Status
-                };
-            }
-
             if (req.PublishCatalog)
             {
                 try
                 {
-                    if (draft != null && string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase))
+                    if (draft != null)
                     {
-                        var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
+                        var syncResult = await catalogStore.SyncExplicitDraftsAsync(new[] { draft }, ct);
                         results["catalog"] = new
                         {
                             success = true,
                             itemsUpdated = syncResult.Updated + syncResult.Created,
-                            target = CatalogTargets.ResolveDraftTarget(draft)
-                        };
-                    }
-                    else if (draft != null)
-                    {
-                        results["catalog"] = new
-                        {
-                            success = true,
-                            scheduled = true,
                             target = CatalogTargets.ResolveDraftTarget(draft),
-                            message = "Catalogo sera sincronizado apos a publicacao do draft."
+                            mode = "explicit-admin-sync"
                         };
                     }
                     else
@@ -1014,7 +1110,7 @@ public static class AdminEndpoints
                 });
             }
 
-            var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
+            var syncResult = await catalogStore.SyncExplicitDraftsAsync(new[] { draft }, ct);
             await audit.WriteAsync("admin.catalog.sync_single", ResolveActor(context), new
             {
                 req.DraftId,
@@ -1076,6 +1172,7 @@ public static class AdminEndpoints
             HttpContext context,
             ICatalogOfferStore catalogStore,
             IInstagramPublishStore draftStore,
+            IInstagramPublishService publishService,
             IOptions<WebhookOptions> opts,
             IAuditTrail audit,
             CancellationToken ct) =>
@@ -1086,23 +1183,54 @@ public static class AdminEndpoints
             var draft = await draftStore.GetAsync(req.DraftId, ct);
             if (draft == null) return Results.NotFound(new { success = false, error = "Draft not found." });
 
-            if (!string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase))
+            var publishResult = await publishService.ExecutePublishAsync(req.DraftId, ct);
+            if (!publishResult.Success)
             {
-                draft.Status = "published";
-                draft.Error = null;
-                draft.ScheduledFor = null;
-                await draftStore.UpdateAsync(draft, ct);
+                await audit.WriteAsync("admin.draft.finalize_now_failed", ResolveActor(context), new
+                {
+                    req.DraftId,
+                    publishResult.StatusCode,
+                    publishResult.Error
+                }, ct);
+
+                return Results.Json(new
+                {
+                    success = false,
+                    error = publishResult.Error ?? "Falha ao publicar no Instagram.",
+                    statusCode = publishResult.StatusCode,
+                    draftId = publishResult.DraftId
+                }, statusCode: 502);
+            }
+
+            draft = await draftStore.GetAsync(req.DraftId, ct);
+            if (draft == null)
+            {
+                return Results.Ok(new
+                {
+                    success = true,
+                    draftId = req.DraftId,
+                    mediaId = publishResult.MediaId,
+                    statusCode = publishResult.StatusCode,
+                    catalog = new
+                    {
+                        success = true,
+                        skipped = true,
+                        message = "Publicacao concluida, mas o draft nao foi reencontrado para sincronizar catalogo."
+                    }
+                });
             }
 
             object catalogResult;
-            if (draft.SendToCatalog || !string.Equals(CatalogTargets.ResolveDraftTarget(draft), CatalogTargets.None, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase) &&
+                (draft.SendToCatalog || !string.Equals(CatalogTargets.ResolveDraftTarget(draft), CatalogTargets.None, StringComparison.OrdinalIgnoreCase)))
             {
-                var syncResult = await catalogStore.SyncFromPublishedDraftsAsync(new[] { draft }, ct);
+                var syncResult = await catalogStore.SyncExplicitDraftsAsync(new[] { draft }, ct);
                 catalogResult = new
                 {
                     success = true,
                     itemsUpdated = syncResult.Created + syncResult.Updated,
-                    target = CatalogTargets.ResolveDraftTarget(draft)
+                    target = CatalogTargets.ResolveDraftTarget(draft),
+                            mode = "explicit-admin-sync"
                 };
             }
             else
@@ -1111,7 +1239,7 @@ public static class AdminEndpoints
                 {
                     success = true,
                     skipped = true,
-                    message = "Draft finalizado sem catalogo."
+                    message = "Draft publicado sem sincronizacao de catalogo."
                 };
             }
 
@@ -1120,13 +1248,18 @@ public static class AdminEndpoints
                 req.DraftId,
                 draft.Status,
                 draft.CatalogTarget,
-                draft.SendToCatalog
+                draft.SendToCatalog,
+                publishResult.MediaId,
+                publishResult.StatusCode
             }, ct);
 
             return Results.Ok(new
             {
                 success = true,
+                draftId = draft.Id,
                 status = draft.Status,
+                mediaId = publishResult.MediaId,
+                statusCode = publishResult.StatusCode,
                 catalog = catalogResult
             });
         });
@@ -1194,7 +1327,8 @@ public static class AdminEndpoints
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
             var draft = await store.GetAsync(draftId, ct);
-            if (draft == null) return Results.NotFound("Draft not found.");
+            if (draft == null)
+                return Results.NotFound(new { success = false, error = "Draft not found." });
 
             return Results.Ok(new { success = true, draft });
         });
@@ -1278,7 +1412,7 @@ public static class AdminEndpoints
         {
             ProductName = productName,
             PostType = isReel ? "reel" : "feed",
-            Caption = caption,
+            Caption = InstagramWorkflowSupport.BuildInstagramCaption(caption, productName, sendToCatalog: false),
             OfferUrl = offerUrl,
             VideoUrl = isReel ? mediaUrl : null,
             ImageUrls = !isReel && !string.IsNullOrWhiteSpace(mediaUrl) ? new List<string> { mediaUrl } : new List<string>(),
@@ -1295,6 +1429,7 @@ public static class AdminEndpoints
             AutoReplyEnabled = !string.IsNullOrWhiteSpace(offerUrl),
             AutoReplyKeyword = string.IsNullOrWhiteSpace(offerUrl) ? null : suggestedKeyword,
             AutoReplyLink = offerUrl,
+            AutoReplyMessage = InstagramWorkflowSupport.BuildWhatsAppCaption(caption, productName, offerUrl),
             Status = "draft"
         };
     }
@@ -1338,6 +1473,26 @@ public static class AdminEndpoints
         return match.Success ? match.Value.Trim().TrimEnd('.', ',', ';', ')', ']') : null;
     }
 
+    private static string? ExtractFirstTrackedUrl(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var matches = Regex.Matches(text, @"https?://\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        foreach (Match match in matches)
+        {
+            var candidate = match.Value.Trim().TrimEnd('.', ',', ';', ')', ']');
+            if (candidate.Contains("/r/", StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
     private static List<InstagramCtaOption> BuildDraftCtas(string? caption, string? rawKeywords, string? preferredLink)
     {
         var keywords = Regex.Split(rawKeywords ?? string.Empty, @"[\s,;|/]+", RegexOptions.CultureInvariant)
@@ -1366,6 +1521,26 @@ public static class AdminEndpoints
             })
             .ToList();
     }
+
+    private static bool IsOfficialWhatsAppDestination(string? targetId)
+    {
+        if (string.IsNullOrWhiteSpace(targetId))
+        {
+            return false;
+        }
+
+        var configured = Environment.GetEnvironmentVariable("OFFICIAL_WHATSAPP_GROUP_ID");
+        return !string.IsNullOrWhiteSpace(configured) &&
+               string.Equals(configured.Trim(), targetId.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildWhatsAppAdminDedupeKey(string? instanceName, string targetId, string text, bool hasMedia)
+    {
+        var normalizedText = Regex.Replace(text ?? string.Empty, @"\s+", " ", RegexOptions.CultureInvariant).Trim();
+        var payload = $"{instanceName ?? "default"}|{targetId}|{(hasMedia ? "img" : "txt")}|{normalizedText}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+        return $"wa-admin:{hash}";
+    }
 }
 
 // --- Request DTOs ---
@@ -1374,8 +1549,8 @@ public sealed record AdminGenerateCardRequest(string Title, string? Price, strin
 public sealed record AdminGenerateCaptionRequest(string ProductName, string? OfferContext);
 public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, string? OfferUrl, List<string>? ImageUrls, string? VideoUrl, string? VideoCoverUrl, double? VideoCoverAtSeconds, string? VideoMusicCue, double? VideoTrimStartSeconds, double? VideoTrimEndSeconds, string? MusicTrackUrl, double? MusicStartSeconds, double? MusicEndSeconds, double? MusicVolume, double? OriginalAudioVolume, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false, string? CatalogTarget = null);
 public sealed record AdminPublishRequest(string DraftId, bool SendToCatalog = false, string? CatalogTarget = null);
-public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl);
-public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl, string? CatalogTarget = null);
+public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl, string? WhatsAppInstanceName = null);
+public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl, string? CatalogTarget = null, string? WhatsAppInstanceName = null);
 public sealed record AdminCreateDraftFromWhatsAppRequest(string MessageId, bool UseAiCaption = false, bool SendToCatalog = false, string? CatalogTarget = null);
 public sealed record AdminApplyWhatsAppOfferRecommendationRequest(string MessageId, string RecommendedAction, string? ExistingDraftId = null, bool UseAiCaption = false, bool SendToCatalog = false, string? CatalogTarget = null, string? SuggestedPostType = null);
 public sealed record AdminAddToCatalogRequest(string DraftId, string? CatalogTarget = null);

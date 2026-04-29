@@ -1,6 +1,7 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Logs;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Security;
@@ -8,6 +9,7 @@ using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AchadinhosBot.Next.Endpoints;
 
@@ -33,9 +35,9 @@ public static class CoreEndpoints
                 // Shein
                 "shein.com", "www.shein.com", "shein.com.br", "www.shein.com.br",
                 // Mercado Livre
-                "mercadolivre.com.br", "www.mercadolivre.com.br", "mlb.cl", "mercadolivre.com",
+                "mercadolivre.com.br", "www.mercadolivre.com.br", "mlb.cl", "mercadolivre.com", "meli.la",
                 // URL Shorteners (will be expanded and re-validated internally)
-                "tinyurl.com", "bit.ly", "cutt.ly", "shorturl.at", "ow.ly", "t.co", "rb.gy", "is.gd", "tiny.cc"
+                "tinyurl.com", "bit.ly", "cutt.ly", "shorturl.at", "ow.ly", "t.co", "rb.gy", "is.gd", "tiny.cc", "compre.link"
             };
 
             return allowed.Any(a => host.Equals(a, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + a, StringComparison.OrdinalIgnoreCase));
@@ -64,6 +66,7 @@ public static class CoreEndpoints
             ConvertRequest payload,
             HttpContext context,
             IMessageProcessor processor,
+            ILinkTrackingStore trackingStore,
             IOptions<WebhookOptions> options,
             CancellationToken ct) =>
         {
@@ -83,12 +86,35 @@ public static class CoreEndpoints
                 return Results.BadRequest(new { success = false, message = "Domínio não suportado para conversão." });
             }
 
-            var result = await processor.ProcessAsync(payload.Text, payload.Source ?? "Webhook", ct);
+            ConversionResult result;
+            string convertedText;
+
+            if (payload.IsTrackingOnly)
+            {
+                result = new ConversionResult(true, payload.Text, 1, payload.Source ?? "Webhook");
+                convertedText = payload.Text;
+            }
+            else
+            {
+                result = await processor.ProcessAsync(payload.Text, payload.Source ?? "Webhook", ct);
+                convertedText = result.ConvertedText;
+            }
+
+            if (result.Success &&
+                !string.IsNullOrWhiteSpace(convertedText) &&
+                !string.IsNullOrWhiteSpace(options.Value.PublicBaseUrl))
+            {
+                convertedText = await ApplyTrackingForConverterAsync(
+                    convertedText,
+                    trackingStore,
+                    options.Value.PublicBaseUrl!,
+                    ct);
+            }
 
             var response = new
             {
                 success = result.Success,
-                converted = result.ConvertedText,
+                converted = convertedText,
                 convertedLinks = result.ConvertedLinks,
                 source = result.Source,
                 message = result.Success
@@ -282,6 +308,48 @@ public static class CoreEndpoints
             return Results.Ok(new { success = true });
         });
     }
+
+    private static async Task<string> ApplyTrackingForConverterAsync(
+        string text,
+        ILinkTrackingStore store,
+        string publicBaseUrl,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        var baseUrl = publicBaseUrl.TrimEnd('/');
+        var matches = UrlRegex().Matches(text);
+        if (matches.Count == 0)
+        {
+            return text;
+        }
+
+        var sb = new StringBuilder(text.Length + 32);
+        var lastIndex = 0;
+        foreach (Match match in matches)
+        {
+            sb.Append(text, lastIndex, match.Index - lastIndex);
+            var url = match.Value;
+            if (url.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                sb.Append(url);
+            }
+            else
+            {
+                var entry = await store.GetOrCreateAsync(url, ct);
+                sb.Append($"{baseUrl}/r/{entry.Id}");
+            }
+            lastIndex = match.Index + match.Length;
+        }
+
+        sb.Append(text, lastIndex, text.Length - lastIndex);
+        return sb.ToString();
+    }
+
+    private static Regex UrlRegex() => new(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public sealed record ClickTelemetryRequest(
         string TargetUrl,

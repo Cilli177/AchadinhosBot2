@@ -2,6 +2,7 @@ using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Agents;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Models;
+using AchadinhosBot.Next.Infrastructure.ProductData;
 
 namespace AchadinhosBot.Next.Application.Services;
 
@@ -10,15 +11,18 @@ public sealed class OfferCurationAgentService : IOfferCurationAgentService
     private readonly IInstagramPublishStore _publishStore;
     private readonly ICatalogOfferStore _catalogOfferStore;
     private readonly IClickLogStore _clickLogStore;
+    private readonly OfficialProductDataService _productDataService;
 
     public OfferCurationAgentService(
         IInstagramPublishStore publishStore,
         ICatalogOfferStore catalogOfferStore,
-        IClickLogStore clickLogStore)
+        IClickLogStore clickLogStore,
+        OfficialProductDataService productDataService)
     {
         _publishStore = publishStore;
         _catalogOfferStore = catalogOfferStore;
         _clickLogStore = clickLogStore;
+        _productDataService = productDataService;
     }
 
     public async Task<OfferCurationResult> CurateAsync(OfferCurationRequest request, CancellationToken cancellationToken)
@@ -40,9 +44,17 @@ public sealed class OfferCurationAgentService : IOfferCurationAgentService
             .Take(200)
             .ToList();
 
-        var suggestions = scopedDrafts
-            .Select(d => BuildSuggestion(d, clickLogs, catalogDev, catalogProd))
-            .Where(s => !string.Equals(s.RecommendedAction, OfferCurationActions.NoAction, StringComparison.OrdinalIgnoreCase))
+        var suggestions = new List<OfferCurationSuggestion>();
+        foreach (var d in scopedDrafts)
+        {
+            var suggestion = await BuildSuggestionAsync(d, clickLogs, catalogDev, catalogProd, cancellationToken);
+            if (!string.Equals(suggestion.RecommendedAction, OfferCurationActions.NoAction, StringComparison.OrdinalIgnoreCase))
+            {
+                suggestions.Add(suggestion);
+            }
+        }
+
+        suggestions = suggestions
             .OrderByDescending(s => s.Score)
             .ThenByDescending(s => s.RecentClicks)
             .Take(maxItems)
@@ -59,9 +71,16 @@ public sealed class OfferCurationAgentService : IOfferCurationAgentService
                 .Take(200)
                 .ToList();
 
-            suggestions = scopedDrafts
-                .Select(d => BuildSuggestion(d, clickLogs, catalogDev, catalogProd))
-                .Where(s => !string.Equals(s.RecommendedAction, OfferCurationActions.NoAction, StringComparison.OrdinalIgnoreCase))
+            foreach (var d in scopedDrafts)
+            {
+                var suggestion = await BuildSuggestionAsync(d, clickLogs, catalogDev, catalogProd, cancellationToken);
+                if (!string.Equals(suggestion.RecommendedAction, OfferCurationActions.NoAction, StringComparison.OrdinalIgnoreCase))
+                {
+                    suggestions.Add(suggestion);
+                }
+            }
+            
+            suggestions = suggestions
                 .OrderByDescending(s => s.Score)
                 .ThenByDescending(s => s.RecentClicks)
                 .Take(maxItems)
@@ -89,11 +108,12 @@ public sealed class OfferCurationAgentService : IOfferCurationAgentService
         };
     }
 
-    private static OfferCurationSuggestion BuildSuggestion(
+    private async Task<OfferCurationSuggestion> BuildSuggestionAsync(
         InstagramPublishDraft draft,
         IReadOnlyList<Domain.Logs.ClickLogEntry> clickLogs,
         IReadOnlyDictionary<string, CatalogOfferItem> catalogDev,
-        IReadOnlyDictionary<string, CatalogOfferItem> catalogProd)
+        IReadOnlyDictionary<string, CatalogOfferItem> catalogProd,
+        CancellationToken ct)
     {
         var inCatalogDev = catalogDev.ContainsKey(draft.Id);
         var inCatalogProd = catalogProd.ContainsKey(draft.Id);
@@ -112,6 +132,35 @@ public sealed class OfferCurationAgentService : IOfferCurationAgentService
         var score = 0;
         var action = OfferCurationActions.NoAction;
         var suggestedTarget = CatalogTargets.None;
+        ComparisonDeal? bestComparisonResult = null;
+
+        // AI Search Enhancement: Better Price/Coupon Search
+        if (hasOfferUrl)
+        {
+            var searchData = await _productDataService.TryGetBestAsync(resolvedOfferUrl!, null, ct);
+            if (searchData?.SearchResults != null && searchData.SearchResults.Count > 0)
+            {
+                var bestSearch = searchData.SearchResults.OrderBy(x => x.Price).FirstOrDefault();
+                if (bestSearch != null)
+                {
+                    bestComparisonResult = new ComparisonDeal
+                    {
+                        Store = bestSearch.Store,
+                        Price = bestSearch.Price,
+                        Url = bestSearch.Url,
+                        Coupon = bestSearch.Coupon
+                    };
+                    score += 15;
+                    reasons.Add($"Agente encontrou melhor preco/cupom em {bestSearch.Store}: {bestSearch.Price}.");
+                }
+            }
+            
+            if (!string.IsNullOrWhiteSpace(searchData?.CouponCode))
+            {
+                score += 12;
+                reasons.Add($"Cupom ativo encontrado para esta oferta: {searchData.CouponCode}.");
+            }
+        }
 
         if (isPublished)
         {
@@ -232,7 +281,8 @@ public sealed class OfferCurationAgentService : IOfferCurationAgentService
             CreatedAt = draft.CreatedAt,
             ScheduledFor = draft.ScheduledFor,
             Reasons = reasons,
-            Risks = risks
+            Risks = risks,
+            BestComparison = bestComparisonResult
         };
     }
 

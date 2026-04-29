@@ -41,6 +41,15 @@ public sealed class OfferCurationSuggestion
     public DateTimeOffset? ScheduledFor { get; set; }
     public List<string> Reasons { get; set; } = new();
     public List<string> Risks { get; set; } = new();
+    public ComparisonDeal? BestComparison { get; set; }
+}
+
+public sealed class ComparisonDeal
+{
+    public string Store { get; set; } = string.Empty;
+    public string Price { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string? Coupon { get; set; }
 }
 
 public static class OfferCurationActions

@@ -1,5 +1,6 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Consumers;
+using AchadinhosBot.Next.Infrastructure.Monitoring;
 using System.Text.Json;
 
 namespace AchadinhosBot.Next.Infrastructure.Instagram;
@@ -10,21 +11,27 @@ namespace AchadinhosBot.Next.Infrastructure.Instagram;
  */
 public sealed class InstagramOutboundReplayService : BackgroundService
 {
+    private const string WorkerName = nameof(InstagramOutboundReplayService);
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<InstagramOutboundReplayService> _logger;
     private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(10);
+    private readonly WorkerActivityTracker _workerActivityTracker;
 
     public InstagramOutboundReplayService(
         IServiceProvider serviceProvider,
-        ILogger<InstagramOutboundReplayService> logger)
+        ILogger<InstagramOutboundReplayService> logger,
+        WorkerActivityTracker workerActivityTracker)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
+        _workerActivityTracker = workerActivityTracker;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _workerActivityTracker.MarkStarted(WorkerName);
         _logger.LogInformation("InstagramOutboundReplayService iniciado (Intervalo={Intervalo}).", _checkInterval);
+        await ReplayOutboxAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -39,6 +46,7 @@ public sealed class InstagramOutboundReplayService : BackgroundService
             }
             catch (Exception ex)
             {
+                _workerActivityTracker.MarkFailure(WorkerName, ex);
                 _logger.LogError(ex, "Erro no ciclo de replay do outbox.");
             }
         }
@@ -53,6 +61,7 @@ public sealed class InstagramOutboundReplayService : BackgroundService
         var pending = await outboxStore.ListPendingAsync(ct);
         if (pending.Count == 0)
         {
+            _workerActivityTracker.MarkSuccess(WorkerName);
             return;
         }
 
@@ -82,8 +91,11 @@ public sealed class InstagramOutboundReplayService : BackgroundService
             }
             catch (Exception ex)
             {
+                _workerActivityTracker.MarkFailure(WorkerName, ex);
                 _logger.LogWarning("Falha ao processar replay para mensagem {MessageId}: {Error}", envelope.MessageId, ex.Message);
             }
         }
+
+        _workerActivityTracker.MarkSuccess(WorkerName);
     }
 }

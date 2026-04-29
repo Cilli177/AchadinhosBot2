@@ -1,4 +1,5 @@
 ﻿let currentRole = null;
+let aiOpsSessionId = null;
 let logsAutoTimer = null;
 let waCurrentGroupParticipants = [];
 let waAdminGroupsCache = null;
@@ -11,10 +12,54 @@ let waScheduleEditState = null;
 let waQrPollTimer = null;
 let waQrPollInstanceName = null;
 let opsOverviewTimer = null;
+let currentOfferNormalizationRunId = null;
 const WA_MANUAL_COPY_MAX_PARTICIPANTS = 50;
 let waOutreachLogsTimer = null;
 let waOutreachLastOperationId = null;
+let skillsHubCache = [];
+let skillsHubActiveType = '';
+let instagramDraftCache = [];
+let instagramPublishLogCache = [];
 const WA_ENGAGEMENT_PLAN_STORAGE_KEY = 'waEngagementPlan:v1';
+const INSTAGRAM_REEL_ASSISTED_PROCESS = 'Fluxo Reel Assistido';
+const INSTAGRAM_PROCESS_LEGACY = 'Legado';
+const FLOW_ENDPOINTS_MAP_FALLBACK = [
+  {
+    canal: 'Telegram',
+    nome: 'AE-IA 3000 - VÍDEOS VIRAIS',
+    id: '2425105459',
+    papel: 'Origem de reels e vídeo do produto',
+    destino: 'Instagram - preview e publicação'
+  },
+  {
+    canal: 'Telegram',
+    nome: 'Rota Telegram principal',
+    id: '1871121243, 1271986083, 2775581964, 3703804341, 1569488789, 3632436217',
+    papel: 'Origem Telegram para WhatsApp',
+    destino: 'Grupo oficial WhatsApp'
+  },
+  {
+    canal: 'WhatsApp',
+    nome: 'Rota Nova Oficial',
+    id: '120363399495595930@g.us, 120363216142767996@g.us, 120363390817589999@g.us, 120363401464158461@g.us, 120363403893859078@g.us, 120363027285871635@g.us, 120363421220620042@g.us, 120363343810565726@g.us, 120363296924962892@g.us, 120363421418282703@g.us',
+    papel: 'Origem WhatsApp principal',
+    destino: 'Grupo oficial WhatsApp'
+  },
+  {
+    canal: 'WhatsApp',
+    nome: 'Ponte Mercado Livre Scout',
+    id: '120363409272515351@g.us',
+    papel: 'Ponte e triagem de ofertas do Mercado Livre',
+    destino: 'Grupo oficial WhatsApp'
+  },
+  {
+    canal: 'WhatsApp',
+    nome: 'Rei das Ofertas Oficial',
+    id: '120363405661434395@g.us',
+    papel: 'Destino final',
+    destino: 'Publicação e recebimento de ofertas'
+  }
+];
 const WA_OUTREACH_PITCH_PRESETS = {
   direto: 'Grupo oficial com ofertas verificadas, links revisados e menos spam. O foco e receber oportunidade real com seguranca.',
   amigavel: 'Nosso grupo oficial e moderado, com ofertas validadas e links revisados para mais seguranca e menos ruido no seu WhatsApp.',
@@ -366,7 +411,7 @@ function showAuthState(authenticated, username = '', role = '') {
 }
 
 function showSection(name) {
-  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'ai-lab', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'analytics', 'wa-monitoring', 'engagement-plan', 'wa-outreach'];
+  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -389,6 +434,9 @@ function showSection(name) {
   if (name === 'analytics') {
     loadAnalyticsSummary();
   }
+  if (name === 'skills') {
+    loadSkillsHub();
+  }
   if (name === 'linkresponder') {
     loadResponderLogs();
     loadResponderClicks();
@@ -407,8 +455,17 @@ function showSection(name) {
       loadAgentChannelTargets().then(() => loadWhatsAppOfferScout());
     });
   }
+  if (name === 'offers') {
+    loadOfferNormalizationRuns();
+    if (currentOfferNormalizationRunId) {
+      loadOfferNormalizationRun(currentOfferNormalizationRunId);
+    }
+  }
   if (name === 'ai-lab') {
     document.getElementById('aiLabResults').innerHTML = '';
+  }
+  if (name === 'ai-ops') {
+    refreshAiOpsSessionState();
   }
   if (name === 'instagram-publish') {
     loadInstagramDrafts();
@@ -424,6 +481,9 @@ function showSection(name) {
     loadMembershipEvents();
     loadWhatsAppAutomation();
   }
+  if (name === 'wa-automation') {
+    loadWhatsAppAutomation();
+  }
   if (name === 'engagement-plan') {
     loadEngagementPlan();
     refreshEngagementPlanSummary();
@@ -436,10 +496,507 @@ function showSection(name) {
   }
 }
 
+function setAiOpsStatus(id, text, cls = 'muted') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = `status ${cls}`;
+}
+
+function getAiOpsSessionId() {
+  if (aiOpsSessionId) return aiOpsSessionId;
+  const cached = localStorage.getItem('aiOpsSessionId');
+  if (cached) aiOpsSessionId = cached;
+  return aiOpsSessionId;
+}
+
+function setAiOpsSessionId(value) {
+  aiOpsSessionId = value || null;
+  if (aiOpsSessionId) localStorage.setItem('aiOpsSessionId', aiOpsSessionId);
+  else localStorage.removeItem('aiOpsSessionId');
+}
+
+async function refreshAiOpsSessionState() {
+  const sessionId = getAiOpsSessionId();
+  const meta = document.getElementById('aiOpsSessionMeta');
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsSessionStatus', 'Sessao bloqueada.', 'warn');
+    if (meta) meta.textContent = '';
+    return;
+  }
+
+  try {
+    const data = await api(`/api/admin/workspace-agent/session/${encodeURIComponent(sessionId)}`);
+    const s = data?.session;
+    if (!s) throw new Error('Sessao nao encontrada.');
+    setAiOpsStatus('aiOpsSessionStatus', `Sessao ativa (${s.provider})`, 'ok');
+    if (meta) {
+      meta.textContent = `Sessao: ${s.sessionId} | expira: ${formatTs(s.expiresAtUtc)} | terminal: ${s.canRunTerminal ? 'on' : 'off'} | escrita: ${s.canWriteWorkspace ? 'on' : 'off'}`;
+    }
+  } catch (err) {
+    setAiOpsSessionId(null);
+    setAiOpsStatus('aiOpsSessionStatus', err?.data?.error || 'Sessao expirada.', 'warn');
+    if (meta) meta.textContent = '';
+  }
+}
+
+async function openAiOpsSession() {
+  const provider = document.getElementById('aiOpsProvider')?.value || 'codex';
+  const pin = document.getElementById('aiOpsPin')?.value || '';
+  const environment = document.getElementById('aiOpsEnvironment')?.value || 'dev';
+  setAiOpsStatus('aiOpsSessionStatus', 'Abrindo sessao...', 'muted');
+
+  try {
+    const data = await api('/api/admin/workspace-agent/session/open', 'POST', { provider, pin, environment });
+    const session = data?.session;
+    if (!session?.sessionId) throw new Error('Sessao nao retornada pelo backend.');
+    setAiOpsSessionId(session.sessionId);
+    setAiOpsStatus('aiOpsSessionStatus', `Sessao ativa (${session.provider})`, 'ok');
+    const meta = document.getElementById('aiOpsSessionMeta');
+    if (meta) {
+      meta.textContent = `Sessao: ${session.sessionId} | expira: ${formatTs(session.expiresAtUtc)} | workspace: ${session.workspacePath}`;
+    }
+  } catch (err) {
+    setAiOpsStatus('aiOpsSessionStatus', err?.data?.error || 'Falha ao abrir sessao.', 'warn');
+  }
+}
+
+async function closeAiOpsSession() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsSessionStatus', 'Nenhuma sessao ativa.', 'warn');
+    return;
+  }
+
+  try {
+    await api('/api/admin/workspace-agent/session/close', 'POST', { sessionId });
+  } catch (err) {
+    console.debug('Erro ao encerrar sessao AI Ops', err);
+  }
+
+  setAiOpsSessionId(null);
+  setAiOpsStatus('aiOpsSessionStatus', 'Sessao encerrada.', 'muted');
+  const meta = document.getElementById('aiOpsSessionMeta');
+  if (meta) meta.textContent = '';
+}
+
+async function sendAiOpsChat() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsChatStatus', 'Abra uma sessao antes de usar o chat.', 'warn');
+    return;
+  }
+
+  const prompt = document.getElementById('aiOpsPrompt')?.value || '';
+  if (!prompt.trim()) {
+    setAiOpsStatus('aiOpsChatStatus', 'Informe um prompt.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsChatStatus', 'Processando prompt...', 'muted');
+  try {
+    const data = await api('/api/admin/workspace-agent/chat', 'POST', { sessionId, prompt });
+    const text = data?.text || '';
+    const provider = data?.provider || '-';
+    const output = document.getElementById('aiOpsResponse');
+    if (output) output.value = text;
+    setAiOpsStatus('aiOpsChatStatus', `Resposta recebida (${provider}).`, 'ok');
+  } catch (err) {
+    setAiOpsStatus('aiOpsChatStatus', err?.data?.error || 'Falha ao enviar prompt.', 'warn');
+  }
+}
+
+async function runAiOpsTerminal() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsTerminalStatus', 'Abra uma sessao antes de usar terminal.', 'warn');
+    return;
+  }
+
+  const command = document.getElementById('aiOpsTerminalCommand')?.value || '';
+  const confirmCritical = !!document.getElementById('aiOpsTerminalConfirmCritical')?.checked;
+  if (!command.trim()) {
+    setAiOpsStatus('aiOpsTerminalStatus', 'Informe um comando.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsTerminalStatus', 'Executando comando...', 'muted');
+  try {
+    const data = await api('/api/admin/workspace-agent/terminal', 'POST', {
+      sessionId,
+      command,
+      timeoutSeconds: 180,
+      confirmCritical
+    });
+    const result = data?.result || {};
+    const out = document.getElementById('aiOpsTerminalOutput');
+    if (out) out.value = result.output || '';
+    const tone = result.exitCode === 0 ? 'ok' : 'warn';
+    setAiOpsStatus('aiOpsTerminalStatus', `Exit ${result.exitCode} | ${result.durationMs || 0} ms`, tone);
+  } catch (err) {
+    setAiOpsStatus('aiOpsTerminalStatus', err?.data?.error || 'Falha ao executar comando.', 'warn');
+  }
+}
+
+async function readAiOpsFile() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsFileStatus', 'Abra uma sessao antes de ler arquivos.', 'warn');
+    return;
+  }
+
+  const path = document.getElementById('aiOpsFilePath')?.value || '';
+  if (!path.trim()) {
+    setAiOpsStatus('aiOpsFileStatus', 'Informe um caminho relativo.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsFileStatus', 'Lendo arquivo...', 'muted');
+  try {
+    const data = await api('/api/admin/workspace-agent/files/read', 'POST', { sessionId, path });
+    const file = data?.file || {};
+    const content = document.getElementById('aiOpsFileContent');
+    if (content) content.value = file.content || '';
+    setAiOpsStatus('aiOpsFileStatus', `Arquivo carregado (${file.sizeBytes || 0} bytes).`, 'ok');
+  } catch (err) {
+    setAiOpsStatus('aiOpsFileStatus', err?.data?.error || 'Falha ao ler arquivo.', 'warn');
+  }
+}
+
+async function writeAiOpsFile() {
+  const sessionId = getAiOpsSessionId();
+  if (!sessionId) {
+    setAiOpsStatus('aiOpsFileStatus', 'Abra uma sessao antes de salvar arquivos.', 'warn');
+    return;
+  }
+
+  const path = document.getElementById('aiOpsFilePath')?.value || '';
+  const content = document.getElementById('aiOpsFileContent')?.value || '';
+  const confirmCritical = !!document.getElementById('aiOpsFileConfirmCritical')?.checked;
+
+  if (!path.trim()) {
+    setAiOpsStatus('aiOpsFileStatus', 'Informe um caminho relativo.', 'warn');
+    return;
+  }
+
+  setAiOpsStatus('aiOpsFileStatus', 'Salvando arquivo...', 'muted');
+  try {
+    await api('/api/admin/workspace-agent/files/write', 'POST', {
+      sessionId,
+      path,
+      content,
+      confirmCritical
+    });
+    setAiOpsStatus('aiOpsFileStatus', 'Arquivo salvo com sucesso.', 'ok');
+  } catch (err) {
+    setAiOpsStatus('aiOpsFileStatus', err?.data?.error || 'Falha ao salvar arquivo.', 'warn');
+  }
+}
+
 function stopOutreachLogsAutoRefresh() {
   if (waOutreachLogsTimer) {
     clearInterval(waOutreachLogsTimer);
     waOutreachLogsTimer = null;
+  }
+}
+
+function normalizeSkillHubTextArea(value) {
+  return String(value || '')
+    .split('\n')
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
+function getSkillHubItem(type) {
+  return skillsHubCache.find(item => item.type === type) || null;
+}
+
+async function loadSkillsHub(preferredType = '') {
+  const status = document.getElementById('skillsHubStatus');
+  if (status) {
+    status.textContent = 'Carregando skills...';
+    status.className = 'status muted';
+  }
+
+  try {
+    const response = await api('/api/skills');
+    const items = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.items)
+        ? response.items
+        : [];
+    skillsHubCache = items;
+    if (!skillsHubActiveType || preferredType) {
+      skillsHubActiveType = preferredType || skillsHubCache[0]?.type || '';
+    }
+    renderSkillsHubList();
+    renderSkillHubEditor(skillsHubActiveType);
+    if (status) {
+      status.textContent = `${skillsHubCache.length} skill(s) carregada(s).`;
+      status.className = 'status ok';
+    }
+  } catch (err) {
+    console.error('Erro ao carregar hub de skills', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao carregar o hub de skills.';
+      status.className = 'status warn';
+    }
+  }
+}
+
+function renderSkillsHubList() {
+  const list = document.getElementById('skillsHubList');
+  const countBadge = document.getElementById('skillsHubCountBadge');
+  if (!list) return;
+
+  const channelFilter = document.getElementById('skillsHubChannelFilter')?.value || 'all';
+  const statusFilter = document.getElementById('skillsHubStatusFilter')?.value || 'all';
+  const filtered = skillsHubCache.filter(item => {
+    if (channelFilter !== 'all' && item.channel !== channelFilter) return false;
+    if (statusFilter === 'enabled' && !item.enabled) return false;
+    if (statusFilter === 'disabled' && item.enabled) return false;
+    return true;
+  });
+
+  if (countBadge) {
+    countBadge.textContent = `${filtered.length} skill${filtered.length === 1 ? '' : 's'}`;
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<span class="muted">Nenhuma skill corresponde ao filtro atual.</span>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(item => `
+    <button type="button" class="${item.type === skillsHubActiveType ? 'secondary' : ''}" style="width:100%; text-align:left; display:block; padding:14px; margin-bottom:10px;" onclick="renderSkillHubEditor('${escapeHtml(item.type)}')">
+      <div class="row" style="justify-content:space-between; gap:8px; align-items:flex-start;">
+        <div>
+          <strong>${escapeHtml(item.displayName || item.type)}</strong>
+          <div class="muted" style="margin-top:6px;">Canal: ${escapeHtml(item.channel || 'n/a')}</div>
+        </div>
+        <span class="badge ${item.enabled ? 'ok' : 'muted'}">${item.enabled ? 'Ativa' : 'Inativa'}</span>
+      </div>
+      ${item.instanceName ? `<div class="muted" style="margin-top:8px;">Instância: ${escapeHtml(item.instanceName)}</div>` : ''}
+      ${item.targetMode ? `<div class="muted" style="margin-top:4px;">Destino: ${escapeHtml(item.targetMode)}</div>` : ''}
+    </button>
+  `).join('');
+}
+
+function renderSkillHubEditor(type) {
+  skillsHubActiveType = type || skillsHubCache[0]?.type || '';
+  renderSkillsHubList();
+
+  const editor = document.getElementById('skillsHubEditor');
+  const item = getSkillHubItem(skillsHubActiveType);
+  if (!editor) return;
+  if (!item) {
+    editor.innerHTML = '<p class="muted">Selecione uma skill para editar.</p>';
+    return;
+  }
+
+  const cfg = item.config || {};
+  const templates = item.templates || {};
+  const boolChecked = value => value ? 'checked' : '';
+  const toLines = key => Array.isArray(templates[key]) ? templates[key].join('\n') : '';
+  const storesValue = Array.isArray(cfg.storesToCompare) ? cfg.storesToCompare.join('\n') : '';
+
+  if (item.type === 'whatsapp_welcome') {
+    editor.innerHTML = `
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="margin:0;">${escapeHtml(item.displayName)}</h3>
+          <p class="muted" style="margin-top:6px;">Controla a jornada de boas-vindas quando alguém entra no grupo.</p>
+        </div>
+        <label class="switch"><input type="checkbox" id="skillEnabled" ${boolChecked(item.enabled)} /><span class="slider"></span></label>
+      </div>
+      <div class="grid" style="margin-top:16px; gap:12px;">
+        <div>
+          <label>Instância remetente</label>
+          <input id="skillInstanceName" value="${escapeHtml(item.instanceName || '')}" placeholder="ZapOfertas" />
+        </div>
+        <div>
+          <label>Modo de destino</label>
+          <select id="skillTargetMode">
+            <option value="private" ${item.targetMode === 'private' ? 'selected' : ''}>Privado</option>
+            <option value="same-group" ${item.targetMode === 'same-group' ? 'selected' : ''}>Mesmo grupo</option>
+            <option value="specific-chat" ${item.targetMode === 'specific-chat' ? 'selected' : ''}>Chat específico</option>
+          </select>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label>Chat alvo</label>
+          <input id="skillTargetChatId" value="${escapeHtml(item.targetChatId || '')}" placeholder="1203...@g.us" />
+        </div>
+        <div>
+          <label style="display:flex; gap:8px; align-items:center;"><input id="skillUseVariableMessages" type="checkbox" ${boolChecked(cfg.useVariableMessages)} /> Mensagens variáveis</label>
+        </div>
+        <div>
+          <label style="display:flex; gap:8px; align-items:center;"><input id="skillWelcomeFollowupOnYesEnabled" type="checkbox" ${boolChecked(cfg.welcomeFollowupOnYesEnabled)} /> Follow-up no "sim"</label>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label>Mensagem fixa de boas-vindas</label>
+          <textarea id="skillWelcomeMessage" rows="3">${escapeHtml(cfg.welcomeMessage || '')}</textarea>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label>Mensagem fixa de follow-up</label>
+          <textarea id="skillWelcomeFollowupOnYesMessage" rows="3">${escapeHtml(cfg.welcomeFollowupOnYesMessage || '')}</textarea>
+        </div>
+        <div>
+          <label>Templates de boas-vindas</label>
+          <textarea id="skillWelcomeTemplates" rows="6">${escapeHtml(toLines('welcomeTemplates'))}</textarea>
+        </div>
+        <div>
+          <label>Templates de follow-up</label>
+          <textarea id="skillFollowupTemplates" rows="6">${escapeHtml(toLines('followupOnYesTemplates'))}</textarea>
+        </div>
+      </div>
+      <div class="row" style="margin-top:16px; gap:8px;">
+        <button onclick="saveSkillHubItem()">Salvar skill</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (item.type === 'whatsapp_invite_conversation') {
+    editor.innerHTML = `
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="margin:0;">${escapeHtml(item.displayName)}</h3>
+          <p class="muted" style="margin-top:6px;">Controla o diálogo antes de enviar o link do grupo oficial.</p>
+        </div>
+        <label class="switch"><input type="checkbox" id="skillEnabled" ${boolChecked(item.enabled)} /><span class="slider"></span></label>
+      </div>
+      <div class="grid" style="margin-top:16px; gap:12px;">
+        <div>
+          <label style="display:flex; gap:8px; align-items:center;"><input id="skillUseVariableMessages" type="checkbox" ${boolChecked(cfg.useVariableMessages)} /> Mensagens variáveis</label>
+        </div>
+        <div>
+          <label>Min. mensagens antes do link</label>
+          <input id="skillMinPreLinkMessages" type="number" min="2" max="4" value="${escapeHtml(String(cfg.minPreLinkMessages ?? 2))}" />
+        </div>
+        <div>
+          <label>Máx. mensagens antes do link</label>
+          <input id="skillMaxPreLinkMessages" type="number" min="2" max="4" value="${escapeHtml(String(cfg.maxPreLinkMessages ?? 3))}" />
+        </div>
+        <div><label>Greeting</label><textarea id="skillGreetingTemplates" rows="5">${escapeHtml(toLines('greetingTemplates'))}</textarea></div>
+        <div><label>Explain</label><textarea id="skillExplainTemplates" rows="5">${escapeHtml(toLines('explainTemplates'))}</textarea></div>
+        <div><label>Trust</label><textarea id="skillTrustTemplates" rows="5">${escapeHtml(toLines('trustTemplates'))}</textarea></div>
+        <div><label>Ask</label><textarea id="skillAskTemplates" rows="5">${escapeHtml(toLines('askTemplates'))}</textarea></div>
+        <div><label>Link após resposta</label><textarea id="skillLinkAfterReplyTemplates" rows="5">${escapeHtml(toLines('linkAfterReplyTemplates'))}</textarea></div>
+        <div><label>Link após timeout</label><textarea id="skillLinkAfterTimeoutTemplates" rows="5">${escapeHtml(toLines('linkAfterTimeoutTemplates'))}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:16px; gap:8px;">
+        <button onclick="saveSkillHubItem()">Salvar skill</button>
+      </div>
+    `;
+    return;
+  }
+
+  editor.innerHTML = `
+    <div class="row" style="justify-content:space-between; align-items:center;">
+      <div>
+        <h3 style="margin:0;">${escapeHtml(item.displayName)}</h3>
+        <p class="muted" style="margin-top:6px;">Busca cupom da loja original e compara o mesmo produto entre lojas afiliadas.</p>
+      </div>
+      <label class="switch"><input type="checkbox" id="skillEnabled" ${boolChecked(item.enabled)} /><span class="slider"></span></label>
+    </div>
+    <div class="grid" style="margin-top:16px; gap:12px;">
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillShowOnWeb" type="checkbox" ${boolChecked(cfg.showOnWeb)} /> Mostrar no conversor web</label>
+      </div>
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillAppendToWhatsApp" type="checkbox" ${boolChecked(cfg.appendToWhatsApp)} /> Anexar no WhatsApp</label>
+      </div>
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillRequireExactProductMatch" type="checkbox" ${boolChecked(cfg.requireExactProductMatch)} /> Exigir match exato</label>
+      </div>
+      <div>
+        <label style="display:flex; gap:8px; align-items:center;"><input id="skillPreferOfficialData" type="checkbox" ${boolChecked(cfg.preferOfficialData)} /> Preferir dado oficial</label>
+      </div>
+      <div>
+        <label>Máx. resultados no comparativo</label>
+        <input id="skillMaxComparisonResults" type="number" min="1" max="6" value="${escapeHtml(String(cfg.maxComparisonResults ?? 3))}" />
+      </div>
+      <div style="grid-column:1 / -1;">
+        <label>Lojas para comparar</label>
+        <textarea id="skillStoresToCompare" rows="6" placeholder="Amazon&#10;Mercado Livre&#10;Shopee&#10;Shein">${escapeHtml(storesValue)}</textarea>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px; gap:8px;">
+      <button onclick="saveSkillHubItem()">Salvar skill</button>
+    </div>
+  `;
+}
+
+async function saveSkillHubItem() {
+  const status = document.getElementById('skillsHubStatus');
+  const type = skillsHubActiveType;
+  const item = getSkillHubItem(type);
+  if (!type || !item) return;
+
+  const payload = {
+    enabled: !!document.getElementById('skillEnabled')?.checked,
+    instanceName: document.getElementById('skillInstanceName')?.value || null,
+    targetMode: document.getElementById('skillTargetMode')?.value || null,
+    targetChatId: document.getElementById('skillTargetChatId')?.value || null,
+    templates: {},
+    config: {}
+  };
+
+  if (type === 'whatsapp_welcome') {
+    payload.templates = {
+      welcomeTemplates: normalizeSkillHubTextArea(document.getElementById('skillWelcomeTemplates')?.value),
+      followupOnYesTemplates: normalizeSkillHubTextArea(document.getElementById('skillFollowupTemplates')?.value)
+    };
+    payload.config = {
+      useVariableMessages: !!document.getElementById('skillUseVariableMessages')?.checked,
+      welcomeMessage: document.getElementById('skillWelcomeMessage')?.value || '',
+      welcomeFollowupOnYesEnabled: !!document.getElementById('skillWelcomeFollowupOnYesEnabled')?.checked,
+      welcomeFollowupOnYesMessage: document.getElementById('skillWelcomeFollowupOnYesMessage')?.value || ''
+    };
+  } else if (type === 'whatsapp_invite_conversation') {
+    payload.templates = {
+      greetingTemplates: normalizeSkillHubTextArea(document.getElementById('skillGreetingTemplates')?.value),
+      explainTemplates: normalizeSkillHubTextArea(document.getElementById('skillExplainTemplates')?.value),
+      trustTemplates: normalizeSkillHubTextArea(document.getElementById('skillTrustTemplates')?.value),
+      askTemplates: normalizeSkillHubTextArea(document.getElementById('skillAskTemplates')?.value),
+      linkAfterReplyTemplates: normalizeSkillHubTextArea(document.getElementById('skillLinkAfterReplyTemplates')?.value),
+      linkAfterTimeoutTemplates: normalizeSkillHubTextArea(document.getElementById('skillLinkAfterTimeoutTemplates')?.value)
+    };
+    payload.config = {
+      useVariableMessages: !!document.getElementById('skillUseVariableMessages')?.checked,
+      minPreLinkMessages: Number(document.getElementById('skillMinPreLinkMessages')?.value || 2),
+      maxPreLinkMessages: Number(document.getElementById('skillMaxPreLinkMessages')?.value || 3)
+    };
+  } else {
+    payload.templates = {};
+    payload.config = {
+      showOnWeb: !!document.getElementById('skillShowOnWeb')?.checked,
+      appendToWhatsApp: !!document.getElementById('skillAppendToWhatsApp')?.checked,
+      requireExactProductMatch: !!document.getElementById('skillRequireExactProductMatch')?.checked,
+      preferOfficialData: !!document.getElementById('skillPreferOfficialData')?.checked,
+      maxComparisonResults: Number(document.getElementById('skillMaxComparisonResults')?.value || 3),
+      storesToCompare: normalizeSkillHubTextArea(document.getElementById('skillStoresToCompare')?.value)
+    };
+  }
+
+  if (status) {
+    status.textContent = `Salvando ${item.displayName}...`;
+    status.className = 'status muted';
+  }
+
+  try {
+    await api(`/api/skills/${encodeURIComponent(type)}`, 'PUT', payload);
+    await loadSkillsHub(type);
+    if (status) {
+      status.textContent = `${item.displayName} salva com sucesso.`;
+      status.className = 'status ok';
+    }
+  } catch (err) {
+    console.error('Erro ao salvar skill', err);
+    if (status) {
+      status.textContent = err?.data?.error || 'Erro ao salvar skill.';
+      status.className = 'status warn';
+    }
   }
 }
 
@@ -494,7 +1051,7 @@ function buildAgentAdminUrl(item, sourceChannel) {
     params.set('postType', item.suggestedPostType);
   }
   const query = params.toString();
-  return query ? `/conversor-admin?${query}` : '/conversor-admin';
+  return query ? `/studio-ofertas?${query}` : '/studio-ofertas';
 }
 
 async function agentOpenWhatsAppAdmin(messageId, sourceChannel, suggestedPostType = 'feed', draftId = '', requiresLinkConversion = false) {
@@ -505,7 +1062,7 @@ async function agentOpenWhatsAppAdmin(messageId, sourceChannel, suggestedPostTyp
   if (suggestedPostType) params.set('postType', suggestedPostType);
   if (requiresLinkConversion) params.set('deepAnalyze', '1');
   const query = params.toString();
-  window.open(query ? `/conversor-admin?${query}` : '/conversor-admin', '_blank');
+  window.open(query ? `/studio-ofertas?${query}` : '/studio-ofertas', '_blank');
 }
 
 function formatAgentDetails(item) {
@@ -703,7 +1260,7 @@ async function loadOfferCuration() {
               ${canHighlightOnBio ? `<button class="secondary" onclick="agentHighlightOnBio('${escapeHtml(item.draftId)}')">Destacar na bio</button>` : ''}
               ${canPublishNow ? `<button class="secondary" onclick="agentPublishDraftNow('${escapeHtml(item.draftId)}', '${escapeHtml(catalogTarget)}')">Publicar agora</button>` : ''}
               ${canReschedule ? `<button class="secondary" onclick="agentRescheduleDraft('${escapeHtml(item.draftId)}', '${escapeHtml(item.scheduledFor || '')}')">Reagendar</button>` : ''}
-              <button class="secondary" onclick="window.open('/conversor-admin?draftId=${escapeHtml(item.draftId)}', '_blank')">Abrir draft</button>
+              <button class="secondary" onclick="window.open('/studio-ofertas?draftId=${escapeHtml(item.draftId)}', '_blank')">Abrir no Studio</button>
             </div>
           </td>
         </tr>
@@ -1361,7 +1918,7 @@ function formatRelativeTime(ts) {
 function normalizeDashboardText(text) {
   if (text === null || text === undefined) return '';
   let normalized = String(text);
-  const looksBroken = /[ÃÂ�]|CÃ|aÃ|nÃ|Ãƒ|Ã¢|�/.test(normalized);
+  const looksBroken = /[áÂ�]|Cá|aá|ná|áƒ|á¢|�/.test(normalized);
   if (!looksBroken) return normalized;
 
   for (let i = 0; i < 2; i++) {
@@ -1435,6 +1992,48 @@ function collectGeminiApiKeysFromUi() {
     .filter(Boolean);
 }
 
+// --- Gemma 4 API key helpers ---
+function getGemma4ApiKeyRowsFromDom() {
+  return Array.from(document.querySelectorAll('#gemma4ApiKeyRows input[data-gemma4-key="1"]'))
+    .map(input => String(input.value || '').trim());
+}
+
+function renderGemma4ApiKeyRows(values) {
+  const container = document.getElementById('gemma4ApiKeyRows');
+  if (!container) return;
+  const rows = (values || []).map(v => String(v || '').trim());
+  const effective = rows.length > 0 ? rows : [''];
+  container.innerHTML = effective.map((value, index) => `
+    <div class="row" style="margin-top:8px;">
+      <input type="password" data-gemma4-key="1" placeholder="Chave Gemma 4 ${index + 1} (AIza...)" value="${escapeHtml(value)}" />
+      <button class="secondary" type="button" onclick="removeGemma4ApiKeyRow(${index})">- Remover</button>
+    </div>
+  `).join('');
+}
+
+function addGemma4ApiKeyRow() {
+  const current = getGemma4ApiKeyRowsFromDom();
+  current.push('');
+  renderGemma4ApiKeyRows(current);
+}
+
+function removeGemma4ApiKeyRow(index) {
+  const current = getGemma4ApiKeyRowsFromDom();
+  if (current.length <= 1) {
+    renderGemma4ApiKeyRows(['']);
+    return;
+  }
+  const safeIndex = Math.max(0, Math.min(index, current.length - 1));
+  current.splice(safeIndex, 1);
+  renderGemma4ApiKeyRows(current);
+}
+
+function collectGemma4ApiKeysFromUi() {
+  return getGemma4ApiKeyRowsFromDom()
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 function parseApiKeysTextarea(id, fallbackMaskedSingle = '') {
   const values = String(document.getElementById(id)?.value || '')
     .split(/\r?\n/)
@@ -1469,6 +2068,324 @@ function renderPillList(targetId, values, emptyText = '') {
     return;
   }
   target.innerHTML = items.map(value => `<span class="pill selection-chip">${escapeHtml(String(value))}</span>`).join('');
+}
+
+function offerNormalizationTargetLabel(target) {
+  switch (String(target || '').toLowerCase()) {
+    case 'catalog':
+      return 'Catálogo';
+    case 'queue':
+      return 'Fila de automação';
+    default:
+      return 'Preview + revisão';
+  }
+}
+
+function offerNormalizationStatusMeta(status) {
+  switch (String(status || '').toLowerCase()) {
+    case 'normalized':
+      return { label: 'Normalizado', badge: 'ok' };
+    case 'review_required':
+      return { label: 'Revisão obrigatória', badge: 'warn' };
+    case 'sent_to_catalog':
+      return { label: 'Enviado ao catálogo', badge: 'ok' };
+    case 'queued_for_automation':
+      return { label: 'Na fila de automação', badge: 'warn' };
+    case 'failed':
+      return { label: 'Falhou', badge: 'bad' };
+    default:
+      return { label: 'Sem execução', badge: 'muted' };
+  }
+}
+
+function offerNormalizationSourceLabel(sourceType) {
+  switch (String(sourceType || '').toLowerCase()) {
+    case 'json':
+      return 'JSON';
+    case 'csv':
+      return 'CSV';
+    case 'tsv':
+      return 'TSV';
+    case 'table':
+      return 'Tabela simples';
+    default:
+      return 'Autodetectar';
+  }
+}
+
+function formatOfferNormalizationMoney(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return numeric.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function formatOfferNormalizationDiscount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return `${numeric.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
+}
+
+function setOfferNormalizationActionStatus(message = '', type = 'muted') {
+  const el = document.getElementById('offerNormalizeActionStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `status ${type}`;
+}
+
+function escapeOfferNormalizationCell(value, fallback = '-') {
+  const text = value === null || value === undefined || value === '' ? fallback : String(value);
+  return escapeHtml(text);
+}
+
+function renderOfferNormalizationIssues(issues) {
+  const container = document.getElementById('offerNormalizeIssuesList');
+  if (!container) return;
+
+  const items = Array.isArray(issues) ? issues : [];
+  if (!items.length) {
+    container.innerHTML = '<div class="overview-list-empty">Nenhuma issue carregada.</div>';
+    return;
+  }
+
+  container.innerHTML = items.map(issue => {
+    const level = String(issue?.level || 'warn').toLowerCase();
+    const badgeClass = level === 'error' ? 'bad' : level === 'info' ? 'muted' : 'warn';
+    const row = issue?.rowNumber ? `Linha ${issue.rowNumber}` : 'Geral';
+    const field = issue?.field ? ` • ${escapeHtml(issue.field)}` : '';
+    return `
+      <div class="overview-list-item">
+        <div>
+          <strong>${escapeHtml(issue?.message || 'Issue sem descrição')}</strong>
+          <small class="muted">${escapeHtml(row)}${field}</small>
+        </div>
+        <span class="badge ${badgeClass}">${escapeHtml(level)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderOfferNormalizationPreview(offers) {
+  const body = document.getElementById('offerNormalizePreviewBody');
+  if (!body) return;
+
+  const items = Array.isArray(offers) ? offers : [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="8" class="muted">Nenhuma oferta normalizada nesta sessão.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = items.map(item => {
+    const issues = [];
+    if (!item?.productName) issues.push('Sem nome');
+    if (!item?.productUrl) issues.push('Sem URL');
+    if (item?.promoPrice === null || item?.promoPrice === undefined) issues.push('Sem preço promo');
+
+    const issueBadges = issues.length
+      ? issues.map(issue => `<span class="badge warn">${escapeHtml(issue)}</span>`).join(' ')
+      : '<span class="badge ok">Pronta</span>';
+
+    const safeUrl = item?.productUrl && /^https?:\/\//i.test(item.productUrl)
+      ? `<a href="${escapeHtml(item.productUrl)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
+      : '<span class="muted">Sem URL</span>';
+
+    return `
+      <tr>
+        <td>
+          <strong>${escapeOfferNormalizationCell(item?.productName, 'Sem nome')}</strong><br />
+          <small class="muted">${safeUrl}</small>
+        </td>
+        <td>${formatOfferNormalizationMoney(item?.originalPrice)}</td>
+        <td>${formatOfferNormalizationMoney(item?.promoPrice)}</td>
+        <td>${formatOfferNormalizationDiscount(item?.discountPercent)}</td>
+        <td>${escapeOfferNormalizationCell(item?.storeName)}</td>
+        <td>${escapeOfferNormalizationCell(item?.category)}</td>
+        <td>${escapeOfferNormalizationCell(item?.commissionRaw)}</td>
+        <td>${issueBadges}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderOfferNormalizationRun(run) {
+  const statusMeta = offerNormalizationStatusMeta(run?.status);
+  const targetLabel = offerNormalizationTargetLabel(run?.selectedTarget);
+  const sourceLabel = offerNormalizationSourceLabel(run?.sourceType);
+  const offersCount = Array.isArray(run?.normalizedOffers) ? run.normalizedOffers.length : 0;
+  const issuesCount = Array.isArray(run?.validationIssues) ? run.validationIssues.length : 0;
+  const assistedSummary = run?.assistedDelivery?.summary ? ` ${run.assistedDelivery.summary}` : '';
+
+  setSafeText('offerNormalizeRunId', run?.id ? shortId(run.id) : 'Nenhum');
+  setSafeText('offerNormalizeStatusText', statusMeta.label);
+  setSafeText('offerNormalizeOffersCount', String(offersCount));
+  setSafeText('offerNormalizeSourceType', run ? sourceLabel : 'Sem origem processada');
+  setSafeText('offerNormalizeIssuesCount', String(issuesCount));
+  setSafeText('offerNormalizeCurrentTarget', targetLabel);
+  setSafeText('offerNormalizeNextStep', run?.nextStepHint || 'Revise a entrada e normalize.');
+  setSafeText('offerNormalizeSummaryTitle', run ? `Execução ${shortId(run.id)} • ${formatTs(run.createdAtUtc)}` : 'Nenhuma execução carregada.');
+  setSafeText('offerNormalizeSummary', run ? `${run.summary || ''}${assistedSummary}`.trim() || 'Normalize uma entrada para gerar preview, issues e histórico.' : 'Normalize uma entrada para gerar preview, issues e histórico.');
+
+  const badge = document.getElementById('offerNormalizeStatusBadge');
+  if (badge) {
+    badge.textContent = statusMeta.label;
+    badge.className = `badge ${statusMeta.badge}`;
+  }
+
+  const targetSelect = document.getElementById('offerNormalizeTarget');
+  if (targetSelect && run?.selectedTarget) {
+    targetSelect.value = run.selectedTarget;
+  }
+
+  const notesInput = document.getElementById('offerNormalizeNotes');
+  if (notesInput && run?.notes !== undefined && run?.notes !== null) {
+    notesInput.value = run.notes;
+  }
+
+  renderOfferNormalizationPreview(run?.normalizedOffers || []);
+  renderOfferNormalizationIssues(run?.validationIssues || []);
+}
+
+function renderOfferNormalizationHistory(runs) {
+  const body = document.getElementById('offerNormalizeHistoryBody');
+  if (!body) return;
+
+  const items = Array.isArray(runs) ? runs : [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="7" class="muted">Nenhuma execução carregada.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = items.map(run => {
+    const statusMeta = offerNormalizationStatusMeta(run?.status);
+    const offersCount = Array.isArray(run?.normalizedOffers) ? run.normalizedOffers.length : 0;
+    const issuesCount = Array.isArray(run?.validationIssues) ? run.validationIssues.length : 0;
+
+    return `
+      <tr>
+        <td><strong>${escapeHtml(shortId(run?.id || ''))}</strong></td>
+        <td>${escapeHtml(formatTs(run?.createdAtUtc))}</td>
+        <td>${escapeHtml(offerNormalizationSourceLabel(run?.sourceType))}</td>
+        <td><span class="badge ${statusMeta.badge}">${escapeHtml(statusMeta.label)}</span></td>
+        <td>${escapeHtml(offerNormalizationTargetLabel(run?.selectedTarget))}</td>
+        <td>${offersCount} oferta(s) / ${issuesCount} issue(s)</td>
+        <td>
+          <div class="section-actions">
+            <button class="secondary" onclick="loadOfferNormalizationRun('${escapeHtml(run?.id || '')}')">Abrir</button>
+            <button class="secondary" onclick="routeOfferNormalizationRun('review', '${escapeHtml(run?.id || '')}')">Revisão</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function loadOfferNormalizationRuns() {
+  const status = document.getElementById('offerNormalizeHistoryStatus')?.value || '';
+  const target = document.getElementById('offerNormalizeHistoryTarget')?.value || '';
+  const body = document.getElementById('offerNormalizeHistoryBody');
+
+  if (body) {
+    body.innerHTML = '<tr><td colspan="7" class="muted">Carregando execuções...</td></tr>';
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (target) params.set('target', target);
+    params.set('limit', '20');
+      const response = await api(`/api/admin/offers/normalization-runs?${params.toString()}`);
+      renderOfferNormalizationHistory(response?.items || response?.runs || []);
+  } catch (e) {
+    if (body) {
+      body.innerHTML = `<tr><td colspan="7" class="muted">Falha ao carregar histórico: ${escapeHtml(e?.data?.error || e?.message || 'erro desconhecido')}</td></tr>`;
+    }
+  }
+}
+
+async function loadOfferNormalizationRun(id) {
+  if (!id) return;
+  try {
+      const response = await api(`/api/admin/offers/normalization-runs/${encodeURIComponent(id)}`);
+      const run = response?.run || response || null;
+    currentOfferNormalizationRunId = run?.id || null;
+    renderOfferNormalizationRun(run);
+  } catch (e) {
+    showToast(e?.data?.error || e?.message || 'Falha ao carregar execução.', 'error');
+  }
+}
+
+async function normalizeOffersInput() {
+  const rawInput = document.getElementById('offerNormalizeInput')?.value || '';
+  const inputType = document.getElementById('offerNormalizeInputType')?.value || 'autodetect';
+  const selectedTarget = document.getElementById('offerNormalizeTarget')?.value || 'review';
+  const notes = document.getElementById('offerNormalizeNotes')?.value || '';
+
+  if (!rawInput.trim()) {
+    setOfferNormalizationActionStatus('Cole algum conteúdo antes de normalizar.', 'warn');
+    showToast('Cole JSON, CSV ou tabela antes de normalizar.', 'error');
+    return;
+  }
+
+  setOfferNormalizationActionStatus('Normalizando ofertas...', 'muted');
+  try {
+    const response = await api('/api/admin/offers/normalize', 'POST', {
+      rawInput,
+      inputType,
+      selectedTarget,
+      notes
+    });
+
+    currentOfferNormalizationRunId = response?.runId || null;
+    setOfferNormalizationActionStatus(`Execução ${shortId(response?.runId || '')} criada com sucesso.`, 'ok');
+    showToast(`Normalização concluída: ${response?.offers?.length || 0} oferta(s).`, 'success');
+    if (currentOfferNormalizationRunId) {
+      await loadOfferNormalizationRun(currentOfferNormalizationRunId);
+    }
+    await loadOfferNormalizationRuns();
+  } catch (e) {
+    const message = e?.data?.error || e?.message || 'Falha ao normalizar ofertas.';
+    setOfferNormalizationActionStatus(message, 'bad');
+    showToast(message, 'error');
+  }
+}
+
+async function routeOfferNormalizationRun(targetOverride, runIdOverride = null) {
+  const runId = runIdOverride || currentOfferNormalizationRunId;
+  if (!runId) {
+    showToast('Abra ou normalize uma execução antes de encaminhar.', 'error');
+    return;
+  }
+
+  const selectedTarget = targetOverride || document.getElementById('offerNormalizeTarget')?.value || 'review';
+  const notes = document.getElementById('offerNormalizeNotes')?.value || '';
+  setOfferNormalizationActionStatus(`Atualizando destino para ${offerNormalizationTargetLabel(selectedTarget)}...`, 'muted');
+
+  try {
+    const response = await api(`/api/admin/offers/normalization-runs/${encodeURIComponent(runId)}/route`, 'POST', {
+      selectedTarget,
+      notes
+    });
+
+      const run = response?.run || response || null;
+      currentOfferNormalizationRunId = run?.id || runId;
+      renderOfferNormalizationRun(run);
+    await loadOfferNormalizationRuns();
+    setOfferNormalizationActionStatus(`Execução encaminhada para ${offerNormalizationTargetLabel(selectedTarget)}.`, 'ok');
+    showToast(`Execução enviada para ${offerNormalizationTargetLabel(selectedTarget)}.`, 'success');
+  } catch (e) {
+    const message = e?.data?.error || e?.message || 'Falha ao atualizar destino da execução.';
+    setOfferNormalizationActionStatus(message, 'bad');
+    showToast(message, 'error');
+  }
+}
+
+function clearOfferNormalizationComposer() {
+  currentOfferNormalizationRunId = null;
+  setSafeVal('offerNormalizeInput', '');
+  setSafeVal('offerNormalizeNotes', '');
+  setSafeVal('offerNormalizeInputType', 'autodetect');
+  setSafeVal('offerNormalizeTarget', 'review');
+  setOfferNormalizationActionStatus('', 'muted');
+  renderOfferNormalizationRun(null);
 }
 
 function loadTheme() {
@@ -1707,11 +2624,7 @@ function setOperationalSummary(prefix, summary, detail, tone) {
   const card = summaryEl?.closest('.status-board-item');
   if (card) {
     card.dataset.tone = tone;
-    card.style.borderColor = tone === 'ok'
-      ? 'rgba(16, 185, 129, 0.22)'
-      : tone === 'bad'
-        ? 'rgba(239, 68, 68, 0.24)'
-        : 'rgba(245, 158, 11, 0.24)';
+    card.style.removeProperty('border-color');
   }
 }
 
@@ -1983,8 +2896,16 @@ function renderSettings(s) {
     setSafeChecked('responderAppendShein', responder.appendSheinCode ?? true);
     setSafeChecked('responderTracking', responder.trackingEnabled ?? true);
     setSafeChecked('responderWelcomeEnabled', responder.welcomeEnabled ?? true);
+    const responderWelcomeInstanceSelect = document.getElementById('responderWelcomeInstanceName');
+    if (responderWelcomeInstanceSelect) {
+      responderWelcomeInstanceSelect.dataset.selectedValue = responder.welcomeInstanceName || '';
+      responderWelcomeInstanceSelect.value = responder.welcomeInstanceName || '';
+    }
+    setSafeVal('responderWelcomeTargetMode', responder.welcomeTargetMode || 'private');
+    setSafeVal('responderWelcomeTargetChatId', responder.welcomeTargetChatId || '');
     setSafeVal('responderWelcomeMessage', responder.welcomeMessage || '');
     setSafeVal('responderFooter', responder.footerText || '');
+    toggleResponderWelcomeTargetConfig();
 
     // ML Compliance
     const mlCompliance = s.mercadoLivreCompliance || {};
@@ -1994,6 +2915,48 @@ function renderSettings(s) {
     setSafeChecked('mlCompWhitelistEnabled', !!mlCompliance.enforceChannelWhitelist);
     setSafeChecked('mlCompBlockUnknown', mlCompliance.blockWhenChannelUnknown ?? true);
     setSafeVal('mlCompAllowedChannels', (mlCompliance.allowedChannels || []).join('\n'));
+
+    const mlScout = s.mercadoLivreAffiliateScout || {};
+    setSafeChecked('mlScoutEnabled', !!mlScout.enabled);
+    setSafeChecked('mlScoutUsePersistentSession', mlScout.usePersistentSession ?? true);
+    setSafeChecked('mlScoutHeadless', mlScout.headless ?? true);
+    setSafeChecked('mlScoutRequireShareFlow', mlScout.requireShareButtonFlow ?? true);
+    setSafeChecked('mlScoutRequireImage', mlScout.requireImage ?? true);
+    setSafeChecked('mlScoutAutoPublishOfficial', !!mlScout.autoPublishToOfficialGroup);
+    setSafeChecked('mlScoutSaveScreenshotsOnFailure', mlScout.saveScreenshotsOnFailure ?? true);
+    setSafeVal('mlScoutInstanceName', mlScout.whatsAppInstanceName || '');
+    setSafeVal('mlScoutDestinationGroupId', mlScout.destinationGroupId || '');
+    setSafeVal('mlScoutLoginUser', mlScout.loginUser || '');
+    setSafeVal('mlScoutLoginPassword', mlScout.loginPassword || '');
+    setSafeVal('mlScoutTwoFactorCode', mlScout.twoFactorCode || '');
+    setSafeVal('mlScoutAuthMode', mlScout.authMode || 'code-or-qr');
+    setSafeVal('mlScoutStorageStateJson', mlScout.storageStateJson || '');
+    setSafeVal('mlScoutStorageStatePath', mlScout.storageStatePath || 'D:\\Achadinhos\\data\\mercadolivre-affiliate-storage-state.json');
+    setSafeVal('mlScoutBaseUrl', mlScout.baseUrl || 'https://www.mercadolivre.com.br/afiliados');
+    setSafeVal('mlScoutLoginUrl', mlScout.loginUrl || 'https://www.mercadolivre.com.br/entrar?go=https%3A%2F%2Fwww.mercadolivre.com.br%2Fafiliados%2Fhub');
+    setSafeVal('mlScoutHomeUrl', mlScout.homeUrl || 'https://www.mercadolivre.com.br/afiliados/hub');
+    setSafeVal('mlScoutIntervalMinutes', mlScout.intervalMinutes ?? 10);
+    setSafeVal('mlScoutIntervalJitterMinutes', mlScout.intervalJitterMinutes ?? 2);
+    setSafeVal('mlScoutMinCommissionPercent', mlScout.minCommissionPercent ?? 19);
+    setSafeVal('mlScoutTier1MinPrice', mlScout.tier1MinPrice ?? 99);
+    setSafeVal('mlScoutTier1MinCommissionPercent', mlScout.tier1MinCommissionPercent ?? 12);
+    setSafeVal('mlScoutTier2MinPrice', mlScout.tier2MinPrice ?? 189);
+    setSafeVal('mlScoutTier2MinCommissionPercent', mlScout.tier2MinCommissionPercent ?? 11);
+    setSafeVal('mlScoutTier3MinPrice', mlScout.tier3MinPrice ?? 325);
+    setSafeVal('mlScoutTier3MinCommissionPercent', mlScout.tier3MinCommissionPercent ?? 7);
+    setSafeVal('mlScoutMaxOffersPerRun', mlScout.maxOffersPerRun ?? 1);
+    setSafeVal('mlScoutRepeatWindowHours', mlScout.repeatWindowHours ?? 24);
+    setSafeVal('mlScoutOfferCardSelector', mlScout.offerCardSelector || "[data-testid='recommendation-card'], [data-testid='affiliate-offer-card'], article, section");
+    setSafeVal('mlScoutOfferLinkSelector', mlScout.offerLinkSelector || "a[href*='/p/'], a[href*='/MLB-'], a[href*='mercadolivre.com.br/p/']");
+    setSafeVal('mlScoutOfferTitleSelector', mlScout.offerTitleSelector || "h2, h3, [data-testid='item-title'], [data-testid='recommendation-title']");
+    setSafeVal('mlScoutOfferPriceSelector', mlScout.offerPriceSelector || "[data-testid='price'], [data-testid='price-current'], .andes-money-amount__fraction");
+    setSafeVal('mlScoutOfferImageSelector', mlScout.offerImageSelector || "img[src], img[data-src]");
+    setSafeVal('mlScoutOfferCommissionSelector', mlScout.offerCommissionSelector || "[data-testid='commission'], [data-testid='extra-profit'], :text-matches('%|comiss|ganho','i')");
+    setSafeVal('mlScoutShareButtonSelector', mlScout.shareButtonSelector || "button:has-text('Compartilhar oferta'), button:has-text('Compartilhar'), [data-testid='share-offer']");
+    setSafeVal('mlScoutShareActionSelector', mlScout.shareActionSelector || "button:has-text('Copiar link'), button:has-text('Gerar link'), [data-testid='copy-affiliate-link'], [data-testid='share-offer-link']");
+    setSafeVal('mlScoutSharedLinkSelector', mlScout.sharedLinkSelector || "input[value^='http'], textarea");
+    setSafeVal('mlScoutSharedLinkCopyButtonSelector', mlScout.sharedLinkCopyButtonSelector || "button:has-text('Copiar'), [data-testid='copy-link'], [data-testid='copy-affiliate-link']");
+    setSafeVal('mlScoutNotes', mlScout.notes || "Fluxo esperado: entrar na Central de Afiliados e Criadores, abrir o hub, usar a secao 'Produtos que escolhemos para voce', abrir o produto, clicar em 'Compartilhar oferta' e copiar o link gerado. O login pode exigir codigo ou leitura de QR code.");
 
     // Instagram Posts
     const insta = s.instagramPosts || {};
@@ -2040,6 +3003,15 @@ function renderSettings(s) {
     renderGeminiApiKeyRows(gemKeys);
     setSafeVal('geminiModel', gemini.model || 'gemini-2.5-flash');
     setSafeVal('geminiMaxTokens', gemini.maxOutputTokens ?? 1200);
+
+    const gemma4 = s.gemma4 || {};
+    const gemma4Keys = Array.isArray(gemma4.apiKeys) ? gemma4.apiKeys : (gemma4.apiKey ? ['********'] : ['']);
+    renderGemma4ApiKeyRows(gemma4Keys);
+    setSafeVal('gemma4Model', gemma4.model || 'gemma-4-26b-a4b-it');
+    setSafeVal('gemma4ModelAdvanced', gemma4.modelAdvanced || 'gemma-4-31b-it');
+    setSafeVal('gemma4MaxTokens', gemma4.maxOutputTokens ?? 1200);
+    setSafeVal('gemma4MonthlyLimit', gemma4.monthlyCallLimit ?? 0);
+    setSafeVal('gemma4CostPerCall', gemma4.estimatedCostPerCallUsd ?? 0);
 
     const deepseek = s.deepSeek || {};
     setSafeVal('deepseekApiKey', deepseek.apiKey ? '********' : '');
@@ -2092,6 +3064,16 @@ function renderSettings(s) {
     setSafeVal('igPubVerifyToken', pub.verifyToken || '');
     setSafeChecked('igPubAutoPilotEnabled', !!pub.autoPilotEnabled);
     setSafeVal('igPubAutoPilotWhatsAppInstance', pub.autoPilotWhatsAppInstance || '');
+    setSafeChecked('igViralReelsEnabled', !!pub.viralReelsAutoPilotEnabled);
+    setSafeVal('igViralReelsSourceChatId', pub.viralReelsSourceTelegramChatId ?? 2425105459);
+    setSafeVal('igViralReelsIntervalHours', pub.viralReelsIntervalHours ?? 12);
+    setSafeVal('igViralReelsScheduleTimes', Array.isArray(pub.viralReelsScheduleTimes) ? pub.viralReelsScheduleTimes.join(', ') : '07:30, 17:30');
+    setSafeVal('igViralReelsLookbackHours', pub.viralReelsLookbackHours ?? 24);
+    setSafeVal('igViralReelsRepeatWindowHours', pub.viralReelsRepeatWindowHours ?? 72);
+    setSafeChecked('igViralReelsSendApproval', pub.viralReelsSendForApproval ?? true);
+    setSafeVal('igViralReelsApprovalWhatsAppGroupId', pub.viralReelsApprovalWhatsAppGroupId || '');
+    setSafeVal('igViralReelsApprovalWhatsAppInstanceName', pub.viralReelsApprovalWhatsAppInstanceName || 'ZapOfertas');
+    setSafeChecked('igViralReelsAutoPublish', false);
 
     const story = s.instagramStory || {};
     setSafeVal('igStoryToken', story.accessToken || '');
@@ -2143,6 +3125,7 @@ async function loadSettings() {
   ]);
   restoreAgentUiState();
   renderTelegramToWhatsAppRoute();
+  renderFlowEndpointsMap();
 }
 
 function renderResponderLogs(items) {
@@ -2313,6 +3296,99 @@ async function saveMercadoLivreCompliance() {
       const message = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar.');
       status.textContent = message;
       status.className = 'status bad';
+    }
+  }
+}
+
+async function saveMercadoLivreAffiliateScout() {
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('mlScoutSaveStatus');
+  if (status) {
+    status.textContent = 'Salvando scout...';
+    status.className = 'status warn';
+  }
+
+  const existing = await api('/api/settings');
+  existing.mercadoLivreAffiliateScout = existing.mercadoLivreAffiliateScout || {};
+  existing.mercadoLivreAffiliateScout.enabled = document.getElementById('mlScoutEnabled')?.checked ?? false;
+  existing.mercadoLivreAffiliateScout.usePersistentSession = document.getElementById('mlScoutUsePersistentSession')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.headless = document.getElementById('mlScoutHeadless')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.requireShareButtonFlow = document.getElementById('mlScoutRequireShareFlow')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.requireImage = document.getElementById('mlScoutRequireImage')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.autoPublishToOfficialGroup = document.getElementById('mlScoutAutoPublishOfficial')?.checked ?? false;
+  existing.mercadoLivreAffiliateScout.saveScreenshotsOnFailure = document.getElementById('mlScoutSaveScreenshotsOnFailure')?.checked ?? true;
+  existing.mercadoLivreAffiliateScout.whatsAppInstanceName = document.getElementById('mlScoutInstanceName')?.value || '';
+  existing.mercadoLivreAffiliateScout.destinationGroupId = document.getElementById('mlScoutDestinationGroupId')?.value || '';
+  existing.mercadoLivreAffiliateScout.loginUser = document.getElementById('mlScoutLoginUser')?.value || '';
+  existing.mercadoLivreAffiliateScout.loginPassword = document.getElementById('mlScoutLoginPassword')?.value || '';
+  existing.mercadoLivreAffiliateScout.twoFactorCode = document.getElementById('mlScoutTwoFactorCode')?.value || '';
+  existing.mercadoLivreAffiliateScout.authMode = document.getElementById('mlScoutAuthMode')?.value || '';
+  existing.mercadoLivreAffiliateScout.storageStateJson = document.getElementById('mlScoutStorageStateJson')?.value || '';
+  existing.mercadoLivreAffiliateScout.storageStatePath = document.getElementById('mlScoutStorageStatePath')?.value || '';
+  existing.mercadoLivreAffiliateScout.baseUrl = document.getElementById('mlScoutBaseUrl')?.value || '';
+  existing.mercadoLivreAffiliateScout.loginUrl = document.getElementById('mlScoutLoginUrl')?.value || '';
+  existing.mercadoLivreAffiliateScout.homeUrl = document.getElementById('mlScoutHomeUrl')?.value || '';
+  existing.mercadoLivreAffiliateScout.intervalMinutes = Number(document.getElementById('mlScoutIntervalMinutes')?.value || 10);
+  existing.mercadoLivreAffiliateScout.intervalJitterMinutes = Number(document.getElementById('mlScoutIntervalJitterMinutes')?.value || 2);
+  existing.mercadoLivreAffiliateScout.minCommissionPercent = Number(document.getElementById('mlScoutMinCommissionPercent')?.value || 19);
+  existing.mercadoLivreAffiliateScout.tier1MinPrice = Number(document.getElementById('mlScoutTier1MinPrice')?.value || 99);
+  existing.mercadoLivreAffiliateScout.tier1MinCommissionPercent = Number(document.getElementById('mlScoutTier1MinCommissionPercent')?.value || 12);
+  existing.mercadoLivreAffiliateScout.tier2MinPrice = Number(document.getElementById('mlScoutTier2MinPrice')?.value || 189);
+  existing.mercadoLivreAffiliateScout.tier2MinCommissionPercent = Number(document.getElementById('mlScoutTier2MinCommissionPercent')?.value || 11);
+  existing.mercadoLivreAffiliateScout.tier3MinPrice = Number(document.getElementById('mlScoutTier3MinPrice')?.value || 325);
+  existing.mercadoLivreAffiliateScout.tier3MinCommissionPercent = Number(document.getElementById('mlScoutTier3MinCommissionPercent')?.value || 7);
+  existing.mercadoLivreAffiliateScout.maxOffersPerRun = Number(document.getElementById('mlScoutMaxOffersPerRun')?.value || 1);
+  existing.mercadoLivreAffiliateScout.repeatWindowHours = Number(document.getElementById('mlScoutRepeatWindowHours')?.value || 24);
+  existing.mercadoLivreAffiliateScout.offerCardSelector = document.getElementById('mlScoutOfferCardSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerLinkSelector = document.getElementById('mlScoutOfferLinkSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerTitleSelector = document.getElementById('mlScoutOfferTitleSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerPriceSelector = document.getElementById('mlScoutOfferPriceSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerImageSelector = document.getElementById('mlScoutOfferImageSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.offerCommissionSelector = document.getElementById('mlScoutOfferCommissionSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.shareButtonSelector = document.getElementById('mlScoutShareButtonSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.shareActionSelector = document.getElementById('mlScoutShareActionSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.sharedLinkSelector = document.getElementById('mlScoutSharedLinkSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.sharedLinkCopyButtonSelector = document.getElementById('mlScoutSharedLinkCopyButtonSelector')?.value || '';
+  existing.mercadoLivreAffiliateScout.notes = document.getElementById('mlScoutNotes')?.value || '';
+
+  try {
+    await api('/api/settings', 'PUT', existing);
+    if (status) {
+      status.textContent = 'Scout salvo com segurança.';
+      status.className = 'status ok';
+    }
+    await loadSettings();
+  } catch (e) {
+    if (status) {
+      const message = e?.data?.errors ? e.data.errors.join(' | ') : (e?.data?.error || e?.message || 'Erro ao salvar scout.');
+      status.textContent = message;
+      status.className = 'status bad';
+    }
+  }
+}
+
+async function testMercadoLivreAffiliateScout() {
+  if (currentRole !== 'admin') return;
+  const status = document.getElementById('mlScoutSaveStatus');
+  if (status) {
+    status.textContent = 'Testando scout...';
+    status.className = 'status warn';
+  }
+
+  try {
+    await saveMercadoLivreAffiliateScout();
+    const result = await api('/api/admin/mercadolivre-affiliate-scout/test', 'POST', {});
+    const offerCount = Array.isArray(result?.offers) ? result.offers.length : 0;
+    const message = result?.message || 'Teste concluído.';
+
+    if (status) {
+      status.textContent = `${message} Ofertas encontradas: ${offerCount}.`;
+      status.className = result?.success ? 'status ok' : 'status warn';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = `Falha no teste: ${e?.message || e}`;
+      status.className = 'status err';
     }
   }
 }
@@ -2584,6 +3660,9 @@ async function saveLinkResponder() {
   existing.linkResponder.appendSheinCode = document.getElementById('responderAppendShein')?.checked ?? true;
   existing.linkResponder.trackingEnabled = document.getElementById('responderTracking')?.checked ?? true;
   existing.linkResponder.welcomeEnabled = document.getElementById('responderWelcomeEnabled')?.checked ?? true;
+  existing.linkResponder.welcomeInstanceName = (document.getElementById('responderWelcomeInstanceName')?.value || '').trim() || null;
+  existing.linkResponder.welcomeTargetMode = document.getElementById('responderWelcomeTargetMode')?.value || 'private';
+  existing.linkResponder.welcomeTargetChatId = (document.getElementById('responderWelcomeTargetChatId')?.value || '').trim() || null;
   existing.linkResponder.welcomeMessage = document.getElementById('responderWelcomeMessage')?.value || '';
   existing.linkResponder.footerText = document.getElementById('responderFooter')?.value || '';
 
@@ -2683,6 +3762,16 @@ async function saveAiLabSettings() {
     existing.gemini.model = document.getElementById('geminiModel')?.value || 'gemini-2.5-flash';
     existing.gemini.maxOutputTokens = parseInt(document.getElementById('geminiMaxTokens')?.value || '1200', 10);
 
+    existing.gemma4 = existing.gemma4 || {};
+    const gemma4Keys = collectGemma4ApiKeysFromUi();
+    existing.gemma4.apiKey = gemma4Keys[0] || '';
+    existing.gemma4.apiKeys = gemma4Keys;
+    existing.gemma4.model = document.getElementById('gemma4Model')?.value || 'gemma-4-26b-a4b-it';
+    existing.gemma4.modelAdvanced = document.getElementById('gemma4ModelAdvanced')?.value || 'gemma-4-31b-it';
+    existing.gemma4.maxOutputTokens = parseInt(document.getElementById('gemma4MaxTokens')?.value || '1200', 10);
+    existing.gemma4.monthlyCallLimit = parseInt(document.getElementById('gemma4MonthlyLimit')?.value || '0', 10);
+    existing.gemma4.estimatedCostPerCallUsd = parseFloat(document.getElementById('gemma4CostPerCall')?.value || '0');
+
     existing.deepSeek = existing.deepSeek || {};
     existing.deepSeek.apiKey = document.getElementById('deepseekApiKey')?.value || '';
     existing.deepSeek.apiKeys = parseApiKeysTextarea('deepseekApiKeys', existing.deepSeek.apiKey === '********' ? '********' : '');
@@ -2744,6 +3833,7 @@ async function runAiLabCompare() {
   const providers = [
     document.getElementById('aiLabProviderOpenAi')?.checked ? 'openai' : null,
     document.getElementById('aiLabProviderGemini')?.checked ? 'gemini' : null,
+    document.getElementById('aiLabProviderGemma4')?.checked ? 'gemma4' : null,
     document.getElementById('aiLabProviderDeepSeek')?.checked ? 'deepseek' : null,
     document.getElementById('aiLabProviderNemotron')?.checked ? 'nemotron' : null,
     document.getElementById('aiLabProviderQwen')?.checked ? 'qwen' : null,
@@ -2823,6 +3913,20 @@ async function saveInstagramPublishSettings() {
   existing.instagramPublish.autoPilotRequireOfficialProductData = document.getElementById('igAutoRequireOfficial')?.checked ?? true;
   existing.instagramPublish.autoPilotMinimumImageMatchScore = parseInt(document.getElementById('igAutoMinImageMatch')?.value || '80', 10) || 80;
   existing.instagramPublish.autoPilotRequireAiCaption = document.getElementById('igAutoRequireAi')?.checked ?? true;
+  existing.instagramPublish.viralReelsAutoPilotEnabled = document.getElementById('igViralReelsEnabled')?.checked ?? false;
+  existing.instagramPublish.viralReelsSourceTelegramChatId = parseInt(document.getElementById('igViralReelsSourceChatId')?.value || '2425105459', 10) || 2425105459;
+  existing.instagramPublish.viralReelsIntervalHours = parseInt(document.getElementById('igViralReelsIntervalHours')?.value || '12', 10) || 12;
+  existing.instagramPublish.viralReelsScheduleTimes = String(document.getElementById('igViralReelsScheduleTimes')?.value || '07:30,17:30')
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean);
+  existing.instagramPublish.viralReelsLookbackHours = parseInt(document.getElementById('igViralReelsLookbackHours')?.value || '24', 10) || 24;
+  existing.instagramPublish.viralReelsRepeatWindowHours = parseInt(document.getElementById('igViralReelsRepeatWindowHours')?.value || '72', 10) || 72;
+  existing.instagramPublish.viralReelsSendForApproval = document.getElementById('igViralReelsSendApproval')?.checked ?? true;
+  existing.instagramPublish.viralReelsApprovalChannel = 'whatsapp';
+  existing.instagramPublish.viralReelsApprovalWhatsAppGroupId = document.getElementById('igViralReelsApprovalWhatsAppGroupId')?.value || null;
+  existing.instagramPublish.viralReelsApprovalWhatsAppInstanceName = document.getElementById('igViralReelsApprovalWhatsAppInstanceName')?.value || 'ZapOfertas';
+  existing.instagramPublish.viralReelsAutoPublishEnabled = false;
 
   try {
     await api('/api/settings', 'PUT', existing);
@@ -3077,6 +4181,9 @@ async function saveLinkResponder() {
   existing.linkResponder.appendSheinCode = document.getElementById('responderAppendShein')?.checked ?? true;
   existing.linkResponder.trackingEnabled = document.getElementById('responderTracking')?.checked ?? true;
   existing.linkResponder.welcomeEnabled = document.getElementById('responderWelcomeEnabled')?.checked ?? true;
+  existing.linkResponder.welcomeInstanceName = (document.getElementById('responderWelcomeInstanceName')?.value || '').trim() || null;
+  existing.linkResponder.welcomeTargetMode = document.getElementById('responderWelcomeTargetMode')?.value || 'private';
+  existing.linkResponder.welcomeTargetChatId = (document.getElementById('responderWelcomeTargetChatId')?.value || '').trim() || null;
   existing.linkResponder.welcomeMessage = document.getElementById('responderWelcomeMessage')?.value || '';
   existing.linkResponder.footerText = document.getElementById('responderFooter')?.value || '';
 
@@ -3388,9 +4495,11 @@ async function loadInstagramDrafts() {
   try {
     const data = await api('/api/instagram/publish/drafts', 'GET');
     const items = data.items || [];
+    instagramDraftCache = items;
     if (!target) return;
     if (items.length === 0) {
       target.innerHTML = '<div class="muted">Nenhum rascunho.</div>';
+      renderInstagramProcessSummary();
       return;
     }
     const rows = items.map(d => `
@@ -3398,6 +4507,7 @@ async function loadInstagramDrafts() {
         <div class="log-time">${escapeHtml(formatTs(d.createdAt))}</div>
         <div class="log-store">${escapeHtml(d.productName || 'Post')}</div>
         <div class="log-msg">
+          <div><strong>Processo:</strong> ${escapeHtml(d.processName || INSTAGRAM_PROCESS_LEGACY)}</div>
           <div><strong>Status:</strong> ${escapeHtml(d.status || '-')}</div>
           <div><strong>Imagens:</strong> ${escapeHtml(String((d.imageUrls || []).length))}</div>
           <div><strong>CTA:</strong> ${escapeHtml(String((d.ctas || []).length))}</div>
@@ -3409,6 +4519,7 @@ async function loadInstagramDrafts() {
       </div>
     `).join('');
     target.innerHTML = rows;
+    renderInstagramProcessSummary();
   } catch (e) {
     if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar.';
   }
@@ -3469,12 +4580,18 @@ async function loadInstagramPublishLogs() {
   const target = document.getElementById('igPubLogs');
   if (target) target.textContent = 'Carregando...';
   const q = document.getElementById('igPubLogSearch')?.value || '';
+  const processName = document.getElementById('igPubProcessFilter')?.value || '';
   try {
-    const data = await api('/api/logs/instagram-publish' + (q ? ('?q=' + encodeURIComponent(q)) : ''), 'GET');
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (processName.trim()) params.set('processName', processName.trim());
+    const data = await api('/api/logs/instagram-publish' + (params.toString() ? (`?${params.toString()}`) : ''), 'GET');
     const items = data.items || [];
+    instagramPublishLogCache = items;
     if (!target) return;
     if (items.length === 0) {
       target.innerHTML = '<div class="muted">Nenhum log.</div>';
+      renderInstagramProcessSummary();
       return;
     }
     const rows = items.map(i => `
@@ -3482,6 +4599,7 @@ async function loadInstagramPublishLogs() {
         <div class="log-time">${escapeHtml(formatTs(i.timestamp))}</div>
         <div class="log-store">${escapeHtml(i.action || '-')} ${i.success ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERRO</span>'}</div>
         <div class="log-msg">
+          <div><strong>Processo:</strong> ${escapeHtml(i.processName || INSTAGRAM_PROCESS_LEGACY)}</div>
           <div><strong>Draft:</strong> ${escapeHtml(i.draftId || '-')}</div>
           <div><strong>Media:</strong> ${escapeHtml(i.mediaId || '-')}</div>
           <div><strong>Erro:</strong> ${escapeHtml(i.error || '-')}</div>
@@ -3491,6 +4609,7 @@ async function loadInstagramPublishLogs() {
       </div>
     `).join('');
     target.innerHTML = rows;
+    renderInstagramProcessSummary();
   } catch (e) {
     if (target) target.textContent = e?.data?.error || e?.message || 'Erro ao carregar.';
   }
@@ -3500,6 +4619,175 @@ async function clearInstagramPublishLogs() {
   if (currentRole !== 'admin') return;
   await api('/api/logs/instagram-publish/clear', 'POST', {});
   await loadInstagramPublishLogs();
+}
+
+function normalizeInstagramProcessName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isLegacyInstagramProcessName(value) {
+  return !String(value || '').trim();
+}
+
+function matchesInstagramProcessName(value, targetProcess) {
+  const target = String(targetProcess || '').trim();
+  if (!target) return true;
+  if (normalizeInstagramProcessName(target) === normalizeInstagramProcessName(INSTAGRAM_PROCESS_LEGACY)) {
+    return isLegacyInstagramProcessName(value);
+  }
+  return normalizeInstagramProcessName(value) === normalizeInstagramProcessName(target);
+}
+
+function detectInstagramProcessName() {
+  const explicitNames = [
+    ...instagramDraftCache.map(x => x?.processName),
+    ...instagramPublishLogCache.map(x => x?.processName)
+  ].filter(Boolean).map(name => String(name).trim());
+  if (explicitNames.some(name => normalizeInstagramProcessName(name) === normalizeInstagramProcessName(INSTAGRAM_REEL_ASSISTED_PROCESS))) {
+    return INSTAGRAM_REEL_ASSISTED_PROCESS;
+  }
+  return explicitNames[0] || INSTAGRAM_PROCESS_LEGACY;
+}
+
+function renderInstagramProcessSummary() {
+  const summaryName = document.getElementById('igProcessName');
+  const summaryLabel = document.getElementById('igProcessLabel');
+  const summaryDrafts = document.getElementById('igProcessDrafts');
+  const summaryPublished = document.getElementById('igProcessPublished');
+  const summaryFailed = document.getElementById('igProcessFailed');
+  const summaryLastDraft = document.getElementById('igProcessLastDraft');
+  const summaryLastPublish = document.getElementById('igProcessLastPublish');
+  const summaryLastError = document.getElementById('igProcessLastError');
+
+  const filterValue = (document.getElementById('igPubProcessFilter')?.value || '').trim();
+  const processName = filterValue || detectInstagramProcessName();
+  const matchingDrafts = instagramDraftCache.filter(x => matchesInstagramProcessName(x?.processName, processName));
+  const matchingLogs = instagramPublishLogCache.filter(x => matchesInstagramProcessName(x?.processName, processName));
+  const draftCounts = matchingDrafts.reduce((acc, draft) => {
+    const status = String(draft?.status || '').trim().toLowerCase();
+    acc[status || 'draft'] = (acc[status || 'draft'] || 0) + 1;
+    return acc;
+  }, {});
+  const publishedLogs = matchingLogs.filter(x => !!x.success);
+  const failedLogs = matchingLogs.filter(x => !x.success);
+  const latestDraft = [...matchingDrafts].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
+  const latestPublishedLog = publishedLogs.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))[0];
+  const latestFailedLog = failedLogs.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))[0];
+
+  if (summaryName) summaryName.textContent = processName;
+  if (summaryLabel) summaryLabel.textContent = filterValue ? 'Filtro ativo' : 'Processo detectado';
+  if (summaryDrafts) summaryDrafts.textContent = `${matchingDrafts.length} drafts`;
+  if (summaryPublished) summaryPublished.textContent = `${draftCounts.published || 0} publicados`;
+  if (summaryFailed) summaryFailed.textContent = `${draftCounts.failed || 0} falhas`;
+  if (summaryLastDraft) {
+    summaryLastDraft.textContent = latestDraft
+      ? `${latestDraft.productName || 'Post'} · ${latestDraft.status || 'draft'}`
+      : 'Sem draft';
+  }
+  if (summaryLastPublish) {
+    summaryLastPublish.textContent = latestPublishedLog
+      ? `${formatTs(latestPublishedLog.timestamp)} · ${latestPublishedLog.mediaId || latestPublishedLog.draftId || '-'}`
+      : 'Sem publicação';
+  }
+  if (summaryLastError) {
+    summaryLastError.textContent = latestFailedLog
+      ? `${formatTs(latestFailedLog.timestamp)} · ${latestFailedLog.error || latestFailedLog.details || '-' }`
+      : 'Sem erro';
+  }
+}
+
+function formatFlowEndpointIds(value) {
+  const ids = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(',')
+      .map(part => part.trim())
+      .filter(Boolean);
+
+  if (!ids.length) {
+    return '<span class="muted">-</span>';
+  }
+
+  return ids.map(id => `<div><code>${escapeHtml(String(id))}</code></div>`).join('');
+}
+
+function getFlowEndpointsMapRows() {
+  const settings = window.__settingsCache || {};
+  const tgChats = Array.isArray(settings?.InstagramPosts?.TelegramChatIds)
+    ? settings.InstagramPosts.TelegramChatIds.map(id => String(id).trim()).filter(Boolean)
+    : ['2425105459'];
+  const tgRoutes = Array.isArray(settings?.TelegramToWhatsAppRoutes) ? settings.TelegramToWhatsAppRoutes : [];
+  const waRoutes = Array.isArray(settings?.WhatsAppForwardingRoutes) ? settings.WhatsAppForwardingRoutes : [];
+  const waForward = settings?.WhatsAppForwarding || {};
+  const officialDestIds = Array.from(new Set([
+    ...(Array.isArray(waForward.DestinationGroupIds) ? waForward.DestinationGroupIds : []),
+    ...waRoutes.flatMap(route => Array.isArray(route?.DestinationGroupIds) ? route.DestinationGroupIds : []),
+    ...tgRoutes.flatMap(route => Array.isArray(route?.DestinationGroupIds) ? route.DestinationGroupIds : [])
+  ].map(value => String(value).trim()).filter(Boolean)));
+
+  const telegramRoute = tgRoutes[0] || null;
+  const waRoute = waRoutes.find(route => (route?.Name || '').trim() === 'Rota Nova Oficial') || waRoutes[0] || null;
+  const mlRoute = waRoutes.find(route => (route?.Name || '').trim() === 'Ponte Mercado Livre Scout') || null;
+
+  const rows = [
+    {
+      canal: 'Telegram',
+      nome: 'AE-IA 3000 - VÍDEOS VIRAIS',
+      id: tgChats.join(', '),
+      papel: 'Origem de reels e vídeo do produto',
+      destino: 'Instagram - preview e publicação'
+    }
+  ];
+
+  if (telegramRoute) {
+    rows.push({
+      canal: 'Telegram',
+      nome: telegramRoute.Name || 'Rota Telegram principal',
+      id: Array.isArray(telegramRoute.SourceChatIds) ? telegramRoute.SourceChatIds.join(', ') : '',
+      papel: 'Origem Telegram para WhatsApp',
+      destino: Array.isArray(telegramRoute.DestinationGroupIds) && telegramRoute.DestinationGroupIds.length
+        ? telegramRoute.DestinationGroupIds.join(', ')
+        : 'Grupo oficial WhatsApp'
+    });
+  }
+
+  if (waRoute) {
+    rows.push({
+      canal: 'WhatsApp',
+      nome: waRoute.Name || 'Rota Nova Oficial',
+      id: Array.isArray(waRoute.SourceChatIds) ? waRoute.SourceChatIds.join(', ') : '',
+      papel: 'Origem WhatsApp principal',
+      destino: Array.isArray(waRoute.DestinationGroupIds) && waRoute.DestinationGroupIds.length
+        ? waRoute.DestinationGroupIds.join(', ')
+        : 'Grupo oficial WhatsApp'
+    });
+  }
+
+  if (mlRoute) {
+    rows.push({
+      canal: 'WhatsApp',
+      nome: mlRoute.Name || 'Ponte Mercado Livre Scout',
+      id: Array.isArray(mlRoute.SourceChatIds) ? mlRoute.SourceChatIds.join(', ') : '',
+      papel: 'Ponte e triagem de ofertas do Mercado Livre',
+      destino: Array.isArray(mlRoute.DestinationGroupIds) && mlRoute.DestinationGroupIds.length
+        ? mlRoute.DestinationGroupIds.join(', ')
+        : 'Grupo oficial WhatsApp'
+    });
+  }
+
+  rows.push({
+    canal: 'WhatsApp',
+    nome: 'Rei das Ofertas Oficial',
+    id: officialDestIds.join(', '),
+    papel: 'Destino final',
+    destino: 'Publicacao e recebimento de ofertas'
+  });
+
+  return rows.length ? rows : FLOW_ENDPOINTS_MAP_FALLBACK;
+}
+
+function renderFlowEndpointsMap() {
+  window.FlowEndpointsMap?.renderTable('flowEndpointsMapBody', 'flowEndpointsMapSearch', window.__settingsCache);
 }
 
 async function checkInstagramStatus(mediaId) {
@@ -4035,7 +5323,7 @@ function applyActiveWhatsAppRouteToUi() {
   if (waFooter) waFooter.value = route.footerText || '';
   const waInstanceName = document.getElementById('waInstanceName');
   if (waInstanceName) waInstanceName.value = route.instanceName || '';
-  populateAllInstanceSelects(route.instanceName || '');
+  populateAllInstanceSelects();
   window.__waSelection = {
     source: new Set((route.sourceChatIds || []).map(String)),
     dest: new Set((route.destinationGroupIds || []).map(String))
@@ -4084,6 +5372,7 @@ function addWhatsAppRoute() {
   if (window.__waPayload) {
     renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
   }
+  saveWhatsAppSelection();
 }
 
 function removeWhatsAppRoute() {
@@ -4100,6 +5389,7 @@ function removeWhatsAppRoute() {
   if (window.__waPayload) {
     renderWhatsAppGroups(window.__waPayload, window.__settingsCache || {});
   }
+  saveWhatsAppSelection();
 }
 
 function renameWhatsAppRoute() {
@@ -5110,6 +6400,7 @@ function showAnalyticsSubtab(name) {
 function renderAnalyticsSummary(data) {
   const container = document.getElementById('analyticsSummaryCards');
   const identity = document.getElementById('analyticsIdentityCards');
+  const trackingCards = document.getElementById('analyticsTrackingCards');
   const recentBody = document.getElementById('analyticsRecentBody');
   const src = document.getElementById('analyticsSources');
   const cmp = document.getElementById('analyticsCampaigns');
@@ -5117,10 +6408,17 @@ function renderAnalyticsSummary(data) {
   const pages = document.getElementById('analyticsPageTypes');
   const devices = document.getElementById('analyticsDevices');
   const browsers = document.getElementById('analyticsBrowsers');
+  const originSurfaces = document.getElementById('analyticsOriginSurfaces');
+  const clickSurfaces = document.getElementById('analyticsClickSurfaces');
+  const storeChannels = document.getElementById('analyticsStoreChannels');
+  const lowEngagement = document.getElementById('analyticsLowEngagement');
+  const surfaceMatrix = document.getElementById('analyticsSurfaceMatrix');
+  const strategicInsights = document.getElementById('analyticsStrategicInsights');
   const hours = document.getElementById('analyticsHours')?.value || '24';
   const hoursLabel = Number.parseInt(hours, 10) >= 24 && Number.parseInt(hours, 10) % 24 === 0
     ? `${Number.parseInt(hours, 10) / 24} dia(s)`
     : `${hours}h`;
+  const tracking = data.summary?.tracking || data.tracking || {};
 
   const categorized = Array.isArray(data.categorized)
     ? data.categorized.reduce((acc, item) => {
@@ -5143,9 +6441,75 @@ function renderAnalyticsSummary(data) {
   ];
 
   const formatBreakdown = (items) => {
+      const list = Array.isArray(items) ? items : [];
+      if (list.length === 0) return 'Sem dados.';
+      return list.map(x => `${x.key}: ${x.count}`).join('\n');
+  };
+
+  const formatStoreChannel = (items) => {
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) return 'Sem dados.';
-    return list.map(x => `${x.key}: ${x.count}`).join('\n');
+    return list.map(x => `${x.store} -> ${x.channel}: ${x.clicks}`).join('\n');
+  };
+
+  const formatLinkList = (items) => {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return 'Sem dados.';
+    return list.map(x => `${x.originSurface} | ${x.store} | ${x.clicks} clique(s) | ${x.trackingSlug || x.trackingId}`).join('\n');
+  };
+
+  const formatMatrix = (items) => {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return 'Sem dados.';
+    return list.map(x => `${x.originSurface} -> ${x.clickSurface}: ${x.count}`).join('\n');
+  };
+
+  const formatInsights = (items) => {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return 'Sem insights ainda.';
+    return list.map(x => `[${x.strength || 'sinal_fraco'}] ${x.title}: ${x.message}`).join('\n\n');
+  };
+
+  const formatAnalyticsRecentLinks = (item) => {
+    const trackedUrl = String(item?.trackedUrl || '').trim();
+    const targetUrl = String(item?.targetUrl || '').trim();
+    const pageUrl = String(item?.pageUrl || '').trim();
+    const parts = [];
+
+    if (trackedUrl) {
+      parts.push(`
+        <div><strong>Rastreado:</strong> <a href="${escapeHtml(trackedUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(shortAnalyticsUrl(trackedUrl))}</a></div>
+      `);
+    }
+
+    if (targetUrl) {
+      parts.push(`
+        <div><strong>Convertido:</strong> <a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(shortAnalyticsUrl(targetUrl))}</a></div>
+      `);
+    }
+
+    if (pageUrl) {
+      parts.push(`
+        <div><strong>Origem:</strong> <a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(shortAnalyticsUrl(pageUrl))}</a></div>
+      `);
+    }
+
+    if (parts.length === 0) {
+      return '<span class="muted">Sem link</span>';
+    }
+
+    const actions = [];
+    const encodedTargetUrl = encodeURIComponent(targetUrl);
+    const encodedTrackedUrl = encodeURIComponent(trackedUrl);
+    if (trackedUrl) {
+      actions.push(`<a href="${escapeHtml(trackedUrl)}" target="_blank" rel="noopener noreferrer" class="secondary" style="padding:4px 8px; font-size:11px;">Abrir rastreado</a>`);
+    }
+    if (targetUrl) {
+      actions.push(`<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" class="secondary" style="padding:4px 8px; font-size:11px;">Abrir convertido</a>`);
+      actions.push(`<button class="secondary" style="padding:4px 8px; font-size:11px;" onclick="showAnalyticsProductInfoFromEncoded('${encodedTargetUrl}','${encodedTrackedUrl}')">Ver produto</button>`);
+    }
+
+    return `<div class="analytics-recent-links">${parts.join('')}<div class="analytics-recent-actions">${actions.join('')}</div></div>`;
   };
 
   if (container) {
@@ -5172,12 +6536,34 @@ function renderAnalyticsSummary(data) {
     `).join('');
   }
 
+  if (trackingCards) {
+    trackingCards.innerHTML = [
+      { label: 'Links gerados', value: tracking.totalLinksCreated || 0, hint: `novos links curtos em ${hoursLabel}` },
+      { label: 'Emitidos', value: tracking.funnel?.publishedOrEmitted || 0, hint: `links fora do conversor puro` },
+      { label: 'Links clicados', value: tracking.linksWithClicks || 0, hint: `links com pelo menos um clique` },
+      { label: 'Cliques rastreados', value: tracking.totalLinksClicked || 0, hint: `eventos via redirect /r/...` },
+      { label: 'Media por link', value: `${tracking.avgClicksPerLink || 0}`, hint: `media de cliques por link criado` }
+    ].map(card => `
+      <div class="card analytics-card">
+        <div class="eyebrow">${card.label}</div>
+        <div class="metric">${card.value}</div>
+        <div class="hint">${card.hint}</div>
+      </div>
+    `).join('');
+  }
+
   if (src) src.textContent = formatBreakdown(data.topSources);
   if (cmp) cmp.textContent = formatBreakdown(data.topCampaigns);
   if (evt) evt.textContent = formatBreakdown(data.topEventTypes);
   if (pages) pages.textContent = formatBreakdown(data.topPageTypes);
   if (devices) devices.textContent = formatBreakdown(data.topDevices);
   if (browsers) browsers.textContent = formatBreakdown(data.topBrowsers);
+  if (originSurfaces) originSurfaces.textContent = formatBreakdown(tracking.topOriginSurfaces);
+  if (clickSurfaces) clickSurfaces.textContent = formatBreakdown(tracking.topClickSurfaces);
+  if (storeChannels) storeChannels.textContent = formatStoreChannel(tracking.storeChannelPerformance);
+  if (lowEngagement) lowEngagement.textContent = formatLinkList(tracking.lowEngagementLinks);
+  if (surfaceMatrix) surfaceMatrix.textContent = formatMatrix(tracking.surfaceMatrix);
+  if (strategicInsights) strategicInsights.textContent = formatInsights(tracking.strategicInsights);
 
   // Stats de conversão
   const conv = data.summary?.conversions || {};
@@ -5202,15 +6588,16 @@ function renderAnalyticsSummary(data) {
   if (recentBody) {
     const items = data.recentItems || [];
     if (items.length === 0) {
-      recentBody.innerHTML = '<tr><td colspan="5" class="muted">Nenhum clique recente.</td></tr>';
+      recentBody.innerHTML = '<tr><td colspan="6" class="muted">Nenhum clique recente.</td></tr>';
     } else {
       recentBody.innerHTML = items.map(i => `
         <tr>
           <td>${formatTs(i.timestamp)}</td>
           <td><span class="badge muted">${escapeHtml(i.category || 'default')}</span></td>
           <td>${escapeHtml(i.eventType || '-')}</td>
-          <td>${escapeHtml(i.source || '-')}</td>
-          <td title="${escapeHtml(i.targetUrl)}">${escapeHtml((i.targetUrl || '').substring(0, 60))}${(i.targetUrl || '').length > 60 ? '...' : ''}</td>
+          <td>${escapeHtml(i.originSurface || i.source || '-')}</td>
+          <td>${escapeHtml(i.clickSurface || '-')}</td>
+          <td>${formatAnalyticsRecentLinks(i)}</td>
         </tr>
       `).join('');
     }
@@ -5218,6 +6605,113 @@ function renderAnalyticsSummary(data) {
 
   // Também carrega as ofertas em alta
   loadHotDeals(hours);
+}
+
+function shortAnalyticsUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  return text.length > 64 ? `${text.substring(0, 64)}...` : text;
+}
+
+function setAnalyticsModalLink(elementId, url, fallbackLabel = '-') {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const safeUrl = String(url || '').trim();
+  if (safeUrl) {
+    el.href = safeUrl;
+    el.removeAttribute('aria-disabled');
+    el.style.pointerEvents = '';
+    el.style.opacity = '';
+    el.title = '';
+    return;
+  }
+
+  el.href = '#';
+  el.setAttribute('aria-disabled', 'true');
+  el.style.pointerEvents = 'none';
+  el.style.opacity = '0.5';
+  el.title = fallbackLabel;
+}
+
+function openAnalyticsProductModal() {
+  const modal = document.getElementById('analyticsProductModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('show'));
+}
+
+function closeAnalyticsProductModal() {
+  const modal = document.getElementById('analyticsProductModal');
+  if (!modal) return;
+  modal.classList.remove('show');
+  setTimeout(() => {
+    if (!modal.classList.contains('show')) {
+      modal.style.display = 'none';
+    }
+  }, 280);
+}
+
+async function showAnalyticsProductInfo(targetUrl, trackedUrl = '') {
+  const normalizedTarget = String(targetUrl || '').trim();
+  if (!normalizedTarget) {
+    showToast('Sem link convertido para inspecionar.', 'error');
+    return;
+  }
+
+  try {
+    const info = await api('/api/conversor', 'POST', {
+      url: normalizedTarget,
+      source: 'analytics_review'
+    });
+
+    const titleEl = document.getElementById('analyticsProductModalTitle');
+    const storeEl = document.getElementById('analyticsProductModalStore');
+    const priceEl = document.getElementById('analyticsProductModalPrice');
+    const prevPriceEl = document.getElementById('analyticsProductModalPrevPrice');
+    const discountEl = document.getElementById('analyticsProductModalDiscount');
+    const descriptionEl = document.getElementById('analyticsProductModalDescription');
+    const imageEl = document.getElementById('analyticsProductModalImage');
+
+    if (titleEl) titleEl.textContent = info?.title || 'Produto nao identificado';
+    if (storeEl) storeEl.textContent = info?.store || '-';
+    if (priceEl) priceEl.textContent = info?.price || '-';
+    if (prevPriceEl) prevPriceEl.textContent = info?.previousPrice || '-';
+    if (discountEl) {
+      const discount = Number(info?.discountPercent || 0);
+      discountEl.textContent = discount > 0 ? `${discount}%` : '-';
+    }
+
+    if (descriptionEl) {
+      const rawDescription = String(info?.description || '').trim();
+      descriptionEl.textContent = rawDescription || 'Sem descricao disponivel.';
+    }
+
+    const imageUrl = String(info?.imageUrl || '').trim();
+    if (imageEl) {
+      imageEl.src = imageUrl || 'img/placeholder.png';
+      imageEl.onerror = () => {
+        imageEl.src = 'img/placeholder.png';
+      };
+    }
+
+    const trackedFinal = String(info?.trackedUrl || trackedUrl || '').trim();
+    const convertedFinal = String(info?.convertedUrl || normalizedTarget).trim();
+    const originalFinal = String(info?.originalUrl || info?.input || normalizedTarget).trim();
+
+    setAnalyticsModalLink('analyticsProductModalTracked', trackedFinal, 'Sem link rastreado');
+    setAnalyticsModalLink('analyticsProductModalConverted', convertedFinal, 'Sem link convertido');
+    setAnalyticsModalLink('analyticsProductModalOriginal', originalFinal, 'Sem link original');
+
+    openAnalyticsProductModal();
+  } catch (error) {
+    showToast(error?.data?.error || error?.message || 'Falha ao carregar dados do produto.', 'error');
+  }
+}
+
+function showAnalyticsProductInfoFromEncoded(targetUrlEncoded = '', trackedUrlEncoded = '') {
+  const targetUrl = decodeURIComponent(String(targetUrlEncoded || ''));
+  const trackedUrl = decodeURIComponent(String(trackedUrlEncoded || ''));
+  return showAnalyticsProductInfo(targetUrl, trackedUrl);
 }
 
 async function loadHotDeals(hours = 24) {
@@ -5425,6 +6919,13 @@ document.addEventListener('DOMContentLoaded', () => {
     el.addEventListener('change', renderScheduledMessagePreview);
   });
 
+  const flowEndpointsSearch = document.getElementById('flowEndpointsMapSearch');
+  if (flowEndpointsSearch) {
+    flowEndpointsSearch.addEventListener('input', renderFlowEndpointsMap);
+    flowEndpointsSearch.addEventListener('change', renderFlowEndpointsMap);
+  }
+  renderFlowEndpointsMap();
+
   ['engCurrentParticipants', 'engTarget120', 'engTarget1000', 'engDailyGoal', 'engActionsWeek1', 'engActionsWeek2To4', 'engActionsScale', 'engRetentionMessages'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -5474,6 +6975,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  const waSafetyInstanceSelect = document.getElementById('waSafetyInstanceName');
+  if (waSafetyInstanceSelect) {
+    waSafetyInstanceSelect.addEventListener('change', () => {
+      renderWhatsAppSafetyPanel(waSafetyInstanceSelect.value || '');
+    });
+  }
+
   document.querySelectorAll('section[id^="section-"]').forEach(section => {
     const firstH2 = section.querySelector('.card:first-child h2:first-of-type, div:first-child > .card:first-child h2:first-of-type');
     if (firstH2 && !firstH2.querySelector('.icon-btn')) {
@@ -5495,8 +7003,10 @@ document.addEventListener('DOMContentLoaded', () => {
   window.onclick = function (event) {
     const modal = document.getElementById('docModal');
     const scheduleModal = document.getElementById('waScheduleEditModal');
+    const analyticsProductModal = document.getElementById('analyticsProductModal');
     if (event.target == modal) closeDoc();
     if (event.target == scheduleModal) closeWaScheduleEditor();
+    if (event.target == analyticsProductModal) closeAnalyticsProductModal();
   }
 });
 
@@ -5514,23 +7024,68 @@ function buildGroupOptions(groups, placeholder = 'Selecione o grupo...') {
 }
 
 function buildWaInstanceOptions(selectedValue = '') {
-  const allInstances = (waInstancesCache || []);
+  const allInstances = Array.isArray(waInstancesCache) ? waInstancesCache : [];
   const activeStates = ['open', 'connected', 'online'];
-  const activeInstances = allInstances.filter(inst => {
-    const stateRaw = (inst?.state || inst?.State || '').toString().toLowerCase();
-    return activeStates.includes(stateRaw);
+  const knownNames = ['ZapOfertas', 'ZapOfertas2'];
+  const instanceMap = new Map();
+
+  allInstances.forEach(inst => {
+    const name = String(inst?.name || inst?.Name || '').trim();
+    if (!name) return;
+    instanceMap.set(name.toLowerCase(), {
+      name,
+      state: getWaInstanceStateValue(inst),
+      connected: activeStates.includes(getWaInstanceStateValue(inst))
+    });
   });
-  const effectiveInstances = activeInstances.length > 0 ? activeInstances : allInstances;
+
+  const configuredNames = [];
+  try {
+    const s = window.__settingsCache || {};
+    configuredNames.push(
+      s?.whatsAppForwarding?.instanceName,
+      s?.linkResponder?.welcomeInstanceName,
+      s?.instagramStory?.approvalWhatsAppInstance,
+      s?.instagramPublish?.autoPilotWhatsAppInstance,
+      s?.whatsAppAdminAutomation?.instanceName
+    );
+    (s?.whatsAppAdminAutomation?.participantCopySchedules || []).forEach(item => configuredNames.push(item?.instanceName));
+    (s?.whatsAppAdminAutomation?.scheduledGroupMessages || []).forEach(item => configuredNames.push(item?.instanceName));
+  } catch (error) {
+    console.debug('Falha ao ler instâncias configuradas no cache de settings', error);
+  }
+
+  [...knownNames, ...configuredNames]
+    .map(name => String(name || '').trim())
+    .filter(Boolean)
+    .forEach(name => {
+    const key = name.toLowerCase();
+    if (!instanceMap.has(key)) {
+      instanceMap.set(key, { name, state: 'configured', connected: false });
+    }
+  });
+
+  const normalizedSelected = String(selectedValue || '').trim();
+  if (normalizedSelected && !instanceMap.has(normalizedSelected.toLowerCase())) {
+    instanceMap.set(normalizedSelected.toLowerCase(), {
+      name: normalizedSelected,
+      state: 'configured',
+      connected: false
+    });
+  }
+
+  const rankedInstances = Array.from(instanceMap.values())
+    .sort((a, b) => {
+      if (a.connected !== b.connected) return a.connected ? -1 : 1;
+      return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
+    });
 
   let options = '<option value="">Padrão do servidor</option>';
-  effectiveInstances.forEach(inst => {
-    const name = inst?.name || inst?.Name;
-    if (!name) return;
-    const stateRaw = (inst?.state || inst?.State || '').toString().toLowerCase();
-    const stateLabel = stateRaw || 'unknown';
-    const marker = (stateRaw === 'open' || stateRaw === 'connected' || stateRaw === 'online') ? 'OK' : 'WARN';
+  rankedInstances.forEach(inst => {
+    const name = inst.name;
+    const stateLabel = inst.state || 'configured';
     const selected = String(name) === String(selectedValue || '') ? ' selected' : '';
-    options += `<option value="${escapeHtml(String(name))}"${selected}>[${marker}] ${escapeHtml(String(name))} (${escapeHtml(stateLabel)})</option>`;
+    options += `<option value="${escapeHtml(String(name))}"${selected}>${escapeHtml(String(name))} (${escapeHtml(stateLabel)})</option>`;
   });
   return options;
 }
@@ -5538,10 +7093,17 @@ function buildWaInstanceOptions(selectedValue = '') {
 function populateWaInstanceSelect(selectId, selectedValue = '') {
   const select = document.getElementById(selectId);
   if (!select) return;
-  const previousValue = selectedValue || select.value || '';
+  const previousValue = selectedValue || select.dataset.selectedValue || select.value || '';
   select.innerHTML = buildWaInstanceOptions(previousValue);
   select.value = previousValue;
+  delete select.dataset.selectedValue;
 }
+
+const _schedulingBadgeMap = {
+  'waCopyParticipantsInstanceName': 'waCopyParticipantsInstanceBadge',
+  'waScheduleCopyInstanceName': 'waScheduleCopyInstanceBadge',
+  'waMessageScheduleInstanceName': 'waMessageScheduleInstanceBadge',
+};
 
 function populateAllInstanceSelects(selectedValue = '') {
   [
@@ -5551,26 +7113,257 @@ function populateAllInstanceSelects(selectedValue = '') {
     'legacyWaMessageScheduleInstanceName',
     'waScheduleEditInstanceName',
     'waCopyParticipantsInstanceName',
-    'waOutreachInstanceName'
-  ].forEach(id => populateWaInstanceSelect(id, selectedValue));
+    'waOutreachInstanceName',
+    'waSafetyInstanceName',
+    'responderWelcomeInstanceName'
+  ].forEach(id => {
+    populateWaInstanceSelect(id, selectedValue);
+    if (_schedulingBadgeMap[id]) updateSchedulingInstanceBadge(id, _schedulingBadgeMap[id]);
+  });
+}
+
+function toggleResponderWelcomeTargetConfig() {
+  const mode = String(document.getElementById('responderWelcomeTargetMode')?.value || 'private').trim();
+  const wrap = document.getElementById('responderWelcomeCustomTargetWrap');
+  const input = document.getElementById('responderWelcomeTargetChatId');
+  if (wrap) {
+    wrap.style.display = mode === 'custom' ? '' : 'none';
+  }
+  if (input) {
+    input.disabled = mode !== 'custom';
+  }
+}
+
+function isWaInstanceConnected(instance) {
+  const stateRaw = getWaInstanceStateValue(instance);
+  return stateRaw === 'open' || stateRaw === 'connected' || stateRaw === 'online';
+}
+
+function getWaInstanceStateTone(instance) {
+  const stateRaw = getWaInstanceStateValue(instance);
+  if (stateRaw === 'open' || stateRaw === 'connected' || stateRaw === 'online') return 'ok';
+  if (stateRaw === 'connecting') return 'warn';
+  return 'bad';
+}
+
+function getWaInstanceStateLabel(instance) {
+  const stateRaw = getWaInstanceStateValue(instance);
+  if (stateRaw === 'open' || stateRaw === 'connected' || stateRaw === 'online') return 'Conectada';
+  if (stateRaw === 'connecting') return 'Conectando';
+  return stateRaw || 'Desconectada';
+}
+
+function getWaInstanceStateValue(instance) {
+  return (
+    instance?.state ||
+    instance?.State ||
+    instance?.connectionStatus ||
+    instance?.ConnectionStatus ||
+    instance?.status ||
+    instance?.Status ||
+    ''
+  ).toString().trim().toLowerCase();
+}
+
+function getResolvedWaInstanceName(instanceName) {
+  return (instanceName || document.getElementById('waInstanceName')?.value || '').trim() || 'Padrão do servidor';
+}
+
+function buildWaInstanceBadge(instanceName, label = 'Instância') {
+  const resolved = getResolvedWaInstanceName(instanceName);
+  const tone = resolved === 'Padrão do servidor' ? 'muted' : 'ok';
+  return `<span class="badge ${tone}">${escapeHtml(label)}: ${escapeHtml(resolved)}</span>`;
+}
+
+function getAutomationSafetyProfile(instanceName = '') {
+  const automation = waAutomationCache || {};
+  const normalizedInstanceName = normalizeInstanceName(instanceName);
+  const instanceConfigs = Array.isArray(automation.instanceParticipantAddSafety)
+    ? automation.instanceParticipantAddSafety
+    : [];
+  const matchedConfig = normalizedInstanceName
+    ? instanceConfigs.find(item => normalizeInstanceName(item?.instanceName) === normalizedInstanceName)
+    : null;
+
+  const maxParticipantsAddedPerDay = Number(
+    matchedConfig?.maxParticipantsAddedPerDay
+      ?? automation.maxParticipantsAddedPerDay
+      ?? 120);
+  const minMinutesBetweenParticipantAdds = Number(
+    matchedConfig?.minMinutesBetweenParticipantAdds
+      ?? automation.minMinutesBetweenParticipantAdds
+      ?? 10);
+  const participantsAddedToday = Number(
+    matchedConfig?.participantsAddedToday
+      ?? automation.participantsAddedToday
+      ?? 0);
+
+  return {
+    instanceName: normalizedInstanceName,
+    resolvedInstanceName: normalizedInstanceName || '',
+    usesDefaultSettings: !matchedConfig,
+    maxParticipantsAddedPerDay: Number.isFinite(maxParticipantsAddedPerDay) && maxParticipantsAddedPerDay > 0
+      ? maxParticipantsAddedPerDay
+      : 120,
+    minMinutesBetweenParticipantAdds: Number.isFinite(minMinutesBetweenParticipantAdds) && minMinutesBetweenParticipantAdds > 0
+      ? minMinutesBetweenParticipantAdds
+      : 10,
+    participantsAddedToday: Number.isFinite(participantsAddedToday) && participantsAddedToday >= 0
+      ? participantsAddedToday
+      : 0
+  };
+}
+
+function renderWhatsAppSafetyPanel(preferredInstanceName = null) {
+  const select = document.getElementById('waSafetyInstanceName');
+  const pauseState = document.getElementById('waParticipantCopyPauseState');
+  const togglePauseBtn = document.getElementById('btnToggleWaCopyPause');
+  const isParticipantCopyAutomationEnabled = waAutomationCache?.participantCopyAutomationEnabled === true;
+
+  let selectedInstanceName = normalizeInstanceName(preferredInstanceName ?? select?.value);
+  const availableValues = Array.from(select?.options || []).map(option => normalizeInstanceName(option.value));
+  if (selectedInstanceName && !availableValues.includes(selectedInstanceName)) {
+    selectedInstanceName = '';
+  }
+
+  if (select) {
+    select.value = selectedInstanceName || '';
+  }
+
+  const safetyProfile = getAutomationSafetyProfile(selectedInstanceName);
+  const remainingQuota = Math.max(0, safetyProfile.maxParticipantsAddedPerDay - safetyProfile.participantsAddedToday);
+
+  setSafeVal('waSafetyDailyLimit', safetyProfile.maxParticipantsAddedPerDay);
+  setSafeVal('waSafetyCooldownMinutes', safetyProfile.minMinutesBetweenParticipantAdds);
+  setSafeText('waSafetyParticipantsAddedToday', String(safetyProfile.participantsAddedToday));
+  setSafeText('waSafetyRemainingQuota', String(remainingQuota));
+  setSafeText('waParticipantCopyPauseState', isParticipantCopyAutomationEnabled ? 'Pausa desativada' : 'Pausa ativada');
+
+  const badge = document.getElementById('waSafetyInstanceBadge');
+  if (badge) {
+    const label = selectedInstanceName || 'Padrão do servidor';
+    badge.textContent = safetyProfile.usesDefaultSettings && selectedInstanceName
+      ? `${label} usando padrão`
+      : label;
+    badge.className = `badge ${safetyProfile.usesDefaultSettings ? 'muted' : 'ok'}`;
+  }
+
+  if (pauseState) pauseState.className = `badge ${isParticipantCopyAutomationEnabled ? 'ok' : 'warn'}`;
+
+  if (togglePauseBtn) {
+    togglePauseBtn.textContent = isParticipantCopyAutomationEnabled ? 'Ativar pausa' : 'Desativar pausa';
+    togglePauseBtn.disabled = (currentRole !== 'admin');
+  }
+
+  return {
+    ...safetyProfile,
+    remainingQuota,
+    isParticipantCopyAutomationEnabled
+  };
+}
+
+function renderWaConnectionInstanceList() {
+  const host = document.getElementById('waConnectionInstanceList');
+  if (!host) return;
+  const instances = (waInstancesCache || []).filter(isWaInstanceConnected);
+  if (!instances.length) {
+    host.innerHTML = '<span class="muted">Nenhuma instância online no Evolution.</span>';
+    return;
+  }
+  host.innerHTML = instances.map(instance => {
+    const name = escapeHtml(String(instance?.name || instance?.Name || '?'));
+    const tone = getWaInstanceStateTone(instance);
+    const label = getWaInstanceStateLabel(instance);
+    return `<div class="wa-connected-instance-item"><strong>${name}</strong><span class="badge ${tone}">${label}</span></div>`;
+  }).join('');
+}
+
+function syncWaConnectionSummary() {
+  const instances = waInstancesCache || [];
+  const connected = instances.filter(isWaInstanceConnected);
+  if (connected.length > 0) {
+    const names = connected
+      .map(instance => String(instance?.name || instance?.Name || '').trim())
+      .filter(Boolean)
+      .join(', ');
+    setSafeText('connectionSummaryWhatsApp', `${connected.length} conectada${connected.length > 1 ? 's' : ''}`);
+    setSafeText('connectionSummaryWhatsAppDetail', `Instâncias online: ${names}`);
+    return;
+  }
+
+  setSafeText('connectionSummaryWhatsApp', '0 conectadas');
+  setSafeText('connectionSummaryWhatsAppDetail', 'Nenhuma instância online no momento.');
 }
 
 async function loadWaInstances(force = false) {
   if (waInstancesCache && !force) {
     populateAllInstanceSelects();
+    renderWhatsAppSafetyPanel();
+    updateWaInstancesBoardFromCache();
+    renderWaConnectionInstanceList();
+    syncWaConnectionSummary();
     return waInstancesCache;
   }
 
   try {
-    const instances = await api('/api/integrations/whatsapp/instances');
-    waInstancesCache = Array.isArray(instances) ? instances : [];
+    const response = await api('/api/integrations/whatsapp/instances');
+    const instances = Array.isArray(response)
+      ? response
+      : (Array.isArray(response?.instances)
+        ? response.instances
+        : (Array.isArray(response?.items)
+          ? response.items
+          : (Array.isArray(response?.data) ? response.data : [])));
+    waInstancesCache = instances;
   } catch (err) {
     console.error('Erro ao carregar instâncias WhatsApp', err);
     waInstancesCache = [];
   }
 
+  if (!waInstancesCache.length) {
+    // Fallback operacional para não bloquear os seletores por falha de payload.
+    waInstancesCache = ['ZapOfertas', 'ZapOfertas2'].map(name => ({ name, state: 'configured' }));
+  }
+
   populateAllInstanceSelects();
+  renderWhatsAppSafetyPanel();
+  updateWaInstancesBoardFromCache();
+  renderWaConnectionInstanceList();
+  syncWaConnectionSummary();
   return waInstancesCache;
+}
+
+function updateWaInstancesBoardFromCache() {
+  const board = document.getElementById('waInstanceStatusBoard');
+  if (!board) return;
+  const instances = waInstancesCache || [];
+  if (!instances.length) {
+    board.innerHTML = '<span class="muted">Nenhuma instância disponível.</span>';
+    return;
+  }
+  board.innerHTML = instances.map(inst => {
+    const name = escapeHtml(String(inst?.name || inst?.Name || '?'));
+    const tone = getWaInstanceStateTone(inst);
+    const label = getWaInstanceStateLabel(inst);
+    return `<div class="wa-instance-status-row"><strong>${name}</strong><span class="badge ${tone}">${label}</span></div>`;
+  }).join('');
+}
+
+async function renderWaInstancesStatusCard(force = false) {
+  const board = document.getElementById('waInstanceStatusBoard');
+  if (!board) return;
+  board.innerHTML = '<span class="muted">Verificando...</span>';
+  await loadWaInstances(force);
+  updateWaInstancesBoardFromCache();
+}
+
+function updateSchedulingInstanceBadge(selectId, badgeId) {
+  const select = document.getElementById(selectId);
+  const badge = document.getElementById(badgeId);
+  if (!badge) return;
+  const val = (select?.value || '').trim();
+  badge.textContent = val || 'Padrão';
+  badge.className = 'badge ' + (val ? 'ok' : 'muted');
 }
 
 function normalizeInstanceName(value) {
@@ -6559,6 +8352,80 @@ function applyOutreachPitchPreset() {
   }
 }
 
+function insertOutreachEmoji(emoji) {
+  const textarea = document.getElementById('waOutreachMessage');
+  if (!textarea || !emoji) return;
+
+  const start = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : textarea.value.length;
+  const end = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : textarea.value.length;
+  const before = textarea.value.slice(0, start);
+  const after = textarea.value.slice(end);
+  const needsLeadingSpace = before.length > 0 && !/\s$/.test(before);
+  const needsTrailingSpace = after.length > 0 && !/^\s/.test(after);
+  const insertion = `${needsLeadingSpace ? ' ' : ''}${emoji}${needsTrailingSpace ? ' ' : ''}`;
+
+  textarea.value = `${before}${insertion}${after}`;
+  const caret = before.length + insertion.length;
+  textarea.focus();
+  if (typeof textarea.setSelectionRange === 'function') {
+    textarea.setSelectionRange(caret, caret);
+  }
+
+  const status = document.getElementById('waOutreachStatus');
+  if (status) {
+    status.textContent = `Emoji ${emoji} inserido na mensagem do disparo.`;
+    status.className = 'status muted';
+  }
+}
+
+function confirmOutreachInviteLink(linkUrl, intendedCount) {
+  const normalizedLink = String(linkUrl || '').trim();
+  if (!normalizedLink) return null;
+
+  let inviteCode = '';
+  try {
+    const parsed = new URL(normalizedLink);
+    if (!/chat\.whatsapp\.com$/i.test(parsed.hostname)) {
+      alert('Link de convite invalido: use um link oficial do chat.whatsapp.com.');
+      return null;
+    }
+    inviteCode = parsed.pathname.replace(/^\/+/, '').trim();
+  } catch (_) {
+    alert('Link de convite invalido: revise o link antes de disparar.');
+    return null;
+  }
+
+  const overview = [
+    `Voce esta prestes a iniciar um disparo para ${intendedCount}.`,
+    '',
+    `Link de convite configurado: ${normalizedLink}`,
+    '',
+    'Confirme para continuar.'
+  ].join('\n');
+
+  if (!confirm(overview)) {
+    return null;
+  }
+
+  const expectedValue = inviteCode || normalizedLink;
+  const promptText = inviteCode
+    ? `Confirmacao de seguranca:\nDigite o codigo do convite exatamente como abaixo para liberar o disparo:\n${inviteCode}`
+    : `Confirmacao de seguranca:\nDigite o link completo exatamente como abaixo para liberar o disparo:\n${normalizedLink}`;
+
+  const typedValue = prompt(promptText, '');
+  if (typedValue === null) {
+    return null;
+  }
+
+  const finalConfirmation = typedValue.trim();
+  if (finalConfirmation !== expectedValue) {
+    alert('Confirmacao nao confere. Disparo cancelado para evitar envio com link incorreto.');
+    return null;
+  }
+
+  return finalConfirmation;
+}
+
 async function sendOutreachMessages() {
   const sourceGroupIds = getSelectedOutreachSourceGroupIds();
   const sourceGroupId = sourceGroupIds[0] || '';
@@ -6629,8 +8496,15 @@ async function sendOutreachMessages() {
     return;
   }
 
-  const intendedCount = useAllParticipants ? 'todos participantes dos grupos selecionados' : `${participantIds.length} participante(s)`;
-  if (!confirm(`Confirmar disparo para ${intendedCount}?`)) {
+  const intendedCount = useAllParticipants
+    ? 'todos participantes dos grupos selecionados'
+    : `${participantIds.length} participante(s)`;
+  const linkConfirmation = confirmOutreachInviteLink(linkUrl, intendedCount);
+  if (!linkConfirmation) {
+    if (status) {
+      status.textContent = 'Disparo cancelado na confirmacao do link de convite.';
+      status.className = 'status warn';
+    }
     return;
   }
 
@@ -6659,6 +8533,7 @@ async function sendOutreachMessages() {
       waitTimeoutSeconds,
       sendLinkOnTimeout,
       securityPitch: message,
+      linkConfirmation,
       instanceName: instanceName || null
     });
 
@@ -7107,26 +8982,8 @@ async function saveWaScheduleEditor() {
 function renderWhatsAppAutomation(automation) {
   waAutomationCache = automation || { participantCopySchedules: [], scheduledGroupMessages: [] };
 
-  const safeDailyLimit = Number(waAutomationCache.maxParticipantsAddedPerDay || 120);
-  const safeCooldown = Number(waAutomationCache.minMinutesBetweenParticipantAdds || 10);
-  const addedToday = Number(waAutomationCache.participantsAddedToday || 0);
-  const remainingQuota = Math.max(0, safeDailyLimit - addedToday);
-  const isParticipantCopyAutomationEnabled = waAutomationCache.participantCopyAutomationEnabled === true;
-
-  setSafeVal('waSafetyDailyLimit', safeDailyLimit);
-  setSafeVal('waSafetyCooldownMinutes', safeCooldown);
-  setSafeText('waSafetyParticipantsAddedToday', String(addedToday));
-  setSafeText('waSafetyRemainingQuota', String(remainingQuota));
-  setSafeText('waParticipantCopyPauseState', isParticipantCopyAutomationEnabled ? 'Pausa desativada' : 'Pausa ativada');
-
-  const pauseState = document.getElementById('waParticipantCopyPauseState');
-  if (pauseState) pauseState.className = `badge ${isParticipantCopyAutomationEnabled ? 'ok' : 'warn'}`;
-
-  const togglePauseBtn = document.getElementById('btnToggleWaCopyPause');
-  if (togglePauseBtn) {
-    togglePauseBtn.textContent = isParticipantCopyAutomationEnabled ? 'Ativar pausa' : 'Desativar pausa';
-    togglePauseBtn.disabled = (currentRole !== 'admin');
-  }
+  const selectedSafetyProfile = renderWhatsAppSafetyPanel();
+  const isParticipantCopyAutomationEnabled = selectedSafetyProfile.isParticipantCopyAutomationEnabled;
 
   const copyList = document.getElementById('waCopySchedulesList');
   const messageList = document.getElementById('waMessageSchedulesList');
@@ -7140,6 +8997,10 @@ function renderWhatsAppAutomation(automation) {
     } else {
       copyList.innerHTML = copySchedules.map(item => `
         ${(() => {
+          const scheduleSafetyProfile = getAutomationSafetyProfile(item.instanceName || '');
+          const remainingQuota = Math.max(
+            0,
+            scheduleSafetyProfile.maxParticipantsAddedPerDay - scheduleSafetyProfile.participantsAddedToday);
           const requestedBatch = Number(item.batchSize || 0);
           const effectiveBatch = Math.min(requestedBatch > 0 ? requestedBatch : 1, remainingQuota);
           const quotaWarning = item.enabled && requestedBatch > 0 && remainingQuota > 0 && effectiveBatch < requestedBatch
@@ -7157,6 +9018,9 @@ function renderWhatsAppAutomation(automation) {
               <div>
                 <strong>${escapeHtml(item.name || 'Agendamento de cópia')}</strong><br />
                 <small class="muted">${escapeHtml(getGroupNameById(item.sourceGroupId))} -> ${escapeHtml(getGroupNameById(item.targetGroupId))}</small>
+                <div class="wa-schedule-meta-row">
+                  ${buildWaInstanceBadge(item.instanceName)}
+                </div>
             </div>
             <div class="row" style="gap:8px;">
               ${getCopyScheduleBadge(item)}
@@ -7192,6 +9056,9 @@ function renderWhatsAppAutomation(automation) {
             <div>
               <strong>${escapeHtml(item.name || 'Mensagem agendada')}</strong><br />
               <small class="muted">${escapeHtml(getGroupNameById(item.targetGroupId))}</small>
+              <div class="wa-schedule-meta-row">
+                ${buildWaInstanceBadge(item.instanceName)}
+              </div>
             </div>
             <div class="row" style="gap:8px;">
               ${getMessageScheduleBadge(item)}
@@ -7246,6 +9113,7 @@ async function loadWhatsAppAutomation() {
 async function saveWhatsAppAutomationSafetySettings() {
   const btn = document.getElementById('btnSaveWaSafetySettings');
   const status = document.getElementById('waSafetySettingsStatus');
+  const instanceName = (document.getElementById('waSafetyInstanceName')?.value || '').trim();
   const maxParticipantsAddedPerDay = Number(document.getElementById('waSafetyDailyLimit')?.value || 0);
   const minMinutesBetweenParticipantAdds = Number(document.getElementById('waSafetyCooldownMinutes')?.value || 0);
   const participantCopyAutomationEnabled = waAutomationCache?.participantCopyAutomationEnabled === true;
@@ -7274,6 +9142,7 @@ async function saveWhatsAppAutomationSafetySettings() {
 
   try {
     const res = await api('/api/admin/whatsapp/automation/safety', 'PUT', {
+      instanceName: instanceName || null,
       maxParticipantsAddedPerDay,
       minMinutesBetweenParticipantAdds,
       participantCopyAutomationEnabled
@@ -7304,7 +9173,7 @@ async function createParticipantCopySchedule() {
   const name = document.getElementById('waScheduleCopyName')?.value || '';
   const batchSize = Number(document.getElementById('waScheduleCopyBatchSize')?.value || 0);
   const intervalMinutes = Number(document.getElementById('waScheduleCopyInterval')?.value || 0);
-  const instanceName = (document.getElementById('waScheduleCopyInstanceName')?.value || '').trim();
+  const instanceName = (document.getElementById('waScheduleCopyInstanceName')?.value || document.getElementById('waInstanceName')?.value || '').trim();
 
   if (!sourceGroupId || !targetGroupId) {
     if (status) {
@@ -7386,6 +9255,7 @@ async function deleteParticipantCopySchedule(id) {
 async function toggleWhatsAppParticipantCopyPause() {
   const btn = document.getElementById('btnToggleWaCopyPause');
   const status = document.getElementById('waSafetySettingsStatus');
+  const instanceName = (document.getElementById('waSafetyInstanceName')?.value || '').trim();
   const maxParticipantsAddedPerDay = Number(document.getElementById('waSafetyDailyLimit')?.value || 0);
   const minMinutesBetweenParticipantAdds = Number(document.getElementById('waSafetyCooldownMinutes')?.value || 0);
   const currentlyEnabled = waAutomationCache?.participantCopyAutomationEnabled === true;
@@ -7414,6 +9284,7 @@ async function toggleWhatsAppParticipantCopyPause() {
 
   try {
     const res = await api('/api/admin/whatsapp/automation/safety', 'PUT', {
+      instanceName: instanceName || null,
       maxParticipantsAddedPerDay,
       minMinutesBetweenParticipantAdds,
       participantCopyAutomationEnabled: nextEnabled

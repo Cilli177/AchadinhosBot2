@@ -16,6 +16,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
 using System.IO;
+using System.Diagnostics;
 
 
 namespace AchadinhosBot.Next.Infrastructure.Telegram;
@@ -46,6 +47,40 @@ public sealed class TelegramBotPollingService : BackgroundService
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private readonly ConcurrentDictionary<long, DateTimeOffset> _chatCooldown = new();
     private readonly ConcurrentDictionary<long, List<AssistantMessage>> _assistantHistory = new();
+    private static readonly HashSet<string> DisabledPostingCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "lista",
+        "listar",
+        "list",
+        "drafts",
+        "rascunhos",
+        "draft",
+        "revisar",
+        "review",
+        "ver",
+        "aprovar",
+        "approve",
+        "confirmar",
+        "reprovar",
+        "reject",
+        "trocarimg",
+        "trocarimagem",
+        "trocar-imagem",
+        "img",
+        "imagem",
+        "removerimg",
+        "removerimagem",
+        "removeimg",
+        "rmimg",
+        "titulo",
+        "title",
+        "legenda",
+        "caption",
+        "story",
+        "autostory",
+        "post",
+        "autopilot"
+    };
     private static readonly TimeSpan ChatCooldownWindow = TimeSpan.FromSeconds(1);
     private const int AssistantHistoryMaxMessages = 12;
 
@@ -493,6 +528,11 @@ public sealed class TelegramBotPollingService : BackgroundService
             await HandleBotCommandAsync(update.Message, botCommand, settings, ct);
             return;
         }
+        if (TryParseShortcutCommand(update.Message.Text, out var shortcutCommand))
+        {
+            await HandleBotCommandAsync(update.Message, shortcutCommand, settings, ct);
+            return;
+        }
         if (TryParseConversationalCommand(update.Message.Text, out var conversationalCommand))
         {
             await HandleBotCommandAsync(update.Message, conversationalCommand, settings, ct);
@@ -841,6 +881,12 @@ public sealed class TelegramBotPollingService : BackgroundService
             return;
         }
 
+        if (DisabledPostingCommands.Contains(command.Name))
+        {
+            await SendMessageAsync(message.ChatId, "Comandos de postagem foram desativados neste bot. Use /status, /infrastatus ou /infraup para operacao.", null, ct);
+            return;
+        }
+
         switch (command.Name)
         {
             case "start":
@@ -860,6 +906,52 @@ public sealed class TelegramBotPollingService : BackgroundService
                 await SendMessageAsync(message.ChatId, BuildStatusMessage(settings), null, ct);
                 return;
 
+            case "infra":
+            case "infrastatus":
+            case "opsstatus":
+            case "saude":
+                await SendMessageAsync(message.ChatId, await BuildInfrastructureStatusMessageAsync(ct), null, ct);
+                return;
+
+            case "dockerdev":
+                await SendMessageAsync(message.ChatId, await BuildSingleInfrastructureStatusMessageAsync("Docker DEV", "achadinhos_docker_dev", "achadinhos_docker", ct), null, ct);
+                return;
+
+            case "dockerprod":
+                await SendMessageAsync(message.ChatId, await BuildSingleInfrastructureStatusMessageAsync("Docker PROD", "achadinhos_docker_prod", "achadinhos_docker", ct), null, ct);
+                return;
+
+            case "sitedev":
+                await SendMessageAsync(message.ChatId, await BuildSingleInfrastructureStatusMessageAsync("Site DEV", "achadinhos_http_dev", "achadinhos_http", ct), null, ct);
+                return;
+
+            case "siteprod":
+                await SendMessageAsync(message.ChatId, await BuildSingleInfrastructureStatusMessageAsync("Site PROD", "achadinhos_http_prod", "achadinhos_http", ct), null, ct);
+                return;
+
+            case "infraup":
+            case "recover":
+            case "recuperar":
+            case "subir":
+                await SendMessageAsync(message.ChatId, await TryRecoverInfrastructureAsync(command.Arguments, ct), null, ct);
+                return;
+
+            case "infraupall":
+                await SendMessageAsync(message.ChatId, await TryRecoverInfrastructureAsync(["all"], ct), null, ct);
+                return;
+
+            case "infraupdocker":
+                await SendMessageAsync(message.ChatId, await TryRecoverInfrastructureAsync(["docker"], ct), null, ct);
+                return;
+
+            case "infrauptunnel":
+                await SendMessageAsync(message.ChatId, await TryRecoverInfrastructureAsync(["tunnel"], ct), null, ct);
+                return;
+
+            case "infraupmarcomadeira":
+                await SendMessageAsync(message.ChatId, await TryRecoverInfrastructureAsync(["marcomadeira"], ct), null, ct);
+                return;
+
             case "assist":
             case "ai":
             case "ask":
@@ -869,7 +961,7 @@ public sealed class TelegramBotPollingService : BackgroundService
                 var prompt = string.Join(' ', command.Arguments).Trim();
                 if (string.IsNullOrWhiteSpace(prompt))
                 {
-                    await SendMessageAsync(message.ChatId, "Uso: /assist <mensagem>\nEx.: /assist remove as imagens 1,3 e 5 do draft 2", null, ct);
+                    await SendMessageAsync(message.ChatId, "Uso: /assist <mensagem>\nEx.: /assist verifica se a infra esta saudavel", null, ct);
                     return;
                 }
 
@@ -1273,7 +1365,7 @@ public sealed class TelegramBotPollingService : BackgroundService
             }
 
             default:
-                await SendMessageAsync(message.ChatId, "Comando nao reconhecido. Use /help para ver os comandos de revisao e autopilot.", null, ct);
+                await SendMessageAsync(message.ChatId, "Comando nao reconhecido. Use /help para ver os comandos operacionais.", null, ct);
                 return;
         }
     }
@@ -1316,56 +1408,434 @@ public sealed class TelegramBotPollingService : BackgroundService
     private string BuildStatusMessage(AutomationSettings settings)
     {
         var uptime = DateTimeOffset.UtcNow - _startedAt;
-        var instaPublish = settings.InstagramPublish ?? new InstagramPublishSettings();
         var responder = settings.LinkResponder ?? new LinkResponderSettings();
         var lines = new List<string>
         {
-            "STATUS BOT",
-            $"Uptime: {uptime:dd\\.hh\\:mm\\:ss}",
-            $"Bot: {(!string.IsNullOrWhiteSpace(_botToken) ? "configurado" : "nao configurado")}",
-            $"Link responder telegram: {(responder.Enabled && responder.AllowTelegramBot ? "ON" : "OFF")}",
-            $"Autopilot feed: {(instaPublish.AutoPilotEnabled ? "ON" : "OFF")} (intervalo {instaPublish.AutoPilotIntervalMinutes}m)",
-            $"Autostory: {(instaPublish.StoryAutoPilotEnabled ? "ON" : "OFF")} (intervalo {instaPublish.StoryAutoPilotIntervalMinutes}m)",
-            $"Aprovacao feed: {instaPublish.AutoPilotApprovalChannel} ({instaPublish.AutoPilotApprovalTelegramChatId})",
-            $"Aprovacao story: {instaPublish.StoryAutoPilotApprovalChannel} ({instaPublish.StoryAutoPilotApprovalTelegramChatId})"
+            "🛰️ STATUS REI DAS OFERTAS",
+            "━━━━━━━━━━━━━━━━━━",
+            "📌 BOT",
+            $"• ⏱️ Uptime: {uptime:dd\\.hh\\:mm\\:ss}",
+            $"• 🤖 Token: {(!string.IsNullOrWhiteSpace(_botToken) ? "🟢 configurado" : "🔴 nao configurado")}",
+            $"• 🔗 Responder Telegram: {(responder.Enabled && responder.AllowTelegramBot ? "🟢 ON" : "🔴 OFF")}",
+            "",
+            "📌 OPERACAO",
+            "• /infrastatus  -> ver saude da infraestrutura",
+            "• /infraup  -> abrir menu de recuperacao"
         };
 
         return string.Join('\n', lines);
+    }
+
+    private async Task<string> BuildInfrastructureStatusMessageAsync(CancellationToken ct)
+    {
+        var statePath = ResolveMonitorStateFilePath();
+        var lines = new List<string>
+        {
+            "🧭 STATUS DE INFRA"
+        };
+
+        try
+        {
+            if (!File.Exists(statePath))
+            {
+                lines.Add($"Arquivo de estado: {statePath}");
+                lines.Add("⚪ Sem estado do monitor ainda. Verifique se o monitor de uptime esta rodando.");
+                return string.Join('\n', lines);
+            }
+
+            var raw = await File.ReadAllTextAsync(statePath, ct);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                lines.Add("⚪ Estado vazio. Aguarde o proximo ciclo do monitor.");
+                return string.Join('\n', lines);
+            }
+
+            var map = JsonSerializer.Deserialize<Dictionary<string, UptimeMonitorStateEntry>>(raw,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new Dictionary<string, UptimeMonitorStateEntry>();
+
+            lines.Add("━━━━━━━━━━━━━━━━━━");
+            lines.Add("📌 SERVICOS");
+            lines.Add(RenderInfraLine("Docker DEV", GetEntry(map, "achadinhos_docker_dev") ?? GetEntry(map, "achadinhos_docker")));
+            lines.Add(RenderInfraLine("Docker PROD", GetEntry(map, "achadinhos_docker_prod") ?? GetEntry(map, "achadinhos_docker")));
+            lines.Add(RenderInfraLine("Site DEV", GetEntry(map, "achadinhos_http_dev") ?? GetEntry(map, "achadinhos_http")));
+            lines.Add(RenderInfraLine("Site PROD", GetEntry(map, "achadinhos_http_prod") ?? GetEntry(map, "achadinhos_http")));
+            lines.Add(RenderInfraLine("Site Marcomadeira", GetEntry(map, "marcomadeira_http_prod") ?? GetEntry(map, "marcomadeira_http")));
+            lines.Add(RenderInfraLine("Tunnel Achadinhos", GetEntry(map, "achadinhos_tunnel")));
+            lines.Add(RenderInfraLine("Tunnel Marcomadeira", GetEntry(map, "marcomadeira_tunnel")));
+
+            var lastWriteLocal = File.GetLastWriteTime(statePath);
+            lines.Add("");
+            lines.Add("📌 ULTIMA ATUALIZACAO");
+            lines.Add($"• 🕒 {lastWriteLocal:yyyy-MM-dd HH:mm:ss} (local)");
+            lines.Add("");
+            lines.Add("📌 ACOES RAPIDAS");
+            lines.Add("/infraup");
+            lines.Add("/infraupall");
+            lines.Add("/infraupdocker");
+            lines.Add("/infrauptunnel");
+            lines.Add("/infraupmarcomadeira");
+            return string.Join('\n', lines);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao montar status de infraestrutura");
+            lines.Add($"🔴 Falha ao ler estado de infra: {ex.Message}");
+            return string.Join('\n', lines);
+        }
+    }
+
+    private async Task<string> BuildSingleInfrastructureStatusMessageAsync(string title, string primaryKey, string? fallbackKey, CancellationToken ct)
+    {
+        var statePath = ResolveMonitorStateFilePath();
+        var lines = new List<string>
+        {
+            $"🧭 {title.ToUpperInvariant()}"
+        };
+
+        try
+        {
+            if (!File.Exists(statePath))
+            {
+                lines.Add("⚪ Sem estado do monitor ainda.");
+                return string.Join('\n', lines);
+            }
+
+            var raw = await File.ReadAllTextAsync(statePath, ct);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                lines.Add("⚪ Estado vazio. Aguarde o proximo ciclo do monitor.");
+                return string.Join('\n', lines);
+            }
+
+            var map = JsonSerializer.Deserialize<Dictionary<string, UptimeMonitorStateEntry>>(raw,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new Dictionary<string, UptimeMonitorStateEntry>();
+
+            var entry = GetEntry(map, primaryKey);
+            if (entry is null && !string.IsNullOrWhiteSpace(fallbackKey))
+            {
+                entry = GetEntry(map, fallbackKey);
+            }
+
+            lines.Add(RenderInfraLine(title, entry));
+            var lastWriteLocal = File.GetLastWriteTime(statePath);
+            lines.Add($"🕒 Atualizado: {lastWriteLocal:yyyy-MM-dd HH:mm:ss} (local)");
+            lines.Add("Ver tudo: /infrastatus");
+            return string.Join('\n', lines);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao montar status unitario de infraestrutura");
+            lines.Add($"🔴 Falha ao ler estado: {ex.Message}");
+            return string.Join('\n', lines);
+        }
+    }
+
+    private static UptimeMonitorStateEntry? GetEntry(IReadOnlyDictionary<string, UptimeMonitorStateEntry> map, string key)
+        => map.TryGetValue(key, out var value) ? value : null;
+
+    private static string RenderInfraLine(string label, UptimeMonitorStateEntry? entry)
+    {
+        if (entry is null)
+        {
+            return $"• ⚪ {label}: sem dados";
+        }
+
+        var healthy = entry.ConsecutiveFailures <= 0;
+        var icon = healthy ? "🟢" : "🔴";
+        var status = healthy ? "OK" : $"FALHA x{entry.ConsecutiveFailures}";
+        var detail = string.IsNullOrWhiteSpace(entry.LastDetail) ? "sem detalhe" : entry.LastDetail.Trim();
+        return $"• {icon} {label}: {status} | {detail}";
+    }
+
+    private async Task<string> TryRecoverInfrastructureAsync(string[] arguments, CancellationToken ct)
+    {
+        var requested = arguments.Length > 0 ? arguments[0].Trim().ToLowerInvariant() : string.Empty;
+
+        if (string.IsNullOrWhiteSpace(requested))
+        {
+            return "📌 RECUPERACAO - ESCOLHA UMA ACAO\n/infraupall\n/infraupdocker\n/infrauptunnel\n/infraupmarcomadeira";
+        }
+
+        var gatewayBaseUrl = ResolveOpsGatewayBaseUrl();
+        if (!string.IsNullOrWhiteSpace(gatewayBaseUrl))
+        {
+            return await TryRecoverInfrastructureViaGatewayAsync(gatewayBaseUrl, requested, ct);
+        }
+
+        var scriptsDir = ResolveScriptsDirectory();
+        if (!Directory.Exists(scriptsDir))
+        {
+            return "⚠️ Recuperacao automatica indisponivel neste ambiente.\nExecute no host:\n- .\\scripts\\start-docker-prod.ps1 -NoBuild\n- .\\scripts\\start-cloudflare-prod.ps1\n- .\\scripts\\start-imobiliaria.ps1";
+        }
+
+        var steps = new List<(string Label, string Script, string Args)>();
+        if (requested is "all" or "docker")
+        {
+            steps.Add(("Docker prod", "start-docker-prod.ps1", "-NoBuild"));
+        }
+        if (requested is "all" or "tunnel" or "cloudflare")
+        {
+            steps.Add(("Tunnel prod", "start-cloudflare-prod.ps1", string.Empty));
+        }
+        if (requested is "all" or "marcomadeira" or "imobiliaria")
+        {
+            steps.Add(("Marcomadeira app", "start-imobiliaria.ps1", string.Empty));
+        }
+
+        if (steps.Count == 0)
+        {
+            return "Uso: /infraup\nOu clique:\n/infraupall\n/infraupdocker\n/infrauptunnel\n/infraupmarcomadeira";
+        }
+
+        var lines = new List<string>
+        {
+            "🛠️ RECUPERACAO DE INFRA",
+            "━━━━━━━━━━━━━━━━━━",
+            $"📌 Alvo: {requested}"
+        };
+
+        foreach (var step in steps)
+        {
+            var scriptPath = Path.Combine(scriptsDir, step.Script);
+            if (!File.Exists(scriptPath))
+            {
+                lines.Add($"• 🔴 {step.Label}: script nao encontrado ({step.Script})");
+                continue;
+            }
+
+            var run = await RunPowerShellScriptAsync(scriptPath, step.Args, 90, ct);
+            lines.Add(run.Success
+                ? $"• 🟢 {step.Label}: comando executado"
+                : $"• 🔴 {step.Label}: falhou ({run.Output})");
+        }
+
+        lines.Add("");
+        lines.Add("📌 Proximo passo: /infrastatus");
+        return string.Join('\n', lines);
+    }
+
+    private async Task<string> TryRecoverInfrastructureViaGatewayAsync(string gatewayBaseUrl, string requested, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{gatewayBaseUrl.TrimEnd('/')}/recover?target={Uri.EscapeDataString(requested)}");
+            var token = ResolveOpsGatewayToken();
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                request.Headers.TryAddWithoutValidation("X-Ops-Token", token);
+            }
+
+            request.Content = new StringContent(string.Empty);
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(95);
+
+            using var response = await client.SendAsync(request, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (response.IsSuccessStatusCode)
+            {
+                return string.IsNullOrWhiteSpace(body)
+                    ? "🟢 Gateway de recuperacao executado. Confira agora: /infrastatus"
+                    : body.Trim();
+            }
+
+            var errorText = string.IsNullOrWhiteSpace(body) ? $"HTTP {(int)response.StatusCode}" : body.Trim();
+            return $"🔴 Gateway de recuperacao falhou: {TruncateForChat(errorText, 320)}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao chamar gateway de recuperacao host-side");
+            return $"🔴 Gateway de recuperacao indisponivel: {TruncateForChat(ex.Message, 220)}";
+        }
+    }
+
+    private async Task<(bool Success, string Output)> RunPowerShellScriptAsync(string scriptPath, string args, int timeoutSeconds, CancellationToken ct)
+    {
+        var shell = ResolvePowerShellExecutable();
+        if (string.IsNullOrWhiteSpace(shell))
+        {
+            return (false, "powershell/pwsh nao encontrado no host");
+        }
+
+        var quotedScript = $"\"{scriptPath}\"";
+        var scriptArgs = string.IsNullOrWhiteSpace(args) ? string.Empty : $" {args}";
+        var psi = new ProcessStartInfo
+        {
+            FileName = shell,
+            Arguments = $"-NoProfile -ExecutionPolicy Bypass -File {quotedScript}{scriptArgs}",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = ResolveWorkspaceRootPath()
+        };
+
+        using var process = Process.Start(psi);
+        if (process is null)
+        {
+            return (false, "nao foi possivel iniciar processo");
+        }
+
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        linkedCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 10, 300)));
+
+        try
+        {
+            var stdOutTask = process.StandardOutput.ReadToEndAsync();
+            var stdErrTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync(linkedCts.Token);
+            var output = ((await stdOutTask) + " " + (await stdErrTask)).Trim();
+
+            if (process.ExitCode == 0)
+            {
+                return (true, string.IsNullOrWhiteSpace(output) ? "ok" : TruncateForChat(output, 220));
+            }
+
+            return (false, string.IsNullOrWhiteSpace(output) ? $"exit code {process.ExitCode}" : TruncateForChat(output, 220));
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true);
+                }
+            }
+            catch
+            {
+            }
+
+            return (false, "timeout ao executar script");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private string ResolveWorkspaceRootPath()
+    {
+        var cwd = Directory.GetCurrentDirectory();
+        if (!string.IsNullOrWhiteSpace(cwd) && Directory.Exists(cwd))
+        {
+            return cwd;
+        }
+
+        var baseDir = AppContext.BaseDirectory;
+        return Directory.Exists(baseDir) ? baseDir : ".";
+    }
+
+    private string ResolveScriptsDirectory()
+    {
+        var root = ResolveWorkspaceRootPath();
+        var direct = Path.Combine(root, "scripts");
+        if (Directory.Exists(direct))
+        {
+            return direct;
+        }
+
+        var fromBase = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "scripts"));
+        if (Directory.Exists(fromBase))
+        {
+            return fromBase;
+        }
+
+        return direct;
+    }
+
+    private string ResolveMonitorStateFilePath()
+    {
+        var configured = Environment.GetEnvironmentVariable("UPTIME_MONITOR__STATEFILE");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.Trim();
+        }
+
+        var root = ResolveWorkspaceRootPath();
+        var direct = Path.Combine(root, "data", "uptime-monitor-state.json");
+        if (File.Exists(direct))
+        {
+            return direct;
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "data", "uptime-monitor-state.json");
+    }
+
+    private static string? ResolvePowerShellExecutable()
+    {
+        var fromPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(fromPath))
+        {
+            var pathItems = fromPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var item in pathItems)
+            {
+                var pwshPath = Path.Combine(item, "pwsh.exe");
+                if (File.Exists(pwshPath))
+                {
+                    return pwshPath;
+                }
+
+                var psPath = Path.Combine(item, "powershell.exe");
+                if (File.Exists(psPath))
+                {
+                    return psPath;
+                }
+            }
+        }
+
+        var fallback = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+        return File.Exists(fallback) ? fallback : null;
+    }
+
+    private static string? ResolveOpsGatewayBaseUrl()
+    {
+        var value = Environment.GetEnvironmentVariable("OPS_GATEWAY__BASEURL");
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? ResolveOpsGatewayToken()
+    {
+        var value = Environment.GetEnvironmentVariable("OPS_GATEWAY__TOKEN");
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string TruncateForChat(string value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length <= max)
+        {
+            return value;
+        }
+
+        return value[..max].TrimEnd() + "...";
     }
 
     private static string BuildHelpMessage(long chatId)
     {
         var lines = new List<string>
         {
-            "COMANDOS DISPONIVEIS",
+            "📘 COMANDOS DISPONIVEIS",
             "/help - mostra este menu",
-            "/status - status do bot e autopilots",
+            "/status - status geral do bot",
+            "/infrastatus - status de site/tuneis (via monitor)",
+            "/dockerdev - status docker do ambiente dev",
+            "/dockerprod - status docker do ambiente prod",
+            "/sitedev - status do site dev",
+            "/siteprod - status do site prod",
+            "/infraup - menu de recuperacao",
+            "/infraupall - tenta recuperar tudo",
+            "/infraupdocker - tenta recuperar docker",
+            "/infrauptunnel - tenta recuperar tunnel",
+            "/infraupmarcomadeira - tenta recuperar marcomadeira",
             "/chatid - mostra o id do chat atual",
             "/assist <mensagem> - conversa com IA",
             "/codex <mensagem> - alias de /assist",
             "/assistclear - limpa contexto da IA neste chat",
-            "/lista [n] - lista drafts mais recentes",
-            "/revisar [id|ultimo] - revisa draft",
-            "/trocarimg [id|ultimo] - busca novas imagens do link do produto",
-            "/img [id|ultimo] [1|1,2|2-4] - seleciona imagem(ns)",
-            "/removerimg [id|ultimo] 1,3,5 - remove imagem(ns) do draft",
-            "/titulo [id|ultimo] <texto> - ajusta nome do produto",
-            "/legenda [id|ultimo] <texto> - ajusta copy",
-            "/aprovar [id|ultimo] - marca draft como aprovado",
-            "/reprovar [id|ultimo] <motivo> - marca draft como reprovado",
-            "/story <link> - cria story de um link especifico",
-            "/autostory [top] [dry] [force] - roda autostory global (ex.: /autostory 2)",
-            "/post <link> - cria post de um link especifico",
-            "/autopilot [top] [dry] [force] - roda autopilot feed global (ex.: /autopilot 3)",
             "/ping - teste rapido",
             "",
-            "Conversacional:",
-            " - \"bot a imagem nao bate, troca a imagem do draft 2\"",
-            " - \"bot remover imagem 1,3 e 5 do draft 2\"",
-            " - \"bot revisa o draft 1\"",
-            " - \"bot aprova o draft 1\"",
-            " - \"bot roda autostory top 2 dry\"",
-            " - \"bot essa imagem nao combina com o produto, o que voce sugere?\"",
+            "💬 Conversacional:",
+            " - \"bot mostra status da infra\"",
+            " - \"bot tenta subir as instancias\"",
+            " - \"bot o site do marcomadeira esta no ar?\"",
             $"Chat atual: {chatId}"
         };
 
@@ -1902,6 +2372,48 @@ public sealed class TelegramBotPollingService : BackgroundService
             return true;
         }
 
+        if ((lower.Contains("status", StringComparison.OrdinalIgnoreCase)
+             && (lower.Contains("infra", StringComparison.OrdinalIgnoreCase)
+                 || lower.Contains("instancia", StringComparison.OrdinalIgnoreCase)
+                 || lower.Contains("tunel", StringComparison.OrdinalIgnoreCase)
+                 || lower.Contains("tunnel", StringComparison.OrdinalIgnoreCase)))
+            || lower.Contains("saude da infra", StringComparison.OrdinalIgnoreCase)
+            || lower.Contains("health infra", StringComparison.OrdinalIgnoreCase))
+        {
+            command = new TelegramBotCommand("infrastatus", []);
+            return true;
+        }
+
+        if ((lower.Contains("subir", StringComparison.OrdinalIgnoreCase)
+             || lower.Contains("recuper", StringComparison.OrdinalIgnoreCase)
+             || lower.Contains("reiniciar", StringComparison.OrdinalIgnoreCase))
+            && (lower.Contains("instancia", StringComparison.OrdinalIgnoreCase)
+                || lower.Contains("infra", StringComparison.OrdinalIgnoreCase)
+                || lower.Contains("tunel", StringComparison.OrdinalIgnoreCase)
+                || lower.Contains("tunnel", StringComparison.OrdinalIgnoreCase)
+                || lower.Contains("marcomadeira", StringComparison.OrdinalIgnoreCase)
+                || lower.Contains("docker", StringComparison.OrdinalIgnoreCase)))
+        {
+            var target = "all";
+            if (lower.Contains("marcomadeira", StringComparison.OrdinalIgnoreCase))
+            {
+                target = "marcomadeira";
+            }
+            else if (lower.Contains("docker", StringComparison.OrdinalIgnoreCase))
+            {
+                target = "docker";
+            }
+            else if (lower.Contains("tunel", StringComparison.OrdinalIgnoreCase)
+                     || lower.Contains("tunnel", StringComparison.OrdinalIgnoreCase)
+                     || lower.Contains("cloudflare", StringComparison.OrdinalIgnoreCase))
+            {
+                target = "tunnel";
+            }
+
+            command = new TelegramBotCommand("infraup", [target]);
+            return true;
+        }
+
         if (lower.Contains("reprova", StringComparison.OrdinalIgnoreCase)
             || lower.Contains("rejeita", StringComparison.OrdinalIgnoreCase))
         {
@@ -1965,6 +2477,56 @@ public sealed class TelegramBotPollingService : BackgroundService
                 command = new TelegramBotCommand("legenda", [draftRef, textPart]);
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    private static bool TryParseShortcutCommand(string text, out TelegramBotCommand command)
+    {
+        command = new TelegramBotCommand(string.Empty, []);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var normalized = text.Trim().ToLowerInvariant();
+        normalized = Regex.Replace(normalized, @"\s+", " ", RegexOptions.CultureInvariant);
+
+        if (normalized is "status" or "st" or "saude")
+        {
+            command = new TelegramBotCommand("status", []);
+            return true;
+        }
+
+        if (normalized is "infra" or "infra status" or "status infra" or "status das instancias")
+        {
+            command = new TelegramBotCommand("infrastatus", []);
+            return true;
+        }
+
+        if (normalized is "subir instancias" or "recuperar" or "recuperar infra" or "infra up")
+        {
+            command = new TelegramBotCommand("infraup", ["all"]);
+            return true;
+        }
+
+        if (normalized is "subir tunnel" or "recuperar tunnel")
+        {
+            command = new TelegramBotCommand("infraup", ["tunnel"]);
+            return true;
+        }
+
+        if (normalized is "subir docker" or "recuperar docker")
+        {
+            command = new TelegramBotCommand("infraup", ["docker"]);
+            return true;
+        }
+
+        if (normalized is "subir marcomadeira" or "recuperar marcomadeira")
+        {
+            command = new TelegramBotCommand("infraup", ["marcomadeira"]);
+            return true;
         }
 
         return false;
@@ -2304,7 +2866,7 @@ public sealed class TelegramBotPollingService : BackgroundService
     {
         return
             "Tarefa: analisar mensagem e devolver somente JSON com intencao de comando.\n" +
-            "Acoes validas: none, help, status, chatid, ping, lista, revisar, aprovar, reprovar, trocarimg, img, removerimg, titulo, legenda, story, post, assistclear.\n" +
+            "Acoes validas: none, help, status, infrastatus, infraup, chatid, ping, assistclear.\n" +
             "Campos JSON:\n" +
             "{\n" +
             "  \"action\": \"none|...\",\n" +
@@ -2317,9 +2879,6 @@ public sealed class TelegramBotPollingService : BackgroundService
             "}\n" +
             "Regras:\n" +
             "- Se nao for pedido de acao, use action=none.\n" +
-            "- Para story/post, interpretar 'dry' ou 'teste' em dryRun=true.\n" +
-            "- Para img/removerimg, preencher indexes.\n" +
-            "- Se faltar draftRef, usar 'ultimo'.\n" +
             "- Responda somente JSON, sem markdown.\n\n" +
             $"Mensagem: {userInput}";
     }
@@ -2384,23 +2943,10 @@ public sealed class TelegramBotPollingService : BackgroundService
             {
                 "help" => new TelegramBotCommand("help", []),
                 "status" => new TelegramBotCommand("status", []),
+                "infrastatus" => new TelegramBotCommand("infrastatus", []),
+                "infraup" => new TelegramBotCommand("infraup", ["all"]),
                 "chatid" => new TelegramBotCommand("chatid", []),
                 "ping" => new TelegramBotCommand("ping", []),
-                "lista" => topCount.HasValue
-                    ? new TelegramBotCommand("lista", [topCount.Value.ToString()])
-                    : new TelegramBotCommand("lista", []),
-                "revisar" => new TelegramBotCommand("revisar", [draftRef]),
-                "aprovar" => new TelegramBotCommand("aprovar", [draftRef]),
-                "reprovar" => string.IsNullOrWhiteSpace(text)
-                    ? new TelegramBotCommand("reprovar", [draftRef])
-                    : new TelegramBotCommand("reprovar", [draftRef, text]),
-                "trocarimg" => new TelegramBotCommand("trocarimg", [draftRef]),
-                "img" when indexes.Count > 0 => new TelegramBotCommand("img", [draftRef, string.Join(",", indexes.Distinct().OrderBy(x => x))]),
-                "removerimg" when indexes.Count > 0 => new TelegramBotCommand("removerimg", [draftRef, string.Join(",", indexes.Distinct().OrderBy(x => x))]),
-                "titulo" when !string.IsNullOrWhiteSpace(text) => new TelegramBotCommand("titulo", [draftRef, text]),
-                "legenda" when !string.IsNullOrWhiteSpace(text) => new TelegramBotCommand("legenda", [draftRef, text]),
-                "story" => BuildAutoPilotCommand("story", topCount, dryRun, force),
-                "post" => BuildAutoPilotCommand("post", topCount, dryRun, force),
                 "assistclear" => new TelegramBotCommand("assistclear", []),
                 _ => null
             };
@@ -2633,7 +3179,7 @@ public sealed class TelegramBotPollingService : BackgroundService
         return
             "Voce e o assistente operacional do Rei das Ofertas.\n" +
             "Responda sempre em portugues do Brasil, objetivo e pratico.\n" +
-            "Seu foco: revisar drafts de post/story, qualidade de imagem x produto, CTA, legenda, e operacao do autopilot.\n" +
+            "Seu foco: operacao de infraestrutura, saude do bot, tuneis e servicos web.\n" +
             "Quando a pessoa pedir acao operacional, responda com passos curtos e comando exato para executar no bot.\n" +
             "Quando nao houver informacao suficiente, faca no maximo 1 pergunta objetiva.";
     }
@@ -2886,12 +3432,12 @@ public sealed class TelegramBotPollingService : BackgroundService
 
     private async Task<TrackingResult> ApplyTrackingAsync(string text, bool trackingEnabled, CancellationToken ct)
     {
-        if (!trackingEnabled || string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(_webhookOptions.PublicBaseUrl))
+        var baseUrl = await ResolveTrackingBaseUrlAsync(ct);
+        if (!trackingEnabled || string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(baseUrl))
         {
             return new TrackingResult(text, new List<string>());
         }
 
-        var baseUrl = _webhookOptions.PublicBaseUrl.TrimEnd('/');
         var trackingSuffix = GetTrackingSuffix(baseUrl);
         var matches = UrlRegex.Matches(text);
         if (matches.Count == 0) return new TrackingResult(text, new List<string>());
@@ -2909,14 +3455,46 @@ public sealed class TelegramBotPollingService : BackgroundService
             }
             else
             {
-                var entry = await _linkTrackingStore.CreateAsync(url, ct);
-                sb.Append($"{baseUrl}/r/{entry.Id}{trackingSuffix}");
+                var entry = await _linkTrackingStore.CreateAsync(new LinkTrackingCreateRequest
+                {
+                    TargetUrl = url,
+                    Store = string.Empty,
+                    OriginSurface = "telegram"
+                }, ct);
+                var lookupKey = string.IsNullOrWhiteSpace(entry.Slug) ? entry.Id : entry.Slug;
+                sb.Append($"{baseUrl}/r/{lookupKey}{trackingSuffix}");
                 trackingIds.Add(entry.Id);
             }
             lastIndex = match.Index + match.Length;
         }
         sb.Append(text, lastIndex, text.Length - lastIndex);
         return new TrackingResult(sb.ToString(), trackingIds);
+    }
+
+    private async Task<string?> ResolveTrackingBaseUrlAsync(CancellationToken ct)
+    {
+        var settings = await _settingsStore.GetAsync(ct);
+        var preferred = settings.BioHub?.PublicBaseUrl;
+        if (!string.IsNullOrWhiteSpace(preferred) &&
+            Uri.TryCreate(preferred.Trim(), UriKind.Absolute, out var preferredUri) &&
+            (preferredUri.Scheme == Uri.UriSchemeHttp || preferredUri.Scheme == Uri.UriSchemeHttps))
+        {
+            return NormalizeCanonicalPublicBaseUrl(preferredUri);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_webhookOptions.PublicBaseUrl) &&
+            Uri.TryCreate(_webhookOptions.PublicBaseUrl.Trim(), UriKind.Absolute, out var fallbackUri) &&
+            (fallbackUri.Scheme == Uri.UriSchemeHttp || fallbackUri.Scheme == Uri.UriSchemeHttps))
+        {
+            return NormalizeCanonicalPublicBaseUrl(fallbackUri);
+        }
+
+        return null;
+    }
+
+    private static string NormalizeCanonicalPublicBaseUrl(Uri uri)
+    {
+        return uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
     }
 
     private static readonly Regex UrlRegex = new(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -2932,6 +3510,12 @@ public sealed class TelegramBotPollingService : BackgroundService
     private sealed record ImageCommandArguments(string DraftRef, List<int> Indexes);
     private sealed record AutoPilotCommandOptions(int? TopCount, bool DryRun, bool ForceIncludeExisting);
     private sealed record AssistantMessage(string Role, string Content);
+    private sealed class UptimeMonitorStateEntry
+    {
+        public int ConsecutiveFailures { get; set; }
+        public bool AlertSent { get; set; }
+        public string LastDetail { get; set; } = string.Empty;
+    }
 
     private static string GetTrackingSuffix(string baseUrl)
     {

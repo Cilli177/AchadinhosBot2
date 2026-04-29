@@ -357,6 +357,20 @@ public sealed class AmazonHtmlScraperService
             if (codeMatch.Success) couponCode = codeMatch.Groups[1].Value.ToUpperInvariant();
         }
 
+        // --- NEW: EXTRA COUPON PATTERNS (Amazon) ---
+        if (string.IsNullOrWhiteSpace(couponCode))
+        {
+            // Amazon specific coupon container (sometimes found in mobile or other templates)
+            var promoMatch = Regex.Match(html, @"class=""[^""]*promoPriceBlock[^""]*""[^>]*>([\s\S]*?)</div>", RegexOptions.IgnoreCase);
+            if (promoMatch.Success && promoMatch.Groups[1].Value.Contains("cupom", StringComparison.OrdinalIgnoreCase))
+            {
+                couponDesc = "Cupom disponível na página";
+                var codeMatch = Regex.Match(promoMatch.Groups[1].Value, @"([A-Z0-9]{5,15})", RegexOptions.IgnoreCase);
+                if (codeMatch.Success) couponCode = codeMatch.Groups[1].Value.ToUpperInvariant();
+            }
+        }
+
+
         return (priceInfo.Price, priceInfo.OldPrice, priceInfo.Discount, isLightning, expiry, couponCode, couponDesc);
     }
 
