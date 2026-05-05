@@ -51,6 +51,7 @@ public static class AutomationSettingsSanitizer
         settings.MercadoLivreAffiliateScout.TwoFactorCode = NormalizeNullable(settings.MercadoLivreAffiliateScout.TwoFactorCode);
         settings.MercadoLivreAffiliateScout.StorageStateJson = NormalizeNullable(settings.MercadoLivreAffiliateScout.StorageStateJson);
         settings.MercadoLivreAffiliateScout.StorageStatePath = NormalizeNullable(settings.MercadoLivreAffiliateScout.StorageStatePath);
+        settings.MercadoLivreAffiliateScout.SeenProductsPath = NormalizeNullable(settings.MercadoLivreAffiliateScout.SeenProductsPath);
         settings.MercadoLivreAffiliateScout.AuthMode = NormalizeNullable(settings.MercadoLivreAffiliateScout.AuthMode) ?? "code-or-qr";
         settings.MercadoLivreAffiliateScout.OfferCardSelector = NormalizeNullable(settings.MercadoLivreAffiliateScout.OfferCardSelector);
         settings.MercadoLivreAffiliateScout.OfferLinkSelector = NormalizeNullable(settings.MercadoLivreAffiliateScout.OfferLinkSelector);
@@ -67,6 +68,11 @@ public static class AutomationSettingsSanitizer
         settings.MercadoLivreAffiliateScout.ProductionRelayBaseUrl = NormalizeNullable(settings.MercadoLivreAffiliateScout.ProductionRelayBaseUrl);
         settings.MercadoLivreAffiliateScout.ProductionRelayAdminKey = NormalizeNullable(settings.MercadoLivreAffiliateScout.ProductionRelayAdminKey);
         settings.MercadoLivreAffiliateScout.ProductionRelayInstanceName = NormalizeNullable(settings.MercadoLivreAffiliateScout.ProductionRelayInstanceName);
+        settings.MercadoLivreAffiliateScout.StoryApprovalWhatsAppGroupId = NormalizeNullable(settings.MercadoLivreAffiliateScout.StoryApprovalWhatsAppGroupId);
+        settings.MercadoLivreAffiliateScout.StoryApprovalWhatsAppInstanceName = NormalizeNullable(settings.MercadoLivreAffiliateScout.StoryApprovalWhatsAppInstanceName);
+        settings.MercadoLivreAffiliateScout.StoryScheduleTimes = NormalizeTimeList(
+            settings.MercadoLivreAffiliateScout.StoryScheduleTimes,
+            new[] { "09:00", "11:00", "13:00", "15:00", "17:00", "19:00", "21:00", "23:00" });
         settings.MercadoLivreAffiliateScout.Notes = NormalizeNullable(settings.MercadoLivreAffiliateScout.Notes);
         settings.MercadoLivreAffiliateScout.IntervalMinutes = Math.Clamp(settings.MercadoLivreAffiliateScout.IntervalMinutes, 5, 240);
         settings.MercadoLivreAffiliateScout.IntervalJitterMinutes = Math.Clamp(settings.MercadoLivreAffiliateScout.IntervalJitterMinutes, 0, 30);
@@ -77,8 +83,9 @@ public static class AutomationSettingsSanitizer
         settings.MercadoLivreAffiliateScout.Tier2MinCommissionPercent = Math.Clamp(settings.MercadoLivreAffiliateScout.Tier2MinCommissionPercent, 0m, 100m);
         settings.MercadoLivreAffiliateScout.Tier3MinPrice = Math.Clamp(settings.MercadoLivreAffiliateScout.Tier3MinPrice, 0m, 1000000m);
         settings.MercadoLivreAffiliateScout.Tier3MinCommissionPercent = Math.Clamp(settings.MercadoLivreAffiliateScout.Tier3MinCommissionPercent, 0m, 100m);
-        settings.MercadoLivreAffiliateScout.MaxOffersPerRun = Math.Clamp(settings.MercadoLivreAffiliateScout.MaxOffersPerRun, 1, 10);
+        settings.MercadoLivreAffiliateScout.MaxOffersPerRun = Math.Clamp(settings.MercadoLivreAffiliateScout.MaxOffersPerRun, 0, 500);
         settings.MercadoLivreAffiliateScout.RepeatWindowHours = Math.Clamp(settings.MercadoLivreAffiliateScout.RepeatWindowHours, 1, 168);
+        settings.MercadoLivreAffiliateScout.StoryDraftsPerDay = Math.Clamp(settings.MercadoLivreAffiliateScout.StoryDraftsPerDay, 1, 24);
         settings.BioHub.PublicBaseUrl = NormalizePublicBaseUrl(settings.BioHub.PublicBaseUrl);
         settings.BioHub.Headline = Normalize(settings.BioHub.Headline);
         settings.BioHub.Subheadline = Normalize(settings.BioHub.Subheadline);
@@ -212,6 +219,29 @@ public static class AutomationSettingsSanitizer
         return normalized.Count > 0
             ? normalized
             : new List<string> { "Amazon", "Mercado Livre", "Shopee", "Shein" };
+    }
+
+    private static List<string> NormalizeTimeList(List<string>? values, IEnumerable<string> defaults)
+    {
+        var fallback = defaults.ToList();
+        if (values is null || values.Count == 0)
+        {
+            return fallback;
+        }
+
+        var normalized = values
+            .Select(NormalizeNullable)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => TimeSpan.TryParse(x, out var parsed) && parsed >= TimeSpan.Zero && parsed < TimeSpan.FromDays(1)
+                ? parsed.ToString(@"hh\:mm")
+                : null)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+
+        return normalized.Count > 0 ? normalized : fallback;
     }
 
     private static List<string> NormalizeRoleList(List<string>? values)

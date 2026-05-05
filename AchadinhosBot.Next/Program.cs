@@ -250,6 +250,7 @@ builder.Services.AddSingleton<VilaNvidiaGenerator>();
 builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
 builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
 builder.Services.AddSingleton<TelegramViralReelsAutoPilotService>();
+builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
 builder.Services.AddSingleton<ContentCalendarAutomationService>();
 builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
@@ -4862,26 +4863,10 @@ api.MapPost("/instagram/viral-reels/run", async (
 
 api.MapPost("/instagram/publish/drafts/{id}/publish", async (
     string id,
-    ISettingsStore store,
-    IInstagramPublishStore publishStore,
-    IInstagramPublishLogStore publishLogStore,
-    IHttpClientFactory httpClientFactory,
-    IMediaStore mediaStore,
-    IOptions<WebhookOptions> webhookOptions,
+    IInstagramPublishService publishService,
     CancellationToken ct) =>
 {
-    var settings = await store.GetAsync(ct);
-    var publishResult = await PublishInstagramDraftAsync(
-        id,
-        settings.InstagramPublish ?? new InstagramPublishSettings(),
-        settings.VilaNvidia ?? new VilaNvidiaSettings(),
-        settings.Gemini ?? new GeminiSettings(),
-        publishStore,
-        publishLogStore,
-        httpClientFactory,
-        mediaStore,
-        webhookOptions.Value.PublicBaseUrl,
-        ct);
+    var publishResult = await publishService.ExecutePublishAsync(id, ct);
 
     return Results.Json(
         new { success = publishResult.Success, mediaId = publishResult.MediaId, error = publishResult.Error },
@@ -6368,9 +6353,9 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
         yield return "MercadoLivreAffiliateScout.IntervalJitterMinutes deve estar entre 0 e 30.";
     }
 
-    if (mercadoLivreScout.MaxOffersPerRun is < 1 or > 10)
+    if (mercadoLivreScout.MaxOffersPerRun is < 0 or > 500)
     {
-        yield return "MercadoLivreAffiliateScout.MaxOffersPerRun deve estar entre 1 e 10.";
+        yield return "MercadoLivreAffiliateScout.MaxOffersPerRun deve estar entre 0 e 500. Use 0 para ilimitado no ciclo.";
     }
 
     if (mercadoLivreScout.RepeatWindowHours is < 1 or > 168)
@@ -6799,6 +6784,7 @@ static IReadOnlyList<WhatsAppForwardingRouteSettings> ResolveWhatsAppForwardingR
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             AppendSheinCode = route.AppendSheinCode,
+            SkipConversionOnlyShorten = route.SkipConversionOnlyShorten,
             SendMediaEnabled = route.SendMediaEnabled,
             FooterText = route.FooterText ?? string.Empty,
             InstanceName = string.IsNullOrWhiteSpace(route.InstanceName) ? null : route.InstanceName.Trim()
@@ -7378,11 +7364,12 @@ static async Task<ApprovalPackageSendResult> SendTelegramReelApprovalPackageAsyn
     TelegramUserbotReelDraftResult draft,
     CancellationToken ct)
 {
-    var results = new List<WhatsAppSendResult>();
+    var mediaResults = new List<WhatsAppSendResult>();
+    var requiredResults = new List<WhatsAppSendResult>();
 
     if (!string.IsNullOrWhiteSpace(draft.MediaUrl))
     {
-        results.Add(await whatsAppGateway.SendImageUrlAsync(
+        mediaResults.Add(await whatsAppGateway.SendImageUrlAsync(
             instanceName,
             groupId,
             draft.MediaUrl.Trim(),
@@ -7392,7 +7379,7 @@ static async Task<ApprovalPackageSendResult> SendTelegramReelApprovalPackageAsyn
             ct));
     }
 
-    results.Add(await whatsAppGateway.SendTextAsync(
+    requiredResults.Add(await whatsAppGateway.SendTextAsync(
         instanceName,
         groupId,
         BuildTelegramReelInstagramCaptionMessage(draft),
@@ -7400,7 +7387,7 @@ static async Task<ApprovalPackageSendResult> SendTelegramReelApprovalPackageAsyn
 
     if (!string.IsNullOrWhiteSpace(draft.ProductImageUrl))
     {
-        results.Add(await whatsAppGateway.SendImageUrlAsync(
+        requiredResults.Add(await whatsAppGateway.SendImageUrlAsync(
             instanceName,
             groupId,
             draft.ProductImageUrl.Trim(),
@@ -7411,14 +7398,15 @@ static async Task<ApprovalPackageSendResult> SendTelegramReelApprovalPackageAsyn
     }
     else
     {
-        results.Add(await whatsAppGateway.SendTextAsync(
+        requiredResults.Add(await whatsAppGateway.SendTextAsync(
             instanceName,
             groupId,
             BuildTelegramReelCompleteOfferMessage(draft, includeImageHint: true),
             ct));
     }
 
-    var success = results.Count > 0 && results.All(x => x.Success);
+    var results = mediaResults.Concat(requiredResults).ToList();
+    var success = requiredResults.Count > 0 && requiredResults.All(x => x.Success);
     var message = string.Join(" | ", results.Select(x => x.Message).Where(x => !string.IsNullOrWhiteSpace(x)));
     return new ApprovalPackageSendResult(success, string.IsNullOrWhiteSpace(message) ? "approval_package_sent" : message);
 }
@@ -10354,6 +10342,44 @@ static string NormalizeConverterDisplayText(string? value)
     return text;
 }
 
+static string NormalizeCatalogDisplayText(string? value)
+{
+    var text = System.Net.WebUtility.HtmlDecode(value?.Trim()) ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return string.Empty;
+    }
+
+    for (var i = 0; i < 2 && LooksLikeCatalogMojibake(text); i++)
+    {
+        try
+        {
+            var repaired = Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(text));
+            if (string.Equals(repaired, text, StringComparison.Ordinal) ||
+                CountCatalogMojibakeMarkers(repaired) > CountCatalogMojibakeMarkers(text))
+            {
+                break;
+            }
+
+            text = repaired.Trim();
+        }
+        catch
+        {
+            break;
+        }
+    }
+
+    return text;
+}
+
+static bool LooksLikeCatalogMojibake(string value)
+    => value.Contains('Ã', StringComparison.Ordinal)
+       || value.Contains('Â', StringComparison.Ordinal)
+       || value.Contains('\uFFFD', StringComparison.Ordinal);
+
+static int CountCatalogMojibakeMarkers(string value)
+    => value.Count(ch => ch is 'Ã' or 'Â' or '\uFFFD');
+
 static bool LooksLikeMojibake(string value)
     => value.Contains("ÃƒÆ’Ã†â€™", StringComparison.Ordinal) || value.Contains("ÃƒÆ’Ã‚Â¢", StringComparison.Ordinal) || value.Contains("ÃƒÂ¯Ã‚Â¿Ã‚Â½", StringComparison.Ordinal) || value.Contains("ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œ", StringComparison.Ordinal);
 
@@ -10549,7 +10575,7 @@ static string BuildBioLinksPageHtml(
     var sb = new StringBuilder();
     const string instagramUrl = "https://www.instagram.com/reidasofertasvip/";
     const string telegramUrl = "https://t.me/ReiDasOfertasVIP";
-    const string whatsappUrl = "https://chat.whatsapp.com/CYy5lP0VOjTDlefARsexXi";
+    const string whatsappUrl = "https://chat.whatsapp.com/GosnHVUa2lE0nYGhO6an4x";
     var brandName = string.IsNullOrWhiteSpace(settings.BrandName) ? "Rei das Ofertas" : settings.BrandName.Trim();
     var headline = string.IsNullOrWhiteSpace(settings.Headline) ? "Achadinhos em destaque" : settings.Headline.Trim();
     var subheadline = string.IsNullOrWhiteSpace(settings.Subheadline) ? "Toque no botao para abrir a oferta." : settings.Subheadline.Trim();
@@ -10647,7 +10673,7 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("            const h = Math.floor(diff / 3600000);");
     sb.AppendLine("            const m = Math.floor((diff % 3600000) / 60000);");
     sb.AppendLine("            const s = Math.floor((diff % 60000) / 1000);");
-    sb.AppendLine("            el.innerHTML = `ÃƒÂ¢Ã…Â¡Ã‚Â¡ ${h}h ${m}m ${s}s`;");
+    sb.AppendLine("            el.innerHTML = `&#9889; ${h}h ${m}m ${s}s`;");
     sb.AppendLine("        });");
     sb.AppendLine("    }");
     sb.AppendLine("    function localizePublishedAt() {");
@@ -10716,11 +10742,11 @@ static string BuildBioLinksPageHtml(
         sb.AppendLine("  <h2 class=\"section-title\">Top 3 ofertas em destaque</h2>");
         foreach (var item in featuredItems)
         {
-            var title = System.Net.WebUtility.HtmlEncode(item.Title);
+            var title = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Title));
             var link = System.Net.WebUtility.HtmlEncode(item.Link);
             var detailLink = BuildBioDetailLink(detailBaseUrl, item);
-            var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
-            var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
+            var keyword = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Keyword ?? string.Empty));
+            var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : NormalizeCatalogDisplayText(item.Store));
             var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
             var createdAtIso = item.CreatedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
             var imageUrl = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
@@ -10734,7 +10760,7 @@ static string BuildBioLinksPageHtml(
                 var expiryAttr = item.LightningDealExpiry.HasValue 
                     ? $" data-expiry=\"{item.LightningDealExpiry.Value:yyyy-MM-ddTHH:mm:ssZ}\"" 
                     : "";
-                sb.AppendLine($"    <div class=\"badge-lightning\"{expiryAttr}>Oferta RelÃƒÂ¢mpago</div>");
+                sb.AppendLine($"    <div class=\"badge-lightning\"{expiryAttr}>Oferta Relampago</div>");
             }
             if (!string.IsNullOrWhiteSpace(item.ImageUrl))
             {
@@ -10743,7 +10769,7 @@ static string BuildBioLinksPageHtml(
             sb.AppendLine($"    <div class=\"title\">{GetBioOfferBadgeHtml(item)} <span>{title}</span></div>");
             if (!string.IsNullOrWhiteSpace(item.CouponCode))
             {
-                sb.AppendLine($"    <div class=\"coupon-tag\">ÃƒÂ°Ã…Â¸Ã…Â½Ã…Â¸ÃƒÂ¯Ã‚Â¸Ã‚Â Cupom: <strong>{System.Net.WebUtility.HtmlEncode(item.CouponCode)}</strong></div>");
+                sb.AppendLine($"    <div class=\"coupon-tag\">Cupom: <strong>{System.Net.WebUtility.HtmlEncode(item.CouponCode)}</strong></div>");
             }
             if (item.ItemNumber.HasValue)
             {
@@ -10761,10 +10787,10 @@ static string BuildBioLinksPageHtml(
             sb.AppendLine("  <h2 class=\"section-title\">Mais ofertas publicadas</h2>");
             foreach (var item in additionalItems)
             {
-                var title = System.Net.WebUtility.HtmlEncode(item.Title);
+                var title = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Title));
                 var link = System.Net.WebUtility.HtmlEncode(item.Link);
-                var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
-                var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
+                var keyword = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Keyword ?? string.Empty));
+                var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : NormalizeCatalogDisplayText(item.Store));
                 var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
                 var createdAtIso = item.CreatedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
                 var imageUrl = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
@@ -10978,6 +11004,12 @@ string? ResolveBioImageUrl(InstagramPublishDraft draft)
         return draft.VideoCoverUrl.Trim();
     }
 
+    var suggestedImage = draft.SuggestedImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    if (!string.IsNullOrWhiteSpace(suggestedImage))
+    {
+        return suggestedImage.Trim();
+    }
+
     return null;
 }
 
@@ -11106,7 +11138,7 @@ string ResolveEffectiveCatalogOfferUrl(
         }
     }
 
-    return ResolveCatalogSearchFallbackUrl(catalogItem?.Store, catalogItem?.ProductName)
+    return ResolveCatalogItemSearchFallbackUrl(catalogItem)
         ?? stored
         ?? string.Empty;
 }
@@ -11119,7 +11151,7 @@ static string ResolveCatalogDisplayOfferUrl(CatalogOfferItem? catalogItem)
         return stored ?? string.Empty;
     }
 
-    return ResolveCatalogSearchFallbackUrl(catalogItem?.Store, catalogItem?.ProductName)
+    return ResolveCatalogItemSearchFallbackUrl(catalogItem)
         ?? stored
         ?? string.Empty;
 }
@@ -11160,6 +11192,52 @@ static string? ResolveCatalogSearchFallbackUrl(string? store, string? productNam
     }
 
     return $"https://www.google.com/search?q={encodedQuery}";
+}
+
+static string? ResolveCatalogItemSearchFallbackUrl(CatalogOfferItem? catalogItem)
+{
+    if (catalogItem is null)
+    {
+        return null;
+    }
+
+    return ResolveCatalogSearchFallbackUrl(
+        ResolveCatalogStoreHint(catalogItem.Store, catalogItem.ImageUrl, catalogItem.OfferUrl),
+        catalogItem.ProductName);
+}
+
+static string ResolveCatalogStoreHint(params string?[] values)
+{
+    foreach (var raw in values)
+    {
+        var value = raw?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            continue;
+        }
+
+        if (value.Contains("shopee", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("cf.shopee", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Shopee";
+        }
+
+        if (value.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("mercado livre", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("meli.", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("mlstatic", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Mercado Livre";
+        }
+
+        if (value.Contains("amazon", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("amzn.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Amazon";
+        }
+    }
+
+    return values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? "Loja";
 }
 
 InstagramPublishDraft? FindRelatedDraftForCatalogItem(
@@ -11221,18 +11299,21 @@ string? BuildPublicImageProxyUrl(string? publicBaseUrl, HttpRequest request, str
     }
 
     var trimmed = imageUrl.Trim();
-    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) ||
+        (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
     {
         return trimmed;
     }
 
-    if (string.Equals(uri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase))
+    if (string.Equals(uri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase) ||
+        ((uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
+          uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase)) &&
+         uri.AbsolutePath.StartsWith("/media/", StringComparison.OrdinalIgnoreCase)))
     {
         return trimmed;
     }
 
-    var baseUrl = ResolvePublicBaseUrl(publicBaseUrl, null, request.Scheme, request.Host.ToString()).TrimEnd('/');
-    return $"{baseUrl}/media/remote?url={Uri.EscapeDataString(trimmed)}";
+    return trimmed;
 }
 
 string NormalizeCatalogPostType(string? postType)
@@ -11752,7 +11833,7 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
                     const h = Math.floor(diff / 3600000);
                     const m = Math.floor((diff % 3600000) / 60000);
                     const s = Math.floor((diff % 60000) / 1000);
-                    el.innerHTML = `ÃƒÂ¢Ã…Â¡Ã‚Â¡ ${h}h ${m}m ${s}s`;
+                    el.innerHTML = `&#9889; ${h}h ${m}m ${s}s`;
                 });
             }
             setInterval(updateCountdowns, 1000);
@@ -11801,13 +11882,14 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
         
         foreach (var item in items)
         {
-            var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
-            var titleShort = title.Length > 60 ? title.Substring(0, 57) + "..." : title;
-            var store = System.Net.WebUtility.HtmlEncode(item.Store);
+            var displayTitle = NormalizeCatalogDisplayText(item.ProductName);
+            var title = System.Net.WebUtility.HtmlEncode(displayTitle);
+            var titleShort = System.Net.WebUtility.HtmlEncode(displayTitle.Length > 60 ? displayTitle[..57] + "..." : displayTitle);
+            var store = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Store));
             var detailLink = $"/item/{item.ItemNumber}";
             var image = string.IsNullOrWhiteSpace(item.ImageUrl) ? "https://via.placeholder.com/400" : System.Net.WebUtility.HtmlEncode(item.ImageUrl);
             
-            var fullPriceText = ResolveCatalogPriceText(item.PriceText);
+            var fullPriceText = NormalizeCatalogDisplayText(ResolveCatalogPriceText(item.PriceText));
             var fullPrice = System.Net.WebUtility.HtmlEncode(fullPriceText);
             var price_val = fullPriceText.Replace("R$ ", "").Replace("R$", "").Trim();
             
@@ -11821,7 +11903,7 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
                     : "";
                 dealBadge = $@"
                     <div class=""absolute top-3 right-3 badge-lightning text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded z-10 border border-white/20 shadow-lg""{expiryAttr}>
-                        Oferta Relâmpago
+                        Oferta Relampago
                     </div>";
             }
             
@@ -11895,10 +11977,10 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
 
 static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
 {
-    var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
-    var store = System.Net.WebUtility.HtmlEncode(item.Store);
-    var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
-    var priceText = ResolveCatalogPriceText(item.PriceText);
+    var title = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.ProductName));
+    var store = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Store));
+    var keyword = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Keyword));
+    var priceText = NormalizeCatalogDisplayText(ResolveCatalogPriceText(item.PriceText));
     var fullPrice = System.Net.WebUtility.HtmlEncode(priceText);
     var price_val = priceText.Replace("R$ ", "").Replace("R$", "").Trim();
     var offerUrl = System.Net.WebUtility.HtmlEncode(ResolveCatalogDisplayOfferUrl(item));
@@ -11912,7 +11994,7 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
     var isLightning = item.IsLightningDeal;
     var expiry = item.LightningDealExpiry;
     var coupon = item.CouponCode ?? "";
-    var couponDesc = item.CouponDescription ?? "";
+    var couponDesc = NormalizeCatalogDisplayText(item.CouponDescription);
     
     var dealBadge = "";
     if (isLightning)
@@ -11922,7 +12004,7 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
             : "";
         dealBadge = $@"
             <div class=""absolute top-6 right-6 bg-vipRed text-white text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl z-20 shadow-2xl animate-pulse""{expiryAttr}>
-                🔥 Oferta Relâmpago
+                &#128293; Oferta Relampago
             </div>";
     }
     var couponBlock1 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
@@ -12089,7 +12171,7 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
                     const h = Math.floor(diff / 3600000);
                     const m = Math.floor((diff % 3600000) / 60000);
                     const s = Math.floor((diff % 60000) / 1000);
-                    el.innerHTML = `ÃƒÂ¢Ã…Â¡Ã‚Â¡ Expira em: ${h}h ${m}m ${s}s`;
+                    el.innerHTML = `&#9889; Expira em: ${h}h ${m}m ${s}s`;
                 });
             }
             setInterval(updateCountdowns, 1000);

@@ -944,7 +944,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             return $"https://www.amazon.com.br/s?k={encodedQuery}";
         }
 
-        return $"https://www.google.com/search?q={encodedQuery}";
+        return string.Empty;
     }
 
     private static bool IsCatalogSelfUrl(string? url)
@@ -959,18 +959,23 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             return false;
         }
 
-        if (!string.Equals(uri.Host, "reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
+        if (!uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) &&
+            !uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        return uri.AbsolutePath.StartsWith("/catalogo", StringComparison.OrdinalIgnoreCase);
+        return uri.AbsolutePath.StartsWith("/catalogo", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/item/", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/bio", StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<string> ResolveImageUrls(InstagramPublishDraft draft)
     {
         var urls = new List<string>();
         var selected = draft.SelectedImageIndexes ?? new List<int>();
+
+        urls.AddRange(draft.SuggestedImageUrls?.Where(x => !string.IsNullOrWhiteSpace(x)) ?? Enumerable.Empty<string>());
         
         if (selected.Count > 0)
         {
@@ -992,7 +997,16 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             urls.AddRange(draft.ImageUrls.Where(x => !string.IsNullOrWhiteSpace(x)));
         }
 
-        return urls;
+        if (!string.IsNullOrWhiteSpace(draft.VideoCoverUrl))
+        {
+            urls.Add(draft.VideoCoverUrl);
+        }
+
+        return urls
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static string? ResolveNicheFromDraft(InstagramPublishDraft draft)
@@ -1044,25 +1058,43 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
 
     private static string ResolveStore(InstagramPublishDraft draft, string offerUrl)
     {
-        if (Uri.TryCreate(offerUrl, UriKind.Absolute, out var uri))
+        var candidates = new List<string?> { offerUrl, draft.OriginalOfferUrl, draft.OfferUrl, draft.AutoReplyLink, draft.Caption };
+        candidates.AddRange(draft.Ctas?.Select(x => x.Link) ?? Enumerable.Empty<string?>());
+        candidates.AddRange(draft.ImageUrls ?? new List<string>());
+        candidates.AddRange(draft.SuggestedImageUrls ?? new List<string>());
+        if (!string.IsNullOrWhiteSpace(draft.VideoCoverUrl))
         {
-            var host = uri.Host.ToLowerInvariant();
-            if (host.Contains("amazon", StringComparison.Ordinal))
+            candidates.Add(draft.VideoCoverUrl);
+        }
+
+        foreach (var raw in candidates)
+        {
+            var value = raw?.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            var haystack = value.ToLowerInvariant();
+            if (haystack.Contains("amazon", StringComparison.Ordinal) || haystack.Contains("amzn.", StringComparison.Ordinal))
             {
                 return "Amazon";
             }
 
-            if (host.Contains("mercadolivre", StringComparison.Ordinal) || host.Contains("mercado-livre", StringComparison.Ordinal))
+            if (haystack.Contains("mercadolivre", StringComparison.Ordinal) ||
+                haystack.Contains("mercado-livre", StringComparison.Ordinal) ||
+                haystack.Contains("meli.", StringComparison.Ordinal) ||
+                haystack.Contains("mlstatic", StringComparison.Ordinal))
             {
                 return "Mercado Livre";
             }
 
-            if (host.Contains("shopee", StringComparison.Ordinal))
+            if (haystack.Contains("shopee", StringComparison.Ordinal))
             {
                 return "Shopee";
             }
 
-            if (host.Contains("shein", StringComparison.Ordinal))
+            if (haystack.Contains("shein", StringComparison.Ordinal))
             {
                 return "Shein";
             }

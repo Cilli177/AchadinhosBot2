@@ -241,13 +241,15 @@ public sealed class FfmpegVideoProcessingService : IVideoProcessingService
 
         if (source.StartsWith("/media/admin/", StringComparison.OrdinalIgnoreCase))
         {
-            return Path.Combine(AppContext.BaseDirectory, "wwwroot", source.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            var path = Path.Combine(AppContext.BaseDirectory, "wwwroot", source.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            return File.Exists(path) ? path : null;
         }
 
         if (Uri.TryCreate(source, UriKind.Absolute, out var uri) &&
             uri.AbsolutePath.StartsWith("/media/admin/", StringComparison.OrdinalIgnoreCase))
         {
-            return Path.Combine(AppContext.BaseDirectory, "wwwroot", uri.AbsolutePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            var path = Path.Combine(AppContext.BaseDirectory, "wwwroot", uri.AbsolutePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            return File.Exists(path) ? path : null;
         }
 
         return null;

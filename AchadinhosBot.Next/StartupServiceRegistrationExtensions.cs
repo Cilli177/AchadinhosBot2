@@ -122,6 +122,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<VilaNvidiaGenerator>();
         builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
         builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
+        builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
         builder.Services.AddSingleton<ContentCalendarAutomationService>();
         builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
         builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();

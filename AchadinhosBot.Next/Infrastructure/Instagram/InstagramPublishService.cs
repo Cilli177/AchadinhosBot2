@@ -138,6 +138,8 @@ public sealed class InstagramPublishService : IInstagramPublishService
                 false);
         }
 
+        try
+        {
         var settings = await _settingsStore.GetAsync(cancellationToken);
         var publishSettings = settings.InstagramPublish ?? new InstagramPublishSettings();
         var settingsError = ValidateSettings(publishSettings);
@@ -273,6 +275,11 @@ public sealed class InstagramPublishService : IInstagramPublishService
             publishResult.Error,
             draft.Id,
             publishResult.IsTransient);
+        }
+        finally
+        {
+            _idempotencyStore.RemoveByPrefix(dedupeKey);
+        }
     }
 
     private static void EnsureCatalogIntentForReel(InstagramPublishDraft draft, InstagramPublishSettings publishSettings)

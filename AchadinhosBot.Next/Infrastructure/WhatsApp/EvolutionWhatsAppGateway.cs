@@ -10,6 +10,7 @@ using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Compliance;
+using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.Safety;
 using Microsoft.Extensions.Options;
 
@@ -635,27 +636,56 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
 
             string? lastFailureDetail = null;
 
+            var payloadFactories = new List<Func<Dictionary<string, object?>>>
+            {
+                () => new()
+                {
+                    ["number"] = to,
+                    ["text"] = safeText
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["textMessage"] = new Dictionary<string, object?>
+                    {
+                        ["text"] = safeText
+                    }
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["options"] = new Dictionary<string, object?>
+                    {
+                        ["delay"] = 1200,
+                        ["presence"] = "composing"
+                    },
+                    ["textMessage"] = new Dictionary<string, object?>
+                    {
+                        ["text"] = safeText
+                    }
+                }
+            };
+
             foreach (var endpoint in endpoints)
             {
                 var path = ResolveEndpoint(endpoint, targetInstance);
 
-                var payload = new Dictionary<string, object?>
+                for (var i = 0; i < payloadFactories.Count; i++)
                 {
-                    ["number"] = to,
-                    ["text"] = safeText
-                };
+                    var payload = payloadFactories[i]();
 
-                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                var res = await PostWithAttemptTimeoutAsync(client, path, content, cancellationToken);
-                var body = await res.Content.ReadAsStringAsync(cancellationToken);
+                    var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                    var res = await PostWithAttemptTimeoutAsync(client, path, content, cancellationToken);
+                    var body = await res.Content.ReadAsStringAsync(cancellationToken);
 
-                if (res.IsSuccessStatusCode)
-                {
-                    return new WhatsAppSendResult(true, "Mensagem enviada");
+                    if (res.IsSuccessStatusCode)
+                    {
+                        return new WhatsAppSendResult(true, "Mensagem enviada");
+                    }
+
+                    _logger.LogWarning("Falha ao enviar mensagem Evolution: {Status} {Body}", res.StatusCode, body);
+                    lastFailureDetail = $"endpoint={path};payload={i + 1} status={(int)res.StatusCode} body={body}";
                 }
-
-                _logger.LogWarning("Falha ao enviar mensagem Evolution: {Status} {Body}", res.StatusCode, body);
-                lastFailureDetail = $"endpoint={path} status={(int)res.StatusCode} body={body}";
             }
 
             return new WhatsAppSendResult(false, $"Falha ao enviar mensagem ({lastFailureDetail ?? "sem detalhes"})");
@@ -763,6 +793,33 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
                     ["base64"] = base64,
                     ["mimetype"] = resolvedMime,
                     ["fileName"] = "image.jpg"
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediaType"] = "image",
+                        ["fileName"] = "image.jpg",
+                        ["caption"] = safeCaption,
+                        ["media"] = base64
+                    }
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["options"] = new Dictionary<string, object?>
+                    {
+                        ["delay"] = 1200,
+                        ["presence"] = "composing"
+                    },
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediaType"] = "image",
+                        ["fileName"] = "image.jpg",
+                        ["caption"] = safeCaption,
+                        ["media"] = base64
+                    }
                 }
             };
 
@@ -904,6 +961,33 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
                     ["caption"] = safeCaption,
                     ["url"] = mediaUrl,
                     ["fileName"] = resolvedFileName
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediaType"] = resolvedMediaType,
+                        ["fileName"] = resolvedFileName,
+                        ["caption"] = safeCaption,
+                        ["media"] = mediaUrl
+                    }
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["options"] = new Dictionary<string, object?>
+                    {
+                        ["delay"] = 1200,
+                        ["presence"] = "composing"
+                    },
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediaType"] = resolvedMediaType,
+                        ["fileName"] = resolvedFileName,
+                        ["caption"] = safeCaption,
+                        ["media"] = mediaUrl
+                    }
                 }
             };
 
@@ -980,10 +1064,25 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
                 return new WhatsAppSendResult(false, downloaded.Error ?? "Falha ao baixar a midia para fallback.");
             }
 
+            var resolvedBytes = downloaded.Bytes;
             var resolvedMime = !string.IsNullOrWhiteSpace(downloaded.MimeType)
                 ? downloaded.MimeType!
                 : fallbackMimeType;
-            var base64 = Convert.ToBase64String(downloaded.Bytes);
+            var resolvedFileName = fallbackFileName;
+            if (string.Equals(fallbackMediaType, "image", StringComparison.OrdinalIgnoreCase))
+            {
+                var jpeg = ImageNormalizationSupport.TranscodeToJpeg(downloaded.Bytes, maxWidth: 1600, maxHeight: 1600, quality: 88);
+                if (jpeg is not null && jpeg.Length > 0)
+                {
+                    resolvedBytes = jpeg;
+                    resolvedMime = "image/jpeg";
+                    resolvedFileName = Path.ChangeExtension(
+                        string.IsNullOrWhiteSpace(fallbackFileName) ? "image.jpg" : fallbackFileName,
+                        ".jpg") ?? "image.jpg";
+                }
+            }
+
+            var base64 = Convert.ToBase64String(resolvedBytes);
             var dataUri = $"data:{resolvedMime};base64,{base64}";
             var payloadFactories = new List<Func<Dictionary<string, object?>>>
             {
@@ -993,8 +1092,8 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
                     ["caption"] = caption ?? string.Empty,
                     ["mediatype"] = fallbackMediaType,
                     ["mimetype"] = resolvedMime,
-                    ["media"] = dataUri,
-                    ["fileName"] = fallbackFileName
+                    ["media"] = base64,
+                    ["fileName"] = resolvedFileName
                 },
                 () => new()
                 {
@@ -1002,8 +1101,8 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
                     ["caption"] = caption ?? string.Empty,
                     ["mediatype"] = fallbackMediaType,
                     ["mimetype"] = resolvedMime,
-                    ["media"] = base64,
-                    ["fileName"] = fallbackFileName
+                    ["media"] = dataUri,
+                    ["fileName"] = resolvedFileName
                 },
                 () => new()
                 {
@@ -1012,7 +1111,34 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
                     ["mediatype"] = fallbackMediaType,
                     ["base64"] = base64,
                     ["mimetype"] = resolvedMime,
-                    ["fileName"] = fallbackFileName
+                    ["fileName"] = resolvedFileName
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediaType"] = fallbackMediaType,
+                        ["fileName"] = fallbackFileName,
+                        ["caption"] = caption ?? string.Empty,
+                        ["media"] = base64
+                    }
+                },
+                () => new()
+                {
+                    ["number"] = to,
+                    ["options"] = new Dictionary<string, object?>
+                    {
+                        ["delay"] = 1200,
+                        ["presence"] = "composing"
+                    },
+                    ["mediaMessage"] = new Dictionary<string, object?>
+                    {
+                        ["mediaType"] = fallbackMediaType,
+                        ["fileName"] = fallbackFileName,
+                        ["caption"] = caption ?? string.Empty,
+                        ["media"] = base64
+                    }
                 }
             };
 

@@ -231,6 +231,7 @@ public sealed class WhatsAppScheduledGroupMessage
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "Mensagem agendada";
     public bool Enabled { get; set; } = true;
+    public bool SendOnce { get; set; }
     public string? InstanceName { get; set; }
     public string TargetGroupId { get; set; } = string.Empty;
     public string Text { get; set; } = string.Empty;
@@ -239,6 +240,7 @@ public sealed class WhatsAppScheduledGroupMessage
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? LastSentAt { get; set; }
     public DateTimeOffset NextRunAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? CompletedAt { get; set; }
     public DateTimeOffset? PausedAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
     public string? LastResultMessage { get; set; }
@@ -692,6 +694,7 @@ public sealed class MercadoLivreAffiliateScoutSettings
     public string? TwoFactorCode { get; set; }
     public string? StorageStateJson { get; set; }
     public string? StorageStatePath { get; set; } = "D:\\Achadinhos\\data\\mercadolivre-affiliate-storage-state.json";
+    public string? SeenProductsPath { get; set; }
     public string? AuthMode { get; set; } = "code-or-qr";
     public string? OfferCardSelector { get; set; } = "[data-testid='recommendation-card'], [data-testid='affiliate-offer-card'], article, section";
     public string? OfferLinkSelector { get; set; } = "a[href*='/p/'], a[href*='/MLB-'], a[href*='mercadolivre.com.br/p/']";
@@ -703,8 +706,8 @@ public sealed class MercadoLivreAffiliateScoutSettings
     public string? ShareActionSelector { get; set; } = "button:has-text('Copiar link'), button:has-text('Gerar link'), [data-testid='copy-affiliate-link'], [data-testid='share-offer-link']";
     public string? SharedLinkSelector { get; set; } = "input[value^='http'], textarea";
     public string? SharedLinkCopyButtonSelector { get; set; } = "button:has-text('Copiar'), [data-testid='copy-link'], [data-testid='copy-affiliate-link']";
-    public int IntervalMinutes { get; set; } = 10;
-    public int IntervalJitterMinutes { get; set; } = 2;
+    public int IntervalMinutes { get; set; } = 30;
+    public int IntervalJitterMinutes { get; set; } = 0;
     public decimal MinCommissionPercent { get; set; } = 19m;
     public decimal Tier1MinPrice { get; set; } = 99m;
     public decimal Tier1MinCommissionPercent { get; set; } = 12m;
@@ -712,10 +715,16 @@ public sealed class MercadoLivreAffiliateScoutSettings
     public decimal Tier2MinCommissionPercent { get; set; } = 11m;
     public decimal Tier3MinPrice { get; set; } = 325m;
     public decimal Tier3MinCommissionPercent { get; set; } = 7m;
-    public int MaxOffersPerRun { get; set; } = 1;
-    public int RepeatWindowHours { get; set; } = 24;
+    public int MaxOffersPerRun { get; set; } = 0;
+    public int RepeatWindowHours { get; set; } = 6;
     public string? WhatsAppInstanceName { get; set; } = "ZapOfertas";
-    public string? DestinationGroupId { get; set; } = "120363405661434395@g.us";
+    public string? DestinationGroupId { get; set; } = "120363409272515351@g.us";
+    public bool CreateStoryDrafts { get; set; } = true;
+    public int StoryDraftsPerDay { get; set; } = 8;
+    public List<string> StoryScheduleTimes { get; set; } = new() { "09:00", "11:00", "13:00", "15:00", "17:00", "19:00", "21:00", "23:00" };
+    public bool StorySendForApproval { get; set; } = true;
+    public string? StoryApprovalWhatsAppGroupId { get; set; } = "1203634261666665839@g.us";
+    public string? StoryApprovalWhatsAppInstanceName { get; set; } = "ZapOfertas";
     public bool PublishViaProductionRelay { get; set; } = false;
     public string? ProductionRelayBaseUrl { get; set; } = "http://host.docker.internal:5005";
     public string? ProductionRelayAdminKey { get; set; } = "dev-local-key";

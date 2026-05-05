@@ -26,11 +26,13 @@ public sealed class MercadoLivreAffiliateScoutClient
         _logger = logger;
     }
 
-    public async Task<MercadoLivreAffiliateScoutResult> TestAsync(CancellationToken ct)
+    public async Task<MercadoLivreAffiliateScoutResult> TestAsync(CancellationToken ct, bool forceRefreshBeforeScan = false)
     {
         var settings = await _settingsStore.GetAsync(ct);
         var scout = settings.MercadoLivreAffiliateScout ?? new MercadoLivreAffiliateScoutSettings();
         var serviceBaseUrl = (_configuration["MercadoLivreAffiliateScoutService:BaseUrl"]
+            ?? _configuration["MERCADOLIVRE_AFFILIATE_SCRAPER:BASEURL"]
+            ?? _configuration["MERCADOLIVRE_AFFILIATE_SCRAPER:BaseUrl"]
             ?? _configuration["MERCADOLIVRE_AFFILIATE_SCRAPER__BASEURL"]
             ?? "http://mercadolivre-affiliate-scraper:3002").Trim();
 
@@ -60,12 +62,21 @@ public sealed class MercadoLivreAffiliateScoutClient
             scout.RequireShareButtonFlow,
             scout.RequireImage,
             scout.SaveScreenshotsOnFailure,
-            scout.MaxOffersPerRun);
+            scout.MaxOffersPerRun,
+            MercadoLivreAffiliateScoutWorker.GetEffectiveMinimumCommissionPercent(scout),
+            scout.Tier1MinPrice,
+            scout.Tier1MinCommissionPercent,
+            scout.Tier2MinPrice,
+            scout.Tier2MinCommissionPercent,
+            scout.Tier3MinPrice,
+            scout.Tier3MinCommissionPercent,
+            ResolveCandidateLimit(scout.MaxOffersPerRun),
+            forceRefreshBeforeScan);
 
         try
         {
             var client = _httpClientFactory.CreateClient("default");
-            client.Timeout = TimeSpan.FromSeconds(120);
+            client.Timeout = TimeSpan.FromMinutes(10);
 
             using var response = await client.PostAsJsonAsync(
                 $"{serviceBaseUrl.TrimEnd('/')}/test",
@@ -90,6 +101,13 @@ public sealed class MercadoLivreAffiliateScoutClient
             _logger.LogWarning(ex, "MercadoLivreAffiliateScout: falha ao testar o scraper Playwright");
             return new MercadoLivreAffiliateScoutResult(false, false, null, null, null, null, [], ex.Message, null);
         }
+    }
+
+    internal static int ResolveCandidateLimit(int maxOffersPerRun)
+    {
+        return maxOffersPerRun <= 0
+            ? 120
+            : Math.Clamp(maxOffersPerRun * 10, 10, 120);
     }
 }
 
@@ -119,7 +137,16 @@ public sealed record MercadoLivreAffiliateScoutRequest(
     bool RequireShareButtonFlow,
     bool RequireImage,
     bool SaveScreenshotsOnFailure,
-    int MaxOffersPerRun);
+    int MaxOffersPerRun,
+    decimal MinCommissionPercent,
+    decimal Tier1MinPrice,
+    decimal Tier1MinCommissionPercent,
+    decimal Tier2MinPrice,
+    decimal Tier2MinCommissionPercent,
+    decimal Tier3MinPrice,
+    decimal Tier3MinCommissionPercent,
+    int CandidateLimit,
+    bool ForceRefreshBeforeScan);
 
 public sealed record MercadoLivreAffiliateScoutOffer(
     string? Title,
