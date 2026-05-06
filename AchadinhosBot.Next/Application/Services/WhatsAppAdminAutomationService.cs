@@ -535,14 +535,34 @@ public sealed class WhatsAppAdminAutomationService
                 ? await _transport.SendTextAsync(effectiveInstanceName, schedule.TargetGroupId, trackedText, ct)
                 : await _transport.SendImageUrlAsync(effectiveInstanceName, schedule.TargetGroupId, schedule.ImageUrl.Trim(), trackedText, null, "message.jpg", ct);
             schedule.LastSentAt = now;
-            schedule.NextRunAt = now.AddMinutes(interval);
             schedule.LastResultMessage = AutomationSettingsSanitizer.NormalizeNullable(result.Message)
                 ?? (result.Success ? "Mensagem enviada com sucesso." : "Falha ao enviar mensagem.");
+            if (schedule.SendOnce)
+            {
+                schedule.Enabled = false;
+                schedule.CompletedAt = now;
+                schedule.NextRunAt = now;
+                schedule.LastResultMessage = $"{schedule.LastResultMessage} Envio unico finalizado.";
+            }
+            else
+            {
+                schedule.NextRunAt = now.AddMinutes(interval);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            schedule.NextRunAt = now.AddMinutes(interval);
             schedule.LastResultMessage = AutomationSettingsSanitizer.NormalizeNullable(ex.Message);
+            if (schedule.SendOnce)
+            {
+                schedule.Enabled = false;
+                schedule.CompletedAt = now;
+                schedule.NextRunAt = now;
+                schedule.LastResultMessage = $"{schedule.LastResultMessage} Envio unico finalizado com falha.";
+            }
+            else
+            {
+                schedule.NextRunAt = now.AddMinutes(interval);
+            }
             _logger.LogWarning(ex,
                 "Falha ao processar agendamento de mensagem {ScheduleId} para grupo {TargetGroupId}",
                 schedule.Id,
@@ -647,3 +667,4 @@ public sealed class WhatsAppParticipantBlastConverter
     public string Action { get; set; } = string.Empty;
     public DateTimeOffset JoinedAt { get; set; }
 }
+

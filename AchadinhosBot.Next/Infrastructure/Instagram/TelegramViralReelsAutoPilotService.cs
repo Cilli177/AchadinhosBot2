@@ -187,11 +187,12 @@ public sealed class TelegramViralReelsAutoPilotService
         TelegramUserbotReelDraftResult draft,
         CancellationToken ct)
     {
-        var results = new List<WhatsAppSendResult>();
+        var mediaResults = new List<WhatsAppSendResult>();
+        var requiredResults = new List<WhatsAppSendResult>();
 
         if (!string.IsNullOrWhiteSpace(draft.MediaUrl))
         {
-            results.Add(await _whatsAppTransport.SendImageUrlAsync(
+            mediaResults.Add(await _whatsAppTransport.SendImageUrlAsync(
                 instanceName,
                 groupId,
                 draft.MediaUrl.Trim(),
@@ -201,7 +202,7 @@ public sealed class TelegramViralReelsAutoPilotService
                 ct));
         }
 
-        results.Add(await _whatsAppTransport.SendTextAsync(
+        requiredResults.Add(await _whatsAppTransport.SendTextAsync(
             instanceName,
             groupId,
             BuildInstagramCaptionApprovalMessage(draft),
@@ -209,7 +210,7 @@ public sealed class TelegramViralReelsAutoPilotService
 
         if (!string.IsNullOrWhiteSpace(draft.ProductImageUrl))
         {
-            results.Add(await _whatsAppTransport.SendImageUrlAsync(
+            requiredResults.Add(await _whatsAppTransport.SendImageUrlAsync(
                 instanceName,
                 groupId,
                 draft.ProductImageUrl.Trim(),
@@ -220,14 +221,15 @@ public sealed class TelegramViralReelsAutoPilotService
         }
         else
         {
-            results.Add(await _whatsAppTransport.SendTextAsync(
+            requiredResults.Add(await _whatsAppTransport.SendTextAsync(
                 instanceName,
                 groupId,
                 BuildCompleteOfferApprovalMessage(draft, includeImageHint: true),
                 ct));
         }
 
-        var success = results.Count > 0 && results.All(x => x.Success);
+        var results = mediaResults.Concat(requiredResults).ToList();
+        var success = requiredResults.Count > 0 && requiredResults.All(x => x.Success);
         var message = string.Join(" | ", results.Select(x => x.Message).Where(x => !string.IsNullOrWhiteSpace(x)));
         return new ApprovalPackageSendResult(success, string.IsNullOrWhiteSpace(message) ? "approval_package_sent" : message);
     }

@@ -59,7 +59,7 @@ public static partial class OfficialWhatsAppGroupGuard
     private static bool IsAllowedNonOfferUrl(string url)
         => url.Contains("reidasofertas.ia.br/bio", StringComparison.OrdinalIgnoreCase)
            || url.Contains("bio.reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase)
-           || url.Contains("chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX", StringComparison.OrdinalIgnoreCase);
+           || url.Contains(WhatsAppInviteLinkNormalizer.OfficialInviteUrl, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRawMarketplaceUrl(string url)
     {

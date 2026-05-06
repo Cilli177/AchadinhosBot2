@@ -83,7 +83,7 @@ public sealed class WhatsAppAdminAutomationServiceTests
                         Id = "blast-run",
                         Name = "Disparo imediato",
                         InstanceName = "ZapOfertas2",
-                        LinkUrl = "https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX",
+                        LinkUrl = "https://chat.whatsapp.com/GosnHVUa2lE0nYGhO6an4x",
                         SecurityPitch = "Grupo oficial com ofertas validadas.",
                         PendingParticipantIds = new List<string>
                         {

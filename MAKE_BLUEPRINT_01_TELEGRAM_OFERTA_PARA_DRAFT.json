@@ -10,7 +10,7 @@
         "useNewZLibDeCompress": true
       },
       "mapper": {
-        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/getUpdates",
+        "url": "https://api.telegram.org/bot{{secrets.telegram_bot_token}}/getUpdates",
         "serializeUrl": false,
         "method": "get",
         "headers": [],
@@ -68,7 +68,7 @@
         ]
       },
       "mapper": {
-        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/sendMessage",
+        "url": "https://api.telegram.org/bot{{secrets.telegram_bot_token}}/sendMessage",
         "serializeUrl": false,
         "method": "post",
         "headers": [
@@ -164,7 +164,7 @@
         "useNewZLibDeCompress": true
       },
       "mapper": {
-        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/getFile",
+        "url": "https://api.telegram.org/bot{{secrets.telegram_bot_token}}/getFile",
         "serializeUrl": false,
         "method": "post",
         "headers": [
@@ -207,7 +207,7 @@
         ],
         "bodyType": "raw",
         "contentType": "application/json",
-        "data": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+        "data": "{\"username\":\"{{secrets.admin_username}}\",\"password\":\"{{secrets.admin_password}}\"}",
         "parseResponse": true,
         "shareCookies": true,
         "useMtls": false,
@@ -240,7 +240,7 @@
         ],
         "bodyType": "raw",
         "contentType": "application/json",
-        "data": "{\n  \"postType\": \"feed\",\n  \"productName\": \"{{5.product_name}}\",\n  \"caption\": \"{{5.catchy_description}}\\n\\n{{5.product_description}}\\n\\nPreco VIP: {{5.current_price}}\\nPreco original: {{5.original_price}}\",\n  \"hashtags\": \"#achadinhos #oferta #vip\",\n  \"imageUrls\": [\n    \"https://api.telegram.org/file/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/{{6.data.result.file_path}}\"\n  ],\n  \"ctas\": [\n    {\n      \"keyword\": \"VIP\",\n      \"link\": \"{{5.affiliate_link}}\"\n    }\n  ]\n}",
+        "data": "{\n  \"postType\": \"feed\",\n  \"productName\": \"{{5.product_name}}\",\n  \"caption\": \"{{5.catchy_description}}\\n\\n{{5.product_description}}\\n\\nPreco VIP: {{5.current_price}}\\nPreco original: {{5.original_price}}\",\n  \"hashtags\": \"#achadinhos #oferta #vip\",\n  \"imageUrls\": [\n    \"https://api.telegram.org/file/bot{{secrets.telegram_bot_token}}/{{6.data.result.file_path}}\"\n  ],\n  \"ctas\": [\n    {\n      \"keyword\": \"VIP\",\n      \"link\": \"{{5.affiliate_link}}\"\n    }\n  ]\n}",
         "parseResponse": true,
         "shareCookies": true,
         "useMtls": false,
@@ -262,7 +262,7 @@
         "useNewZLibDeCompress": true
       },
       "mapper": {
-        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/sendMessage",
+        "url": "https://api.telegram.org/bot{{secrets.telegram_bot_token}}/sendMessage",
         "serializeUrl": false,
         "method": "post",
         "headers": [

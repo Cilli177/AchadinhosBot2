@@ -4,7 +4,7 @@ namespace AchadinhosBot.Next.Application.Services;
 
 public static partial class WhatsAppInviteLinkNormalizer
 {
-    public const string OfficialInviteUrl = "https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX";
+    public const string OfficialInviteUrl = "https://chat.whatsapp.com/GosnHVUa2lE0nYGhO6an4x";
     public const string OfficialBioUrl = "https://bio.reidasofertas.ia.br";
 
     public static string NormalizeOfficialInviteBlock(string? text)

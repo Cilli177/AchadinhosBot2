@@ -5,7 +5,7 @@ namespace AchadinhosBot.Next.Application.Services;
 
 public sealed class WhatsAppAutomationQueueService
 {
-    private readonly Channel<QueuedWhatsAppAutomationJob> _channel = Channel.CreateUnbounded<QueuedWhatsAppAutomationJob>(
+    private readonly Channel<string> _channel = Channel.CreateUnbounded<string>(
         new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -13,13 +13,15 @@ public sealed class WhatsAppAutomationQueueService
         });
 
     private readonly ConcurrentDictionary<string, WhatsAppAutomationQueueItem> _items = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, QueuedWhatsAppAutomationJob> _jobs = new(StringComparer.OrdinalIgnoreCase);
     private string? _currentJobId;
 
     public async Task<WhatsAppAutomationQueueItem> EnqueueAsync(
         string kind,
         string label,
         Func<CancellationToken, Task<(bool Success, string Message)>> handler,
-        CancellationToken ct)
+        CancellationToken ct,
+        DateTimeOffset? scheduledForUtc = null)
     {
         var item = new WhatsAppAutomationQueueItem
         {
@@ -27,19 +29,57 @@ public sealed class WhatsAppAutomationQueueService
             Kind = kind,
             Label = label,
             Status = "queued",
-            EnqueuedAt = DateTimeOffset.UtcNow
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            ScheduledForUtc = scheduledForUtc?.ToUniversalTime()
         };
 
         _items[item.Id] = item;
-        await _channel.Writer.WriteAsync(new QueuedWhatsAppAutomationJob(item.Id, handler), ct);
+        _jobs[item.Id] = new QueuedWhatsAppAutomationJob(item.Id, handler);
+        await _channel.Writer.WriteAsync(item.Id, ct);
         return item;
     }
 
     public bool TryDequeue(out QueuedWhatsAppAutomationJob? job)
-        => _channel.Reader.TryRead(out job);
+    {
+        while (_channel.Reader.TryRead(out _))
+        {
+            // The channel is only a wake-up signal; jobs live in _jobs so future
+            // scheduled messages do not block immediate messages behind them.
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var due = _jobs.Values
+            .Select(x => new
+            {
+                Job = x,
+                Item = _items.TryGetValue(x.ItemId, out var item) ? item : null
+            })
+            .Where(x => x.Item is not null)
+            .Where(x => string.Equals(x.Item!.Status, "queued", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !x.Item!.ScheduledForUtc.HasValue || x.Item.ScheduledForUtc.Value <= now)
+            .OrderBy(x => x.Item!.ScheduledForUtc ?? x.Item.EnqueuedAt)
+            .ThenBy(x => x.Item!.EnqueuedAt)
+            .FirstOrDefault();
+
+        if (due is null || !_jobs.TryRemove(due.Job.ItemId, out job))
+        {
+            job = null;
+            return false;
+        }
+
+        return true;
+    }
 
     public async Task<bool> WaitForWorkAsync(CancellationToken ct)
         => await _channel.Reader.WaitToReadAsync(ct);
+
+    public bool HasDueQueuedWork()
+    {
+        var now = DateTimeOffset.UtcNow;
+        return _items.Values.Any(x =>
+            string.Equals(x.Status, "queued", StringComparison.OrdinalIgnoreCase) &&
+            (!x.ScheduledForUtc.HasValue || x.ScheduledForUtc.Value <= now));
+    }
 
     public async Task ProcessNextAsync(CancellationToken ct)
     {
@@ -80,6 +120,7 @@ public sealed class WhatsAppAutomationQueueService
         {
             item.CompletedAt = DateTimeOffset.UtcNow;
             _currentJobId = null;
+            _jobs.TryRemove(item.Id, out _);
         }
     }
 
@@ -115,6 +156,7 @@ public sealed class WhatsAppAutomationQueueItem
     public string Status { get; set; } = "queued";
     public bool Success { get; set; }
     public DateTimeOffset EnqueuedAt { get; set; }
+    public DateTimeOffset? ScheduledForUtc { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public string? Detail { get; set; }
@@ -127,6 +169,7 @@ public sealed class WhatsAppAutomationQueueItem
         Status = Status,
         Success = Success,
         EnqueuedAt = EnqueuedAt,
+        ScheduledForUtc = ScheduledForUtc,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
         Detail = Detail

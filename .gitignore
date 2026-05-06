@@ -495,9 +495,35 @@ $RECYCLE.BIN/
 
 # Local temp and generated validation artifacts
 .tmp_*
+.tmp-*
+.codex-temp/
+.tt*.txt
 tmp-*
+tmp/
 tmp_*.json
 _build_check/
+cloudflared/generated/
+data/
+auth_out.txt
+login.json
+next_logs*.txt
+scraper_logs*.txt
+hub_dump.*
+dump_html.js
+test_profile.js
+tg.cookies.txt
+shopee_resolved.html
+run-ml-scraper-local.bat
+start-scraper.bat
+AchadinhosBot.Next/build_*.txt
+AchadinhosBot.Next/Program.cs.bak
+**/obj-validation/
+**/obj-validation*/
+**/bin-validation*/
+AchadinhosBot.Next/scratch/
+AchadinhosBot.Next/tmp/
+AchadinhosBot.Next.Tests/bin_temp/
+AchadinhosBot.Next.Tests/tmp/
 
 # Local diagnostics and one-off patch scripts
 /analyze_*.py

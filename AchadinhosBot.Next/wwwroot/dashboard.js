@@ -2944,8 +2944,8 @@ function renderSettings(s) {
     setSafeVal('mlScoutTier2MinCommissionPercent', mlScout.tier2MinCommissionPercent ?? 11);
     setSafeVal('mlScoutTier3MinPrice', mlScout.tier3MinPrice ?? 325);
     setSafeVal('mlScoutTier3MinCommissionPercent', mlScout.tier3MinCommissionPercent ?? 7);
-    setSafeVal('mlScoutMaxOffersPerRun', mlScout.maxOffersPerRun ?? 1);
-    setSafeVal('mlScoutRepeatWindowHours', mlScout.repeatWindowHours ?? 24);
+    setSafeVal('mlScoutMaxOffersPerRun', mlScout.maxOffersPerRun ?? 0);
+    setSafeVal('mlScoutRepeatWindowHours', mlScout.repeatWindowHours ?? 6);
     setSafeVal('mlScoutOfferCardSelector', mlScout.offerCardSelector || "[data-testid='recommendation-card'], [data-testid='affiliate-offer-card'], article, section");
     setSafeVal('mlScoutOfferLinkSelector', mlScout.offerLinkSelector || "a[href*='/p/'], a[href*='/MLB-'], a[href*='mercadolivre.com.br/p/']");
     setSafeVal('mlScoutOfferTitleSelector', mlScout.offerTitleSelector || "h2, h3, [data-testid='item-title'], [data-testid='recommendation-title']");
@@ -3337,8 +3337,8 @@ async function saveMercadoLivreAffiliateScout() {
   existing.mercadoLivreAffiliateScout.tier2MinCommissionPercent = Number(document.getElementById('mlScoutTier2MinCommissionPercent')?.value || 11);
   existing.mercadoLivreAffiliateScout.tier3MinPrice = Number(document.getElementById('mlScoutTier3MinPrice')?.value || 325);
   existing.mercadoLivreAffiliateScout.tier3MinCommissionPercent = Number(document.getElementById('mlScoutTier3MinCommissionPercent')?.value || 7);
-  existing.mercadoLivreAffiliateScout.maxOffersPerRun = Number(document.getElementById('mlScoutMaxOffersPerRun')?.value || 1);
-  existing.mercadoLivreAffiliateScout.repeatWindowHours = Number(document.getElementById('mlScoutRepeatWindowHours')?.value || 24);
+  existing.mercadoLivreAffiliateScout.maxOffersPerRun = Number(document.getElementById('mlScoutMaxOffersPerRun')?.value ?? 0);
+  existing.mercadoLivreAffiliateScout.repeatWindowHours = Number(document.getElementById('mlScoutRepeatWindowHours')?.value || 6);
   existing.mercadoLivreAffiliateScout.offerCardSelector = document.getElementById('mlScoutOfferCardSelector')?.value || '';
   existing.mercadoLivreAffiliateScout.offerLinkSelector = document.getElementById('mlScoutOfferLinkSelector')?.value || '';
   existing.mercadoLivreAffiliateScout.offerTitleSelector = document.getElementById('mlScoutOfferTitleSelector')?.value || '';

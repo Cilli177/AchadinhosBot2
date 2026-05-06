@@ -89,7 +89,7 @@ public sealed partial class TrackingLinkShortenerService
 
         if (IsWhatsAppInviteUrl(normalizedUrl))
         {
-            return "https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX";
+            return WhatsAppInviteLinkNormalizer.OfficialInviteUrl;
         }
 
         if (!Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var normalizedUri))

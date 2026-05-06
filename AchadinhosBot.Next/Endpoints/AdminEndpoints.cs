@@ -734,6 +734,68 @@ public static class AdminEndpoints
             });
         });
 
+        app.MapPost("/api/admin/stories/approve-all", async (
+            AdminApproveAllStoriesRequest req,
+            HttpContext context,
+            IInstagramPublishStore draftStore,
+            IInstagramPublishService publishService,
+            IOptions<WebhookOptions> opts,
+            IAuditTrail audit,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var limit = Math.Clamp(req.Limit ?? 25, 1, 100);
+            var drafts = await draftStore.ListAsync(ct);
+            var candidates = drafts
+                .Where(IsPublishableStoryDraft)
+                .OrderBy(d => d.CreatedAt)
+                .Take(limit)
+                .ToList();
+
+            var results = new List<AdminApproveAllStoriesItemResult>();
+            foreach (var draft in candidates)
+            {
+                ct.ThrowIfCancellationRequested();
+                var previousStatus = draft.Status;
+                draft.Status = "approved";
+                draft.Error = null;
+                await draftStore.UpdateAsync(draft, ct);
+
+                var publishResult = await publishService.ExecutePublishAsync(draft.Id, ct);
+                results.Add(new AdminApproveAllStoriesItemResult(
+                    draft.Id,
+                    draft.ProductName,
+                    previousStatus,
+                    publishResult.Success ? "published" : "failed",
+                    publishResult.Success,
+                    publishResult.MediaId,
+                    publishResult.StatusCode,
+                    publishResult.Error));
+            }
+
+            await audit.WriteAsync("admin.stories.approve_all", ResolveActor(context), new
+            {
+                requestedLimit = limit,
+                candidates = candidates.Count,
+                published = results.Count(x => x.Success),
+                failed = results.Count(x => !x.Success),
+                draftIds = results.Select(x => x.DraftId).ToArray()
+            }, ct);
+
+            return Results.Ok(new
+            {
+                success = results.All(x => x.Success),
+                action = "approve_all_stories",
+                reviewed = candidates.Count,
+                approved = candidates.Count,
+                published = results.Count(x => x.Success),
+                failed = results.Count(x => !x.Success),
+                results
+            });
+        });
+
         // --- Publish to WhatsApp ---
         app.MapPost("/api/admin/publish-whatsapp", async (
             AdminPublishToChannelRequest req,
@@ -1541,6 +1603,17 @@ publish_instagram_label:
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
         return $"wa-admin:{hash}";
     }
+
+    private static bool IsPublishableStoryDraft(InstagramPublishDraft draft)
+    {
+        if (!string.Equals(InstagramWorkflowSupport.NormalizePostType(draft.PostType), "story", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(draft.Status, "publishing", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 // --- Request DTOs ---
@@ -1549,6 +1622,8 @@ public sealed record AdminGenerateCardRequest(string Title, string? Price, strin
 public sealed record AdminGenerateCaptionRequest(string ProductName, string? OfferContext);
 public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, string? OfferUrl, List<string>? ImageUrls, string? VideoUrl, string? VideoCoverUrl, double? VideoCoverAtSeconds, string? VideoMusicCue, double? VideoTrimStartSeconds, double? VideoTrimEndSeconds, string? MusicTrackUrl, double? MusicStartSeconds, double? MusicEndSeconds, double? MusicVolume, double? OriginalAudioVolume, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false, string? CatalogTarget = null);
 public sealed record AdminPublishRequest(string DraftId, bool SendToCatalog = false, string? CatalogTarget = null);
+public sealed record AdminApproveAllStoriesRequest(int? Limit = null);
+public sealed record AdminApproveAllStoriesItemResult(string DraftId, string ProductName, string PreviousStatus, string Status, bool Success, string? MediaId, int StatusCode, string? Error);
 public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl, string? WhatsAppInstanceName = null);
 public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl, string? CatalogTarget = null, string? WhatsAppInstanceName = null);
 public sealed record AdminCreateDraftFromWhatsAppRequest(string MessageId, bool UseAiCaption = false, bool SendToCatalog = false, string? CatalogTarget = null);

@@ -29,7 +29,7 @@ public sealed class WhatsAppAdminAutomationWorker : BackgroundService
         {
             try
             {
-                while (!_queueService.GetState().Items.All(x => !string.Equals(x.Status, "queued", StringComparison.OrdinalIgnoreCase)))
+                while (_queueService.HasDueQueuedWork())
                 {
                     await _queueService.ProcessNextAsync(stoppingToken);
                     if (stoppingToken.IsCancellationRequested)

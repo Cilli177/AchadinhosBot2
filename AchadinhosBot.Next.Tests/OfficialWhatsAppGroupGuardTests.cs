@@ -39,7 +39,7 @@ public sealed class OfficialWhatsAppGroupGuardTests
                   Oferta top https://reidasofertas.ia.br/r/AM-000001
 
                   💚CONVIDEM MEMBROS
-                  LINK DOS GRUPOS: https://chat.whatsapp.com/FhkbgV9fnUjKnOM4KGDCPX
+                  LINK DOS GRUPOS: https://chat.whatsapp.com/GosnHVUa2lE0nYGhO6an4x
 
                   https://reidasofertas.ia.br/bio
                   """,
