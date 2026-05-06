@@ -21,6 +21,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IMediaStore _mediaStore;
     private readonly IMetaGraphClient _metaGraphClient;
+    private readonly InstagramLinkMetaService _linkMetaService;
     private readonly IVideoProcessingService _videoProcessingService;
     private readonly IInstagramOutboundPublisher _publisher;
     private readonly IInstagramOutboundOutboxStore _outboxStore;
@@ -36,6 +37,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         IHttpClientFactory httpClientFactory,
         IMediaStore mediaStore,
         IMetaGraphClient metaGraphClient,
+        InstagramLinkMetaService linkMetaService,
         IVideoProcessingService videoProcessingService,
         IInstagramOutboundPublisher publisher,
         IInstagramOutboundOutboxStore outboxStore,
@@ -50,6 +52,7 @@ public sealed class InstagramPublishService : IInstagramPublishService
         _httpClientFactory = httpClientFactory;
         _mediaStore = mediaStore;
         _metaGraphClient = metaGraphClient;
+        _linkMetaService = linkMetaService;
         _videoProcessingService = videoProcessingService;
         _publisher = publisher;
         _outboxStore = outboxStore;
@@ -192,6 +195,18 @@ public sealed class InstagramPublishService : IInstagramPublishService
         }
 
         var publishMediaUrls = publishImageUrls;
+        if (draft.PostType is "story" or "feed" &&
+            publishMediaUrls.Count > 0 &&
+            publishMediaUrls.All(IsMissingLocalMediaUrl))
+        {
+            var repaired = await TryRepairExpiredImageMediaAsync(draft, cancellationToken);
+            if (repaired.Count > 0)
+            {
+                publishImageUrls = repaired;
+                publishMediaUrls = repaired;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(draft.VideoUrl))
         {
             var videoResult = await _videoProcessingService.PrepareForInstagramPublicationAsync(draft, _publicBaseUrl, cancellationToken);
@@ -374,6 +389,64 @@ public sealed class InstagramPublishService : IInstagramPublishService
 
         return null;
     }
+
+    private async Task<List<string>> TryRepairExpiredImageMediaAsync(InstagramPublishDraft draft, CancellationToken cancellationToken)
+    {
+        var offerUrl = FirstNonEmpty(draft.OriginalOfferUrl, draft.OfferUrl, draft.AutoReplyLink, draft.Ctas?.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Link))?.Link);
+        if (string.IsNullOrWhiteSpace(offerUrl))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            var meta = await _linkMetaService.GetMetaAsync(offerUrl, cancellationToken);
+            var candidates = (meta.Images ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToList();
+            if (candidates.Count == 0)
+            {
+                return new List<string>();
+            }
+
+            draft.ImageUrls = candidates;
+            draft.SelectedImageIndexes = new List<int>();
+            var normalized = await InstagramWorkflowSupport.NormalizeInstagramImagesAsync(
+                _httpClientFactory,
+                _mediaStore,
+                _publicBaseUrl,
+                draft.PostType,
+                candidates,
+                cancellationToken);
+            return normalized.Count > 0 ? normalized : candidates;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao reparar midia expirada do draft {DraftId}.", draft.Id);
+            return new List<string>();
+        }
+    }
+
+    private bool IsMissingLocalMediaUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!uri.AbsolutePath.StartsWith("/media/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var id = Path.GetFileNameWithoutExtension(uri.AbsolutePath);
+        return string.IsNullOrWhiteSpace(id) || !_mediaStore.TryGet(id, out _);
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
 
     private async Task TrySyncCatalogAsync(InstagramPublishDraft draft, CancellationToken cancellationToken)
     {

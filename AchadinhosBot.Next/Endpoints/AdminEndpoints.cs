@@ -747,15 +747,19 @@ public static class AdminEndpoints
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
             var limit = Math.Clamp(req.Limit ?? 25, 1, 100);
+            var publishNowLimit = Math.Clamp(req.PublishNowLimit ?? Math.Min(limit, 10), 0, limit);
             var drafts = await draftStore.ListAsync(ct);
             var candidates = drafts
-                .Where(IsPublishableStoryDraft)
-                .OrderBy(d => d.CreatedAt)
+                .Where(draft => IsPublishableStoryDraft(draft, req.IncludeFailed == true))
+                .OrderBy(d => d.ScheduledFor ?? d.CreatedAt)
                 .Take(limit)
                 .ToList();
 
             var results = new List<AdminApproveAllStoriesItemResult>();
-            foreach (var draft in candidates)
+            var publishNow = candidates.Take(publishNowLimit).ToList();
+            var scheduleRest = req.ScheduleRest ?? true;
+            var scheduledCount = 0;
+            foreach (var draft in publishNow)
             {
                 ct.ThrowIfCancellationRequested();
                 var previousStatus = draft.Status;
@@ -775,12 +779,42 @@ public static class AdminEndpoints
                     publishResult.Error));
             }
 
+            foreach (var draft in candidates.Skip(publishNow.Count))
+            {
+                ct.ThrowIfCancellationRequested();
+                var previousStatus = draft.Status;
+                if (scheduleRest)
+                {
+                    draft.Status = "scheduled";
+                    draft.Error = null;
+                    if (!draft.ScheduledFor.HasValue || draft.ScheduledFor.Value <= DateTimeOffset.UtcNow)
+                    {
+                        draft.ScheduledFor = DateTimeOffset.UtcNow.AddHours(++scheduledCount);
+                    }
+
+                    await draftStore.UpdateAsync(draft, ct);
+                }
+
+                results.Add(new AdminApproveAllStoriesItemResult(
+                    draft.Id,
+                    draft.ProductName,
+                    previousStatus,
+                    scheduleRest ? "scheduled" : "approved",
+                    true,
+                    null,
+                    StatusCodes.Status202Accepted,
+                    null));
+            }
+
             await audit.WriteAsync("admin.stories.approve_all", ResolveActor(context), new
             {
                 requestedLimit = limit,
+                publishNowLimit,
+                scheduleRest,
                 candidates = candidates.Count,
-                published = results.Count(x => x.Success),
+                published = results.Count(x => string.Equals(x.Status, "published", StringComparison.OrdinalIgnoreCase)),
                 failed = results.Count(x => !x.Success),
+                scheduled = results.Count(x => string.Equals(x.Status, "scheduled", StringComparison.OrdinalIgnoreCase)),
                 draftIds = results.Select(x => x.DraftId).ToArray()
             }, ct);
 
@@ -790,8 +824,9 @@ public static class AdminEndpoints
                 action = "approve_all_stories",
                 reviewed = candidates.Count,
                 approved = candidates.Count,
-                published = results.Count(x => x.Success),
+                published = results.Count(x => string.Equals(x.Status, "published", StringComparison.OrdinalIgnoreCase)),
                 failed = results.Count(x => !x.Success),
+                scheduled = results.Count(x => string.Equals(x.Status, "scheduled", StringComparison.OrdinalIgnoreCase)),
                 results
             });
         });
@@ -1604,15 +1639,20 @@ publish_instagram_label:
         return $"wa-admin:{hash}";
     }
 
-    private static bool IsPublishableStoryDraft(InstagramPublishDraft draft)
+    private static bool IsPublishableStoryDraft(InstagramPublishDraft draft, bool includeFailed)
     {
         if (!string.Equals(InstagramWorkflowSupport.NormalizePostType(draft.PostType), "story", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        return !string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(draft.Status, "publishing", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(draft.Status, "publishing", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return includeFailed || !string.Equals(draft.Status, "failed", StringComparison.OrdinalIgnoreCase);
     }
 }
 
@@ -1622,7 +1662,7 @@ public sealed record AdminGenerateCardRequest(string Title, string? Price, strin
 public sealed record AdminGenerateCaptionRequest(string ProductName, string? OfferContext);
 public sealed record AdminCreateDraftRequest(string ProductName, string? PostType, string Caption, string? OfferUrl, List<string>? ImageUrls, string? VideoUrl, string? VideoCoverUrl, double? VideoCoverAtSeconds, string? VideoMusicCue, double? VideoTrimStartSeconds, double? VideoTrimEndSeconds, string? MusicTrackUrl, double? MusicStartSeconds, double? MusicEndSeconds, double? MusicVolume, double? OriginalAudioVolume, bool AutoReplyEnabled, string? AutoReplyKeyword, string? AutoReplyMessage, string? AutoReplyLink, DateTimeOffset? ScheduledFor, bool SendToCatalog = false, string? CatalogTarget = null);
 public sealed record AdminPublishRequest(string DraftId, bool SendToCatalog = false, string? CatalogTarget = null);
-public sealed record AdminApproveAllStoriesRequest(int? Limit = null);
+public sealed record AdminApproveAllStoriesRequest(int? Limit = null, int? PublishNowLimit = null, bool? ScheduleRest = null, bool? IncludeFailed = null);
 public sealed record AdminApproveAllStoriesItemResult(string DraftId, string ProductName, string PreviousStatus, string Status, bool Success, string? MediaId, int StatusCode, string? Error);
 public sealed record AdminPublishToChannelRequest(string TargetId, string Content, string? ImageUrl, string? WhatsAppInstanceName = null);
 public sealed record AdminMasterPublishRequest(string DraftId, bool PublishInstagram, bool PublishTelegram, bool PublishWhatsApp, bool PublishCatalog, string? TelegramChatId, string? WhatsAppTargetId, string? Content, string? ImageUrl, string? CatalogTarget = null, string? WhatsAppInstanceName = null);
