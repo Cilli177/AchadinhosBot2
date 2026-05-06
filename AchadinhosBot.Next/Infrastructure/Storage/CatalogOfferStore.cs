@@ -2,11 +2,14 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
+using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Infrastructure.Storage;
 
@@ -14,16 +17,35 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
 {
     private readonly string _dataDirectory;
     private readonly ICatalogOfferEnrichmentService? _enrichmentService;
+    private readonly IAffiliateLinkService? _affiliateLinkService;
+    private readonly ILinkTrackingStore? _linkTrackingStore;
+    private readonly IInstagramPublishLogStore? _publishLogStore;
+    private readonly WebhookOptions _webhookOptions;
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
     public CatalogOfferStore(ICatalogOfferEnrichmentService? enrichmentService = null)
-        : this(enrichmentService, null)
+        : this(enrichmentService, null, null, null, null, null)
     {
     }
 
     public CatalogOfferStore(ICatalogOfferEnrichmentService? enrichmentService, string? dataDirectory)
+        : this(enrichmentService, dataDirectory, null, null, null, null)
+    {
+    }
+
+    private CatalogOfferStore(
+        ICatalogOfferEnrichmentService? enrichmentService,
+        string? dataDirectory,
+        IAffiliateLinkService? affiliateLinkService,
+        ILinkTrackingStore? linkTrackingStore,
+        IInstagramPublishLogStore? publishLogStore,
+        WebhookOptions? webhookOptions)
     {
         _enrichmentService = enrichmentService;
+        _affiliateLinkService = affiliateLinkService;
+        _linkTrackingStore = linkTrackingStore;
+        _publishLogStore = publishLogStore;
+        _webhookOptions = webhookOptions ?? new WebhookOptions();
         _dataDirectory = string.IsNullOrWhiteSpace(dataDirectory)
             ? FindPersistentDataRoot(AppContext.BaseDirectory)
             : dataDirectory;
@@ -32,9 +54,19 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
     [ActivatorUtilitiesConstructor]
     public CatalogOfferStore(
         ICatalogOfferEnrichmentService? enrichmentService,
+        IAffiliateLinkService? affiliateLinkService,
+        ILinkTrackingStore? linkTrackingStore,
+        IInstagramPublishLogStore? publishLogStore,
+        IOptions<WebhookOptions>? webhookOptions,
         IConfiguration? configuration,
         IWebHostEnvironment? environment)
-        : this(enrichmentService, ResolveDataDirectory(configuration, environment))
+        : this(
+            enrichmentService,
+            ResolveDataDirectory(configuration, environment),
+            affiliateLinkService,
+            linkTrackingStore,
+            publishLogStore,
+            webhookOptions?.Value)
     {
     }
 
@@ -83,6 +115,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
                 aggregate.Deactivated += result.Deactivated;
                 aggregate.TotalActive += result.TotalActive;
                 aggregate.HighestItemNumber = Math.Max(aggregate.HighestItemNumber, result.HighestItemNumber);
+                aggregate.LinkAudit = MergeAuditResults(aggregate.LinkAudit, result.LinkAudit);
             }
 
             return aggregate;
@@ -181,6 +214,68 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
     }
 
+    public async Task<CatalogLinkAuditResult> AuditLinksAsync(CancellationToken cancellationToken, string? catalogTarget = null)
+    {
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var items = await ReadItemsAsync(catalogTarget, cancellationToken);
+            return BuildAuditResult(items, includeItems: true);
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
+    public async Task<CatalogLinkAuditResult> RevalidateLinksAsync(CancellationToken cancellationToken, string? catalogTarget = null)
+    {
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var aggregate = new CatalogLinkAuditResult();
+            foreach (var target in ResolveReadableTargets(catalogTarget))
+            {
+                var db = await ReadAsync(target, cancellationToken);
+                var changed = false;
+                foreach (var item in db.Items)
+                {
+                    var sourceUrl = FirstNotEmpty(item.OriginalProductUrl, item.AffiliateTargetUrl, item.OfferUrl);
+                    if (string.IsNullOrWhiteSpace(sourceUrl) || IsOfficialTrackingUrl(sourceUrl))
+                    {
+                        continue;
+                    }
+
+                    var secured = await SecureCatalogLinkAsync(null, sourceUrl, target, item, cancellationToken);
+                    item.OriginalProductUrl = secured.OriginalProductUrl;
+                    item.AffiliateTargetUrl = secured.AffiliateTargetUrl;
+                    item.TrackingUrl = secured.TrackingUrl;
+                    item.TrackingId = secured.TrackingId;
+                    item.AffiliateValidationStatus = secured.Status;
+                    item.AffiliateValidationError = secured.Error;
+                    item.AffiliateValidatedAt = DateTimeOffset.UtcNow;
+                    item.OfferUrl = secured.AffiliateTargetUrl ?? sourceUrl.Trim();
+                    item.Active = secured.IsValid;
+                    item.UpdatedAt = DateTimeOffset.UtcNow;
+                    changed = true;
+                }
+
+                if (changed)
+                {
+                    await WriteAsync(target, db, cancellationToken);
+                }
+
+                aggregate = MergeAuditResults(aggregate, BuildAuditResult(db.Items, includeItems: true)) ?? aggregate;
+            }
+
+            return aggregate;
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
     private async Task<CatalogSyncResult> SyncTargetDatabaseAsync(
         CatalogDatabase db,
         IReadOnlyList<InstagramPublishDraft> drafts,
@@ -195,8 +290,8 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
 
         foreach (var draft in drafts)
         {
-            var offerUrl = ResolveOfferUrl(draft);
-            if (string.IsNullOrWhiteSpace(offerUrl))
+            var sourceOfferUrl = ResolveOfferUrl(draft);
+            if (string.IsNullOrWhiteSpace(sourceOfferUrl))
             {
                 continue;
             }
@@ -222,9 +317,18 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
                 updated++;
             }
 
+            var secured = await SecureCatalogLinkAsync(draft, sourceOfferUrl, target, existing, ct);
+
             existing.ProductName = string.IsNullOrWhiteSpace(draft.ProductName) ? $"Item {existing.ItemNumber}" : draft.ProductName.Trim();
-            existing.Store = ResolveStore(draft, offerUrl);
-            existing.OfferUrl = offerUrl.Trim();
+            existing.Store = ResolveStore(draft, secured.AffiliateTargetUrl ?? sourceOfferUrl);
+            existing.OriginalProductUrl = secured.OriginalProductUrl;
+            existing.AffiliateTargetUrl = secured.AffiliateTargetUrl;
+            existing.TrackingUrl = secured.TrackingUrl;
+            existing.TrackingId = secured.TrackingId;
+            existing.AffiliateValidationStatus = secured.Status;
+            existing.AffiliateValidationError = secured.Error;
+            existing.AffiliateValidatedAt = now;
+            existing.OfferUrl = secured.AffiliateTargetUrl ?? sourceOfferUrl.Trim();
             
             var images = ResolveImageUrls(draft);
             existing.ImageUrl = images.FirstOrDefault();
@@ -233,7 +337,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             existing.PostType = NormalizePostType(draft.PostType);
             existing.CatalogTarget = target;
             existing.Niche = ResolveNicheFromDraft(draft);
-            existing.Active = true;
+            existing.Active = secured.IsValid;
             existing.PublishedAt = draft.CreatedAt;
             existing.UpdatedAt = now;
             
@@ -242,7 +346,9 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             // Enrichment
             if (_enrichmentService != null)
             {
-                var enrichment = await _enrichmentService.TryEnrichAsync(existing.OfferUrl, ct);
+                var enrichment = existing.Active
+                    ? await _enrichmentService.TryEnrichAsync(existing.AffiliateTargetUrl ?? existing.OfferUrl, ct)
+                    : null;
                 if (enrichment != null)
                 {
                     existing.IsLightningDeal = enrichment.IsLightningDeal;
@@ -288,6 +394,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             Deactivated = deactivated,
             TotalActive = db.Items.Count(x => x.Active),
             HighestItemNumber = maxNumber,
+            LinkAudit = BuildAuditResult(db.Items, includeItems: false),
             SyncedAt = now
         };
     }
@@ -318,8 +425,8 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
                     var enrichment = await _enrichmentService.TryEnrichAsync(item.OfferUrl, cancellationToken);
                     // Trata como "sem preço" tanto retorno null quanto objeto com CurrentPrice vazio.
                     // O scraper pode retornar um objeto não-nulo mas sem conseguir extrair o preço.
-                    var priceUnavailable = enrichment is null || string.IsNullOrWhiteSpace(enrichment.CurrentPrice);
-                    if (priceUnavailable)
+                    var resolvedEnrichment = enrichment;
+                    if (resolvedEnrichment is null || string.IsNullOrWhiteSpace(resolvedEnrichment.CurrentPrice))
                     {
                         item.PriceEnrichFailCount++;
                         item.UpdatedAt = now;
@@ -346,21 +453,22 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
                     }
 
                     // Preço voltou: reativa se estava desativado por falha de preço
-                    if (enrichment is not null && !item.Active && item.PriceEnrichFailCount > 0)
+                    if (resolvedEnrichment is not null && !item.Active && item.PriceEnrichFailCount > 0)
                     {
                         item.Active = true;
                     }
 
+                    var validEnrichment = resolvedEnrichment!;
                     item.PriceEnrichFailCount = 0;
                     item.NextPriceCheckAt = null;
-                    item.IsLightningDeal = enrichment.IsLightningDeal;
-                    item.LightningDealExpiry = enrichment.LightningDealExpiry;
-                    item.CouponCode = enrichment.CouponCode;
-                    item.CouponDescription = enrichment.CouponDescription;
+                    item.IsLightningDeal = validEnrichment.IsLightningDeal;
+                    item.LightningDealExpiry = validEnrichment.LightningDealExpiry;
+                    item.CouponCode = validEnrichment.CouponCode;
+                    item.CouponDescription = validEnrichment.CouponDescription;
 
-                    if (!string.IsNullOrWhiteSpace(enrichment.CurrentPrice))
+                    if (!string.IsNullOrWhiteSpace(validEnrichment.CurrentPrice))
                     {
-                        item.PriceText = enrichment.CurrentPrice;
+                        item.PriceText = validEnrichment.CurrentPrice;
                     }
 
                     item.UpdatedAt = now;
@@ -829,6 +937,13 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             ProductName = source.ProductName,
             Store = source.Store,
             OfferUrl = source.OfferUrl,
+            OriginalProductUrl = source.OriginalProductUrl,
+            AffiliateTargetUrl = source.AffiliateTargetUrl,
+            TrackingUrl = source.TrackingUrl,
+            TrackingId = source.TrackingId,
+            AffiliateValidationStatus = source.AffiliateValidationStatus,
+            AffiliateValidationError = source.AffiliateValidationError,
+            AffiliateValidatedAt = source.AffiliateValidatedAt,
             ImageUrl = source.ImageUrl,
             SecondaryImageUrls = source.SecondaryImageUrls?.ToList() ?? new List<string>(),
             PostType = source.PostType,
@@ -879,13 +994,305 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         };
     }
 
-    private static string ResolveOfferUrl(InstagramPublishDraft draft)
+    private async Task<CatalogSecuredLink> SecureCatalogLinkAsync(
+        InstagramPublishDraft? draft,
+        string sourceOfferUrl,
+        string target,
+        CatalogOfferItem item,
+        CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(draft.OriginalOfferUrl) && !IsCatalogSelfUrl(draft.OriginalOfferUrl))
+        var originalProductUrl = sourceOfferUrl.Trim();
+        if (string.IsNullOrWhiteSpace(originalProductUrl) || IsCatalogSelfUrl(originalProductUrl) || IsMarketplaceSearchUrl(originalProductUrl))
         {
-            return draft.OriginalOfferUrl.Trim();
+            await AppendLinkGuardLogAsync(
+                "catalog_affiliate_blocked",
+                false,
+                draft?.Id ?? item.DraftId,
+                $"Item={item.ItemNumber};Target={target};Reason=invalid_source_url;Url={Sanitize(originalProductUrl)}",
+                "Link de oferta ausente, interno ou busca generica.",
+                ct);
+            return CatalogSecuredLink.Invalid(originalProductUrl, "Link de oferta ausente, interno ou busca generica.");
         }
 
+        if (_affiliateLinkService is null || _linkTrackingStore is null)
+        {
+            await AppendLinkGuardLogAsync(
+                "catalog_affiliate_blocked",
+                false,
+                draft?.Id ?? item.DraftId,
+                $"Item={item.ItemNumber};Target={target};Reason=services_unavailable;Url={Sanitize(originalProductUrl)}",
+                "Servicos de conversao/tracking indisponiveis.",
+                ct);
+            return CatalogSecuredLink.Invalid(originalProductUrl, "Servicos de conversao/tracking indisponiveis.");
+        }
+
+        var conversion = await _affiliateLinkService.ConvertAsync(originalProductUrl, ct, "catalogo", forceResolution: true);
+        if (!conversion.Success || !conversion.IsAffiliated || string.IsNullOrWhiteSpace(conversion.ConvertedUrl))
+        {
+            var error = FirstNotEmpty(conversion.ValidationError, conversion.Error, "Conversao afiliada invalida.");
+            await AppendLinkGuardLogAsync(
+                "catalog_affiliate_blocked",
+                false,
+                draft?.Id ?? item.DraftId,
+                $"Item={item.ItemNumber};Target={target};Store={Sanitize(conversion.Store)};Reason=conversion_failed;Url={Sanitize(originalProductUrl)};Error={Sanitize(error)}",
+                error,
+                ct);
+            return CatalogSecuredLink.Invalid(originalProductUrl, error);
+        }
+
+        var affiliateTargetUrl = conversion.ConvertedUrl.Trim();
+        var desiredCampaign = $"catalogo_{CatalogTargets.Normalize(target, CatalogTargets.Prod)}";
+        var trackingRequest = new LinkTrackingCreateRequest
+        {
+            TargetUrl = affiliateTargetUrl,
+            Store = conversion.Store,
+            OriginChannel = "catalogo",
+            OriginSurface = "catalogo",
+            Campaign = desiredCampaign,
+            DraftId = draft?.Id ?? item.DraftId,
+            OfferId = string.IsNullOrWhiteSpace(item.Id) ? null : item.Id
+        };
+        var tracking = await _linkTrackingStore.GetOrCreateAsync(trackingRequest, ct);
+        if (!string.Equals(tracking.OriginSurface, "catalogo", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(tracking.Campaign, desiredCampaign, StringComparison.OrdinalIgnoreCase))
+        {
+            tracking = await _linkTrackingStore.CreateAsync(trackingRequest, ct);
+        }
+
+        var trackingId = string.IsNullOrWhiteSpace(tracking.Slug) ? tracking.Id : tracking.Slug;
+        var trackingUrl = BuildTrackingUrl(trackingId);
+        var repaired = !string.Equals(item.AffiliateTargetUrl, affiliateTargetUrl, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(item.TrackingId, trackingId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(item.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Valid, StringComparison.OrdinalIgnoreCase);
+
+        await AppendLinkGuardLogAsync(
+            "catalog_affiliate_validated",
+            true,
+            draft?.Id ?? item.DraftId,
+            $"Item={item.ItemNumber};Target={target};Store={Sanitize(conversion.Store)};TrackingId={Sanitize(trackingId)};Corrected={conversion.CorrectionApplied};Repaired={repaired}",
+            null,
+            ct);
+
+        if (repaired)
+        {
+            await AppendLinkGuardLogAsync(
+                "catalog_link_repaired",
+                true,
+                draft?.Id ?? item.DraftId,
+                $"Item={item.ItemNumber};Target={target};TrackingUrl={Sanitize(trackingUrl)}",
+                null,
+                ct);
+        }
+
+        await AppendLinkGuardLogAsync(
+            "catalog_tracking_created",
+            true,
+            draft?.Id ?? item.DraftId,
+            $"Item={item.ItemNumber};Target={target};TrackingId={Sanitize(trackingId)};Url={Sanitize(trackingUrl)}",
+            null,
+            ct);
+
+        return new CatalogSecuredLink(
+            true,
+            originalProductUrl,
+            affiliateTargetUrl,
+            trackingUrl,
+            trackingId,
+            CatalogAffiliateValidationStatuses.Valid,
+            null);
+    }
+
+    private async Task AppendLinkGuardLogAsync(string action, bool success, string? draftId, string details, string? error, CancellationToken ct)
+    {
+        if (_publishLogStore is null)
+        {
+            return;
+        }
+
+        await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = action,
+            Success = success,
+            DraftId = string.IsNullOrWhiteSpace(draftId) ? null : draftId,
+            Details = details,
+            Error = error,
+            ProcessName = "catalog_link_guard"
+        }, ct);
+    }
+
+    private string BuildTrackingUrl(string trackingId)
+    {
+        var baseUrl = NormalizePublicBaseUrl(_webhookOptions.PublicBaseUrl);
+        var query = "src=c&camp=catalogo_prod";
+        return $"{baseUrl}/r/{Uri.EscapeDataString(trackingId)}?{query}";
+    }
+
+    private static string NormalizePublicBaseUrl(string? publicBaseUrl)
+    {
+        var candidate = string.IsNullOrWhiteSpace(publicBaseUrl)
+            ? "https://reidasofertas.ia.br"
+            : publicBaseUrl.Trim().TrimEnd('/');
+
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri))
+        {
+            return "https://reidasofertas.ia.br";
+        }
+
+        if (uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{uri.Scheme}://reidasofertas.ia.br";
+        }
+
+        return uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+    }
+
+    private static CatalogLinkAuditResult BuildAuditResult(IEnumerable<CatalogOfferItem> items, bool includeItems)
+    {
+        var list = items.ToList();
+        var result = new CatalogLinkAuditResult
+        {
+            TotalItems = list.Count,
+            ActiveItems = list.Count(x => x.Active),
+            ValidTrackedItems = list.Count(IsValidTrackedCatalogItem),
+            ConvertedItems = list.Count(x => !string.IsNullOrWhiteSpace(x.AffiliateTargetUrl)),
+            InvalidItems = list.Count(x => string.Equals(x.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Invalid, StringComparison.OrdinalIgnoreCase)),
+            PendingItems = list.Count(x => string.IsNullOrWhiteSpace(x.AffiliateValidationStatus) || string.Equals(x.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Pending, StringComparison.OrdinalIgnoreCase)),
+            DirectExternalItems = list.Count(HasPublicDirectExternalLink),
+            SuspectedThirdPartyAffiliateItems = list.Count(HasSuspiciousAffiliateMarker),
+            BlockedItems = list.Count(x => !x.Active && string.Equals(x.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Invalid, StringComparison.OrdinalIgnoreCase)),
+            RepairedItems = list.Count(x => !string.IsNullOrWhiteSpace(x.TrackingId) && !string.IsNullOrWhiteSpace(x.AffiliateTargetUrl))
+        };
+
+        if (includeItems)
+        {
+            result.Items = list
+                .OrderByDescending(x => x.UpdatedAt)
+                .Select(x => new CatalogLinkAuditItem
+                {
+                    ItemNumber = x.ItemNumber,
+                    DraftId = x.DraftId,
+                    ProductName = x.ProductName,
+                    Store = x.Store,
+                    Active = x.Active,
+                    Status = string.IsNullOrWhiteSpace(x.AffiliateValidationStatus) ? CatalogAffiliateValidationStatuses.Pending : x.AffiliateValidationStatus,
+                    TrackingId = x.TrackingId,
+                    TrackingUrl = x.TrackingUrl,
+                    AffiliateTargetUrl = x.AffiliateTargetUrl,
+                    OriginalProductUrl = x.OriginalProductUrl,
+                    Error = x.AffiliateValidationError,
+                    DirectExternal = HasPublicDirectExternalLink(x),
+                    SuspectedThirdPartyAffiliate = HasSuspiciousAffiliateMarker(x)
+                })
+                .ToList();
+        }
+
+        return result;
+    }
+
+    private static CatalogLinkAuditResult? MergeAuditResults(CatalogLinkAuditResult? left, CatalogLinkAuditResult? right)
+    {
+        if (left is null)
+        {
+            return right;
+        }
+
+        if (right is null)
+        {
+            return left;
+        }
+
+        left.TotalItems += right.TotalItems;
+        left.ActiveItems += right.ActiveItems;
+        left.ValidTrackedItems += right.ValidTrackedItems;
+        left.ConvertedItems += right.ConvertedItems;
+        left.InvalidItems += right.InvalidItems;
+        left.PendingItems += right.PendingItems;
+        left.DirectExternalItems += right.DirectExternalItems;
+        left.SuspectedThirdPartyAffiliateItems += right.SuspectedThirdPartyAffiliateItems;
+        left.BlockedItems += right.BlockedItems;
+        left.RepairedItems += right.RepairedItems;
+        left.Items.AddRange(right.Items);
+        left.AuditedAt = DateTimeOffset.UtcNow;
+        return left;
+    }
+
+    private static bool IsValidTrackedCatalogItem(CatalogOfferItem item)
+        => item.Active
+           && string.Equals(item.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Valid, StringComparison.OrdinalIgnoreCase)
+           && !string.IsNullOrWhiteSpace(item.AffiliateTargetUrl)
+           && !string.IsNullOrWhiteSpace(item.TrackingId)
+           && IsOfficialTrackingUrl(item.TrackingUrl);
+
+    private static bool HasPublicDirectExternalLink(CatalogOfferItem item)
+        => item.Active
+           && !IsValidTrackedCatalogItem(item)
+           && !string.IsNullOrWhiteSpace(item.OfferUrl)
+           && Uri.TryCreate(item.OfferUrl.Trim(), UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+           && !IsOfficialTrackingUri(uri);
+
+    private static bool HasSuspiciousAffiliateMarker(CatalogOfferItem item)
+    {
+        var original = item.OriginalProductUrl ?? item.OfferUrl;
+        if (string.IsNullOrWhiteSpace(original) || !Uri.TryCreate(original, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var query = uri.Query.ToLowerInvariant();
+        if (!query.Contains("tag=", StringComparison.Ordinal) &&
+            !query.Contains("matt_tool=", StringComparison.Ordinal) &&
+            !query.Contains("matt_word=", StringComparison.Ordinal) &&
+            !query.Contains("url_from=", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return !string.Equals(item.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Valid, StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(item.AffiliateTargetUrl)
+            || !string.Equals(item.AffiliateTargetUrl, original, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsMarketplaceSearchUrl(string? url)
+    {
+        if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var host = uri.Host.ToLowerInvariant();
+        var path = uri.AbsolutePath.ToLowerInvariant();
+        return (host.Contains("google", StringComparison.Ordinal) && path.Contains("search", StringComparison.Ordinal))
+            || (host.Contains("shopee", StringComparison.Ordinal) && path.Contains("search", StringComparison.Ordinal))
+            || (host.Contains("mercadolivre", StringComparison.Ordinal) && path.Contains("lista", StringComparison.Ordinal))
+            || (host.Contains("amazon", StringComparison.Ordinal) && path.Contains("/s", StringComparison.Ordinal));
+    }
+
+    private static bool IsOfficialTrackingUrl(string? url)
+        => Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) && IsOfficialTrackingUri(uri);
+
+    private static bool IsOfficialTrackingUri(Uri uri)
+        => (uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
+           && uri.AbsolutePath.StartsWith("/r/", StringComparison.OrdinalIgnoreCase);
+
+    private static string? FirstNotEmpty(params string?[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
+
+    private static string Sanitize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = Regex.Replace(value.Trim(), @"\s+", " ", RegexOptions.CultureInvariant);
+        return trimmed.Length <= 500 ? trimmed : trimmed[..500];
+    }
+
+    private static string ResolveOfferUrl(InstagramPublishDraft draft)
+    {
         if (!string.IsNullOrWhiteSpace(draft.OfferUrl) && !IsCatalogSelfUrl(draft.OfferUrl))
         {
             return draft.OfferUrl.Trim();
@@ -904,6 +1311,11 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             return draft.AutoReplyLink.Trim();
         }
 
+        if (!string.IsNullOrWhiteSpace(draft.OriginalOfferUrl) && !IsCatalogSelfUrl(draft.OriginalOfferUrl))
+        {
+            return draft.OriginalOfferUrl.Trim();
+        }
+
         if (!string.IsNullOrWhiteSpace(draft.Caption))
         {
             var match = Regex.Match(draft.Caption, @"https?://\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -914,6 +1326,19 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         }
 
         return BuildMarketplaceSearchUrl(ResolveStore(draft, draft.Caption ?? string.Empty), draft.ProductName);
+    }
+
+    private sealed record CatalogSecuredLink(
+        bool IsValid,
+        string OriginalProductUrl,
+        string? AffiliateTargetUrl,
+        string? TrackingUrl,
+        string? TrackingId,
+        string Status,
+        string? Error)
+    {
+        public static CatalogSecuredLink Invalid(string originalProductUrl, string? error)
+            => new(false, originalProductUrl, null, null, null, CatalogAffiliateValidationStatuses.Invalid, error);
     }
 
     private static string BuildMarketplaceSearchUrl(string? store, string? productName)

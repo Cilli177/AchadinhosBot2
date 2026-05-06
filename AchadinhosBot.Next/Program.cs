@@ -2158,11 +2158,11 @@ app.MapGet("/catalogo", async (
         .Select(item =>
         {
             var draft = FindRelatedDraftForCatalogItem(item, draftsById, drafts);
-            item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, draft, recentConversions);
+            item.OfferUrl = ResolvePublicCatalogOfferUrl(item);
             item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(item.ImageUrl, draft is null ? null : ResolveBioImageUrl(draft)));
             if (string.IsNullOrWhiteSpace(item.Store))
             {
-                item.Store = ResolveStoreNameFromUrl(item.OfferUrl);
+                item.Store = ResolveStoreNameFromUrl(FirstNonEmpty(item.AffiliateTargetUrl, item.OriginalProductUrl, item.OfferUrl));
             }
 
             return item;
@@ -2202,13 +2202,13 @@ app.MapGet("/item/{query}", async (
     }
     else if (!string.IsNullOrWhiteSpace(item.DraftId) && draftsById.TryGetValue(item.DraftId, out var storedDraft))
     {
-        item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, storedDraft, recentConversions);
+        item.OfferUrl = ResolvePublicCatalogOfferUrl(item);
         item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, context.Request, FirstNonEmpty(item.ImageUrl, ResolveBioImageUrl(storedDraft)));
     }
     else
     {
         var relatedDraft = FindRelatedDraftForCatalogItem(item, draftsById, drafts);
-        item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, relatedDraft, recentConversions);
+        item.OfferUrl = ResolvePublicCatalogOfferUrl(item);
         item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, context.Request, FirstNonEmpty(item.ImageUrl, relatedDraft is null ? null : ResolveBioImageUrl(relatedDraft)));
     }
 
@@ -4230,6 +4230,34 @@ api.MapGet("/catalog/items/{query}", async (
     var item = await catalogOfferStore.FindByCodeAsync(query, ct, catalogTarget);
     return item is null ? Results.NotFound() : Results.Ok(item);
 });
+
+api.MapGet("/catalog/link-audit", async (
+    [FromQuery] string? target,
+    HttpContext context,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var catalogTarget = string.IsNullOrWhiteSpace(target)
+        ? ResolveCatalogTargetForRequest(context.Request)
+        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
+    var result = await catalogOfferStore.AuditLinksAsync(ct, catalogTarget);
+    return Results.Ok(new { success = true, target = catalogTarget, result });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/catalog/revalidate-links", async (
+    [FromQuery] string? target,
+    IAuditTrail audit,
+    HttpContext context,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var catalogTarget = string.IsNullOrWhiteSpace(target)
+        ? ResolveCatalogTargetForRequest(context.Request)
+        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
+    var result = await catalogOfferStore.RevalidateLinksAsync(ct, catalogTarget);
+    await audit.WriteAsync("catalog.links.revalidated", context.User.Identity?.Name ?? "unknown", result, ct);
+    return Results.Ok(new { success = true, target = catalogTarget, result });
+}).RequireAuthorization("AdminOnly");
 
 api.MapPost("/integrations/whatsapp/connect", async (
     WhatsAppInstanceRequest payload,
@@ -11143,17 +11171,26 @@ string ResolveEffectiveCatalogOfferUrl(
         ?? string.Empty;
 }
 
-static string ResolveCatalogDisplayOfferUrl(CatalogOfferItem? catalogItem)
+static string ResolvePublicCatalogOfferUrl(CatalogOfferItem? catalogItem)
 {
-    var stored = catalogItem?.OfferUrl?.Trim();
-    if (!IsInternalCatalogUrl(stored))
+    if (catalogItem is null)
     {
-        return stored ?? string.Empty;
+        return string.Empty;
     }
 
-    return ResolveCatalogItemSearchFallbackUrl(catalogItem)
-        ?? stored
-        ?? string.Empty;
+    if (string.Equals(catalogItem.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Valid, StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(catalogItem.TrackingUrl) &&
+        IsOfficialTrackingUrl(catalogItem.TrackingUrl))
+    {
+        return catalogItem.TrackingUrl.Trim();
+    }
+
+    return string.Empty;
+}
+
+static string ResolveCatalogDisplayOfferUrl(CatalogOfferItem? catalogItem)
+{
+    return ResolvePublicCatalogOfferUrl(catalogItem);
 }
 
 static string ResolveCatalogPriceText(string? priceText)
@@ -11191,7 +11228,7 @@ static string? ResolveCatalogSearchFallbackUrl(string? store, string? productNam
         return $"https://www.amazon.com.br/s?k={encodedQuery}";
     }
 
-    return $"https://www.google.com/search?q={encodedQuery}";
+    return null;
 }
 
 static string? ResolveCatalogItemSearchFallbackUrl(CatalogOfferItem? catalogItem)
@@ -11289,6 +11326,18 @@ static bool IsInternalCatalogUrl(string? url)
     return path.StartsWith("/catalogo", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/item/", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/bio", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsOfficialTrackingUrl(string? url)
+{
+    if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    return (uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase)) &&
+           uri.AbsolutePath.StartsWith("/r/", StringComparison.OrdinalIgnoreCase);
 }
 
 string? BuildPublicImageProxyUrl(string? publicBaseUrl, HttpRequest request, string? imageUrl)
@@ -11983,12 +12032,30 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
     var priceText = NormalizeCatalogDisplayText(ResolveCatalogPriceText(item.PriceText));
     var fullPrice = System.Net.WebUtility.HtmlEncode(priceText);
     var price_val = priceText.Replace("R$ ", "").Replace("R$", "").Trim();
-    var offerUrl = System.Net.WebUtility.HtmlEncode(ResolveCatalogDisplayOfferUrl(item));
+    var rawOfferUrl = ResolveCatalogDisplayOfferUrl(item);
+    var hasPublicOfferUrl = !string.IsNullOrWhiteSpace(rawOfferUrl);
+    var offerUrl = System.Net.WebUtility.HtmlEncode(rawOfferUrl);
     var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? "https://via.placeholder.com/800");
     var catalog = System.Net.WebUtility.HtmlEncode(catalogUrl);
     var previous_price = "---";
     var savings_text = "Desconto aplicado";
     var publish_date = item.PublishedAt.ToString("dd/MM/yyyy HH:mm");
+    var imageLinkOpen = hasPublicOfferUrl ? $"""<a href="{offerUrl}" target="_blank" rel="noopener noreferrer">""" : "<div>";
+    var imageLinkClose = hasPublicOfferUrl ? "</a>" : "</div>";
+    var buyButton = hasPublicOfferUrl
+        ? $$"""
+                        <a href="{{offerUrl}}" target="_blank" class="group relative inline-flex items-center justify-center px-10 py-5 font-bold text-primary transition-all duration-200 bg-accent rounded-xl hover:bg-accentHover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent w-full sm:w-auto shadow-lg shadow-accent/20">
+                            Comprar Agora
+                            <svg class="w-5 h-5 ml-2 transition-transform duration-200 group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                            </svg>
+                        </a>
+        """
+        : """
+                        <div class="inline-flex items-center justify-center px-10 py-5 font-bold text-slate-500 bg-slate-200 rounded-xl w-full sm:w-auto">
+                            Link em validação
+                        </div>
+        """;
     
     // Enrichment
     var isLightning = item.IsLightningDeal;
@@ -12216,9 +12283,9 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
                     <div class="relative group">
                         <div class="absolute -inset-4 bg-accent/20 rounded-full blur-3xl group-hover:bg-accent/30 transition duration-500"></div>
                         <div class="relative">
-                            <a href="{{offerUrl}}" target="_blank" rel="noopener noreferrer">
+                            {{imageLinkOpen}}
                                 <img src="{{image}}" alt="{{title}}" class="w-full h-auto max-w-md object-contain drop-shadow-[0_20px_50px_rgba(0,0,0,0.5)] transform transition-transform duration-500 hover:scale-105" />
-                            </a>
+                            {{imageLinkClose}}
                         </div>
                     </div>
                 </div>
@@ -12241,12 +12308,7 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
                     </p>
                     
                     <div class="pt-4 flex flex-col sm:flex-row items-center gap-6 justify-center lg:justify-start">
-                        <a href="{{offerUrl}}" target="_blank" class="group relative inline-flex items-center justify-center px-10 py-5 font-bold text-primary transition-all duration-200 bg-accent rounded-xl hover:bg-accentHover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent w-full sm:w-auto shadow-lg shadow-accent/20">
-                            Comprar Agora
-                            <svg class="w-5 h-5 ml-2 transition-transform duration-200 group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                            </svg>
-                        </a>
+                        {{buyButton}}
                         <div class="text-white/60 text-sm font-medium italic">
                             *Estoque limitado
                         </div>
