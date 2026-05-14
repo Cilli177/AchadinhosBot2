@@ -43,6 +43,7 @@ public sealed class AutomationSettings
     public List<string> MonitoredGroupIds { get; set; } = new();
     public List<WhatsAppMonitoredGroup> MonitoredWhatsAppGroups { get; set; } = new();
     public WhatsAppAdminAutomationSettings WhatsAppAdminAutomation { get; set; } = new();
+    public List<WhatsAppNicheGroupSettings> WhatsAppNicheGroups { get; set; } = new();
     public ConverterCouponAndPriceCompareSkillSettings ConverterCouponAndPriceCompareSkill { get; set; } = new();
     public WhatsAppAiAgentSettings WhatsAppAiAgent { get; set; } = new();
     public AmazonPlaywrightScraperSettings AmazonPlaywrightScraper { get; set; } = new();
@@ -69,6 +70,25 @@ public sealed class WhatsAppMonitoredGroup
     public string GroupId { get; set; } = string.Empty;
     public string? GroupName { get; set; }
     public string? InstanceName { get; set; }
+}
+
+public sealed class WhatsAppNicheGroupSettings
+{
+    public string Slug { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public string? InstanceName { get; set; }
+    public string? GroupId { get; set; }
+    public string? InviteUrl { get; set; }
+    public string Campaign { get; set; } = string.Empty;
+    public int DailyLimit { get; set; } = 8;
+    public int SentToday { get; set; }
+    public DateTimeOffset? SentQuotaDateUtc { get; set; }
+    public DateTimeOffset? CreatedAtUtc { get; set; }
+    public DateTimeOffset? UpdatedAtUtc { get; set; }
+    public string? LastCreationStatus { get; set; }
+    public string? LastCreationMessage { get; set; }
 }
 
 public sealed class IntegrationSettings
@@ -298,6 +318,8 @@ public sealed class WhatsAppForwardingRouteSettings
     public string FooterText { get; set; } = string.Empty;
     public string? InstanceName { get; set; }
     public bool SkipConversionOnlyShorten { get; set; } = false;
+    public List<string> AllowedStores { get; set; } = new();
+    public List<string> BlockedStores { get; set; } = new();
 }
 
 public sealed class TelegramToWhatsAppSettings

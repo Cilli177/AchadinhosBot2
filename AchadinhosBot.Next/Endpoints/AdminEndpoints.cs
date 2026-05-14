@@ -11,6 +11,7 @@ using AchadinhosBot.Next.Infrastructure.Security;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Logs;
+using AchadinhosBot.Next.Domain.PriceWatch;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Safety;
@@ -39,6 +40,205 @@ public static class AdminEndpoints
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { valid = false }, statusCode: 403);
             return Results.Ok(new { valid = true });
+        });
+
+        app.MapGet("/api/admin/whatsapp/niche-groups", async (
+            HttpContext context,
+            WhatsAppNicheGroupService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var groups = await service.ListAsync(ct);
+            return Results.Ok(new { success = true, total = groups.Count, groups });
+        });
+
+        app.MapPost("/api/admin/whatsapp/niche-groups/create", async (
+            WhatsAppNicheGroupCreateRequest req,
+            HttpContext context,
+            WhatsAppNicheGroupService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var result = await service.CreateOrRegisterDefaultsAsync(req, ct);
+            return Results.Ok(new { success = result.Failed == 0, result });
+        });
+
+        app.MapPut("/api/admin/whatsapp/niche-groups/{slug}", async (
+            string slug,
+            WhatsAppNicheGroupUpsertRequest req,
+            HttpContext context,
+            WhatsAppNicheGroupService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            try
+            {
+                var group = await service.UpsertAsync(slug, req, ct);
+                return Results.Ok(new { success = true, group });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { success = false, error = ex.Message });
+            }
+        });
+
+        app.MapPost("/api/admin/whatsapp/niche-groups/{slug}/invite-campaign", async (
+            string slug,
+            WhatsAppNicheInviteCampaignRequest req,
+            HttpContext context,
+            WhatsAppNicheGroupService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            try
+            {
+                var result = await service.CreateInviteCampaignAsync(slug, req, ct);
+                return result.Success
+                    ? Results.Ok(new { success = true, result })
+                    : Results.BadRequest(new { success = false, result });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { success = false, error = ex.Message });
+            }
+        });
+
+        app.MapPost("/api/admin/offers/route-by-niche", async (
+            WhatsAppNicheRouteOfferRequest req,
+            HttpContext context,
+            WhatsAppNicheGroupService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var result = await service.RouteOfferAsync(req, ct);
+            return result.Success
+                ? Results.Ok(new { success = true, result })
+                : Results.BadRequest(new { success = false, result });
+        });
+
+        app.MapGet("/api/admin/price-watch", async (
+            HttpContext context,
+            PriceWatchService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var status = context.Request.Query["status"].ToString();
+            var contact = context.Request.Query["contact"].ToString();
+            var items = await service.ListAsync(ct, status, contact);
+            return Results.Ok(new { success = true, total = items.Count, items });
+        });
+
+        app.MapPost("/api/admin/price-watch", async (
+            PriceWatchCreateRequest req,
+            HttpContext context,
+            PriceWatchService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            try
+            {
+                var item = await service.CreateAsync(req, "admin", ct);
+                return Results.Ok(new { success = true, item });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { success = false, error = ex.Message });
+            }
+        });
+
+        app.MapPost("/api/admin/price-watch/{id}/pause", async (
+            string id,
+            HttpContext context,
+            PriceWatchService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var ok = await service.PauseAsync(id, ct);
+            return ok ? Results.Ok(new { success = true }) : Results.NotFound(new { success = false, error = "Radar nao encontrado." });
+        });
+
+        app.MapPost("/api/admin/price-watch/{id}/resume", async (
+            string id,
+            HttpContext context,
+            PriceWatchService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var ok = await service.ResumeAsync(id, ct);
+            return ok ? Results.Ok(new { success = true }) : Results.NotFound(new { success = false, error = "Radar nao encontrado." });
+        });
+
+        app.MapPost("/api/admin/price-watch/{id}/run-now", async (
+            string id,
+            HttpContext context,
+            PriceWatchService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var result = await service.RunNowAsync(id, ct);
+            return result.Error == "not_found"
+                ? Results.NotFound(new { success = false, result.Error, result.Message })
+                : Results.Ok(new { success = result.Success, result });
+        });
+
+        app.MapGet("/api/admin/price-watch/review", async (
+            HttpContext context,
+            PriceWatchService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var status = context.Request.Query["status"].ToString();
+            var items = await service.ListReviewsAsync(ct, string.IsNullOrWhiteSpace(status) ? "pending" : status);
+            return Results.Ok(new { success = true, total = items.Count, items });
+        });
+
+        app.MapPost("/api/admin/price-watch/review/{id}/approve", async (
+            string id,
+            HttpContext context,
+            PriceWatchService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var result = await service.ApproveReviewAsync(id, ct);
+            return result.Error == "not_found"
+                ? Results.NotFound(new { success = false, result.Error, result.Message })
+                : Results.Ok(new { success = result.Success, result });
         });
 
         // --- Generate Card (formerly publish-instagram, now specialized) ---

@@ -6,7 +6,6 @@ using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Settings;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -29,6 +28,7 @@ public sealed class AffiliateTrackedContentServiceTests
         var service = new AffiliateTrackedContentService(
             new FakeAffiliateLinkService("https://s.shopee.com.br/LjAwdaCJu?lp=aff", "Shopee"),
             trackingService,
+            trackingStore,
             NullLogger<AffiliateTrackedContentService>.Instance);
 
         var result = await service.RewriteAsync(
@@ -44,8 +44,9 @@ public sealed class AffiliateTrackedContentServiceTests
     [Fact]
     public async Task RewriteAsync_ShouldKeepOperationalLinksUntouched()
     {
+        var trackingStore = new RecordingLinkTrackingStore();
         var trackingService = new TrackingLinkShortenerService(
-            new RecordingLinkTrackingStore(),
+            trackingStore,
             new FakeHttpClientFactory(),
             new FakeSettingsStore(),
             Options.Create(new WebhookOptions { PublicBaseUrl = "https://reidasofertas.ia.br" }),
@@ -55,6 +56,7 @@ public sealed class AffiliateTrackedContentServiceTests
         var service = new AffiliateTrackedContentService(
             new FakeAffiliateLinkService("https://s.shopee.com.br/LjAwdaCJu?lp=aff", "Shopee"),
             trackingService,
+            trackingStore,
             NullLogger<AffiliateTrackedContentService>.Instance);
 
         var result = await service.RewriteAsync(
@@ -68,8 +70,9 @@ public sealed class AffiliateTrackedContentServiceTests
     [Fact]
     public async Task RewriteAsync_ShouldKeepOfficialBioSubdomainUntouched()
     {
+        var trackingStore = new RecordingLinkTrackingStore();
         var trackingService = new TrackingLinkShortenerService(
-            new RecordingLinkTrackingStore(),
+            trackingStore,
             new FakeHttpClientFactory(),
             new FakeSettingsStore(),
             Options.Create(new WebhookOptions { PublicBaseUrl = "https://reidasofertas.ia.br" }),
@@ -79,6 +82,7 @@ public sealed class AffiliateTrackedContentServiceTests
         var service = new AffiliateTrackedContentService(
             new FakeAffiliateLinkService("https://s.shopee.com.br/LjAwdaCJu?lp=aff", "Shopee"),
             trackingService,
+            trackingStore,
             NullLogger<AffiliateTrackedContentService>.Instance);
 
         var result = await service.RewriteAsync(
@@ -87,6 +91,43 @@ public sealed class AffiliateTrackedContentServiceTests
             CancellationToken.None);
 
         Assert.Equal("Footer https://bio.reidasofertas.ia.br", result);
+    }
+
+    [Fact]
+    public async Task RewriteAsync_ShouldRepairOfficialTrackedShortAffiliateTarget()
+    {
+        var trackingStore = new RecordingLinkTrackingStore
+        {
+            Existing = new LinkTrackingEntry
+            {
+                Id = "LK-000123",
+                Slug = "LK-000123",
+                TargetUrl = "https://amzn.to/original",
+                Store = "Amazon"
+            }
+        };
+        var trackingService = new TrackingLinkShortenerService(
+            trackingStore,
+            new FakeHttpClientFactory(),
+            new FakeSettingsStore(),
+            Options.Create(new WebhookOptions { PublicBaseUrl = "https://reidasofertas.ia.br" }),
+            new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<TrackingLinkShortenerService>.Instance);
+
+        var service = new AffiliateTrackedContentService(
+            new FakeAffiliateLinkService("https://www.amazon.com.br/dp/B0TESTE?tag=reidasofer022-20", "Amazon"),
+            trackingService,
+            trackingStore,
+            NullLogger<AffiliateTrackedContentService>.Instance);
+
+        var result = await service.RewriteAsync(
+            "Oferta https://achadinhos.reidasofertas.ia.br/r/LK-000123",
+            "whatsapp_grupo_oficial",
+            CancellationToken.None);
+
+        Assert.Equal("Oferta https://reidasofertas.ia.br/r/AM-000001", result);
+        Assert.Equal("https://www.amazon.com.br/dp/B0TESTE?tag=reidasofer022-20", trackingStore.LastTargetUrl);
+        Assert.Equal("Amazon", trackingStore.LastStore);
     }
 
     private sealed class FakeAffiliateLinkService : IAffiliateLinkService
@@ -107,6 +148,11 @@ public sealed class AffiliateTrackedContentServiceTests
                 return Task.FromResult(new AffiliateLinkResult(true, _convertedUrl, _store, true, null, null, false, null));
             }
 
+            if (rawUrl.Contains("amzn.to", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new AffiliateLinkResult(true, _convertedUrl, _store, true, null, null, true, "test"));
+            }
+
             return Task.FromResult(new AffiliateLinkResult(false, null, "Unknown", false, null, "not-converted", false, null));
         }
     }
@@ -115,9 +161,27 @@ public sealed class AffiliateTrackedContentServiceTests
     {
         public string? LastTargetUrl { get; private set; }
         public string? LastStore { get; private set; }
+        public LinkTrackingEntry? Existing { get; init; }
 
         public Task<LinkTrackingEntry> CreateAsync(LinkTrackingCreateRequest request, CancellationToken cancellationToken)
-            => throw new NotSupportedException();
+        {
+            LastTargetUrl = request.TargetUrl;
+            LastStore = request.Store;
+            var prefix = string.Equals(request.Store, "Shopee", StringComparison.OrdinalIgnoreCase)
+                ? "SP"
+                : string.Equals(request.Store, "Amazon", StringComparison.OrdinalIgnoreCase)
+                    ? "AM"
+                    : "LK";
+            return Task.FromResult(new LinkTrackingEntry
+            {
+                Id = $"{prefix}-000001",
+                Slug = $"{prefix}-000001",
+                TargetUrl = request.TargetUrl,
+                Store = request.Store ?? string.Empty,
+                OriginChannel = request.OriginChannel ?? "unknown",
+                OriginSurface = request.OriginSurface ?? "unknown"
+            });
+        }
 
         public Task<LinkTrackingEntry> CreateAsync(string targetUrl, CancellationToken cancellationToken)
             => throw new NotSupportedException();
@@ -145,7 +209,12 @@ public sealed class AffiliateTrackedContentServiceTests
             => throw new NotSupportedException();
 
         public Task<LinkTrackingEntry?> GetLinkAsync(string id, CancellationToken cancellationToken)
-            => Task.FromResult<LinkTrackingEntry?>(null);
+            => Task.FromResult(
+                Existing is not null &&
+                (string.Equals(Existing.Id, id, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(Existing.Slug, id, StringComparison.OrdinalIgnoreCase))
+                    ? Existing
+                    : null);
 
         public Task<IReadOnlyList<LinkTrackingEntry>> ListAsync(CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<LinkTrackingEntry>>(Array.Empty<LinkTrackingEntry>());

@@ -33,6 +33,7 @@ using AchadinhosBot.Next.Infrastructure.Content;
 using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.Monitoring;
+using AchadinhosBot.Next.Infrastructure.PriceWatch;
 using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Telegram;
 using AchadinhosBot.Next.Infrastructure.ProductData;
@@ -221,6 +222,7 @@ builder.Services.AddSingleton<ILinkTrackingStore>(sp => new LinkTrackingStore(
     sp.GetRequiredService<IConfiguration>(),
     sp.GetRequiredService<IWebHostEnvironment>()));
 builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
+builder.Services.AddSingleton<IPriceWatchStore, PriceWatchStore>();
 builder.Services.AddSingleton<IContentCalendarStore, CsvContentCalendarStore>();
 builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
@@ -273,6 +275,9 @@ builder.Services.AddSingleton<IStoreImageScraper>(provider => provider.GetRequir
 builder.Services.AddSingleton<IStoreImageScraper>(provider => provider.GetRequiredService<MercadoLivreStoreImageScraper>());
 builder.Services.AddSingleton<AffiliateTrackedContentService>();
 builder.Services.AddSingleton<WhatsAppPublishContentService>();
+builder.Services.AddSingleton<PriceWatchService>();
+builder.Services.AddSingleton<PriceWatchConversationService>();
+builder.Services.AddSingleton<WhatsAppNicheGroupService>();
 builder.Services.AddSingleton<EvolutionWhatsAppGateway>();
 builder.Services.AddSingleton<IWhatsAppTransport>(provider => provider.GetRequiredService<EvolutionWhatsAppGateway>());
 builder.Services.AddSingleton<IWhatsAppGateway, QueuedWhatsAppGateway>();
@@ -325,6 +330,7 @@ if (isWorkerRole)
     builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
     builder.Services.AddHostedService<TelegramViralReelsAutoPilotWorker>();
     builder.Services.AddHostedService<CatalogPriceRefreshWorker>();
+    builder.Services.AddHostedService<PriceWatchWorker>();
     builder.Services.AddHostedService<UptimeHeartbeatService>();
     builder.Services.AddHostedService(provider => provider.GetRequiredService<WhatsAppMembershipSyncService>());
     builder.Services.AddHostedService<WhatsAppAdminAutomationWorker>();
@@ -1534,6 +1540,12 @@ app.MapGet("/dashboard.js", (IWebHostEnvironment env) =>
     return File.Exists(path) ? Results.File(path, "application/javascript; charset=utf-8") : Results.NotFound();
 });
 
+app.MapGet("/flow-endpoints-map.js", (IWebHostEnvironment env) =>
+{
+    var path = Path.Combine(env.WebRootPath, "flow-endpoints-map.js");
+    return File.Exists(path) ? Results.File(path, "application/javascript; charset=utf-8") : Results.NotFound();
+});
+
 app.MapGet("/assets/{**assetPath}", (string assetPath, IWebHostEnvironment env) =>
 {
     var safePath = (assetPath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar);
@@ -2121,7 +2133,16 @@ app.MapGet("/bio", async (
     }
 
     var currentUrl = BuildBioCurrentUrl(publicBaseUrl, source, campaign);
-    var html = BuildBioLinksPageHtml(trackedItems, currentUrl, bioSettings, source, campaign);
+    var nicheLinks = settings.WhatsAppNicheGroups?
+        .Where(x => x.Enabled && !string.IsNullOrWhiteSpace(x.InviteUrl))
+        .OrderBy(x => WhatsAppNicheDefinitions.GetOrder(x.Slug))
+        .Select(x => new BioNicheLink(
+            x.Slug,
+            string.IsNullOrWhiteSpace(x.DisplayName) ? x.Slug : x.DisplayName,
+            x.InviteUrl!,
+            string.IsNullOrWhiteSpace(x.Campaign) ? $"niche_{x.Slug}" : x.Campaign))
+        .ToArray() ?? Array.Empty<BioNicheLink>();
+    var html = BuildBioLinksPageHtml(trackedItems, nicheLinks, currentUrl, bioSettings, source, campaign);
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
@@ -2430,6 +2451,8 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     IInstagramPublishStore instagramPublishStore,
     IInstagramPublishLogStore instagramPublishLogStore,
     WhatsAppPublishContentService whatsAppPublishContent,
+    AffiliateTrackedContentService affiliateTrackedContentService,
+    PriceWatchConversationService priceWatchConversation,
     ICatalogOfferStore catalogOfferStore,
     InstagramConversationStore instagramStore,
     InstagramCommandMenuStore instagramMenuStore,
@@ -2530,6 +2553,12 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
         var normalizedText = msg.Text?.Trim() ?? string.Empty;
+        if (!msg.FromMe &&
+            await priceWatchConversation.TryHandleAsync(msg.InstanceName, msg.ChatId, msg.SenderId, normalizedText, ct))
+        {
+            continue;
+        }
+
         if (TryParseViralReelApprovalKeyword(
                 normalizedText,
                 settings.InstagramPublish ?? new InstagramPublishSettings(),
@@ -3080,13 +3109,24 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             var (enrichedFinal, forwardProductImageUrl, _) = await processor.EnrichTextWithProductDataAsync(
                 finalText, normalizedText, ct);
             finalText = enrichedFinal;
+            var routeStoreHint =
+                TrackingLinkShortenerService.ResolveStoreHint(finalText) ??
+                TrackingLinkShortenerService.ResolveStoreHint(normalizedText);
+            if (!IsWhatsAppRouteStoreAllowed(waRoute, routeStoreHint, finalText, normalizedText))
+            {
+                logger.LogInformation(
+                    "WhatsApp forwarding ignorado por filtro de loja. Route={RouteName} Store={Store}",
+                    waRoute.Name,
+                    routeStoreHint ?? "unknown");
+                continue;
+            }
 
             var imageResolution = await offerImageResolver.ResolveAsync(
                 new OfferImageResolutionRequest(
                     ExtractUrlsFromText(normalizedText).FirstOrDefault(),
                     ExtractUrlsFromText(finalText).FirstOrDefault(),
                     finalText,
-                    TrackingLinkShortenerService.ResolveStoreHint(finalText) ?? TrackingLinkShortenerService.ResolveStoreHint(normalizedText),
+                    routeStoreHint,
                     forwardProductImageUrl),
                 ct);
 
@@ -3158,18 +3198,17 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             var instanceToUse = FirstNonEmpty(waRoute.InstanceName, waSettings.InstanceName, msg.InstanceName);
             foreach (var destination in destinations)
             {
-                var trackedForward = await ApplyTrackingAsync(
+                var isOfficialDestination = deliverySafetyPolicy.IsOfficialWhatsAppDestination(destination);
+                var originSurface = isOfficialDestination ? "whatsapp_grupo_oficial" : "whatsapp_grupo";
+                var outboundText = await affiliateTrackedContentService.RewriteAsync(
                     finalText,
-                    linkTrackingStore,
-                    webhookOptions.Value.PublicBaseUrl,
-                    trackingEnabled: true,
+                    originSurface,
                     ct);
-                var outboundText = trackedForward.Text;
+                outboundText = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(outboundText);
 
                 var outboundMediaMessage = msg.HasMedia
                     ? msg
                     : BuildForwardMessageWithResolvedImage(msg, imageResolution);
-                var isOfficialDestination = deliverySafetyPolicy.IsOfficialWhatsAppDestination(destination);
                 var hasActualMedia = outboundMediaMessage.HasMedia &&
                                      (!string.IsNullOrWhiteSpace(outboundMediaMessage.MediaUrl) ||
                                       !string.IsNullOrWhiteSpace(outboundMediaMessage.MediaBase64));
@@ -6098,6 +6137,8 @@ app.MapGet("/r/{id}", async (
     HttpContext context,
     ILinkTrackingStore trackingStore,
     IClickLogStore clickLogStore,
+    IAffiliateLinkService affiliateLinkService,
+    ILoggerFactory loggerFactory,
     CancellationToken ct) =>
 {
     var entry = await trackingStore.RegisterClickAsync(id, ct);
@@ -6107,6 +6148,13 @@ app.MapGet("/r/{id}", async (
     }
 
     var originSurface = TrackingAttributionHelper.NormalizeSurface(entry.OriginSurface);
+    var redirectTarget = await ResolveSafeTrackingRedirectTargetAsync(
+        entry.TargetUrl,
+        originSurface,
+        affiliateLinkService,
+        loggerFactory.CreateLogger("TrackingRedirect"),
+        ct);
+    redirectTarget = NormalizeRedirectLocation(redirectTarget);
     var originChannel = string.IsNullOrWhiteSpace(entry.OriginChannel)
         ? TrackingAttributionHelper.ResolveChannelFromSurface(originSurface)
         : entry.OriginChannel.Trim();
@@ -6121,7 +6169,7 @@ app.MapGet("/r/{id}", async (
     await clickLogStore.AppendAsync(new ClickLogEntry
     {
         TrackingId = entry.Id,
-        TargetUrl = entry.TargetUrl,
+        TargetUrl = redirectTarget,
         Source = source,
         Campaign = campaign,
         OriginChannel = originChannel,
@@ -6131,7 +6179,7 @@ app.MapGet("/r/{id}", async (
         IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
     }, null, ct);
 
-    return Results.Redirect(entry.TargetUrl);
+    return Results.Redirect(redirectTarget);
 });
 
 app.MapGet("/{id}", async (
@@ -6139,6 +6187,8 @@ app.MapGet("/{id}", async (
     HttpContext context,
     ILinkTrackingStore trackingStore,
     IClickLogStore clickLogStore,
+    IAffiliateLinkService affiliateLinkService,
+    ILoggerFactory loggerFactory,
     CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(id) || !id.Contains("-"))
@@ -6153,6 +6203,13 @@ app.MapGet("/{id}", async (
     }
 
     var originSurface = TrackingAttributionHelper.NormalizeSurface(entry.OriginSurface);
+    var redirectTarget = await ResolveSafeTrackingRedirectTargetAsync(
+        entry.TargetUrl,
+        originSurface,
+        affiliateLinkService,
+        loggerFactory.CreateLogger("TrackingRedirect"),
+        ct);
+    redirectTarget = NormalizeRedirectLocation(redirectTarget);
     var originChannel = string.IsNullOrWhiteSpace(entry.OriginChannel)
         ? TrackingAttributionHelper.ResolveChannelFromSurface(originSurface)
         : entry.OriginChannel.Trim();
@@ -6169,7 +6226,7 @@ app.MapGet("/{id}", async (
     await clickLogStore.AppendAsync(new ClickLogEntry
     {
         TrackingId = entry.Id,
-        TargetUrl = entry.TargetUrl,
+        TargetUrl = redirectTarget,
         Source = source,
         Campaign = campaign,
         OriginChannel = originChannel,
@@ -6179,10 +6236,114 @@ app.MapGet("/{id}", async (
         IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
     }, null, ct);
 
-    return Results.Redirect(entry.TargetUrl);
+    return Results.Redirect(redirectTarget);
 });
 
 app.Run();
+
+static string NormalizeRedirectLocation(string? url)
+{
+    var candidate = url?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(candidate))
+    {
+        return "https://bio.reidasofertas.ia.br";
+    }
+
+    if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri))
+    {
+        return "https://bio.reidasofertas.ia.br";
+    }
+
+    return uri.AbsoluteUri;
+}
+
+static async Task<string> ResolveSafeTrackingRedirectTargetAsync(
+    string targetUrl,
+    string? originSurface,
+    IAffiliateLinkService affiliateLinkService,
+    ILogger logger,
+    CancellationToken ct)
+{
+    var normalizedTarget = targetUrl?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(normalizedTarget))
+    {
+        return "https://bio.reidasofertas.ia.br";
+    }
+
+    if (IsTrustedMercadoLivreScoutRedirectTarget(normalizedTarget, originSurface))
+    {
+        return normalizedTarget;
+    }
+
+    if (!IsUnsafeMercadoLivreRedirectTarget(normalizedTarget))
+    {
+        return normalizedTarget;
+    }
+
+    var conversion = await affiliateLinkService.ConvertAsync(normalizedTarget, ct, "redirect_repair", forceResolution: true);
+    if (conversion.Success &&
+        conversion.IsAffiliated &&
+        !string.IsNullOrWhiteSpace(conversion.ConvertedUrl) &&
+        !IsUnsafeMercadoLivreRedirectTarget(conversion.ConvertedUrl))
+    {
+        logger.LogWarning(
+            "Tracking redirect Mercado Livre reparado em tempo de clique. Original={OriginalUrl}; Corrigido={ConvertedUrl}",
+            normalizedTarget,
+            conversion.ConvertedUrl);
+        return conversion.ConvertedUrl.Trim();
+    }
+
+    logger.LogError(
+        "Tracking redirect Mercado Livre bloqueado para evitar afiliado de terceiros. Target={TargetUrl}; Error={Error}",
+        normalizedTarget,
+        conversion.Error ?? conversion.ValidationError ?? "conversao_indisponivel");
+    return "https://bio.reidasofertas.ia.br";
+}
+
+static bool IsTrustedMercadoLivreScoutRedirectTarget(string? url, string? originSurface)
+{
+    if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    var normalizedSurface = TrackingAttributionHelper.NormalizeSurface(originSurface);
+    if (string.Equals(normalizedSurface, "whatsapp_grupo_oficial", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var host = uri.Host.Trim().Trim('.').ToLowerInvariant();
+    return host is "meli.la" or "meli.co" &&
+           string.Equals(normalizedSurface, "whatsapp_grupo", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsUnsafeMercadoLivreRedirectTarget(string? url)
+{
+    if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    var host = uri.Host.Trim().Trim('.').ToLowerInvariant();
+    var path = uri.AbsolutePath;
+    if (!host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) &&
+        host is not "meli.la" &&
+        host is not "meli.co")
+    {
+        return false;
+    }
+
+    if (Regex.IsMatch(path, @"/p/MLB\d+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+        Regex.IsMatch(path, @"/MLB-?\d+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+    {
+        return false;
+    }
+
+    return path.Contains("/social/", StringComparison.OrdinalIgnoreCase) ||
+           host is "meli.la" ||
+           host is "meli.co";
+}
 
 static void LoadDotEnvIfPresent()
 {
@@ -6538,6 +6699,68 @@ static bool IsMercadoLivreUrlLike(string url)
            || url.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
            || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
            || url.Contains("compre.link", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsWhatsAppRouteStoreAllowed(WhatsAppForwardingRouteSettings route, string? storeHint, string finalText, string originalText)
+{
+    var detectedStores = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    AddStoreHint(detectedStores, storeHint);
+    AddStoreHint(detectedStores, TrackingLinkShortenerService.ResolveStoreHint(finalText));
+    AddStoreHint(detectedStores, TrackingLinkShortenerService.ResolveStoreHint(originalText));
+
+    if (ExtractUrlsFromText(finalText).Concat(ExtractUrlsFromText(originalText)).Any(IsMercadoLivreUrlLike))
+    {
+        detectedStores.Add("Mercado Livre");
+    }
+
+    if (route.BlockedStores.Any() &&
+        detectedStores.Any(store => route.BlockedStores.Any(blocked => IsStoreNameMatch(store, blocked))))
+    {
+        return false;
+    }
+
+    if (!route.AllowedStores.Any())
+    {
+        return true;
+    }
+
+    return detectedStores.Any(store => route.AllowedStores.Any(allowed => IsStoreNameMatch(store, allowed)));
+}
+
+static void AddStoreHint(HashSet<string> stores, string? store)
+{
+    if (!string.IsNullOrWhiteSpace(store))
+    {
+        stores.Add(store.Trim());
+    }
+}
+
+static bool IsStoreNameMatch(string detected, string configured)
+{
+    var left = NormalizeStoreNameForComparison(detected);
+    var right = NormalizeStoreNameForComparison(configured);
+    return !string.IsNullOrWhiteSpace(left) && left == right;
+}
+
+static string NormalizeStoreNameForComparison(string? value)
+{
+    var normalized = RemoveDiacritics(value ?? string.Empty).ToLowerInvariant();
+    return Regex.Replace(normalized, @"[^a-z0-9]+", string.Empty);
+}
+
+static string RemoveDiacritics(string value)
+{
+    var normalized = value.Normalize(NormalizationForm.FormD);
+    var builder = new StringBuilder(normalized.Length);
+    foreach (var ch in normalized)
+    {
+        if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+        {
+            builder.Append(ch);
+        }
+    }
+
+    return builder.ToString().Normalize(NormalizationForm.FormC);
 }
 
 static int CountUrlsInText(string? text)
@@ -10595,6 +10818,7 @@ static string ExtractPriceFromText(string? text)
 
 static string BuildBioLinksPageHtml(
     IReadOnlyList<BioLinkItem> items,
+    IReadOnlyList<BioNicheLink> nicheLinks,
     string currentUrl,
     BioHubSettings settings,
     string source,
@@ -10759,6 +10983,14 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(instagramUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_instagram\"><div><strong>{instagramSymbol} Seguir no Instagram</strong><span>Acompanhe reels, stories e posts com os melhores achadinhos.</span></div><em>Instagram</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(catalogUrl)}\" data-analytics-source=\"bio_catalog\"><div><strong>{catalogSymbol} Abrir Catalogo VIP</strong><span>Veja todas as ofertas publicadas e acesse os links atualizados.</span></div><em>Catalogo</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(converterUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_converter\"><div><strong>{converterSymbol} Abrir Conversor de Links</strong><span>Converta links rapidamente e encontre ofertas prontas para comprar.</span></div><em>Conversor</em></a>");
+    foreach (var niche in nicheLinks)
+    {
+        var nicheLabel = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(niche.DisplayName));
+        var nicheUrl = System.Net.WebUtility.HtmlEncode(niche.InviteUrl);
+        var nicheSlug = System.Net.WebUtility.HtmlEncode(niche.Slug);
+        var nicheCampaign = System.Net.WebUtility.HtmlEncode(niche.Campaign);
+        sb.AppendLine($"    <a class=\"quick-link\" href=\"{nicheUrl}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_whatsapp_niche_{nicheSlug}\" data-analytics-event=\"niche_join_intent\" data-analytics-target=\"{nicheUrl}\"><div><strong>{whatsAppSymbol} {nicheLabel}</strong><span>Entre direto no grupo segmentado e receba ofertas mais relevantes.</span></div><em>{nicheCampaign}</em></a>");
+    }
     sb.AppendLine("  </section>");
 
     if (featuredItems.Count == 0)
@@ -16451,6 +16683,7 @@ internal sealed record BioLinkItem
     public string? CouponDescription { get; init; }
     public string? ImageUrl { get; init; }
 }
+internal sealed record BioNicheLink(string Slug, string DisplayName, string InviteUrl, string Campaign);
 internal sealed record PublicLinkConverterViewModel
 {
     public string Input { get; set; } = string.Empty;

@@ -9,6 +9,8 @@ public interface IWhatsAppTransport
     Task<WhatsAppConnectionSnapshot> GetConnectionSnapshotAsync(string? instanceName, CancellationToken cancellationToken)
         => Task.FromResult(new WhatsAppConnectionSnapshot(false, null, null, "Snapshot nao implementado."));
     Task<IReadOnlyList<WhatsAppGroupInfo>> GetGroupsAsync(string? instanceName, CancellationToken cancellationToken);
+    Task<WhatsAppCreateGroupResult> CreateGroupAsync(string? instanceName, string subject, string? description, IReadOnlyList<string> participantJids, CancellationToken cancellationToken)
+        => Task.FromResult(new WhatsAppCreateGroupResult(false, null, null, "Criacao de grupo nao implementada."));
     Task<WhatsAppSendResult> SendTextAsync(string? instanceName, string to, string text, CancellationToken cancellationToken);
     Task<WhatsAppSendResult> SendImageAsync(string? instanceName, string to, byte[] imageBytes, string? caption, string? mimeType, CancellationToken cancellationToken);
     Task<WhatsAppSendResult> SendImageUrlAsync(string? instanceName, string to, string mediaUrl, string? caption, string? mimeType, string? fileName, CancellationToken cancellationToken);

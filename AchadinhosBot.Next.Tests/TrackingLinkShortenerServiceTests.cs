@@ -115,9 +115,98 @@ public sealed class TrackingLinkShortenerServiceTests
         Assert.Equal(2, trackingStore.CreateCalls);
     }
 
+    [Fact]
+    public async Task TrackSingleUrlAsync_ShouldNotCreateTrackingForMercadoLivreSocialWithoutProductId()
+    {
+        var trackingStore = new FakeLinkTrackingStore();
+        var service = CreateService(trackingStore: trackingStore);
+        const string socialUrl = "https://www.mercadolivre.com.br/social/agenciarice?matt_word=agenciarice&matt_tool=85935425&forceInApp=true";
+
+        var result = await service.TrackSingleUrlAsync(
+            socialUrl,
+            "whatsapp_grupo_oficial",
+            CancellationToken.None,
+            "Mercado Livre");
+
+        Assert.Equal(socialUrl, result);
+        Assert.Equal(0, trackingStore.CreateCalls);
+    }
+
+    [Fact]
+    public async Task TrackTrustedUrlAsync_ShouldKeepScoutMeliLinkAsTrackingTarget()
+    {
+        var trackingStore = new FakeLinkTrackingStore();
+        var service = CreateService(trackingStore: trackingStore);
+        const string scoutUrl = "https://meli.la/17th95z";
+
+        var result = await service.TrackTrustedUrlAsync(
+            scoutUrl,
+            "whatsapp_grupo",
+            CancellationToken.None,
+            "Mercado Livre");
+
+        Assert.Equal("https://reidasofertas.ia.br/r/ML-000001", result);
+        Assert.Equal(1, trackingStore.CreateCalls);
+        Assert.Equal(scoutUrl, trackingStore.LastTargetUrl);
+        Assert.Equal("Mercado Livre", trackingStore.LastStore);
+    }
+
+    [Fact]
+    public async Task TrackSingleUrlAsync_ShouldNotCreateTrackingForMercadoLivreProductWithoutOfficialTags()
+    {
+        var trackingStore = new FakeLinkTrackingStore();
+        var service = CreateService(trackingStore: trackingStore);
+        const string productUrl = "https://www.mercadolivre.com.br/p/MLB19761624";
+
+        var result = await service.TrackSingleUrlAsync(
+            productUrl,
+            "whatsapp_grupo_oficial",
+            CancellationToken.None,
+            "Mercado Livre");
+
+        Assert.Equal(productUrl, result);
+        Assert.Equal(0, trackingStore.CreateCalls);
+    }
+
+    [Theory]
+    [InlineData("https://amzn.to/4tybkEs")]
+    [InlineData("https://amzlink.to/az0GbHhu8TFsw")]
+    [InlineData("https://compre.link/w52/8sikma")]
+    public async Task TrackSingleUrlAsync_ShouldNotCreateGenericLkTrackingForWhatsAppSurface(string url)
+    {
+        var trackingStore = new FakeLinkTrackingStore();
+        var service = CreateService(trackingStore: trackingStore);
+
+        var result = await service.TrackSingleUrlAsync(
+            url,
+            "whatsapp_grupo_oficial",
+            CancellationToken.None,
+            "Unknown");
+
+        Assert.Equal(url, result);
+        Assert.Equal(0, trackingStore.CreateCalls);
+    }
+
+    [Fact]
+    public async Task TrackSingleUrlAsync_ShouldNotCreateGenericLkTrackingForNonWhatsAppSurface()
+    {
+        var trackingStore = new FakeLinkTrackingStore();
+        var service = CreateService(trackingStore: trackingStore);
+        const string url = "https://amzlink.to/az0J4uOJQqlHR";
+
+        var result = await service.TrackSingleUrlAsync(
+            url,
+            "telegram_forwarding",
+            CancellationToken.None,
+            "Unknown");
+
+        Assert.Equal(url, result);
+        Assert.Equal(0, trackingStore.CreateCalls);
+    }
+
     [Theory]
     [InlineData("https://www.amazon.com.br/dp/B08N5M7S6K", "Amazon", "https://reidasofertas.ia.br/r/AM-000001?src=cw")]
-    [InlineData("https://www.mercadolivre.com.br/p/MLB19761624", "Mercado Livre", "https://reidasofertas.ia.br/r/ML-000001?src=cw")]
+    [InlineData("https://www.mercadolivre.com.br/p/MLB19761624?matt_tool=98187057&matt_word=land177", "Mercado Livre", "https://reidasofertas.ia.br/r/ML-000001?src=cw")]
     [InlineData("https://s.shopee.com.br/AUpvSsCTgY", "Shopee", "https://reidasofertas.ia.br/r/SP-000001?src=cw")]
     public async Task TrackSingleUrlAsync_ShouldFollowCanonicalGoldenOutputs(string url, string store, string expected)
     {
@@ -150,12 +239,16 @@ public sealed class TrackingLinkShortenerServiceTests
     private sealed class FakeLinkTrackingStore : ILinkTrackingStore
     {
         public DateTimeOffset? LastExpiresAtUtc { get; private set; }
+        public string? LastTargetUrl { get; private set; }
+        public string? LastStore { get; private set; }
         public int CreateCalls { get; private set; }
 
         public Task<LinkTrackingEntry> CreateAsync(LinkTrackingCreateRequest request, CancellationToken cancellationToken)
         {
             CreateCalls += 1;
             LastExpiresAtUtc = request.ExpiresAtUtc;
+            LastTargetUrl = request.TargetUrl;
+            LastStore = request.Store;
             var prefix = ResolvePrefix(request.TargetUrl);
             return Task.FromResult(new LinkTrackingEntry
             {

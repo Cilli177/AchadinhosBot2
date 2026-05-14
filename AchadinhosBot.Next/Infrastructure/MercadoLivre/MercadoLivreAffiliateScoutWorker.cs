@@ -364,7 +364,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
 
     internal static string? BuildDedupeKey(MercadoLivreAffiliateScoutOffer offer)
     {
-        var url = FirstNonEmpty(offer.ProductUrl, offer.SharedUrl);
+        var url = FirstNonEmpty(offer.SharedUrl, offer.ProductUrl);
         var productId = ExtractMercadoLivreProductKey(url);
         if (!string.IsNullOrWhiteSpace(productId))
         {
@@ -518,8 +518,30 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
             targetGroupId == "120363405661434395@g.us" ? "OFICIAL" : "TESTE", 
             scout.AutoPublishToOfficialGroup);
         
-        // Prepare content (Link shortening, formatting, image resolving)
-        var prepared = await _publishService.PrepareForSendAsync(BuildScoutMessage(offer, includeCommission), offer.ImageUrl, targetGroupId, ct);
+        // Links copied from the Mercado Livre affiliate scout are already attributed to our account.
+        // For this flow we only shorten/track the captured URL, without expanding or reconverting it.
+        var prepared = await _publishService.PrepareTrustedLinksForSendAsync(
+            BuildScoutMessage(offer, includeCommission),
+            offer.ImageUrl,
+            targetGroupId,
+            "Mercado Livre",
+            ct);
+
+        var officialGuard = OfficialWhatsAppGroupGuard.Validate(
+            string.Equals(targetGroupId, OfficialOffersGroupId, StringComparison.OrdinalIgnoreCase),
+            prepared.Content,
+            prepared.HasImageCandidate,
+            prepared.ResolvedImageBytes != null || !string.IsNullOrWhiteSpace(prepared.ResolvedImageUrl));
+
+        if (!officialGuard.Allowed)
+        {
+            _logger.LogWarning(
+                "MercadoLivreAffiliateScoutWorker: oferta bloqueada para grupo oficial. Reason={Reason}; Detail={Detail}; Title={Title}",
+                officialGuard.Reason,
+                officialGuard.Detail,
+                offer.Title);
+            return false;
+        }
 
         // Enqueue for delivery
         await _queueService.EnqueueAsync(

@@ -78,7 +78,7 @@ public sealed partial class WhatsAppPublishContentService
                 if (processed.Success && !string.IsNullOrWhiteSpace(processed.ConvertedText))
                 {
                     var normalizedProcessed = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(processed.ConvertedText);
-                    outboundContent = await _trackingLinkShortenerService.ApplyTrackingAsync(
+                    outboundContent = await _affiliateTrackedContentService.RewriteAsync(
                         normalizedProcessed,
                         originSurface,
                         cancellationToken);
@@ -104,6 +104,44 @@ public sealed partial class WhatsAppPublishContentService
         store = TrackingLinkShortenerService.ResolveStoreHint(convertedOfferUrl);
         var fallbackImageResolution = await ResolveImageAsync(content, outboundContent, preferredImageUrl, store, cancellationToken);
         return BuildPreparedContent(outboundContent, fallbackImageResolution);
+    }
+
+    public async Task<WhatsAppPreparedContent> PrepareTrustedLinksForSendAsync(
+        string? text,
+        string? preferredImageUrl,
+        string targetId,
+        string? store,
+        CancellationToken cancellationToken)
+    {
+        var content = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(text);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return new WhatsAppPreparedContent(string.Empty, preferredImageUrl, null, null, null, false, null);
+        }
+
+        var originSurface = ResolveOriginSurface(targetId);
+        var settings = await _settingsStore.GetAsync(cancellationToken);
+        var footerText = ResolveFooterText(settings, targetId);
+
+        if (!UrlRegex().IsMatch(content))
+        {
+            var contentWithoutUrl = AppendFooter(content, footerText);
+            return new WhatsAppPreparedContent(contentWithoutUrl, preferredImageUrl, null, null, null, false, null);
+        }
+
+        var outboundContent = await _trackingLinkShortenerService.ApplyTrustedTrackingAsync(
+            content,
+            originSurface,
+            cancellationToken,
+            store);
+        outboundContent = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(outboundContent);
+        outboundContent = AppendFooter(outboundContent, footerText);
+        outboundContent = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(outboundContent);
+
+        var convertedOfferUrl = ExtractFirstUrl(outboundContent);
+        var resolvedStore = store ?? TrackingLinkShortenerService.ResolveStoreHint(convertedOfferUrl);
+        var imageResolution = await ResolveImageAsync(content, outboundContent, preferredImageUrl, resolvedStore, cancellationToken);
+        return BuildPreparedContent(outboundContent, imageResolution);
     }
 
     private async Task<OfferImageResolutionResult?> ResolveImageAsync(

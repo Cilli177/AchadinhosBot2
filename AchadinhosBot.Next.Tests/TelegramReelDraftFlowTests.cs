@@ -282,6 +282,7 @@ public sealed class TelegramReelDraftFlowTests
             httpClientFactory,
             new InMemoryMediaStore(),
             metaGraphClient,
+            CreateUninitialized<InstagramLinkMetaService>(),
             new StubVideoProcessingService(),
             new NoopInstagramOutboundPublisher(),
             new InMemoryInstagramOutboxStore(),

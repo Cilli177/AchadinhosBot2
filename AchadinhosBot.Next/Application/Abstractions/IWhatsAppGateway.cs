@@ -8,6 +8,8 @@ public interface IWhatsAppGateway
     Task<WhatsAppInstanceResult> CreateInstanceAsync(string instanceName, CancellationToken cancellationToken);
     Task<WhatsAppConnectionSnapshot> GetConnectionSnapshotAsync(string? instanceName, CancellationToken cancellationToken);
     Task<IReadOnlyList<WhatsAppGroupInfo>> GetGroupsAsync(string? instanceName, CancellationToken cancellationToken);
+    Task<WhatsAppCreateGroupResult> CreateGroupAsync(string? instanceName, string subject, string? description, IReadOnlyList<string> participantJids, CancellationToken cancellationToken)
+        => Task.FromResult(new WhatsAppCreateGroupResult(false, null, null, "Criacao de grupo nao implementada."));
     Task<WhatsAppSendResult> SendTextAsync(string? instanceName, string to, string text, CancellationToken cancellationToken);
     Task<WhatsAppSendResult> SendImageAsync(string? instanceName, string to, byte[] imageBytes, string? caption, string? mimeType, CancellationToken cancellationToken);
     Task<WhatsAppSendResult> SendImageUrlAsync(string? instanceName, string to, string mediaUrl, string? caption, string? mimeType, string? fileName, CancellationToken cancellationToken);
@@ -21,6 +23,7 @@ public sealed record WhatsAppConnectResult(bool Success, string? QrCodeBase64, s
 public sealed record WhatsAppInstanceResult(bool Success, string? QrCodeBase64, string? Message);
 public sealed record WhatsAppConnectionSnapshot(bool Connected, string? State, string? QrCodeBase64, string? Message);
 public sealed record WhatsAppSendResult(bool Success, string? Message);
+public sealed record WhatsAppCreateGroupResult(bool Success, string? GroupId, string? InviteUrl, string? Message);
 
 public sealed record WhatsAppGroupInfo(string Id, string Name, int ParticipantsCount, string Type);
 public sealed record WhatsAppInstanceInfo(string Name, string State);

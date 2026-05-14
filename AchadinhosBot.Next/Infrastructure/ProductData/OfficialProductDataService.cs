@@ -402,6 +402,26 @@ public sealed class OfficialProductDataService
         var resolvedUrl = await TryResolveFinalUrlAsync(uri.ToString(), ct) ?? uri.ToString();
         var scrapedTask = _mercadoLivreHtmlScraper.ScrapeUrlAsync(resolvedUrl, ct);
 
+        var catalogProductId = ExtractMercadoLivreCatalogProductId(uri);
+        if (string.IsNullOrWhiteSpace(catalogProductId) &&
+            Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var resolvedCatalogUri))
+        {
+            catalogProductId = ExtractMercadoLivreCatalogProductId(resolvedCatalogUri);
+        }
+
+        if (!string.IsNullOrWhiteSpace(catalogProductId))
+        {
+            var catalogResult = await TryGetMercadoLivreCatalogProductDataAsync(
+                catalogProductId,
+                resolvedUrl,
+                scrapedTask,
+                ct);
+            if (catalogResult is not null)
+            {
+                return catalogResult;
+            }
+        }
+
         var itemId = await TryResolveMercadoLivreItemIdAsync(uri, ct);
         if (string.IsNullOrWhiteSpace(itemId))
         {
@@ -512,6 +532,139 @@ public sealed class OfficialProductDataService
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Falha ao obter dados oficiais do Mercado Livre.");
+            return null;
+        }
+    }
+
+    private async Task<OfficialProductDataResult?> TryGetMercadoLivreCatalogProductDataAsync(
+        string productId,
+        string resolvedUrl,
+        Task<MercadoLivreScrapedProduct?> scrapedTask,
+        CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("default");
+            var accessToken = await _mercadoLivreOAuthService.GetAccessTokenAsync(ct);
+            if (string.IsNullOrWhiteSpace(accessToken))
+            {
+                return null;
+            }
+
+            JsonElement? productRoot = null;
+            using (var productRequest = new HttpRequestMessage(HttpMethod.Get, $"https://api.mercadolibre.com/products/{productId}"))
+            {
+                productRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                using var productResponse = await client.SendAsync(productRequest, ct);
+                if (productResponse.IsSuccessStatusCode)
+                {
+                    var productBody = await productResponse.Content.ReadAsStringAsync(ct);
+                    using var productDoc = JsonDocument.Parse(productBody);
+                    productRoot = productDoc.RootElement.Clone();
+                }
+            }
+
+            using var itemsRequest = new HttpRequestMessage(HttpMethod.Get, $"https://api.mercadolibre.com/products/{productId}/items");
+            itemsRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            using var itemsResponse = await client.SendAsync(itemsRequest, ct);
+            if (!itemsResponse.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var itemsBody = await itemsResponse.Content.ReadAsStringAsync(ct);
+            using var itemsDoc = JsonDocument.Parse(itemsBody);
+            if (!itemsDoc.RootElement.TryGetProperty("results", out var resultsNode) ||
+                resultsNode.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            JsonElement? bestItem = null;
+            decimal? bestPrice = null;
+            foreach (var item in resultsNode.EnumerateArray())
+            {
+                var price = TryGetDecimal(item, "price");
+                if (!price.HasValue || price.Value <= 0)
+                {
+                    continue;
+                }
+
+                if (!bestPrice.HasValue || price.Value < bestPrice.Value)
+                {
+                    bestPrice = price;
+                    bestItem = item.Clone();
+                }
+            }
+
+            if (bestItem is null || !bestPrice.HasValue)
+            {
+                return null;
+            }
+
+            var itemNode = bestItem.Value;
+            var itemId = TryGetString(itemNode, "item_id");
+            var currency = TryGetString(itemNode, "currency_id") ?? "BRL";
+            var originalPrice = TryGetDecimal(itemNode, "original_price");
+            var images = new List<string>();
+            string? title = null;
+            if (productRoot.HasValue)
+            {
+                title = TryGetString(productRoot.Value, "name");
+                if (productRoot.Value.TryGetProperty("pictures", out var picturesNode) &&
+                    picturesNode.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var picture in picturesNode.EnumerateArray().Take(10))
+                    {
+                        var pictureUrl = TryGetString(picture, "url") ?? TryGetString(picture, "secure_url");
+                        if (!string.IsNullOrWhiteSpace(pictureUrl))
+                        {
+                            images.Add(pictureUrl.Trim());
+                        }
+                    }
+                }
+            }
+
+            var scraped = await scrapedTask;
+            if (scraped is not null)
+            {
+                title = title ?? scraped.Title;
+                foreach (var image in scraped.Images)
+                {
+                    if (!images.Contains(image, StringComparer.OrdinalIgnoreCase))
+                    {
+                        images.Add(image);
+                    }
+                }
+            }
+
+            string? estimatedDelivery = null;
+            if (itemNode.TryGetProperty("shipping", out var shippingNode) && shippingNode.ValueKind == JsonValueKind.Object)
+            {
+                var freeShipping = shippingNode.TryGetProperty("free_shipping", out var fsNode) && fsNode.ValueKind == JsonValueKind.True;
+                estimatedDelivery = freeShipping ? "Entrega gratis" : "Frete pago";
+            }
+
+            var sourceUrl = string.IsNullOrWhiteSpace(itemId)
+                ? resolvedUrl
+                : $"https://produto.mercadolivre.com.br/{itemId}";
+
+            return new OfficialProductDataResult(
+                Store: "Mercado Livre",
+                Title: title,
+                CurrentPrice: FormatCurrency(bestPrice, currency),
+                PreviousPrice: FormatCurrency(originalPrice, currency),
+                DiscountPercent: ComputeDiscount(originalPrice, bestPrice),
+                Images: images,
+                IsOfficial: true,
+                DataSource: "mercadolivre_catalog_items_api",
+                SourceUrl: sourceUrl,
+                EstimatedDelivery: estimatedDelivery,
+                VideoUrl: null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Falha ao obter dados de catalogo do Mercado Livre para {ProductId}.", productId);
             return null;
         }
     }
@@ -1586,6 +1739,13 @@ public sealed class OfficialProductDataService
         var text = Uri.UnescapeDataString($"{uri.AbsolutePath} {uri.Query}");
         var match = Regex.Match(text, @"(?:^|[^a-zA-Z0-9])MLB[-_]?(?<id>\d{8,})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return match.Success ? $"MLB{match.Groups["id"].Value}" : null;
+    }
+
+    private static string? ExtractMercadoLivreCatalogProductId(Uri uri)
+    {
+        var text = Uri.UnescapeDataString($"{uri.AbsolutePath} {uri.Query}");
+        var match = Regex.Match(text, @"/p/(?<id>MLB\d{8,})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? match.Groups["id"].Value.ToUpperInvariant() : null;
     }
 
     private static string? ExtractMercadoLivreItemIdFromText(string? text)

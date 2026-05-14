@@ -560,6 +560,109 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
         }
     }
 
+    public async Task<WhatsAppCreateGroupResult> CreateGroupAsync(
+        string? instanceName,
+        string subject,
+        string? description,
+        IReadOnlyList<string> participantJids,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var baseUrl = SafeCreateUri(_options.BaseUrl);
+            if (baseUrl == null)
+            {
+                return new WhatsAppCreateGroupResult(false, null, null, "Evolution BaseUrl nao configurada ou invalida");
+            }
+
+            if (string.IsNullOrWhiteSpace(_options.ApiKey))
+            {
+                return new WhatsAppCreateGroupResult(false, null, null, "Evolution ApiKey nao configurada");
+            }
+
+            var normalizedSubject = subject?.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedSubject))
+            {
+                return new WhatsAppCreateGroupResult(false, null, null, "Nome do grupo obrigatorio.");
+            }
+
+            var participants = (participantJids ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (participants.Length == 0)
+            {
+                return new WhatsAppCreateGroupResult(false, null, null, "Informe ao menos um participante semente para criar o grupo.");
+            }
+
+            var client = _httpClientFactory.CreateClient("evolution-groups");
+            client.BaseAddress = baseUrl;
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+            if (!client.DefaultRequestHeaders.Contains("apikey"))
+            {
+                client.DefaultRequestHeaders.Add("apikey", _options.ApiKey);
+            }
+            if (!client.DefaultRequestHeaders.Contains("x-api-key"))
+            {
+                client.DefaultRequestHeaders.Add("x-api-key", _options.ApiKey);
+            }
+
+            var targetInstance = ResolveInstanceName(instanceName);
+            if (string.IsNullOrWhiteSpace(targetInstance))
+            {
+                return new WhatsAppCreateGroupResult(false, null, null, "InstanceName da Evolution nao configurado");
+            }
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                subject = normalizedSubject,
+                description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+                participants
+            });
+
+            var endpoints = new[]
+            {
+                $"/group/create/{Uri.EscapeDataString(targetInstance)}",
+                $"/group/create"
+            };
+
+            string? lastFailure = null;
+            foreach (var endpoint in endpoints)
+            {
+                var res = await client.PostAsync(
+                    endpoint,
+                    new StringContent(payload, Encoding.UTF8, "application/json"),
+                    cancellationToken);
+                var body = await res.Content.ReadAsStringAsync(cancellationToken);
+                if (!res.IsSuccessStatusCode)
+                {
+                    lastFailure = $"{res.StatusCode}: {body}";
+                    _logger.LogWarning("Falha ao criar grupo Evolution em {Endpoint}: {Status} {Body}", endpoint, res.StatusCode, body);
+                    continue;
+                }
+
+                var (groupId, inviteUrl) = ExtractCreatedGroupReferences(body);
+                _groupsCache.TryRemove(targetInstance, out _);
+                return new WhatsAppCreateGroupResult(
+                    true,
+                    groupId,
+                    inviteUrl,
+                    string.IsNullOrWhiteSpace(groupId)
+                        ? "Grupo criado, mas a Evolution nao retornou o JID do grupo."
+                        : "Grupo criado com sucesso.");
+            }
+
+            return new WhatsAppCreateGroupResult(false, null, null, $"Evolution nao aceitou a criacao do grupo ({lastFailure ?? "sem detalhes"}).");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao criar grupo Evolution");
+            return new WhatsAppCreateGroupResult(false, null, null, $"Erro: {ex.Message}");
+        }
+    }
+
     public async Task<WhatsAppSendResult> SendTextAsync(string? instanceName, string to, string text, CancellationToken cancellationToken)
     {
         try
@@ -1692,7 +1795,55 @@ public sealed class EvolutionWhatsAppGateway : IWhatsAppGateway, IWhatsAppTransp
         }
     }
 
-        private static IReadOnlyList<WhatsAppGroupInfo> ExtractGroups(string body)
+    private static (string? GroupId, string? InviteUrl) ExtractCreatedGroupReferences(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            string? groupId = null;
+            string? inviteUrl = null;
+            ExtractCreatedGroupReferencesFromElement(doc.RootElement, ref groupId, ref inviteUrl);
+            return (groupId, inviteUrl);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    private static void ExtractCreatedGroupReferencesFromElement(JsonElement element, ref string? groupId, ref string? inviteUrl)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            groupId ??= GetString(element, "id", "jid", "groupId", "remoteJid", "chatId");
+            inviteUrl ??= GetString(element, "inviteUrl", "inviteLink", "link", "url");
+
+            if (!string.IsNullOrWhiteSpace(inviteUrl) &&
+                !inviteUrl.Contains("chat.whatsapp.com", StringComparison.OrdinalIgnoreCase))
+            {
+                inviteUrl = null;
+            }
+
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ExtractCreatedGroupReferencesFromElement(prop.Value, ref groupId, ref inviteUrl);
+                }
+            }
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                ExtractCreatedGroupReferencesFromElement(item, ref groupId, ref inviteUrl);
+            }
+        }
+    }
+
+    private static IReadOnlyList<WhatsAppGroupInfo> ExtractGroups(string body)
     {
         try
         {

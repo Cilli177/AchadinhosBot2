@@ -12,6 +12,7 @@ using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.Monitoring;
+using AchadinhosBot.Next.Infrastructure.PriceWatch;
 using AchadinhosBot.Next.Infrastructure.ProductData;
 using AchadinhosBot.Next.Infrastructure.Resilience;
 using AchadinhosBot.Next.Infrastructure.Safety;
@@ -93,6 +94,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
         builder.Services.AddSingleton<ILinkTrackingStore, LinkTrackingStore>();
         builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
+        builder.Services.AddSingleton<IPriceWatchStore, PriceWatchStore>();
         builder.Services.AddSingleton<IContentCalendarStore, CsvContentCalendarStore>();
         builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
         builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
@@ -145,6 +147,9 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<IStoreImageScraper>(provider => provider.GetRequiredService<MercadoLivreStoreImageScraper>());
         builder.Services.AddSingleton<AffiliateTrackedContentService>();
         builder.Services.AddSingleton<WhatsAppPublishContentService>();
+        builder.Services.AddSingleton<PriceWatchService>();
+        builder.Services.AddSingleton<PriceWatchConversationService>();
+        builder.Services.AddSingleton<WhatsAppNicheGroupService>();
         builder.Services.AddSingleton<EvolutionWhatsAppGateway>();
         builder.Services.AddSingleton<IWhatsAppTransport>(provider => provider.GetRequiredService<EvolutionWhatsAppGateway>());
         builder.Services.AddSingleton<IWhatsAppGateway, QueuedWhatsAppGateway>();
@@ -199,6 +204,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
         builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
         builder.Services.AddHostedService<CatalogPriceRefreshWorker>();
+        builder.Services.AddHostedService<PriceWatchWorker>();
         builder.Services.AddHostedService<UptimeHeartbeatService>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<WhatsAppMembershipSyncService>());
         builder.Services.AddHostedService<WhatsAppAdminAutomationWorker>();

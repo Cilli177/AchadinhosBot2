@@ -177,6 +177,7 @@ public sealed class WhatsAppPublishContentServiceTests
         => new(
             new FakeAffiliateLinkService("https://www.amazon.com.br/dp/B0CYJ7DBQC?tag=reidasofer022-20", "Amazon"),
             CreateTrackingService(trackingStore),
+            trackingStore,
             NullLogger<AffiliateTrackedContentService>.Instance);
 
     private sealed class FakeMessageProcessor : IMessageProcessor

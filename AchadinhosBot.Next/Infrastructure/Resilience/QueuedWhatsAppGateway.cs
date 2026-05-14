@@ -42,6 +42,9 @@ public sealed class QueuedWhatsAppGateway : IWhatsAppGateway
     public Task<IReadOnlyList<WhatsAppGroupInfo>> GetGroupsAsync(string? instanceName, CancellationToken cancellationToken)
         => _transport.GetGroupsAsync(instanceName, cancellationToken);
 
+    public Task<WhatsAppCreateGroupResult> CreateGroupAsync(string? instanceName, string subject, string? description, IReadOnlyList<string> participantJids, CancellationToken cancellationToken)
+        => _transport.CreateGroupAsync(instanceName, subject, description, participantJids, cancellationToken);
+
     public Task<WhatsAppSendResult> UpdateProfilePictureAsync(string? instanceName, string picture, CancellationToken cancellationToken)
         => _transport.UpdateProfilePictureAsync(instanceName, picture, cancellationToken);
 

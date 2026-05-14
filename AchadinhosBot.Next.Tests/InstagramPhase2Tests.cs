@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.Serialization;
 using System.Text;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Application.Consumers;
@@ -18,6 +19,9 @@ namespace AchadinhosBot.Next.Tests;
 
 public sealed class InstagramPhase2Tests
 {
+    private static T CreateUninitialized<T>()
+        => (T)FormatterServices.GetUninitializedObject(typeof(T));
+
     [Fact]
     public async Task MetaGraphClient_PublishAsync_CreatesCarouselAndPublishesParent()
     {
@@ -179,6 +183,7 @@ public sealed class InstagramPhase2Tests
                 new FakeHttpClientFactory(new RecordingHandler()),
                 new InMemoryMediaStore(),
                 new StubMetaGraphClient(),
+                CreateUninitialized<InstagramLinkMetaService>(),
                 new StubVideoProcessingService(),
                 new ThrowingInstagramPublisher(),
                 outbox,
@@ -232,6 +237,7 @@ public sealed class InstagramPhase2Tests
             new FakeHttpClientFactory(new RecordingHandler()),
             new InMemoryMediaStore(),
             new StubMetaGraphClient(),
+            CreateUninitialized<InstagramLinkMetaService>(),
             new StubVideoProcessingService(),
             new RecordingInstagramPublisher(),
             new InMemoryInstagramOutboxStore(),
@@ -281,6 +287,7 @@ public sealed class InstagramPhase2Tests
             new FakeHttpClientFactory(new RecordingHandler()),
             new InMemoryMediaStore(),
             metaGraphClient,
+            CreateUninitialized<InstagramLinkMetaService>(),
             new StubVideoProcessingService(),
             new RecordingInstagramPublisher(),
             new InMemoryInstagramOutboxStore(),

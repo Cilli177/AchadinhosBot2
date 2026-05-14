@@ -8,6 +8,7 @@ let waParticipantsCache = new Map();
 let waAutomationCache = null;
 let waAutomationQueueCache = null;
 let waInstancesCache = null;
+let waNicheGroupsCache = [];
 let waScheduleEditState = null;
 let waQrPollTimer = null;
 let waQrPollInstanceName = null;
@@ -411,7 +412,7 @@ function showAuthState(authenticated, username = '', role = '') {
 }
 
 function showSection(name) {
-  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach'];
+  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach', 'wa-niches'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -493,6 +494,9 @@ function showSection(name) {
     startOutreachLogsAutoRefresh();
   } else {
     stopOutreachLogsAutoRefresh();
+  }
+  if (name === 'wa-niches') {
+    loadWhatsAppNicheGroups();
   }
 }
 
@@ -1947,6 +1951,25 @@ function shortId(text) {
   const s = String(text || '');
   if (s.length <= 18) return s;
   return `${s.slice(0, 6)}...${s.slice(-6)}`;
+}
+
+function extractApiErrorMessage(err, fallback = 'Erro inesperado.') {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+  const data = err.data || err.Data || err;
+  const result = data.result || data.Result || data;
+  const message =
+    result.message || result.Message ||
+    result.error || result.Error ||
+    result.reason || result.Reason ||
+    data.error || data.Error ||
+    err.message || err.Message;
+  if (message) return String(message);
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return fallback;
+  }
 }
 
 function getGeminiApiKeyRowsFromDom() {
@@ -6858,6 +6881,13 @@ const sectionGuides = {
       <li><strong>Vis?o Geral:</strong> Veja o total de cliques capturados nas ?ltimas 24h em cada parte do sistema (Bio, Cat?logo, Conversor).</li>
       <li><strong>Origens e Campanhas:</strong> Identifique de onde vem seus cliques mais quentes para otimizar suas ofertas.</li>
       <li><strong>Logs em Tempo Real:</strong> Monitore cada clique individualmente para garantir que o rastreamento est? funcionando perfeitamente.</li>
+    </ul>`,
+  'wa-niches': `
+    <h3>Nichos WhatsApp</h3>
+    <ul>
+      <li>Cadastre os IDs dos grupos de teste e ative apenas os nichos que voce quer avaliar.</li>
+      <li>O grupo principal continua com a configuracao atual; esta aba trabalha com superficies e campanhas por nicho.</li>
+      <li>Use o teste de roteamento antes de permitir envio imediato.</li>
     </ul>`
 };
 
@@ -7013,6 +7043,224 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
+
+function getNicheValue(item, camelName, pascalName, fallback = '') {
+  if (!item) return fallback;
+  const value = item[camelName] ?? item[pascalName];
+  return value === undefined || value === null ? fallback : value;
+}
+
+function normalizeWhatsAppNicheGroup(item) {
+  const slug = String(getNicheValue(item, 'slug', 'Slug')).trim();
+  const campaign = String(getNicheValue(item, 'campaign', 'Campaign', slug ? `niche_${slug}` : '') || '').trim();
+  return {
+    slug,
+    displayName: String(getNicheValue(item, 'displayName', 'DisplayName', slug) || slug),
+    description: String(getNicheValue(item, 'description', 'Description', '') || ''),
+    enabled: Boolean(getNicheValue(item, 'enabled', 'Enabled', false)),
+    instanceName: String(getNicheValue(item, 'instanceName', 'InstanceName', '') || ''),
+    groupId: String(getNicheValue(item, 'groupId', 'GroupId', '') || ''),
+    inviteUrl: String(getNicheValue(item, 'inviteUrl', 'InviteUrl', '') || ''),
+    campaign,
+    dailyLimit: Number(getNicheValue(item, 'dailyLimit', 'DailyLimit', 0)) || 0,
+    sentToday: Number(getNicheValue(item, 'sentToday', 'SentToday', 0)) || 0,
+    lastCreationStatus: String(getNicheValue(item, 'lastCreationStatus', 'LastCreationStatus', '') || ''),
+    lastCreationMessage: String(getNicheValue(item, 'lastCreationMessage', 'LastCreationMessage', '') || '')
+  };
+}
+
+function renderWhatsAppNicheMetrics(groups) {
+  const total = groups.length;
+  const enabled = groups.filter(g => g.enabled).length;
+  const configured = groups.filter(g => g.groupId).length;
+  const pending = groups.filter(g => !g.groupId || !g.enabled).length;
+  setSafeText('waNicheMetricTotal', String(total));
+  setSafeText('waNicheMetricEnabled', String(enabled));
+  setSafeText('waNicheMetricConfigured', String(configured));
+  setSafeText('waNicheMetricPending', String(pending));
+}
+
+function renderWhatsAppNicheGroups(groups) {
+  const container = document.getElementById('waNicheGroupsList');
+  if (!container) return;
+  renderWhatsAppNicheMetrics(groups);
+
+  if (!groups.length) {
+    container.innerHTML = '<div class="muted">Nenhum nicho carregado.</div>';
+    return;
+  }
+
+  container.innerHTML = groups.map(group => {
+    const slug = escapeHtml(group.slug);
+    const status = group.groupId
+      ? (group.enabled ? '<span class="badge ok">ativo</span>' : '<span class="badge muted">configurado</span>')
+      : '<span class="badge warn">sem grupo</span>';
+    const last = group.lastCreationStatus
+      ? `<div class="muted" style="font-size:12px; margin-top:6px;">Ultimo status: ${escapeHtml(group.lastCreationStatus)} ${escapeHtml(group.lastCreationMessage)}</div>`
+      : '';
+
+    return `
+      <div class="card" style="padding:14px;">
+        <div class="row" style="justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+          <div style="min-width:220px;">
+            <div class="row" style="gap:8px; align-items:center; flex-wrap:wrap;">
+              <strong>${escapeHtml(group.displayName)}</strong>
+              <code>${slug}</code>
+              ${status}
+            </div>
+            <div class="muted" style="margin-top:6px;">${escapeHtml(group.description)}</div>
+            ${last}
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; margin:0;">
+            <input id="waNicheEnabled-${slug}" type="checkbox" ${group.enabled ? 'checked' : ''} onchange="saveWhatsAppNicheGroup('${slug}')" />
+            <span>Ativar nicho</span>
+          </label>
+        </div>
+        <div class="grid" style="gap:10px; margin-top:12px;">
+          <div>
+            <label>Instancia</label>
+            <select id="waNicheInstance-${slug}" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+              ${buildWaInstanceOptions(group.instanceName)}
+            </select>
+          </div>
+          <div>
+            <label>ID do grupo</label>
+            <input id="waNicheGroupId-${slug}" class="form-control" value="${escapeHtml(group.groupId)}" placeholder="120363...@g.us" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+          </div>
+          <div>
+            <label>Campanha</label>
+            <input id="waNicheCampaign-${slug}" class="form-control" value="${escapeHtml(group.campaign || `niche_${group.slug}`)}" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+          </div>
+          <div>
+            <label>Limite diario</label>
+            <input id="waNicheDailyLimit-${slug}" type="number" min="0" max="50" class="form-control" value="${escapeHtml(String(group.dailyLimit || 0))}" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+          </div>
+          <div style="grid-column: 1 / -1;">
+            <label>Link oficial de convite</label>
+            <input id="waNicheInviteUrl-${slug}" class="form-control" value="${escapeHtml(group.inviteUrl)}" placeholder="https://chat.whatsapp.com/..." style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+          </div>
+        </div>
+        <div class="row" style="justify-content:space-between; gap:8px; flex-wrap:wrap; margin-top:12px;">
+          <span class="muted">Enviadas hoje: ${escapeHtml(String(group.sentToday))}/${escapeHtml(String(group.dailyLimit || '-'))}</span>
+          <div class="row" style="gap:8px; flex-wrap:wrap;">
+            <button type="button" class="secondary" onclick="copyWhatsAppNicheInvite('${slug}')">Copiar convite</button>
+            <button type="button" onclick="saveWhatsAppNicheGroup('${slug}')">Salvar nicho</button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function loadWhatsAppNicheGroups(force = false) {
+  if (waNicheGroupsCache.length && !force) {
+    renderWhatsAppNicheGroups(waNicheGroupsCache);
+    return waNicheGroupsCache;
+  }
+
+  setSafeText('waNicheStatus', 'Carregando nichos...');
+  try {
+    await loadWaInstances();
+    const response = await api('/api/admin/whatsapp/niche-groups');
+    const rawGroups = Array.isArray(response)
+      ? response
+      : (Array.isArray(response?.groups)
+        ? response.groups
+        : (Array.isArray(response?.items)
+          ? response.items
+          : (Array.isArray(response?.data) ? response.data : [])));
+    waNicheGroupsCache = rawGroups.map(normalizeWhatsAppNicheGroup).filter(g => g.slug);
+    renderWhatsAppNicheGroups(waNicheGroupsCache);
+    setSafeText('waNicheStatus', `${waNicheGroupsCache.length} nichos carregados.`);
+    return waNicheGroupsCache;
+  } catch (err) {
+    console.error('Erro ao carregar nichos WhatsApp', err);
+    setSafeText('waNicheStatus', 'Erro ao carregar nichos: ' + extractApiErrorMessage(err));
+    return [];
+  }
+}
+
+async function saveWhatsAppNicheGroup(slug) {
+  const read = id => (document.getElementById(`${id}-${slug}`)?.value || '').trim();
+  const enabled = Boolean(document.getElementById(`waNicheEnabled-${slug}`)?.checked);
+  const dailyLimitRaw = Number(read('waNicheDailyLimit'));
+  const payload = {
+    enabled,
+    instanceName: read('waNicheInstance') || null,
+    groupId: read('waNicheGroupId') || null,
+    inviteUrl: read('waNicheInviteUrl') || null,
+    campaign: read('waNicheCampaign') || `niche_${slug}`,
+    dailyLimit: Number.isFinite(dailyLimitRaw) && dailyLimitRaw > 0 ? dailyLimitRaw : null
+  };
+
+  setSafeText('waNicheStatus', `Salvando ${slug}...`);
+  try {
+    const response = await api(`/api/admin/whatsapp/niche-groups/${encodeURIComponent(slug)}`, 'PUT', payload);
+    const group = normalizeWhatsAppNicheGroup(response?.group || response?.Group || response);
+    const idx = waNicheGroupsCache.findIndex(x => x.slug === slug);
+    if (idx >= 0) waNicheGroupsCache[idx] = group;
+    renderWhatsAppNicheGroups(waNicheGroupsCache);
+    setSafeText('waNicheStatus', `${slug} salvo.`);
+  } catch (err) {
+    console.error('Erro ao salvar nicho WhatsApp', err);
+    setSafeText('waNicheStatus', 'Erro ao salvar nicho: ' + extractApiErrorMessage(err));
+  }
+}
+
+async function copyWhatsAppNicheInvite(slug) {
+  const invite = (document.getElementById(`waNicheInviteUrl-${slug}`)?.value || '').trim();
+  if (!invite) {
+    setSafeText('waNicheStatus', 'Este nicho ainda nao tem link de convite.');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(invite);
+    setSafeText('waNicheStatus', `Convite de ${slug} copiado.`);
+  } catch {
+    setSafeText('waNicheStatus', `Convite de ${slug}: ${invite}`);
+  }
+}
+
+async function routeWhatsAppNicheTest(forceSend = false) {
+  const sendNow = Boolean(forceSend && document.getElementById('waNicheTestSendNow')?.checked);
+  const price = (document.getElementById('waNicheTestPrice')?.value || '').trim();
+  const payload = {
+    productName: (document.getElementById('waNicheTestProductName')?.value || '').trim() || null,
+    productUrl: (document.getElementById('waNicheTestProductUrl')?.value || '').trim() || null,
+    storeName: (document.getElementById('waNicheTestStore')?.value || '').trim() || null,
+    category: (document.getElementById('waNicheTestCategory')?.value || '').trim() || null,
+    priceText: price || null,
+    campaign: null,
+    sendNow
+  };
+
+  if (!payload.productName && !payload.productUrl) {
+    setSafeText('waNicheRouteStatus', 'Informe nome ou URL da oferta.');
+    return;
+  }
+
+  setSafeText('waNicheRouteStatus', sendNow ? 'Enviando teste...' : 'Classificando...');
+  const resultBox = document.getElementById('waNicheRouteResult');
+  if (resultBox) resultBox.textContent = '';
+  try {
+    const response = await api('/api/admin/offers/route-by-niche', 'POST', payload);
+    const result = response?.result || response?.Result || response;
+    if (resultBox) resultBox.textContent = JSON.stringify(result, null, 2);
+    const slug = result?.slug || result?.Slug || '-';
+    const status = result?.status || result?.Status || 'ok';
+    setSafeText('waNicheRouteStatus', `Roteamento: ${slug} (${status}).`);
+  } catch (err) {
+    console.error('Erro no teste de roteamento por nicho', err);
+    const data = err?.data || err?.Data || {};
+    const result = data.result || data.Result || null;
+    if (resultBox && result) {
+      resultBox.textContent = JSON.stringify(result, null, 2);
+    }
+    const slug = result?.slug || result?.Slug || '-';
+    const status = result?.status || result?.Status || `HTTP ${err?.status || ''}`.trim();
+    const message = extractApiErrorMessage(err, 'Nao foi possivel rotear a oferta.');
+    setSafeText('waNicheRouteStatus', `Roteamento: ${slug} (${status}) - ${message}`);
+  }
+}
 
 // WhatsApp Monitoring
 function buildGroupOptions(groups, placeholder = 'Selecione o grupo...') {

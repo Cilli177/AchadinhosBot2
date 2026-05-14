@@ -144,6 +144,37 @@ public sealed class EvolutionWhatsAppGatewayTests
             body.Contains("\"fileName\":\"oferta.jpg\"", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task CreateGroupAsync_PostsSubjectAndParticipants()
+    {
+        var handler = new RecordingEvolutionHandler((request, body) =>
+        {
+            if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/group/create/ZapOfertas")
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                return root.GetProperty("subject").GetString() == "Rei das Ofertas - Tech"
+                       && root.GetProperty("participants").EnumerateArray().Any(x => x.GetString() == "5511999999999@s.whatsapp.net")
+                    ? OkJson("""{"id":"120363123456789@g.us","inviteUrl":"https://chat.whatsapp.com/abc123"}""")
+                    : BadJson("{}");
+            }
+
+            return BadJson("{}");
+        });
+        var gateway = CreateGateway(handler);
+
+        var result = await gateway.CreateGroupAsync(
+            "ZapOfertas",
+            "Rei das Ofertas - Tech",
+            "Grupo de tech",
+            ["5511999999999@s.whatsapp.net"],
+            CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal("120363123456789@g.us", result.GroupId);
+        Assert.Equal("https://chat.whatsapp.com/abc123", result.InviteUrl);
+    }
+
     private static EvolutionWhatsAppGateway CreateGateway(HttpMessageHandler handler)
     {
         return new EvolutionWhatsAppGateway(

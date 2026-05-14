@@ -652,8 +652,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             {
                 if (isSocialUrl)
                 {
-                    _logger.LogInformation("Mercado Livre: Vitrine detectada (sem MLB-ID). Prosseguindo com afiliação da URL social. Resolved={ResolvedUrl}", resolvedUrl);
-                    return BuildMercadoLivreAffiliateUrl(null, resolvedUrl);
+                    _logger.LogInformation("Mercado Livre: URL social/vitrine sem MLB-ID confiavel. Conversao abortada para evitar destino social sem produto. Resolved={ResolvedUrl}", resolvedUrl);
+                    return null;
                 }
 
                 if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
@@ -931,10 +931,12 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         var query = ParseQuery(uri.Query);
-        var hasTool = query.TryGetValue("matt_tool", out var tool) && !string.IsNullOrWhiteSpace(tool);
-        var hasWord = query.TryGetValue("matt_word", out var word) && !string.IsNullOrWhiteSpace(word);
+        var hasOfficialTool = query.TryGetValue("matt_tool", out var tool)
+                              && string.Equals(tool, MercadoLivreMattTool, StringComparison.OrdinalIgnoreCase);
+        var hasOfficialWord = query.TryGetValue("matt_word", out var word)
+                              && string.Equals(word, MercadoLivreMattWord, StringComparison.OrdinalIgnoreCase);
 
-        if (hasTool && hasWord)
+        if (hasOfficialTool && hasOfficialWord)
         {
             return new AffiliateCorrectionResult(url, false, null);
         }
@@ -951,7 +953,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         query["matt_word"] = fixedWord;
         var encodedQuery = string.Join("&", query.Select(p => $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value)}"));
         var fixedUri = new UriBuilder(uri) { Query = encodedQuery }.Uri.ToString();
-        var note = $"Mercado Livre corrigido (matt_tool/matt_word preenchidos)";
+        var note = $"Mercado Livre corrigido (matt_tool/matt_word oficiais aplicados)";
         _logger.LogWarning("Mercado Livre sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", originalUrl, fixedUri);
         return new AffiliateCorrectionResult(fixedUri, true, note);
     }
@@ -1953,16 +1955,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     {
         try
         {
-            using var handler = new HttpClientHandler
-            {
-                AllowAutoRedirect = false,
-                UseCookies = true,
-                CookieContainer = new CookieContainer()
-            };
-            using var client = new HttpClient(handler)
-            {
-                Timeout = TimeSpan.FromSeconds(20)
-            };
+            var client = _httpClientFactory.CreateClient("default");
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
             client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
             client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
@@ -2276,7 +2269,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private static string? ExtractMercadoLivreIdFromJson(string html)
     {
-        var match = Regex.Match(html, "\"(permalink|canonical)\"\\s*:\\s*\"(https?:\\\\/\\\\/[^\\\"]+)\"", RegexOptions.IgnoreCase);
+        var match = Regex.Match(html, "\"(permalink|canonical|url)\"\\s*:\\s*\"(https?:\\\\/\\\\/[^\\\"]*mercadolivre[^\\\"]*(?:MLB-?\\d+|/p/MLB\\d+)[^\\\"]*)\"", RegexOptions.IgnoreCase);
         if (match.Success)
         {
             var url = match.Groups[2].Value.Replace("\\/", "/");
@@ -2294,7 +2287,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private static string? ExtractMercadoLivreIdFromProductLink(string html)
     {
-        var match = Regex.Match(html, @"produto\.mercadolivre\.com\.br\/(MLB-?\d+)", RegexOptions.IgnoreCase);
+        var match = Regex.Match(html, @"(?:produto\.mercadolivre\.com\.br\/|mercadolivre\.com\.br\/p\/)(MLB-?\d+)", RegexOptions.IgnoreCase);
         if (!match.Success) return null;
         var id = match.Groups[1].Value.ToUpperInvariant();
         if (id.Contains("-")) id = id.Replace("-", "");
@@ -2834,7 +2827,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 : (false, IsAmazonPartnerTagValid(amazonExpectedTag)
                     ? $"Tag Amazon inválida (esperado: {amazonExpectedTag})"
                     : "PartnerTag Amazon nao configurada"),
-            "Mercado Livre" => (IsMercadoLivreProductUri(uri) || IsMercadoLivreSocialOrShortUri(uri))
+            "Mercado Livre" => IsMercadoLivreProductUri(uri)
                                 && query.TryGetValue("matt_tool", out var tool)
                                 && query.TryGetValue("matt_word", out var word)
                                 && string.Equals(tool, MercadoLivreMattTool, StringComparison.OrdinalIgnoreCase)

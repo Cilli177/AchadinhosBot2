@@ -35,6 +35,7 @@
           <button data-tab="wa-monitoring" onclick="showSection('wa-monitoring')">Monitoramento WhatsApp</button>
           <button data-tab="wa-automation" onclick="showSection('wa-automation')">Automação WhatsApp</button>
           <button data-tab="wa-outreach" onclick="showSection('wa-outreach')">Disparo para participantes</button>
+          <button data-tab="wa-niches" onclick="showSection('wa-niches')">Nichos WhatsApp</button>
         </div>
         <div class="nav-group">
           <div class="nav-label">Automação</div>
@@ -3114,12 +3115,93 @@
               </section>
             </section>
           </div>
+          <div id="section-wa-niches" class="hidden">
+            <section class="card" style="margin-top:16px;">
+              <div class="row" style="justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+                <div>
+                  <h2 style="margin-bottom:6px;">Nichos WhatsApp</h2>
+                  <p class="muted" style="margin:0;">Cadastre os grupos de teste por nicho e ative o roteamento sem alterar o grupo principal REI DAS OFERTAS VIP.</p>
+                </div>
+                <div class="row" style="gap:8px; flex-wrap:wrap;">
+                  <button class="secondary" onclick="loadWhatsAppNicheGroups(true)">Atualizar</button>
+                </div>
+              </div>
+              <div class="grid" style="margin-top:14px; gap:10px;">
+                <div class="card" style="padding:12px;">
+                  <div class="muted" style="font-size:12px;">Nichos</div>
+                  <strong id="waNicheMetricTotal" style="font-size:24px;">-</strong>
+                </div>
+                <div class="card" style="padding:12px;">
+                  <div class="muted" style="font-size:12px;">Ativos</div>
+                  <strong id="waNicheMetricEnabled" style="font-size:24px;">-</strong>
+                </div>
+                <div class="card" style="padding:12px;">
+                  <div class="muted" style="font-size:12px;">Com grupo</div>
+                  <strong id="waNicheMetricConfigured" style="font-size:24px;">-</strong>
+                </div>
+                <div class="card" style="padding:12px;">
+                  <div class="muted" style="font-size:12px;">Pendentes</div>
+                  <strong id="waNicheMetricPending" style="font-size:24px;">-</strong>
+                </div>
+              </div>
+              <p id="waNicheStatus" class="status muted" style="margin-top:12px;">Carregue a lista para comecar.</p>
+              <div id="waNicheGroupsList" style="display:grid; gap:12px; margin-top:12px;">
+                <div class="muted">Nenhum nicho carregado.</div>
+              </div>
+            </section>
+
+            <section class="card" style="margin-top:16px;">
+              <h3 style="margin-top:0;">Teste de roteamento</h3>
+              <p class="muted">Use uma oferta de teste para ver em qual nicho ela cai. Envio imediato so acontece se o nicho estiver ativo e com grupo configurado.</p>
+              <div class="grid" style="gap:12px;">
+                <div style="grid-column: 1 / -1;">
+                  <label>Nome do produto</label>
+                  <input id="waNicheTestProductName" class="form-control" placeholder="Ex: Fone bluetooth Lenovo, kit organizador de cozinha..." style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Loja</label>
+                  <input id="waNicheTestStore" class="form-control" placeholder="Mercado Livre, Shopee..." style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div>
+                  <label>Categoria ou nicho sugerido</label>
+                  <select id="waNicheTestCategory" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;">
+                    <option value="">Classificar automaticamente</option>
+                    <option value="mercado_livre">mercado_livre</option>
+                    <option value="casa">casa</option>
+                    <option value="beleza">beleza</option>
+                    <option value="moda">moda</option>
+                    <option value="tech">tech</option>
+                    <option value="ate_50">ate_50</option>
+                    <option value="geral">geral</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Preco promocional</label>
+                  <input id="waNicheTestPrice" type="number" step="0.01" min="0" class="form-control" placeholder="49.90" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label>URL da oferta</label>
+                  <input id="waNicheTestProductUrl" class="form-control" placeholder="https://..." style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                </div>
+              </div>
+              <div class="row" style="gap:10px; flex-wrap:wrap; align-items:center; margin-top:12px;">
+                <button class="secondary" onclick="routeWhatsAppNicheTest(false)">Classificar</button>
+                <label style="display:flex; align-items:center; gap:8px; margin:0;">
+                  <input id="waNicheTestSendNow" type="checkbox" />
+                  Enviar oferta de teste para o grupo do nicho
+                </label>
+                <button onclick="routeWhatsAppNicheTest(true)">Executar teste</button>
+                <span id="waNicheRouteStatus" class="status muted"></span>
+              </div>
+              <pre id="waNicheRouteResult" class="muted" style="margin-top:12px; white-space:pre-wrap; overflow:auto; max-height:220px;"></pre>
+            </section>
+          </div>
         </section>
       </div>
     </main>
   </div>
   <script src="/flow-endpoints-map.js?v=20260422-flow-map"></script>
-  <script src="/dashboard.js?v=20260402-analytics-product-modal"></script>
+  <script src="/dashboard.js?v=20260513-wa-niches"></script>
   <div id="toastContainer"></div>
   <div id="docModal" class="modal">
     <div class="modal-content">
