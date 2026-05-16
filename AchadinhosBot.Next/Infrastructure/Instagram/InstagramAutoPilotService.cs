@@ -4,9 +4,11 @@ using System.Text.RegularExpressions;
 using System.Net;
 using System.Net.Http.Headers;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.ProductData;
@@ -79,7 +81,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     {
         var result = new InstagramAutoPilotRunResult();
         request ??= new InstagramAutoPilotRunRequest();
-        var normalizedPostType = NormalizeAutoPilotPostType(request.PostType);
+        var normalizedPostType = InstagramCommandParser.NormalizeInstagramPostTypeValue(request.PostType);
         var storyMode = string.Equals(normalizedPostType, "story", StringComparison.OrdinalIgnoreCase);
         result.PostType = normalizedPostType;
 
@@ -215,7 +217,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
             result.ApprovalChannel = approvalChannel;
             if (!dryRun && sendForApproval && result.DraftsCreated > 0)
             {
-                var (sent, target) = await SendApprovalAsync(
+                var approvalResult = await SendApprovalAsync(
                     result.Selected.Where(x => !string.IsNullOrWhiteSpace(x.DraftId)).ToList(),
                     request,
                     settings,
@@ -224,8 +226,8 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                     storyMode,
                     normalizedPostType,
                     cancellationToken);
-                result.ApprovalSent = sent;
-                result.ApprovalTarget = target;
+                result.ApprovalSent = approvalResult.Sent;
+                result.ApprovalTarget = approvalResult.Target;
             }
 
             result.Success = true;
@@ -542,8 +544,17 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
                 CaptionOptions = captions,
                 SelectedCaptionIndex = 1,
                 Hashtags = hashtags,
+                OriginalOfferUrl = candidate.Url,
+                OfferUrl = candidate.Url,
                 ImageUrls = images,
                 Ctas = ctas,
+                AutoReplyEnabled = true,
+                AutoReplyLink = candidate.Url,
+                SendToCatalog = string.Equals(postType, "reel", StringComparison.OrdinalIgnoreCase),
+                CatalogTarget = string.Equals(postType, "reel", StringComparison.OrdinalIgnoreCase)
+                    ? CatalogTargets.Prod
+                    : CatalogTargets.None,
+                CatalogIntentLocked = string.Equals(postType, "reel", StringComparison.OrdinalIgnoreCase),
                 Status = "draft"
             };
 
@@ -633,7 +644,7 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
         if (chatId == 0) return;
 
         var sb = new StringBuilder();
-        sb.AppendLine($"🚀 **{draft.PostType.ToUpper()} AUTOPILOT**");
+        sb.AppendLine($"🚀 **{draft.PostType.ToUpperInvariant()} AUTOPILOT**");
         sb.AppendLine($"Produto: {draft.ProductName}");
         sb.AppendLine($"Draft ID: `{draft.Id}`");
         sb.AppendLine();
@@ -668,7 +679,11 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
     private static string BuildApprovalMessage(IReadOnlyList<InstagramAutoPilotSelectionItem> selected, string postType)
     {
         var sb = new StringBuilder();
-        var label = string.Equals(postType, "story", StringComparison.OrdinalIgnoreCase) ? "STORY" : "FEED";
+        var label = string.Equals(postType, "story", StringComparison.OrdinalIgnoreCase)
+            ? "STORY"
+            : string.Equals(postType, "reel", StringComparison.OrdinalIgnoreCase)
+                ? "REEL"
+                : "FEED";
         sb.AppendLine($"AUTOPILOT INSTAGRAM {label}");
         sb.AppendLine("Rascunhos criados para aprovacao:");
         sb.AppendLine();
@@ -921,17 +936,6 @@ public sealed class InstagramAutoPilotService : IInstagramAutoPilotService
 
         var safeStore = string.IsNullOrWhiteSpace(store) ? "loja parceira" : store.Trim();
         return $"{safeProduct} em destaque na {safeStore}.\nComente \"{keyword}\" para receber o link.";
-    }
-
-    private static string NormalizeAutoPilotPostType(string? input)
-    {
-        var normalized = (input ?? string.Empty).Trim().ToLowerInvariant();
-        return normalized switch
-        {
-            "story" => "story",
-            "stories" => "story",
-            _ => "feed"
-        };
     }
 
     private static string ResolveRankingUrl(ConversionLogEntry entry)

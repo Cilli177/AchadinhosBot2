@@ -1,30 +1,36 @@
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
+using AchadinhosBot.Next.Infrastructure.Monitoring;
 using Microsoft.Extensions.Options;
 
 namespace AchadinhosBot.Next.Infrastructure.Resilience;
 
 public sealed class BotConversorOutboxReplayWorker : BackgroundService
 {
+    private const string WorkerName = nameof(BotConversorOutboxReplayWorker);
     private readonly IBotConversorOutboxStore _outboxStore;
     private readonly IBotConversorQueuePublisher _publisher;
     private readonly MessagingOptions _options;
     private readonly ILogger<BotConversorOutboxReplayWorker> _logger;
+    private readonly WorkerActivityTracker _workerActivityTracker;
 
     public BotConversorOutboxReplayWorker(
         IBotConversorOutboxStore outboxStore,
         IBotConversorQueuePublisher publisher,
         IOptions<MessagingOptions> options,
-        ILogger<BotConversorOutboxReplayWorker> logger)
+        ILogger<BotConversorOutboxReplayWorker> logger,
+        WorkerActivityTracker workerActivityTracker)
     {
         _outboxStore = outboxStore;
         _publisher = publisher;
         _options = options.Value;
         _logger = logger;
+        _workerActivityTracker = workerActivityTracker;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _workerActivityTracker.MarkStarted(WorkerName);
         await FlushPendingAsync(stoppingToken);
 
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(5, _options.OutboxReplayIntervalSeconds)));
@@ -46,6 +52,7 @@ public sealed class BotConversorOutboxReplayWorker : BackgroundService
         var pending = await _outboxStore.ListPendingAsync(cancellationToken);
         if (pending.Count == 0)
         {
+            _workerActivityTracker.MarkSuccess(WorkerName);
             return;
         }
 
@@ -59,6 +66,7 @@ public sealed class BotConversorOutboxReplayWorker : BackgroundService
             }
             catch (Exception ex)
             {
+                _workerActivityTracker.MarkFailure(WorkerName, ex);
                 _logger.LogWarning(
                     ex,
                     "Falha ao reenfileirar mensagem {MessageId} do outbox local. Nova tentativa ocorrera depois.",
@@ -66,5 +74,7 @@ public sealed class BotConversorOutboxReplayWorker : BackgroundService
                 break;
             }
         }
+
+        _workerActivityTracker.MarkSuccess(WorkerName);
     }
 }

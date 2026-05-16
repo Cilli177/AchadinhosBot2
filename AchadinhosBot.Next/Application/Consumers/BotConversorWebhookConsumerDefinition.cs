@@ -7,7 +7,7 @@ public sealed class BotConversorWebhookConsumerDefinition : ConsumerDefinition<B
     public BotConversorWebhookConsumerDefinition()
     {
         EndpointName = "bot-conversor-webhook";
-        ConcurrentMessageLimit = 1;
+        ConcurrentMessageLimit = 4;
     }
 
     protected override void ConfigureConsumer(
@@ -15,8 +15,8 @@ public sealed class BotConversorWebhookConsumerDefinition : ConsumerDefinition<B
         IConsumerConfigurator<BotConversorWebhookConsumer> consumerConfigurator,
         IRegistrationContext context)
     {
-        endpointConfigurator.PrefetchCount = 1;
-        endpointConfigurator.ConcurrentMessageLimit = 1;
+        endpointConfigurator.PrefetchCount = 8;
+        endpointConfigurator.ConcurrentMessageLimit = 4;
         endpointConfigurator.UseMessageRetry(retry => retry.Interval(3, TimeSpan.FromSeconds(10)));
     }
 }

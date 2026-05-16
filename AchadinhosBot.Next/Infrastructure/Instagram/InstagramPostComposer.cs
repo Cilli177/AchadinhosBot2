@@ -91,15 +91,17 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
         {
             var openAi = allSettings.OpenAI ?? new OpenAISettings();
             var gemini = allSettings.Gemini ?? new GeminiSettings();
+            var gemma4 = GeminiInstagramPostGenerator.WithGeminiKeyFallback(allSettings.Gemma4, allSettings.Gemini);
             var deepSeek = allSettings.DeepSeek ?? new DeepSeekSettings();
             var nemotron = allSettings.Nemotron ?? new NemotronSettings();
             var qwen = allSettings.Qwen ?? new QwenSettings();
             var vila = allSettings.VilaNvidia ?? new VilaNvidiaSettings();
 
-            var provider = string.IsNullOrWhiteSpace(settings.AiProvider) ? "nemotron" : settings.AiProvider.Trim().ToLowerInvariant();
+            var provider = string.IsNullOrWhiteSpace(settings.AiProvider) ? "gemini" : settings.AiProvider.Trim().ToLowerInvariant();
             var results = new List<string>();
             var openAiResult = string.Empty;
             var geminiResult = string.Empty;
+            var gemma4Result = string.Empty;
             var deepSeekResult = string.Empty;
             var nemotronResult = string.Empty;
             var qwenResult = string.Empty;
@@ -159,6 +161,15 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                 }
             }
 
+            if (provider is "gemma4")
+            {
+                gemma4Result = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemma4, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(gemma4Result))
+                {
+                    results.Add(gemma4Result);
+                }
+            }
+
             if (provider is "all")
             {
                 openAiResult = (await _openAiGenerator.GenerateAsync(input, offerContext, link, settings, openAi, cancellationToken))?.Trim() ?? string.Empty;
@@ -171,6 +182,12 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                 if (!string.IsNullOrWhiteSpace(geminiResult))
                 {
                     results.Add($"=== GEMINI ===\n{geminiResult}");
+                }
+
+                gemma4Result = (await _geminiGenerator.GenerateAsync(input, offerContext, link, settings, gemma4, cancellationToken))?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(gemma4Result))
+                {
+                    results.Add($"=== GEMMA4 ===\n{gemma4Result}");
                 }
 
                 vilaResult = (await _vilaGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { input, offerContext, link }.Where(x => !string.IsNullOrWhiteSpace(x))), vila, cancellationToken))?.Trim() ?? string.Empty;
@@ -276,6 +293,15 @@ public sealed class InstagramPostComposer : IInstagramPostComposer
                     if (!string.IsNullOrWhiteSpace(qwenResult))
                     {
                         results.Add(qwenResult);
+                    }
+                }
+
+                if (results.Count == 0 && provider != "vila")
+                {
+                    vilaResult = (await _vilaGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { input, offerContext, link }.Where(x => !string.IsNullOrWhiteSpace(x))), vila, cancellationToken))?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(vilaResult))
+                    {
+                        results.Add(vilaResult);
                     }
                 }
             }

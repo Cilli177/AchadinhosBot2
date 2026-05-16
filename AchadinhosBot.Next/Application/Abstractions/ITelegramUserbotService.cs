@@ -4,8 +4,14 @@ public interface ITelegramUserbotService
 {
     Task<IReadOnlyList<TelegramUserbotChat>> GetDialogsAsync(CancellationToken cancellationToken);
     Task<bool> RefreshDialogsAsync(CancellationToken cancellationToken);
-    Task<IReadOnlyList<TelegramUserbotOfferMessage>> ListRecentOffersAsync(IReadOnlyCollection<long> sourceChatIds, int perChatLimit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<TelegramUserbotOfferMessage>> ListRecentOffersAsync(
+        IReadOnlyCollection<long> sourceChatIds,
+        int perChatLimit,
+        CancellationToken cancellationToken,
+        bool includeMedia = true,
+        string? mediaMessageId = null);
     Task<TelegramUserbotReplayResult> ReplayRecentOffersToWhatsAppAsync(long sourceChatId, int count, bool allowOfficialDestination, CancellationToken cancellationToken);
+    Task<TelegramUserbotReelDraftResult> CreateLatestReelDraftAsync(TelegramUserbotCreateReelDraftRequest request, CancellationToken cancellationToken);
     Task<TelegramUserbotAuthUpdateResult> UpdateRuntimeAuthAsync(TelegramUserbotAuthUpdateRequest request, CancellationToken cancellationToken);
     bool IsReady { get; }
 }
@@ -33,6 +39,33 @@ public sealed record TelegramUserbotAuthUpdateRequest(
     string? VerificationCode,
     string? Password,
     bool ForceReconnect);
+
+public sealed record TelegramUserbotCreateReelDraftRequest(
+    long? SourceChatId,
+    string? SourceMessageId = null,
+    int Limit = 25,
+    bool? SendForApproval = null,
+    string? ApprovalChannel = null,
+    string? ApprovalWhatsAppGroupId = null,
+    string? ApprovalWhatsAppInstanceName = null);
+
+public sealed record TelegramUserbotReelDraftResult(
+    bool Success,
+    string Message,
+    long? SourceChatId,
+    string? SourceChatTitle,
+    string? SourceMessageId,
+    string? MediaKind,
+    string? MediaUrl,
+    string? OfferUrl,
+    string? ProductName,
+    string? DraftId,
+    string? EditorUrl,
+    string? InstagramCaption,
+    string? AutoReplyMessage,
+    string? SourceDataOrigin,
+    string? ProductImageUrl,
+    string? PreviewMessage);
 
 public sealed record TelegramUserbotAuthUpdateResult(
     bool Success,

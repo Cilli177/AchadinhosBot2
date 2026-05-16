@@ -90,17 +90,22 @@ function Ensure-DnsRoute {
         [string]$HostnameValue
     )
 
-    $routeOutput = & $CloudflaredPath --loglevel error tunnel route dns $Name $HostnameValue 2>&1
+    $routeOutput = ""
+    try {
+        $routeOutput = (& $CloudflaredPath --loglevel error tunnel route dns $Name $HostnameValue 2>&1) | Out-String
+    } catch {
+        $routeOutput = $_.Exception.Message + ($_.ToString())
+    }
+
     if ($LASTEXITCODE -eq 0) {
         return
     }
 
-    $text = ($routeOutput | Out-String)
-    if ($text -match "already exists|CNAME .* already exists|code: 1003") {
+    if ($routeOutput -match "already exists|CNAME .* already exists|code: 1003|An A, AAAA, or CNAME record with that host already exists") {
         return
     }
 
-    throw "Falha ao configurar rota DNS para '$HostnameValue'."
+    throw "Falha ao configurar rota DNS para '$HostnameValue'. Saida: $routeOutput"
 }
 
 function Write-TunnelConfig {

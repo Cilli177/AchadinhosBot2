@@ -13,17 +13,20 @@ public sealed class WebhookServerService : BackgroundService
 {
     private readonly IMessageProcessor _messageProcessor;
     private readonly ISettingsStore _settingsStore;
+    private readonly ISettingsVersionStore _settingsVersionStore;
     private readonly WebhookOptions _options;
     private readonly ILogger<WebhookServerService> _logger;
 
     public WebhookServerService(
         IMessageProcessor messageProcessor,
         ISettingsStore settingsStore,
+        ISettingsVersionStore settingsVersionStore,
         IOptions<WebhookOptions> options,
         ILogger<WebhookServerService> logger)
     {
         _messageProcessor = messageProcessor;
         _settingsStore = settingsStore;
+        _settingsVersionStore = settingsVersionStore;
         _options = options.Value;
         _logger = logger;
     }
@@ -100,6 +103,41 @@ public sealed class WebhookServerService : BackgroundService
                 var settings = await _settingsStore.GetAsync(ct);
                 MaskProviderKeys(settings);
                 await WriteJsonAsync(context.Response, settings, ct);
+                return;
+            }
+
+            if (path == "/api/settings/versions" && method == HttpMethod.Get.Method)
+            {
+                var versions = await _settingsVersionStore.ListVersionsAsync(ct);
+                await WriteJsonAsync(context.Response, new { success = true, versions }, ct);
+                return;
+            }
+
+            if (path == "/api/settings/restore" && method == HttpMethod.Post.Method)
+            {
+                var payload = await ReadJsonAsync<RestoreSettingsRequest>(context.Request, ct);
+                if (payload is null || string.IsNullOrWhiteSpace(payload.VersionFileName))
+                {
+                    context.Response.StatusCode = 400;
+                    await WriteJsonAsync(context.Response, new { success = false, error = "versionFileName invalido" }, ct);
+                    return;
+                }
+
+                var restored = await _settingsVersionStore.RestoreAsync(payload.VersionFileName, ct);
+                if (restored is null)
+                {
+                    context.Response.StatusCode = 404;
+                    await WriteJsonAsync(context.Response, new { success = false, error = "snapshot nao encontrado" }, ct);
+                    return;
+                }
+
+                MaskProviderKeys(restored);
+                await WriteJsonAsync(context.Response, new
+                {
+                    success = true,
+                    restored = payload.VersionFileName,
+                    settings = restored
+                }, ct);
                 return;
             }
 
@@ -331,4 +369,5 @@ public sealed class WebhookServerService : BackgroundService
 
     private sealed record ConvertRequest(string Text, string? Source);
     private sealed record LoginRequest(string? Identifier);
+    private sealed record RestoreSettingsRequest(string VersionFileName);
 }

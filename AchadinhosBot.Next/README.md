@@ -81,7 +81,7 @@ curl http://localhost:8081/health
 
 ## Usuários de desenvolvimento
 `appsettings.Development.json` contém:
-- `admin / admin123`
+- defina `ADMIN_USERNAME` e `ADMIN_PASSWORD` por ambiente
 - `operator / operator123`
 
 ## Endpoints

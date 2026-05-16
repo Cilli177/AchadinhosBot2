@@ -20,7 +20,9 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     private readonly ILogger<AffiliateLinkService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private static readonly TimeSpan ExpandCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ConversionCacheTtl = TimeSpan.FromMinutes(20);
     private static readonly ConcurrentDictionary<string, ExpandCacheEntry> ExpandCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, ConversionCacheEntry> ConversionCache = new(StringComparer.OrdinalIgnoreCase);
 
     public AffiliateLinkService(
         IOptions<AffiliateOptions> options,
@@ -38,18 +40,60 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<AffiliateLinkResult> ConvertAsync(string rawUrl, CancellationToken cancellationToken, string? source = null)
+    public async Task<AffiliateLinkResult> ConvertAsync(string rawUrl, CancellationToken cancellationToken, string? source = null, bool forceResolution = false)
     {
+        if (TryGetCachedConversion(rawUrl, source, out var cached))
+        {
+            return cached;
+        }
+
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri))
         {
             return new AffiliateLinkResult(false, null, "Unknown", false, null, "URL inválida", false, null);
         }
 
         var host = NormalizeHost(uri.Host);
-        return await ConvertWithExpansionAsync(uri, host, cancellationToken, source);
+        var result = await ConvertWithExpansionAsync(uri, host, cancellationToken, source, forceResolution);
+        CacheConversion(rawUrl, source, result);
+        return result;
     }
 
-    private async Task<AffiliateLinkResult> ConvertWithExpansionAsync(Uri uri, string host, CancellationToken cancellationToken, string? source)
+    private static bool TryGetCachedConversion(string rawUrl, string? source, out AffiliateLinkResult result)
+    {
+        result = default!;
+        var cacheKey = BuildConversionCacheKey(rawUrl, source);
+        if (!ConversionCache.TryGetValue(cacheKey, out var entry))
+        {
+            return false;
+        }
+
+        if (entry.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+        {
+            ConversionCache.TryRemove(cacheKey, out _);
+            return false;
+        }
+
+        result = entry.Result;
+        return true;
+    }
+
+    private static void CacheConversion(string rawUrl, string? source, AffiliateLinkResult result)
+    {
+        if (string.IsNullOrWhiteSpace(rawUrl) || !result.Success)
+        {
+            return;
+        }
+
+        var cacheKey = BuildConversionCacheKey(rawUrl, source);
+        ConversionCache[cacheKey] = new ConversionCacheEntry(result, DateTimeOffset.UtcNow.Add(ConversionCacheTtl));
+    }
+
+    private static string BuildConversionCacheKey(string rawUrl, string? source)
+    {
+        return $"{rawUrl.Trim()}|{source?.Trim()?.ToLowerInvariant() ?? "default"}";
+    }
+
+    private async Task<AffiliateLinkResult> ConvertWithExpansionAsync(Uri uri, string host, CancellationToken cancellationToken, string? source, bool forceResolution)
     {
         var converted = await ConvertInternalAsync(uri, host, cancellationToken, source);
         if (converted.Success)
@@ -58,6 +102,18 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         var expanded = await ExpandUrlAsync(uri, cancellationToken);
+        if ((expanded is null
+             || (NormalizeHost(expanded.Host) == host
+                 && string.Equals(expanded.AbsoluteUri, uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)))
+            && (forceResolution || IsShortLink(uri.ToString())))
+        {
+            var browserResolved = await ResolveFinalUriLikeBrowserAsync(uri, cancellationToken);
+            if (browserResolved is not null)
+            {
+                expanded = browserResolved;
+            }
+        }
+
         if (expanded is null)
         {
             return converted.Error is not null
@@ -74,6 +130,36 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         return await ConvertInternalAsync(expanded, expandedHost, cancellationToken, source);
+    }
+
+    private static async Task<Uri?> ResolveFinalUriLikeBrowserAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = true,
+                UseCookies = true,
+                CookieContainer = new CookieContainer()
+            };
+
+            using var client = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(20)
+            };
+
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            return response.RequestMessage?.RequestUri;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<AffiliateLinkResult> ConvertInternalAsync(Uri uri, string host, CancellationToken cancellationToken, string? source)
@@ -566,8 +652,8 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             {
                 if (isSocialUrl)
                 {
-                    _logger.LogInformation("Mercado Livre: Vitrine detectada (sem MLB-ID). Prosseguindo com afiliação da URL social. Resolved={ResolvedUrl}", resolvedUrl);
-                    return BuildMercadoLivreAffiliateUrl(null, resolvedUrl);
+                    _logger.LogInformation("Mercado Livre: URL social/vitrine sem MLB-ID confiavel. Conversao abortada para evitar destino social sem produto. Resolved={ResolvedUrl}", resolvedUrl);
+                    return null;
                 }
 
                 if (startedFromMercadoLivreShortOrSocial || IsMercadoLivreSocialOrShortUri(resolvedUri))
@@ -845,10 +931,12 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         }
 
         var query = ParseQuery(uri.Query);
-        var hasTool = query.TryGetValue("matt_tool", out var tool) && !string.IsNullOrWhiteSpace(tool);
-        var hasWord = query.TryGetValue("matt_word", out var word) && !string.IsNullOrWhiteSpace(word);
+        var hasOfficialTool = query.TryGetValue("matt_tool", out var tool)
+                              && string.Equals(tool, MercadoLivreMattTool, StringComparison.OrdinalIgnoreCase);
+        var hasOfficialWord = query.TryGetValue("matt_word", out var word)
+                              && string.Equals(word, MercadoLivreMattWord, StringComparison.OrdinalIgnoreCase);
 
-        if (hasTool && hasWord)
+        if (hasOfficialTool && hasOfficialWord)
         {
             return new AffiliateCorrectionResult(url, false, null);
         }
@@ -865,7 +953,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
         query["matt_word"] = fixedWord;
         var encodedQuery = string.Join("&", query.Select(p => $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value)}"));
         var fixedUri = new UriBuilder(uri) { Query = encodedQuery }.Uri.ToString();
-        var note = $"Mercado Livre corrigido (matt_tool/matt_word preenchidos)";
+        var note = $"Mercado Livre corrigido (matt_tool/matt_word oficiais aplicados)";
         _logger.LogWarning("Mercado Livre sem afiliado detectado e corrigido. Original={OriginalUrl} Corrigido={FixedUrl}", originalUrl, fixedUri);
         return new AffiliateCorrectionResult(fixedUri, true, note);
     }
@@ -1240,30 +1328,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             return url;
         }
 
-        try
-        {
-            var client = _httpClientFactory.CreateClient("default");
-            var shortener = $"https://tinyurl.com/api-create.php?url={Uri.EscapeDataString(url)}";
-            var res = await client.GetAsync(shortener, cancellationToken);
-            if (!res.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("TinyURL falhou: {Status}", res.StatusCode);
-                return url;
-            }
-
-            var body = await res.Content.ReadAsStringAsync(cancellationToken);
-            if (Uri.TryCreate(body.Trim(), UriKind.Absolute, out _))
-            {
-                return body.Trim();
-            }
-
-            return url;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Erro ao encurtar URL");
-            return url;
-        }
+        // Keep canonical affiliate URL. Tracking/shortening to first-party domain
+        // is applied later by message pipelines (e.g. /r/{id}).
+        await Task.CompletedTask;
+        return url;
     }
 
     private static string ApplyQuery(string url, Dictionary<string, string> pairs)
@@ -1887,16 +1955,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
     {
         try
         {
-            using var handler = new HttpClientHandler
-            {
-                AllowAutoRedirect = false,
-                UseCookies = true,
-                CookieContainer = new CookieContainer()
-            };
-            using var client = new HttpClient(handler)
-            {
-                Timeout = TimeSpan.FromSeconds(20)
-            };
+            var client = _httpClientFactory.CreateClient("default");
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
             client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
             client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
@@ -2210,7 +2269,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private static string? ExtractMercadoLivreIdFromJson(string html)
     {
-        var match = Regex.Match(html, "\"(permalink|canonical)\"\\s*:\\s*\"(https?:\\\\/\\\\/[^\\\"]+)\"", RegexOptions.IgnoreCase);
+        var match = Regex.Match(html, "\"(permalink|canonical|url)\"\\s*:\\s*\"(https?:\\\\/\\\\/[^\\\"]*mercadolivre[^\\\"]*(?:MLB-?\\d+|/p/MLB\\d+)[^\\\"]*)\"", RegexOptions.IgnoreCase);
         if (match.Success)
         {
             var url = match.Groups[2].Value.Replace("\\/", "/");
@@ -2228,7 +2287,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private static string? ExtractMercadoLivreIdFromProductLink(string html)
     {
-        var match = Regex.Match(html, @"produto\.mercadolivre\.com\.br\/(MLB-?\d+)", RegexOptions.IgnoreCase);
+        var match = Regex.Match(html, @"(?:produto\.mercadolivre\.com\.br\/|mercadolivre\.com\.br\/p\/)(MLB-?\d+)", RegexOptions.IgnoreCase);
         if (!match.Success) return null;
         var id = match.Groups[1].Value.ToUpperInvariant();
         if (id.Contains("-")) id = id.Replace("-", "");
@@ -2332,7 +2391,17 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                || url.Contains("mercadolivre.com.br/sec", StringComparison.OrdinalIgnoreCase)
                || url.Contains("meli.co", StringComparison.OrdinalIgnoreCase)
                || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
-               || url.Contains("amzlink.to", StringComparison.OrdinalIgnoreCase);
+               || url.Contains("amzlink.to", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("t.me", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("cutt.ly", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("rebrand.ly", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("curto.io", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("social.ml", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("app.link", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("page.link", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("shorturl.at", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("bit.do", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("tiny.cc", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsStrongAffiliateCandidate(Uri uri)
@@ -2758,7 +2827,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 : (false, IsAmazonPartnerTagValid(amazonExpectedTag)
                     ? $"Tag Amazon inválida (esperado: {amazonExpectedTag})"
                     : "PartnerTag Amazon nao configurada"),
-            "Mercado Livre" => (IsMercadoLivreProductUri(uri) || IsMercadoLivreSocialOrShortUri(uri))
+            "Mercado Livre" => IsMercadoLivreProductUri(uri)
                                 && query.TryGetValue("matt_tool", out var tool)
                                 && query.TryGetValue("matt_word", out var word)
                                 && string.Equals(tool, MercadoLivreMattTool, StringComparison.OrdinalIgnoreCase)
@@ -2969,4 +3038,5 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
         return false;
     }
+    private sealed record ConversionCacheEntry(AffiliateLinkResult Result, DateTimeOffset ExpiresAtUtc);
 }

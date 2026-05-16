@@ -1,4 +1,6 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
+using AchadinhosBot.Next;
+using AchadinhosBot.Next.Infrastructure.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -22,16 +24,16 @@ using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Audit;
+using AchadinhosBot.Next.Infrastructure.Catalog;
 using AchadinhosBot.Next.Infrastructure.Coupons;
 using AchadinhosBot.Next.Infrastructure.Amazon;
 using AchadinhosBot.Next.Infrastructure.Idempotency;
 using AchadinhosBot.Next.Infrastructure.Instagram;
 using AchadinhosBot.Next.Infrastructure.Content;
-using AchadinhosBot.Next.Infrastructure.Logs;
 using AchadinhosBot.Next.Infrastructure.MercadoLivre;
 using AchadinhosBot.Next.Infrastructure.Media;
 using AchadinhosBot.Next.Infrastructure.Monitoring;
-using AchadinhosBot.Next.Infrastructure.Security;
+using AchadinhosBot.Next.Infrastructure.PriceWatch;
 using AchadinhosBot.Next.Infrastructure.Storage;
 using AchadinhosBot.Next.Infrastructure.Telegram;
 using AchadinhosBot.Next.Infrastructure.ProductData;
@@ -50,10 +52,14 @@ using AchadinhosBot.Next.Application.Consumers;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.FileProviders;
 
 LoadDotEnvIfPresent();
 
 var builder = WebApplication.CreateBuilder(args);
+var appRole = (builder.Configuration["APP__ROLE"] ?? builder.Configuration["App:Role"] ?? "all").Trim().ToLowerInvariant();
+var isWorkerRole = appRole is "all" or "worker";
+var isWebRole = appRole is "all" or "web";
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 256L * 1024L * 1024L;
@@ -72,7 +78,7 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 // Evita falha de permissao no EventLog em ambientes sem privilegio administrativo.
 builder.Logging.ClearProviders();
 
-// Persistir chaves de DataProtection em pasta local acessível ao sandbox
+// Persistir chaves de DataProtection em pasta local acessÃƒÆ’Ã‚Â­vel ao sandbox
 var dpKeysPath = Path.Combine(AppContext.BaseDirectory, ".runtime", "localappdata", "DataProtection-Keys");
 Directory.CreateDirectory(dpKeysPath);
 builder.Services.AddDataProtection()
@@ -84,28 +90,14 @@ builder.Services.Configure<HostOptions>(options =>
     options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
 });
 
-builder.Services
-    .AddOptions<WebhookOptions>()
-    .Bind(builder.Configuration.GetSection("Webhook"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-builder.Services
-    .AddOptions<AffiliateOptions>()
-    .Bind(builder.Configuration.GetSection("Affiliate"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-builder.Services
-    .AddOptions<TelegramOptions>()
-    .Bind(builder.Configuration.GetSection("Telegram"))
-    .ValidateDataAnnotations();
-
-builder.Services
-    .AddOptions<MessagingOptions>()
-    .Bind(builder.Configuration.GetSection("Messaging"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
+builder.Services.Configure<WebhookOptions>(options =>
+{
+    builder.Configuration.GetSection("Webhook").Bind(options);
+    options.ApiKey = builder.Configuration["WEBHOOK__API_KEY"] ?? options.ApiKey;
+});
+builder.Services.Configure<AffiliateOptions>(builder.Configuration.GetSection("Affiliate"));
+builder.Services.Configure<TelegramOptions>(builder.Configuration.GetSection("Telegram"));
+builder.Services.Configure<MessagingOptions>(builder.Configuration.GetSection("Messaging"));
 
 var telegramStartupOptions = builder.Configuration.GetSection("Telegram").Get<TelegramOptions>() ?? new TelegramOptions();
 var persistedTelegramBotTokenPath =
@@ -121,23 +113,27 @@ catch
 {
     hasPersistedTelegramBotToken = false;
 }
-var startTelegramBotWorker = !string.IsNullOrWhiteSpace(telegramStartupOptions.BotToken) || hasPersistedTelegramBotToken;
-var startTelegramUserbotWorker = telegramStartupOptions.ApiId > 0 && !string.IsNullOrWhiteSpace(telegramStartupOptions.ApiHash);
+var startTelegramBotWorker = isWorkerRole && (!string.IsNullOrWhiteSpace(telegramStartupOptions.BotToken) || hasPersistedTelegramBotToken);
+var startTelegramUserbotWorker = isWorkerRole && telegramStartupOptions.ApiId > 0 && !string.IsNullOrWhiteSpace(telegramStartupOptions.ApiHash);
 
-builder.Services
-    .AddOptions<AuthOptions>()
-    .Bind(builder.Configuration.GetSection("Auth"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-builder.Services
-    .AddOptions<EvolutionOptions>()
-    .Bind(builder.Configuration.GetSection("Evolution"))
-    .ValidateDataAnnotations();
+builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
+builder.Services.Configure<EvolutionOptions>(options =>
+{
+    builder.Configuration.GetSection("Evolution").Bind(options);
+    
+    // Fallback explicito para variÃƒÆ’Ã‚Â¡veis de ambiente flat (caso __ nÃƒÆ’Ã‚Â£o esteja funcionando como separador)
+    options.BaseUrl = builder.Configuration["EVOLUTION__BASEURL"] ?? options.BaseUrl;
+    options.ApiKey = builder.Configuration["EVOLUTION__APIKEY"] ?? options.ApiKey;
+    options.InstanceName = builder.Configuration["EVOLUTION__INSTANCENAME"] ?? options.InstanceName;
+});
 
 builder.Services
     .AddOptions<HeartbeatOptions>()
     .Bind(builder.Configuration.GetSection("Heartbeat"));
+
+builder.Services
+    .AddOptions<OperationalReadinessOptions>()
+    .Bind(builder.Configuration.GetSection("OperationalReadiness"));
 
 builder.Services
     .AddOptions<DeliverySafetyOptions>()
@@ -208,7 +204,11 @@ builder.Services.AddSingleton<IAffiliateLinkService, AffiliateLinkService>();
 builder.Services.AddSingleton<AmazonCreatorApiClient>();
 builder.Services.AddSingleton<AmazonPaApiClient>();
 builder.Services.AddSingleton<AmazonHtmlScraperService>();
+builder.Services.AddSingleton<AmazonPlaywrightScraperClient>();
+builder.Services.AddSingleton<AmazonStoreImageScraper>();
 builder.Services.AddSingleton<MercadoLivreHtmlScraperService>();
+builder.Services.AddSingleton<MercadoLivreAffiliateScoutClient>();
+builder.Services.AddSingleton<MercadoLivreStoreImageScraper>();
 builder.Services.AddSingleton<IAffiliateCouponSyncService, AffiliateCouponSyncService>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, AmazonOfficialCouponProvider>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, ShopeeOfficialCouponProvider>();
@@ -217,14 +217,19 @@ builder.Services.AddSingleton<IAffiliateCouponProvider, MercadoLivreOfficialCoup
 builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
 builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
 builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
-builder.Services.AddSingleton<ILinkTrackingStore, LinkTrackingStore>();
+builder.Services.AddSingleton<ILinkTrackingStore>(sp => new LinkTrackingStore(
+    sp.GetRequiredService<ILogger<LinkTrackingStore>>(),
+    sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<IWebHostEnvironment>()));
 builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
+builder.Services.AddSingleton<IPriceWatchStore, PriceWatchStore>();
 builder.Services.AddSingleton<IContentCalendarStore, CsvContentCalendarStore>();
 builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
 builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
 builder.Services.AddSingleton<InstagramLinkMetaService>();
 builder.Services.AddSingleton<OfficialProductDataService>();
+builder.Services.AddSingleton<ShopeeStoreImageScraper>();
 builder.Services.AddSingleton<ICatalogOfferEnrichmentService, CatalogOfferEnrichmentService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
 builder.Services.AddSingleton<IMetaGraphClient, MetaGraphClient>();
@@ -234,6 +239,8 @@ builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
 builder.Services.AddSingleton<IOperationalAnalyticsService, OperationalAnalyticsService>();
 builder.Services.AddSingleton<IOfferCurationAgentService, OfferCurationAgentService>();
 builder.Services.AddSingleton<IWhatsAppOfferScoutAgentService, WhatsAppOfferScoutAgentService>();
+builder.Services.AddSingleton<OfferNormalizationService>();
+builder.Services.AddSingleton<OfferNormalizationRoutingService>();
 builder.Services.AddSingleton<IChannelOfferDeepAnalysisService, ChannelOfferDeepAnalysisService>();
 builder.Services.AddSingleton<IWhatsAppOfferReasoner, WhatsAppOfferReasoner>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
@@ -244,22 +251,44 @@ builder.Services.AddSingleton<QwenInstagramPostGenerator>();
 builder.Services.AddSingleton<VilaNvidiaGenerator>();
 builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
 builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
+builder.Services.AddSingleton<TelegramViralReelsAutoPilotService>();
+builder.Services.AddSingleton<StoryAutoPublishService>();
+builder.Services.AddSingleton<ReelAutoPublishService>();
+builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
+builder.Services.AddSingleton<MercadoLivreReelDraftService>();
 builder.Services.AddSingleton<ContentCalendarAutomationService>();
 builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
 builder.Services.AddSingleton<IWhatsAppOutboundLogStore, WhatsAppOutboundLogStore>();
+builder.Services.AddSingleton<IWhatsAppNicheOperationsStore, WhatsAppNicheOperationsStore>();
 builder.Services.AddSingleton<ITelegramOutboundLogStore, TelegramOutboundLogStore>();
 builder.Services.AddSingleton<IWhatsAppAgentMemoryStore, WhatsAppAgentMemoryStore>();
 builder.Services.AddSingleton<IChannelMonitorSelectionStore, ChannelMonitorSelectionStore>();
 builder.Services.AddSingleton<IChannelMonitorUiStateStore, ChannelMonitorUiStateStore>();
 builder.Services.AddSingleton<IChannelOfferCandidateStore, ChannelOfferCandidateStore>();
+builder.Services.AddSingleton<IOfferNormalizationRunStore, OfferNormalizationRunStore>();
+builder.Services.AddSingleton<IOfferAutomationIntentStore, OfferAutomationIntentStore>();
 builder.Services.AddSingleton<IMercadoLivreApprovalStore, MercadoLivreApprovalStore>();
-builder.Services.AddSingleton<ISettingsStore, JsonSettingsStore>();
+builder.Services.AddSingleton<JsonSettingsStore>();
+builder.Services.AddSingleton<ISettingsStore>(provider => provider.GetRequiredService<JsonSettingsStore>());
+builder.Services.AddSingleton<ISettingsVersionStore>(provider => provider.GetRequiredService<JsonSettingsStore>());
+builder.Services.AddSingleton<TrackingLinkShortenerService>();
+builder.Services.AddSingleton<IOfferImageResolver, OfferImageResolver>();
+builder.Services.AddSingleton<IStoreImageScraper>(provider => provider.GetRequiredService<ShopeeStoreImageScraper>());
+builder.Services.AddSingleton<IStoreImageScraper>(provider => provider.GetRequiredService<AmazonStoreImageScraper>());
+builder.Services.AddSingleton<IStoreImageScraper>(provider => provider.GetRequiredService<MercadoLivreStoreImageScraper>());
+builder.Services.AddSingleton<AffiliateTrackedContentService>();
+builder.Services.AddSingleton<WhatsAppPublishContentService>();
+builder.Services.AddSingleton<PriceWatchService>();
+builder.Services.AddSingleton<PriceWatchConversationService>();
+builder.Services.AddSingleton<WhatsAppNicheGroupService>();
 builder.Services.AddSingleton<EvolutionWhatsAppGateway>();
 builder.Services.AddSingleton<IWhatsAppTransport>(provider => provider.GetRequiredService<EvolutionWhatsAppGateway>());
 builder.Services.AddSingleton<IWhatsAppGateway, QueuedWhatsAppGateway>();
 builder.Services.AddSingleton<IMediaStore, FileMediaStore>();
 builder.Services.AddSingleton<IMediaFailureLogStore, MediaFailureLogStore>();
+builder.Services.AddSingleton<IOfficialWhatsAppBlockedOfferStore, OfficialWhatsAppBlockedOfferStore>();
+builder.Services.AddSingleton<IWhatsAppParticipantBlastProgressStore, WhatsAppParticipantBlastProgressStore>();
 builder.Services.AddSingleton<IPromotionalCardGenerator, PromotionalCardGenerator>();
 builder.Services.AddSingleton<InstagramConversationStore>();
 builder.Services.AddSingleton<InstagramCommandMenuStore>();
@@ -271,6 +300,7 @@ builder.Services.AddSingleton<IBotConversorQueuePublisher, RabbitMqBotConversorQ
 builder.Services.AddSingleton<IBotConversorOutboxStore, FileBotConversorOutboxStore>();
 builder.Services.AddSingleton<IMessageOrchestrator, BotConversorMessageOrchestrator>();
 builder.Services.AddSingleton<IWhatsAppOutboundPublisher, RabbitMqWhatsAppOutboundPublisher>();
+builder.Services.AddSingleton<WhatsAppAutomationQueueService>();
 builder.Services.AddSingleton<IWhatsAppOutboundOutboxStore, FileWhatsAppOutboundOutboxStore>();
 builder.Services.AddSingleton<ITelegramOutboundPublisher, RabbitMqTelegramOutboundPublisher>();
 builder.Services.AddSingleton<ITelegramOutboundOutboxStore, FileTelegramOutboundOutboxStore>();
@@ -278,6 +308,9 @@ builder.Services.AddSingleton<IInstagramOutboundPublisher, RabbitMqInstagramOutb
 builder.Services.AddSingleton<IInstagramOutboundOutboxStore, FileInstagramOutboundOutboxStore>();
 builder.Services.AddSingleton<IIdempotencyStore, FileIdempotencyStore>();
 builder.Services.AddSingleton<TelegramAlertSender>();
+builder.Services.AddSingleton<WorkerActivityTracker>();
+builder.Services.AddSingleton<OperationalReadinessService>();
+builder.Services.AddSingleton<OperationalStatusService>();
 
 if (startTelegramBotWorker)
 {
@@ -290,23 +323,43 @@ if (startTelegramUserbotWorker)
     builder.Services.AddHostedService(provider => (TelegramUserbotService)provider.GetRequiredService<ITelegramUserbotService>());
 }
 
-builder.Services.AddHostedService<InstagramOutboundReplayService>();
-builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
+builder.Services.AddSingleton<WhatsAppMembershipSyncService>();
+builder.Services.AddSingleton<WhatsAppAdminAutomationService>();
+if (isWorkerRole)
+{
+    builder.Services.AddHostedService<InstagramOutboundReplayService>();
+    builder.Services.AddHostedService<BotConversorOutboxReplayWorker>();
+    builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
+    builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
+    builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
+    builder.Services.AddHostedService<TelegramViralReelsAutoPilotWorker>();
+    builder.Services.AddHostedService<CatalogPriceRefreshWorker>();
+    builder.Services.AddHostedService<PriceWatchWorker>();
+    builder.Services.AddHostedService<UptimeHeartbeatService>();
+    builder.Services.AddHostedService(provider => provider.GetRequiredService<WhatsAppMembershipSyncService>());
+    builder.Services.AddHostedService<WhatsAppAdminAutomationWorker>();
+    builder.Services.AddHostedService<MercadoLivreAffiliateScoutWorker>();
+    builder.Services.AddHostedService<WhatsAppNicheAutoRouteWorker>();
+}
 
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
 builder.Services.AddSingleton<DeliverySafetyPolicy>();
 builder.Services.AddSingleton<LoginAttemptStore>();
-
+builder.Services.AddSingleton<IWhatsAppGroupMembershipStore, WhatsAppGroupMembershipStore>();
+builder.Services.AddSingleton<WhatsAppWelcomeJourneyStore>();
 
 builder.Services.AddMassTransit(x =>
 {
-    x.AddConsumer<BotConversorWebhookConsumer>();
-    x.AddConsumer<EvolutionWebhookConsumer>();
-    x.AddConsumer<WhatsAppOutboundConsumer>();
-    x.AddConsumer<TelegramOutboundConsumer>();
-    x.AddConsumer<InstagramPublishConsumer>();
-    x.AddConsumer<InstagramCommentReplyConsumer>();
-    x.AddConsumer<InstagramDirectMessageConsumer>();
+    if (isWorkerRole)
+    {
+        x.AddConsumer<BotConversorWebhookConsumer>();
+        x.AddConsumer<EvolutionWebhookConsumer>();
+        x.AddConsumer<WhatsAppOutboundConsumer>();
+        x.AddConsumer<TelegramOutboundConsumer>();
+        x.AddConsumer<InstagramPublishConsumer>();
+        x.AddConsumer<InstagramCommentReplyConsumer>();
+        x.AddConsumer<InstagramDirectMessageConsumer>();
+    }
     x.UsingRabbitMq((context, cfg) =>
     {
         var rabbitHost = builder.Configuration["RabbitMq:Host"] ?? "localhost";
@@ -318,7 +371,10 @@ builder.Services.AddMassTransit(x =>
             h.Username(rabbitUser);
             h.Password(rabbitPass);
         });
-        cfg.ConfigureEndpoints(context);
+        if (isWorkerRole)
+        {
+            cfg.ConfigureEndpoints(context);
+        }
     });
 });
 
@@ -328,6 +384,8 @@ builder.Services.AddHttpClient("evolution-webhook-internal", (sp, client) => {
 });
 
 var app = builder.Build();
+
+app.Logger.LogInformation("Achadinhos runtime iniciado. Role={Role} IsWeb={IsWeb} IsWorker={IsWorker}", appRole, isWebRole, isWorkerRole);
 
 var webhookOptions = app.Services.GetRequiredService<IOptions<WebhookOptions>>().Value;
 app.Urls.Clear();
@@ -341,6 +399,7 @@ defaultFilesOptions.DefaultFileNames.Add("dashboard.html");
 app.UseDefaultFiles(defaultFilesOptions);
 app.UseStaticFiles(new StaticFileOptions
 {
+    FileProvider = new PhysicalFileProvider(Path.Combine(app.Environment.ContentRootPath, "wwwroot")),
     OnPrepareResponse = ctx =>
     {
         var contentType = ctx.Context.Response.ContentType;
@@ -361,9 +420,66 @@ app.UseStaticFiles(new StaticFileOptions
         }
     }
 });
+
+app.MapGet("/studio-ofertas", (HttpContext context) =>
+{
+    var filePath = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "conversor-admin.html");
+    return Results.File(filePath, "text/html; charset=utf-8");
+});
+
+app.MapGet("/studio-ofertas/{*path}", (HttpContext context) =>
+{
+    var filePath = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "conversor-admin.html");
+    return Results.File(filePath, "text/html; charset=utf-8");
+});
+
 app.UseSerilogRequestLogging();
+if (!isWorkerRole)
+{
+    app.Use(async (context, next) =>
+    {
+        if (context.Request.Path.Equals("/internal/webhook/bot-conversor", StringComparison.OrdinalIgnoreCase))
+        {
+            var forwardedFor = context.Request.Headers["X-Forwarded-For"].ToString();
+            var realIp = context.Request.Headers["CF-Connecting-IP"].ToString();
+            var userAgent = context.Request.Headers.UserAgent.ToString();
+            var host = context.Request.Host.HasValue ? context.Request.Host.Value : "unknown";
+            var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            app.Logger.LogWarning(
+                "Tentativa indevida de acessar endpoint interno no runtime web. Host={Host} RemoteIp={RemoteIp} RealIp={RealIp} XForwardedFor={XForwardedFor} UserAgent={UserAgent}",
+                host,
+                remoteIp,
+                string.IsNullOrWhiteSpace(realIp) ? "n/a" : realIp,
+                string.IsNullOrWhiteSpace(forwardedFor) ? "n/a" : forwardedFor,
+                string.IsNullOrWhiteSpace(userAgent) ? "n/a" : userAgent);
+
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        await next();
+    });
+}
 app.UseRateLimiter();
 app.UseAuthentication();
+app.Use(async (context, next) =>
+{
+    if (context.User?.Identity?.IsAuthenticated != true &&
+        context.Request.Headers.TryGetValue("X-Admin-Key", out var provided) &&
+        !string.IsNullOrWhiteSpace(provided.ToString()) &&
+        SecretComparer.EqualsConstantTime(webhookOptions.ApiKey, provided.ToString()))
+    {
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.Name, "api_key"),
+            new Claim(ClaimTypes.Role, "admin")
+        };
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme));
+    }
+
+    await next();
+});
 app.UseAuthorization();
 
 app.MapPost("/auth/login", async (
@@ -449,7 +565,940 @@ app.MapGet("/auth/me", (HttpContext context) =>
 app.MapConverterEndpoint();
 app.MapAdminEndpoints();
 app.MapChannelAgentAdminEndpoints();
-app.MapHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
+app.MapOperationalHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
+app.MapOperationalAdminEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
+
+app.MapGet("/api/admin/whatsapp/membership-events", async (
+    IWhatsAppGroupMembershipStore store,
+    CancellationToken ct) =>
+{
+    var events = await store.ListAsync(ct);
+    return Results.Ok(events.OrderByDescending(x => x.Timestamp).Take(1000));
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/whatsapp/membership-events/sync", async (
+    WhatsAppMembershipSyncService syncService,
+    CancellationToken ct) =>
+{
+    await syncService.SynchronizeAllGroupsNowAsync(ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/whatsapp/groups", async (
+    HttpContext context,
+    string? instanceName,
+    IWhatsAppGateway gateway,
+    IOptions<WebhookOptions> webhookOptions,
+    CancellationToken ct) =>
+{
+    if (!AdminAuthorizationHelper.IsAdminAuthorized(context, webhookOptions.Value.ApiKey))
+        return Results.Unauthorized();
+
+    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(instanceName);
+    var groups = await gateway.GetGroupsAsync(effectiveInstanceName, ct);
+    return Results.Ok(groups);
+});
+
+app.MapGet("/api/admin/debug-key", (IOptions<WebhookOptions> opts, IConfiguration config) => 
+{
+    return Results.Ok(new { 
+        configuredKey = opts.Value.ApiKey,
+        envKey = config["WEBHOOK__API_KEY"],
+        sectionKey = config.GetSection("Webhook")["ApiKey"]
+    });
+});
+
+app.MapGet("/api/admin/whatsapp/groups/participants", async (
+    string groupId,
+    string? instanceName,
+    AchadinhosBot.Next.Application.Abstractions.IWhatsAppGateway gateway,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(groupId))
+        return Results.BadRequest(new { error = "GroupId ÃƒÆ’Ã‚Â© obrigatÃƒÆ’Ã‚Â³rio." });
+
+    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(instanceName);
+    var participants = await gateway.GetGroupParticipantsAsync(effectiveInstanceName, groupId, ct);
+    return Results.Ok(participants);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/whatsapp/groups/copy-participants", async (
+    CopyParticipantsRequest request,
+    AchadinhosBot.Next.Application.Abstractions.IWhatsAppGateway gateway,
+    AchadinhosBot.Next.Application.Abstractions.IWhatsAppTransport transport,
+    WhatsAppAutomationQueueService queueService,
+    ISettingsStore settingsStore,
+    ILogger<Program> logger,
+    CancellationToken ct) =>
+{
+    const int maxManualCopyParticipants = 50;
+    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
+
+    if (string.IsNullOrWhiteSpace(request.SourceGroupId) || string.IsNullOrWhiteSpace(request.TargetGroupId))
+        return Results.BadRequest(new { error = "SourceGroupId e TargetGroupId sÃƒÆ’Ã‚Â£o obrigatÃƒÆ’Ã‚Â³rios." });
+
+    if (request.SourceGroupId == request.TargetGroupId)
+        return Results.BadRequest(new { error = "Grupo de origem e destino nÃƒÆ’Ã‚Â£o podem ser o mesmo." });
+
+    var participantsToCopy = request.ParticipantIds?
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (participantsToCopy is null || participantsToCopy.Count == 0)
+        return Results.BadRequest(new { error = "Selecione explicitamente os participantes antes de copiar." });
+
+    if (participantsToCopy.Count > maxManualCopyParticipants)
+        return Results.BadRequest(new { error = $"A cÃƒÆ’Ã‚Â³pia manual permite no mÃƒÆ’Ã‚Â¡ximo {maxManualCopyParticipants} participantes por vez." });
+
+    var targetParticipants = await transport.GetGroupParticipantsAsync(effectiveInstanceName, request.TargetGroupId, ct); var targetSet = new HashSet<string>(targetParticipants, StringComparer.OrdinalIgnoreCase);
+    var filteredParticipants = participantsToCopy
+        .Where(x => !string.IsNullOrWhiteSpace(x) && !targetSet.Contains(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    var skippedParticipants = participantsToCopy.Count - filteredParticipants.Count;
+
+    if (filteredParticipants.Count == 0)
+        return Results.Ok(new { success = true, message = "Todos os participantes selecionados jÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ estÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o no grupo de destino.", count = 0, skipped = skippedParticipants });
+
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    if (!automation.ParticipantCopyAutomationEnabled)
+    {
+        return Results.BadRequest(new { error = "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento." });
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    WhatsAppParticipantAddSafety.Normalize(automation, now);
+
+    if (WhatsAppParticipantAddSafety.TryGetCooldownBlock(automation, effectiveInstanceName, now, out var nextAllowedAt, out var cooldownMessage))
+    {
+        logger.LogWarning(
+            "Copia manual bloqueada por cooldown. GrupoDestino={TargetGroupId}, ProximaLiberacao={NextAllowedAt}",
+            request.TargetGroupId,
+            nextAllowedAt);
+        return Results.BadRequest(new { error = cooldownMessage, nextAllowedAt });
+    }
+
+    var remainingQuota = WhatsAppParticipantAddSafety.GetRemainingQuota(automation, effectiveInstanceName);
+    if (remainingQuota <= 0)
+    {
+        var nextQuotaResetAt = WhatsAppParticipantAddSafety.GetNextQuotaResetAt(now);
+        return Results.BadRequest(new
+        {
+            error = "Limite diÃƒÂ¡rio de adiÃƒÂ§ÃƒÂµes atingido para esta conta.",
+            nextAllowedAt = nextQuotaResetAt
+        });
+    }
+
+    if (filteredParticipants.Count > remainingQuota)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"Restam apenas {remainingQuota} adiÃƒÂ§ÃƒÂµes disponÃƒÂ­veis hoje para esta conta. Reduza a seleÃƒÂ§ÃƒÂ£o.",
+            remainingQuota
+        });
+    }
+
+    async Task<(bool Success, string Message)> ExecuteCopyAsync(CancellationToken jobCt)
+    {
+        var latestSettings = await settingsStore.GetAsync(jobCt);
+        var latestAutomation = latestSettings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+        if (!latestAutomation.ParticipantCopyAutomationEnabled)
+        {
+            return (false, "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento.");
+        }
+
+        var jobNow = DateTimeOffset.UtcNow;
+        WhatsAppParticipantAddSafety.Normalize(latestAutomation, jobNow);
+
+        if (WhatsAppParticipantAddSafety.TryGetCooldownBlock(latestAutomation, effectiveInstanceName, jobNow, out _, out var jobCooldownMessage))
+        {
+            return (false, jobCooldownMessage);
+        }
+
+        var jobRemainingQuota = WhatsAppParticipantAddSafety.GetRemainingQuota(latestAutomation, effectiveInstanceName);
+        if (jobRemainingQuota <= 0)
+        {
+            return (false, "Limite diÃƒÂ¡rio de adiÃƒÂ§ÃƒÂµes atingido para esta conta.");
+        }
+
+        if (filteredParticipants.Count > jobRemainingQuota)
+        {
+            return (false, $"Restam apenas {jobRemainingQuota} adiÃƒÂ§ÃƒÂµes disponÃƒÂ­veis hoje para esta conta.");
+        }
+
+        var result = await transport.AddParticipantsAsync(effectiveInstanceName, request.TargetGroupId, filteredParticipants, jobCt);
+        if (result.Success)
+        {
+            WhatsAppParticipantAddSafety.RegisterSuccessfulAdd(latestAutomation, effectiveInstanceName, filteredParticipants.Count, jobNow);
+            await settingsStore.SaveAsync(latestSettings, jobCt);
+        }
+
+        return (result.Success, result.Message ?? "OperaÃƒÂ§ÃƒÂ£o concluÃƒÂ­da");
+    }
+
+    var queued = await queueService.EnqueueAsync(
+        "manual-copy",
+        $"CÃƒÂ³pia manual {request.SourceGroupId} -> {request.TargetGroupId}",
+        ExecuteCopyAsync,
+        ct);
+
+    return Results.Json(new
+    {
+        success = true,
+        queued = true,
+        queueId = queued.Id,
+        message = $"CÃƒÂ³pia enfileirada com {filteredParticipants.Count} participante(s).",
+        count = filteredParticipants.Count,
+        skipped = skippedParticipants
+    }, statusCode: StatusCodes.Status202Accepted);
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/whatsapp/automation", async (
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
+{
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    var changed = WhatsAppParticipantAddSafety.Normalize(automation, DateTimeOffset.UtcNow);
+    if (changed)
+    {
+        await settingsStore.SaveAsync(settings, ct);
+    }
+
+    return Results.Ok(automation);
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/whatsapp/automation/queue", (
+    WhatsAppAutomationQueueService queueService) =>
+{
+    var state = queueService.GetState();
+    return Results.Ok(new
+    {
+        currentJobId = state.CurrentJobId,
+        pendingCount = state.PendingCount,
+        items = state.Items
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/admin/whatsapp/automation/safety", async (
+    UpdateWhatsAppParticipantSafetyRequest request,
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
+{
+    if (request.MaxParticipantsAddedPerDay <= 0)
+    {
+        return Results.BadRequest(new { error = "O limite diÃƒÂ¡rio deve ser maior que zero." });
+    }
+
+    if (request.MinMinutesBetweenParticipantAdds <= 0)
+    {
+        return Results.BadRequest(new { error = "O cooldown mÃƒÂ­nimo deve ser maior que zero." });
+    }
+
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    automation.MaxParticipantsAddedPerDay = request.MaxParticipantsAddedPerDay;
+    automation.MinMinutesBetweenParticipantAdds = request.MinMinutesBetweenParticipantAdds;
+    automation.ParticipantCopyAutomationEnabled = request.ParticipantCopyAutomationEnabled;
+
+    var now = DateTimeOffset.UtcNow;
+    WhatsAppParticipantAddSafety.Normalize(automation, now);
+    if (!string.IsNullOrWhiteSpace(request.InstanceName))
+    {
+        WhatsAppParticipantAddSafety.UpdateConfiguredLimits(
+            automation,
+            request.InstanceName,
+            request.MaxParticipantsAddedPerDay,
+            request.MinMinutesBetweenParticipantAdds,
+            now);
+    }
+    await settingsStore.SaveAsync(settings, ct);
+
+    var remainingQuota = WhatsAppParticipantAddSafety.GetRemainingQuota(automation, request.InstanceName);
+    var cooldownActive = WhatsAppParticipantAddSafety.TryGetCooldownBlock(
+        automation,
+        request.InstanceName,
+        now,
+        out var nextAllowedAt,
+        out var cooldownMessage);
+
+    return Results.Ok(new
+    {
+        success = true,
+        maxParticipantsAddedPerDay = automation.MaxParticipantsAddedPerDay,
+        minMinutesBetweenParticipantAdds = automation.MinMinutesBetweenParticipantAdds,
+        participantCopyAutomationEnabled = automation.ParticipantCopyAutomationEnabled,
+        participantsAddedToday = automation.ParticipantsAddedToday,
+        remainingQuota,
+        nextAllowedAt = cooldownActive ? nextAllowedAt : (DateTimeOffset?)null,
+        message = cooldownActive
+            ? cooldownMessage
+            : "Travas de seguranÃƒÂ§a atualizadas com sucesso."
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/whatsapp/copy-schedules", async (
+    CreateParticipantCopyScheduleRequest request,
+    ISettingsStore settingsStore,
+    IWhatsAppGateway gateway,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.SourceGroupId) || string.IsNullOrWhiteSpace(request.TargetGroupId))
+        return Results.BadRequest(new { error = "SourceGroupId e TargetGroupId sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rios." });
+
+    if (request.SourceGroupId == request.TargetGroupId)
+        return Results.BadRequest(new { error = "Grupo de origem e destino nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o podem ser o mesmo." });
+
+    var batchSize = Math.Max(1, request.BatchSize);
+    var participantIds = request.ParticipantIds?
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (participantIds is null || participantIds.Count == 0)
+    {
+        participantIds = (await gateway.GetGroupParticipantsAsync(null, request.SourceGroupId, ct))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    if (participantIds.Count == 0)
+        return Results.BadRequest(new { error = "Nenhum participante disponÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â­vel para agendar." });
+
+    var targetParticipants = await gateway.GetGroupParticipantsAsync(null, request.TargetGroupId, ct); var targetSet = new HashSet<string>(targetParticipants, StringComparer.OrdinalIgnoreCase); var eligibleParticipants = participantIds.Where(x => !targetSet.Contains(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(); var skippedParticipants = participantIds.Count - eligibleParticipants.Count;
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    if (!automation.ParticipantCopyAutomationEnabled)
+    {
+        return Results.BadRequest(new { error = "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento." });
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    WhatsAppParticipantAddSafety.Normalize(automation, now);
+    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
+    var minIntervalMinutes = automation.ParticipantAddSafetyEnabled
+        ? WhatsAppParticipantAddSafety.GetMinimumIntervalMinutes(automation, effectiveInstanceName)
+        : 1;
+    var intervalMinutes = Math.Max(Math.Max(1, request.IntervalMinutes), minIntervalMinutes);
+    var schedule = new WhatsAppParticipantCopySchedule
+    {
+        Id = Guid.NewGuid().ToString("N"),
+        Name = string.IsNullOrWhiteSpace(request.Name)
+            ? $"CÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³pia {request.SourceGroupId} -> {request.TargetGroupId}"
+            : request.Name.Trim(),
+        Enabled = true,
+        InstanceName = effectiveInstanceName,
+        SourceGroupId = request.SourceGroupId.Trim(),
+        TargetGroupId = request.TargetGroupId.Trim(),
+        PendingParticipantIds = eligibleParticipants,
+        TotalParticipants = eligibleParticipants.Count,
+        ProcessedParticipants = 0,
+        SkippedParticipants = skippedParticipants,
+        BatchSize = batchSize,
+        IntervalMinutes = intervalMinutes,
+        CreatedAt = now,
+        NextRunAt = request.StartAt ?? now,
+        LastResultMessage = $"Agendamento criado com {eligibleParticipants.Count} participante(s). Repetidos ignorados: {skippedParticipants}."
+    };
+
+    automation.ParticipantCopySchedules.Insert(0, schedule);
+    await settingsStore.SaveAsync(settings, ct);
+
+    return Results.Ok(new
+    {
+        success = true,
+        scheduleId = schedule.Id,
+        totalParticipants = schedule.TotalParticipants,
+        skippedParticipants,
+        nextRunAt = schedule.NextRunAt,
+        message = schedule.LastResultMessage
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/admin/whatsapp/copy-schedules/{id}", async (
+    string id,
+    UpdateParticipantCopyScheduleRequest request,
+    ISettingsStore settingsStore,
+    IWhatsAppGateway gateway,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
+
+    if (string.IsNullOrWhiteSpace(request.SourceGroupId) || string.IsNullOrWhiteSpace(request.TargetGroupId))
+        return Results.BadRequest(new { error = "SourceGroupId e TargetGroupId sÃƒÂ£o obrigatÃƒÂ³rios." });
+
+    if (request.SourceGroupId == request.TargetGroupId)
+        return Results.BadRequest(new { error = "Grupo de origem e destino nÃƒÂ£o podem ser o mesmo." });
+
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    if (!automation.ParticipantCopyAutomationEnabled)
+    {
+        return Results.BadRequest(new { error = "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento." });
+    }
+
+    var schedule = automation.ParticipantCopySchedules.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (schedule is null)
+        return Results.NotFound(new { error = "Agendamento nÃƒÂ£o encontrado." });
+
+    var now = DateTimeOffset.UtcNow;
+    WhatsAppParticipantAddSafety.Normalize(automation, now);
+
+    var batchSize = Math.Max(1, request.BatchSize);
+    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
+    var minIntervalMinutes = automation.ParticipantAddSafetyEnabled
+        ? WhatsAppParticipantAddSafety.GetMinimumIntervalMinutes(automation, effectiveInstanceName)
+        : 1;
+    var intervalMinutes = Math.Max(Math.Max(1, request.IntervalMinutes), minIntervalMinutes);
+    var shouldRefreshQueue = request.RefreshQueue
+        || !string.Equals(schedule.SourceGroupId, request.SourceGroupId.Trim(), StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(schedule.TargetGroupId, request.TargetGroupId.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    if (shouldRefreshQueue)
+    {
+        var participantIds = request.ParticipantIds?
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (participantIds is null || participantIds.Count == 0)
+        {
+            participantIds = (await gateway.GetGroupParticipantsAsync(null, request.SourceGroupId, ct))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        var targetParticipants = await gateway.GetGroupParticipantsAsync(null, request.TargetGroupId, ct);
+        var targetSet = new HashSet<string>(targetParticipants, StringComparer.OrdinalIgnoreCase);
+        var eligibleParticipants = participantIds
+            .Where(x => !targetSet.Contains(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var skippedParticipants = participantIds.Count - eligibleParticipants.Count;
+
+        schedule.PendingParticipantIds = eligibleParticipants;
+        schedule.TotalParticipants = eligibleParticipants.Count;
+        schedule.ProcessedParticipants = 0;
+        schedule.SkippedParticipants = skippedParticipants;
+        schedule.CompletedAt = null;
+        schedule.LastRunAt = null;
+        schedule.NextRunAt = request.StartAt ?? now;
+        schedule.LastResultMessage = eligibleParticipants.Count == 0
+            ? "Fila recarregada, mas nenhum participante ficou elegÃƒÂ­vel."
+            : $"Fila recarregada com {eligibleParticipants.Count} participante(s). Repetidos ignorados: {skippedParticipants}.";
+    }
+    else
+    {
+        schedule.NextRunAt = request.StartAt ?? schedule.NextRunAt;
+    }
+
+    schedule.Name = string.IsNullOrWhiteSpace(request.Name)
+        ? schedule.Name
+        : request.Name.Trim();
+    schedule.Enabled = request.Enabled;
+    schedule.InstanceName = effectiveInstanceName;
+    schedule.SourceGroupId = request.SourceGroupId.Trim();
+    schedule.TargetGroupId = request.TargetGroupId.Trim();
+    schedule.BatchSize = batchSize;
+    schedule.IntervalMinutes = intervalMinutes;
+
+    if (request.Enabled && schedule.NextRunAt < now)
+    {
+        schedule.NextRunAt = now;
+    }
+
+    await settingsStore.SaveAsync(settings, ct);
+    return Results.Ok(new
+    {
+        success = true,
+        scheduleId = schedule.Id,
+        enabled = schedule.Enabled,
+        nextRunAt = schedule.NextRunAt,
+        message = schedule.LastResultMessage
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapDelete("/api/admin/whatsapp/copy-schedules/{id}", async (
+    string id,
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Id ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
+
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    var removed = automation.ParticipantCopySchedules.RemoveAll(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (removed == 0)
+        return Results.NotFound(new { error = "Agendamento nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o encontrado." });
+
+    await settingsStore.SaveAsync(settings, ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/whatsapp/copy-schedules/{id}/run-now", async (
+    string id,
+    WhatsAppAutomationQueueService queueService,
+    WhatsAppAdminAutomationService automationService,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
+
+    var job = await queueService.EnqueueAsync(
+        "copy-schedule-now",
+        $"CÃƒÂ³pia agendada {id}",
+        token => automationService.RunCopyScheduleNowAsync(id, token),
+        ct);
+
+    return Results.Json(new
+    {
+        success = true,
+        queued = true,
+        queueId = job.Id,
+        message = "CÃƒÂ³pia enfileirada para execuÃƒÂ§ÃƒÂ£o."
+    }, statusCode: StatusCodes.Status202Accepted);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/whatsapp/message-schedules", async (
+    CreateScheduledGroupMessageRequest request,
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.TargetGroupId))
+        return Results.BadRequest(new { error = "TargetGroupId ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
+
+    if (string.IsNullOrWhiteSpace(request.Text))
+        return Results.BadRequest(new { error = "Texto da mensagem ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
+
+    if (!string.IsNullOrWhiteSpace(request.ImageUrl) &&
+        (!Uri.TryCreate(request.ImageUrl, UriKind.Absolute, out var parsedImageUrl) ||
+         parsedImageUrl.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.Equals("host.docker.internal", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)))
+    {
+        return Results.BadRequest(new { error = "ImageUrl deve ser uma URL publica absoluta valida." });
+    }
+
+    var intervalMinutes = Math.Max(1, request.IntervalMinutes);
+    var now = DateTimeOffset.UtcNow;
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    var schedule = new WhatsAppScheduledGroupMessage
+    {
+        Id = Guid.NewGuid().ToString("N"),
+        Name = string.IsNullOrWhiteSpace(request.Name)
+            ? $"Mensagem {request.TargetGroupId}"
+            : request.Name.Trim(),
+        Enabled = true,
+        InstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName),
+        TargetGroupId = request.TargetGroupId.Trim(),
+        Text = request.Text.Trim(),
+        ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim(),
+        IntervalMinutes = intervalMinutes,
+        CreatedAt = now,
+        NextRunAt = request.StartAt ?? now,
+        LastResultMessage = "Agendamento criado."
+    };
+
+    automation.ScheduledGroupMessages.Insert(0, schedule);
+    await settingsStore.SaveAsync(settings, ct);
+
+    return Results.Ok(new
+    {
+        success = true,
+        scheduleId = schedule.Id,
+        nextRunAt = schedule.NextRunAt
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/whatsapp/message-schedules/{id}/run-now", async (
+    string id,
+    WhatsAppAutomationQueueService queueService,
+    WhatsAppAdminAutomationService automationService,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
+
+    var job = await queueService.EnqueueAsync(
+        "message-schedule-now",
+        $"Mensagem agendada {id}",
+        token => automationService.RunMessageScheduleNowAsync(id, token),
+        ct);
+
+    return Results.Json(new
+    {
+        success = true,
+        queued = true,
+        queueId = job.Id,
+        message = "Mensagem enfileirada para envio."
+    }, statusCode: StatusCodes.Status202Accepted);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/whatsapp/groups/blast-participants/scheduled", async (
+    CreateParticipantBlastScheduleRequest request,
+    ISettingsStore settingsStore,
+    IWhatsAppGroupMembershipStore membershipStore,
+    WhatsAppAutomationQueueService queueService,
+    WhatsAppAdminAutomationService automationService,
+    CancellationToken ct) =>
+{
+    var sourceGroupIds = (request.SourceGroupIds ?? new List<string>())
+        .Append(request.SourceGroupId ?? string.Empty)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (sourceGroupIds.Count == 0)
+    {
+        return Results.BadRequest(new { error = "Informe ao menos um grupo de origem." });
+    }
+
+    if (string.IsNullOrWhiteSpace(request.LinkUrl))
+    {
+        return Results.BadRequest(new { error = "Informe o link oficial do grupo." });
+    }
+
+    if (!Uri.TryCreate(request.LinkUrl.Trim(), UriKind.Absolute, out var inviteUri) ||
+        !inviteUri.Host.Equals("chat.whatsapp.com", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { error = "Use um link oficial do chat.whatsapp.com." });
+    }
+
+    var inviteCode = inviteUri.AbsolutePath.Trim('/').Trim();
+    var expectedConfirmation = string.IsNullOrWhiteSpace(inviteCode) ? request.LinkUrl.Trim() : inviteCode;
+    if (!string.Equals((request.LinkConfirmation ?? string.Empty).Trim(), expectedConfirmation, StringComparison.Ordinal))
+    {
+        return Results.BadRequest(new { error = "ConfirmaÃƒÂ§ÃƒÂ£o do link nÃƒÂ£o confere com o convite oficial." });
+    }
+
+    var pitch = string.IsNullOrWhiteSpace(request.SecurityPitch) ? request.Message : request.SecurityPitch;
+    if (string.IsNullOrWhiteSpace(pitch))
+    {
+        return Results.BadRequest(new { error = "Informe o pitch de seguranÃƒÂ§a do disparo." });
+    }
+
+    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
+    var participantIds = (request.ParticipantIds ?? new List<string>())
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (request.UseAllParticipantsFromSources)
+    {
+        var allParticipants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sourceGroupId in sourceGroupIds)
+        {
+            var groupParticipants = await membershipStore.GetParticipantsAsync(sourceGroupId, effectiveInstanceName, ct);
+            foreach (var participantId in groupParticipants)
+            {
+                if (!string.IsNullOrWhiteSpace(participantId))
+                {
+                    allParticipants.Add(participantId.Trim());
+                }
+            }
+        }
+
+        participantIds = allParticipants.ToList();
+    }
+
+    if (participantIds.Count == 0)
+    {
+        return Results.BadRequest(new { error = "Nenhum participante elegÃƒÂ­vel encontrado para o disparo." });
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    var schedule = new WhatsAppParticipantBlastSchedule
+    {
+        Id = Guid.NewGuid().ToString("N"),
+        Name = string.IsNullOrWhiteSpace(request.Name)
+            ? $"Disparo {now:yyyyMMdd-HHmmss}"
+            : request.Name.Trim(),
+        Enabled = true,
+        Status = "queued",
+        InstanceName = effectiveInstanceName,
+        SourceGroupIds = sourceGroupIds,
+        UseAllParticipantsFromSources = request.UseAllParticipantsFromSources,
+        PendingParticipantIds = participantIds,
+        SentParticipantIds = new List<string>(),
+        TotalParticipants = participantIds.Count,
+        ProcessedParticipants = 0,
+        SuccessParticipants = 0,
+        FailedParticipants = 0,
+        RepliedParticipants = 0,
+        LinksSent = 0,
+        Message = request.Message?.Trim(),
+        LinkUrl = request.LinkUrl.Trim(),
+        UseAiDialogue = request.UseAiDialogue,
+        IntervalMs = request.IntervalMs,
+        MinUserIntervalMs = request.MinUserIntervalMs,
+        MaxUserIntervalMs = request.MaxUserIntervalMs,
+        BatchSize = request.BatchSize,
+        BatchPauseSeconds = request.BatchPauseSeconds,
+        PreLinkMessages = request.PreLinkMessages,
+        WaitMode = string.IsNullOrWhiteSpace(request.WaitMode) ? "response-or-timeout" : request.WaitMode.Trim(),
+        WaitTimeoutSeconds = request.WaitTimeoutSeconds,
+        SendLinkOnTimeout = request.SendLinkOnTimeout,
+        SecurityPitch = pitch?.Trim(),
+        CreatedAt = now,
+        QueuedAt = now,
+        LastResultMessage = $"Disparo criado com {participantIds.Count} participante(s)."
+    };
+
+    automation.ParticipantBlastSchedules.Insert(0, schedule);
+    await settingsStore.SaveAsync(settings, ct);
+
+    var job = await queueService.EnqueueAsync(
+        "participant-blast-now",
+        $"Disparo agendado {schedule.Id}",
+        token => automationService.RunBlastScheduleNowAsync(schedule.Id, token),
+        ct);
+
+    return Results.Json(new
+    {
+        success = true,
+        queued = true,
+        queueId = job.Id,
+        operationId = schedule.Id,
+        scheduleId = schedule.Id,
+        count = participantIds.Count,
+        message = schedule.LastResultMessage
+    }, statusCode: StatusCodes.Status202Accepted);
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/whatsapp/groups/blast-participants/schedules", async (
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
+{
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    var schedules = automation.ParticipantBlastSchedules
+        .OrderByDescending(x => x.CreatedAt)
+        .Select(x => new
+        {
+            id = x.Id,
+            name = x.Name,
+            status = x.Status,
+            enabled = x.Enabled,
+            instanceName = x.InstanceName,
+            totalParticipants = x.TotalParticipants,
+            processedParticipants = x.ProcessedParticipants,
+            successParticipants = x.SuccessParticipants,
+            failedParticipants = x.FailedParticipants,
+            sentParticipants = x.SentParticipantIds.Count,
+            linksSent = x.LinksSent,
+            lastResultMessage = x.LastResultMessage,
+            createdAt = x.CreatedAt,
+            lastRunAt = x.LastRunAt,
+            lastProgressAt = x.LastProgressAt,
+            completedAt = x.CompletedAt
+        })
+        .ToArray();
+
+    return Results.Ok(new { schedules });
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/whatsapp/groups/blast-participants/logs", async (
+    [FromQuery] string? operationId,
+    [FromQuery] int? limit,
+    WhatsAppAdminAutomationService automationService,
+    CancellationToken ct) =>
+{
+    var effectiveLimit = Math.Clamp(limit ?? 200, 1, 2000);
+    var items = await automationService.GetBlastLogsAsync(operationId, effectiveLimit, ct);
+    return Results.Ok(new
+    {
+        operationId = string.IsNullOrWhiteSpace(operationId) ? items.FirstOrDefault()?.OperationId : operationId.Trim(),
+        items
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/whatsapp/groups/blast-participants/conversion", async (
+    [FromQuery] string? scheduleId,
+    [FromQuery] string? groupId,
+    WhatsAppAdminAutomationService automationService,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(scheduleId))
+    {
+        return Results.BadRequest(new { error = "scheduleId ÃƒÂ© obrigatÃƒÂ³rio." });
+    }
+
+    var snapshot = await automationService.GetBlastConversionAsync(scheduleId.Trim(), groupId, ct);
+    if (snapshot is null)
+    {
+        return Results.NotFound(new { error = "Disparo nÃƒÂ£o encontrado." });
+    }
+
+    return Results.Ok(new
+    {
+        scheduleId = snapshot.ScheduleId,
+        scheduleName = snapshot.ScheduleName,
+        totalSent = snapshot.TotalSent,
+        converted = snapshot.Converted,
+        conversionRate = snapshot.ConversionRate,
+        totalJoinEvents = snapshot.TotalJoinEvents,
+        converters = snapshot.Converters
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/admin/media/upload", async (
+    HttpRequest request,
+    ISettingsStore settingsStore,
+    IOptions<WebhookOptions> webhookOptions,
+    IMediaStore mediaStore,
+    CancellationToken ct) =>
+{
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { error = "Envie a imagem como multipart/form-data." });
+    }
+
+    var form = await request.ReadFormAsync(ct);
+    var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
+    if (file is null || file.Length <= 0)
+    {
+        return Results.BadRequest(new { error = "Nenhum arquivo de imagem foi enviado." });
+    }
+
+    if (file.Length > 10_000_000)
+    {
+        return Results.BadRequest(new { error = "Imagem muito grande. Use uma imagem abaixo de 10 MB." });
+    }
+
+    var mimeType = string.IsNullOrWhiteSpace(file.ContentType)
+        ? "image/jpeg"
+        : file.ContentType.Trim();
+    if (!mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { error = "O arquivo enviado precisa ser uma imagem." });
+    }
+
+    await using var ms = new MemoryStream();
+    await file.CopyToAsync(ms, ct);
+    var bytes = ms.ToArray();
+    if (bytes.Length == 0)
+    {
+        return Results.BadRequest(new { error = "Imagem vazia." });
+    }
+
+    var settings = await settingsStore.GetAsync(ct);
+    var resolvedPublicBaseUrl = ResolvePublicBaseUrl(
+        settings.BioHub?.PublicBaseUrl,
+        webhookOptions.Value.PublicBaseUrl,
+        request.Scheme,
+        request.Host.ToString());
+    if (string.IsNullOrWhiteSpace(resolvedPublicBaseUrl) ||
+        IsInternalLikeHost(new Uri(resolvedPublicBaseUrl).Host))
+    {
+        return Results.BadRequest(new { error = "Configure um dominio publico antes de carregar imagens." });
+    }
+
+    var mediaId = mediaStore.Add(bytes, mimeType, TimeSpan.FromDays(365));
+    var publicUrl = BuildPublicMediaUrl(resolvedPublicBaseUrl, mediaId);
+
+    return Results.Ok(new
+    {
+        success = true,
+        mediaId,
+        publicUrl,
+        mimeType
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapPut("/api/admin/whatsapp/message-schedules/{id}", async (
+    string id,
+    UpdateScheduledGroupMessageRequest request,
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
+
+    if (string.IsNullOrWhiteSpace(request.TargetGroupId))
+        return Results.BadRequest(new { error = "TargetGroupId ÃƒÂ© obrigatÃƒÂ³rio." });
+
+    if (string.IsNullOrWhiteSpace(request.Text))
+        return Results.BadRequest(new { error = "Texto da mensagem ÃƒÂ© obrigatÃƒÂ³rio." });
+
+    if (!string.IsNullOrWhiteSpace(request.ImageUrl) &&
+        (!Uri.TryCreate(request.ImageUrl, UriKind.Absolute, out var parsedImageUrl) ||
+         parsedImageUrl.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.Equals("host.docker.internal", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
+         parsedImageUrl.Host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)))
+    {
+        return Results.BadRequest(new { error = "ImageUrl deve ser uma URL publica absoluta valida." });
+    }
+
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    var schedule = automation.ScheduledGroupMessages.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (schedule is null)
+        return Results.NotFound(new { error = "Agendamento nÃƒÂ£o encontrado." });
+
+    var now = DateTimeOffset.UtcNow;
+    var intervalMinutes = Math.Max(1, request.IntervalMinutes);
+    schedule.Name = string.IsNullOrWhiteSpace(request.Name) ? schedule.Name : request.Name.Trim();
+    schedule.Enabled = request.Enabled;
+    schedule.InstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
+    schedule.TargetGroupId = request.TargetGroupId.Trim();
+    schedule.Text = request.Text.Trim();
+    schedule.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim();
+    schedule.IntervalMinutes = intervalMinutes;
+    schedule.NextRunAt = request.StartAt ?? (request.Enabled ? (schedule.NextRunAt < now ? now : schedule.NextRunAt) : schedule.NextRunAt);
+    if (request.Enabled && schedule.NextRunAt < now)
+    {
+        schedule.NextRunAt = now;
+    }
+
+    schedule.LastResultMessage = "Agendamento atualizado.";
+    await settingsStore.SaveAsync(settings, ct);
+
+    return Results.Ok(new
+    {
+        success = true,
+        scheduleId = schedule.Id,
+        enabled = schedule.Enabled,
+        nextRunAt = schedule.NextRunAt,
+        message = schedule.LastResultMessage
+    });
+}).RequireAuthorization("AdminOnly");
+
+app.MapDelete("/api/admin/whatsapp/message-schedules/{id}", async (
+    string id,
+    ISettingsStore settingsStore,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+        return Results.BadRequest(new { error = "Id ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
+
+    var settings = await settingsStore.GetAsync(ct);
+    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
+    var removed = automation.ScheduledGroupMessages.RemoveAll(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+    if (removed == 0)
+        return Results.NotFound(new { error = "Agendamento nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o encontrado." });
+
+    await settingsStore.SaveAsync(settings, ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
 
 app.MapGet("/", (HttpContext context, IWebHostEnvironment env) =>
 {
@@ -484,6 +1533,45 @@ app.MapGet("/dashboard", (IWebHostEnvironment env) =>
     return File.Exists(path) ? Results.File(path, "text/html") : Results.NotFound();
 });
 
+app.MapGet("/dashboard.css", (IWebHostEnvironment env) =>
+{
+    var path = Path.Combine(env.WebRootPath, "dashboard.css");
+    return File.Exists(path) ? Results.File(path, "text/css; charset=utf-8") : Results.NotFound();
+});
+
+app.MapGet("/dashboard.js", (IWebHostEnvironment env) =>
+{
+    var path = Path.Combine(env.WebRootPath, "dashboard.js");
+    return File.Exists(path) ? Results.File(path, "application/javascript; charset=utf-8") : Results.NotFound();
+});
+
+app.MapGet("/flow-endpoints-map.js", (IWebHostEnvironment env) =>
+{
+    var path = Path.Combine(env.WebRootPath, "flow-endpoints-map.js");
+    return File.Exists(path) ? Results.File(path, "application/javascript; charset=utf-8") : Results.NotFound();
+});
+
+app.MapGet("/assets/{**assetPath}", (string assetPath, IWebHostEnvironment env) =>
+{
+    var safePath = (assetPath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar);
+    var path = Path.Combine(env.WebRootPath, "assets", safePath);
+    return File.Exists(path) ? Results.File(path) : Results.NotFound();
+});
+
+app.MapGet("/img/{**assetPath}", (string assetPath, IWebHostEnvironment env) =>
+{
+    var safePath = (assetPath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar);
+    var path = Path.Combine(env.WebRootPath, "img", safePath);
+    return File.Exists(path) ? Results.File(path) : Results.NotFound();
+});
+
+app.MapGet("/fonts/{**assetPath}", (string assetPath, IWebHostEnvironment env) =>
+{
+    var safePath = (assetPath ?? string.Empty).Replace('/', Path.DirectorySeparatorChar);
+    var path = Path.Combine(env.WebRootPath, "fonts", safePath);
+    return File.Exists(path) ? Results.File(path) : Results.NotFound();
+});
+
 app.MapPost("/api/conversor", async (
     [FromBody] ConversorWebRequest webRequest,
     HttpContext context,
@@ -491,7 +1579,7 @@ app.MapPost("/api/conversor", async (
     InstagramLinkMetaService instagramMeta,
     IHttpClientFactory httpClientFactory,
     OfficialProductDataService officialProductDataService,
-    ILinkTrackingStore trackingStore,
+    TrackingLinkShortenerService trackingLinkShortener,
     ICouponSelector couponSelector,
     ISettingsStore settingsStore,
     IOptions<WebhookOptions> webhookOptions,
@@ -624,7 +1712,11 @@ app.MapPost("/api/conversor", async (
                     viewModel.EstimatedDelivery = NormalizeConverterDisplayText(fallbackOfficial?.EstimatedDelivery ?? string.Empty);
                     viewModel.DataSource = !string.IsNullOrWhiteSpace(fallbackOfficial?.DataSource) ? fallbackOfficial!.DataSource : "meta-fallback";
                     viewModel.ConvertedUrl = FirstNonEmpty(fallbackResolvedUrl, normalizedInputUrl) ?? normalizedInputUrl;
-                    viewModel.TrackedUrl = viewModel.ConvertedUrl;
+                    viewModel.TrackedUrl = await trackingLinkShortener.TrackSingleUrlAsync(
+                        viewModel.ConvertedUrl,
+                        "web_conversor",
+                        ct,
+                        viewModel.Store);
                     viewModel.IsLightningDeal = fallbackOfficial?.IsLightningDeal ?? false;
                     viewModel.LightningDealExpiry = fallbackOfficial?.LightningDealExpiry;
                     viewModel.CouponCode = fallbackOfficial?.CouponCode;
@@ -688,7 +1780,11 @@ app.MapPost("/api/conversor", async (
                     }
                 }
 
-                var trackedUrl = convertedUrl;
+                var trackedUrl = await trackingLinkShortener.TrackSingleUrlAsync(
+                    convertedUrl,
+                    "web_conversor",
+                    ct,
+                    conversion.Store);
                 var enrichmentUrl = FirstNonEmpty(
                     conversion.EnrichmentUrl ?? string.Empty,
                     normalizedInputUrl,
@@ -860,7 +1956,7 @@ app.MapPost("/api/conversor", async (
                     convertedMeta.Videos?.FirstOrDefault(),
                     string.Empty) ?? string.Empty;
 
-                // Previous price: cascade from official data → HTML scraping of each meta source
+                // Previous price: cascade from official data ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ HTML scraping of each meta source
                 viewModel.PreviousPrice = NormalizeConverterDisplayText(FirstNonEmpty(
                     officialData?.PreviousPrice ?? string.Empty,
                     productPageMeta.PreviousPriceText ?? string.Empty,
@@ -882,7 +1978,7 @@ app.MapPost("/api/conversor", async (
                     }
                 }
 
-                // Discount percent: cascade official API → HTML extracted % → computed from prices
+                // Discount percent: cascade official API ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ HTML extracted % ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ computed from prices
                 viewModel.DiscountPercent = officialData?.DiscountPercent;
                 if (!viewModel.DiscountPercent.HasValue || viewModel.DiscountPercent.Value <= 0)
                 {
@@ -950,6 +2046,7 @@ app.MapGet("/bio", async (
     IInstagramPublishStore publishStore,
     ICatalogOfferStore catalogOfferStore,
     IConversionLogStore conversionLogStore,
+    IClickLogStore clickLogStore,
     ILinkTrackingStore trackingStore,
     ISettingsStore settingsStore,
     IOptions<WebhookOptions> webhookOptions,
@@ -973,12 +2070,19 @@ app.MapGet("/bio", async (
     var maxItems = Math.Clamp(bioSettings.MaxItems, 5, 80);
     var catalogTarget = ResolveCatalogTargetForRequest(request);
     var recentConversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 500 }, ct);
+    var catalogItems = await catalogOfferStore.ListAsync(null, 500, ct, catalogTarget);
+    var validCatalogItemsByDraftId = catalogItems
+        .Where(IsValidPublicCatalogItem)
+        .Where(x => !string.IsNullOrWhiteSpace(x.DraftId))
+        .ToDictionary(x => x.DraftId, StringComparer.OrdinalIgnoreCase);
+    var catalogClicks = await clickLogStore.QueryAsync("catalog", null, 5000, ct);
+    var catalogClickCounts = BuildCatalogItemClickCounts(catalogClicks);
 
     var drafts = await publishStore.ListAsync(ct);
     var draftsById = drafts
         .Where(d => !string.IsNullOrWhiteSpace(d.Id))
         .ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
-    var catalogByDraftId = await catalogOfferStore.GetByDraftIdAsync(ct, catalogTarget);
+    var catalogByDraftId = validCatalogItemsByDraftId;
     if (catalogByDraftId.Count == 0)
     {
         catalogByDraftId = BuildCatalogFallbackItemsFromDrafts(drafts, recentConversions, catalogTarget)
@@ -990,37 +2094,61 @@ app.MapGet("/bio", async (
                 StringComparer.OrdinalIgnoreCase);
     }
 
-    var baseItems = drafts
-        .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
-        .Select(d =>
+    var baseItems = catalogByDraftId
+        .Values
+        .Select(catalogItem =>
         {
-            catalogByDraftId.TryGetValue(d.Id, out var catalogItem);
-            var effectiveOfferUrl = ResolveEffectiveCatalogOfferUrl(catalogItem, d, recentConversions);
-            var title = !string.IsNullOrWhiteSpace(d.ProductName) ? d.ProductName : "Oferta";
+            draftsById.TryGetValue(catalogItem.DraftId, out var draft);
+            var effectiveOfferUrl = FirstNonEmpty(catalogItem.AffiliateTargetUrl, catalogItem.OfferUrl, catalogItem.TrackingUrl);
+            var title = !string.IsNullOrWhiteSpace(catalogItem.ProductName)
+                ? catalogItem.ProductName
+                : !string.IsNullOrWhiteSpace(draft?.ProductName)
+                    ? draft.ProductName
+                    : "Oferta";
             return new BioLinkItem
             {
-                CreatedAt = d.CreatedAt,
+                CreatedAt = catalogItem.PublishedAt,
                 Title = title.Trim(),
                 Link = effectiveOfferUrl,
                 OriginalLink = effectiveOfferUrl,
-                Store = ResolveStoreNameFromUrl(FirstNonEmpty(effectiveOfferUrl, catalogItem?.Store)),
-                ItemNumber = catalogItem?.ItemNumber,
-                IsHighlightedOnBio = d.IsBioHighlighted,
-                BioHighlightedAt = d.BioHighlightedAt,
-                Keyword = FirstNonEmpty(catalogItem?.Keyword, d.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Keyword))?.Keyword?.Trim()),
-                IsLightningDeal = catalogItem?.IsLightningDeal ?? false,
-                LightningDealExpiry = catalogItem?.LightningDealExpiry,
-                CouponCode = catalogItem?.CouponCode,
-                CouponDescription = catalogItem?.CouponDescription,
-                ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(catalogItem?.ImageUrl, ResolveBioImageUrl(d)))
+                Store = ResolveStoreNameFromUrl(FirstNonEmpty(effectiveOfferUrl, catalogItem.Store)),
+                ItemNumber = catalogItem.ItemNumber,
+                IsHighlightedOnBio = draft?.IsBioHighlighted ?? false,
+                BioHighlightedAt = draft?.BioHighlightedAt,
+                Keyword = FirstNonEmpty(catalogItem.Keyword, draft?.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Keyword))?.Keyword?.Trim()),
+                IsLightningDeal = catalogItem.IsLightningDeal,
+                LightningDealExpiry = catalogItem.LightningDealExpiry,
+                CouponCode = catalogItem.CouponCode,
+                CouponDescription = catalogItem.CouponDescription,
+                ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(catalogItem.ImageUrl, draft is null ? null : ResolveBioImageUrl(draft)))
             };
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Link))
-        .OrderByDescending(x => x.IsHighlightedOnBio)
-        .ThenByDescending(x => x.BioHighlightedAt ?? DateTimeOffset.MinValue)
-        .ThenByDescending(x => x.CreatedAt)
         .GroupBy(x => x.Link, StringComparer.OrdinalIgnoreCase)
         .Select(g => g.First())
+        .ToList();
+
+    var latestItems = baseItems
+        .OrderByDescending(x => x.CreatedAt)
+        .Take(3)
+        .ToList();
+    var latestItemNumbers = latestItems
+        .Where(x => x.ItemNumber.HasValue)
+        .Select(x => x.ItemNumber!.Value)
+        .ToHashSet();
+    var mostClickedItems = baseItems
+        .Where(x => x.ItemNumber.HasValue && !latestItemNumbers.Contains(x.ItemNumber.Value))
+        .OrderByDescending(x => catalogClickCounts.GetValueOrDefault(x.ItemNumber!.Value))
+        .ThenByDescending(x => x.CreatedAt)
+        .Take(2)
+        .ToList();
+    var remainingItems = baseItems
+        .Where(x => !latestItems.Contains(x) && !mostClickedItems.Contains(x))
+        .OrderByDescending(x => x.CreatedAt)
+        .ToList();
+    baseItems = latestItems
+        .Concat(mostClickedItems)
+        .Concat(remainingItems)
         .Take(maxItems)
         .ToList();
 
@@ -1042,7 +2170,16 @@ app.MapGet("/bio", async (
     }
 
     var currentUrl = BuildBioCurrentUrl(publicBaseUrl, source, campaign);
-    var html = BuildBioLinksPageHtml(trackedItems, currentUrl, bioSettings, source, campaign);
+    var nicheLinks = settings.WhatsAppNicheGroups?
+        .Where(x => x.Enabled && !string.IsNullOrWhiteSpace(x.InviteUrl))
+        .OrderBy(x => WhatsAppNicheDefinitions.GetOrder(x.Slug))
+        .Select(x => new BioNicheLink(
+            x.Slug,
+            string.IsNullOrWhiteSpace(x.DisplayName) ? x.Slug : x.DisplayName,
+            x.InviteUrl!,
+            string.IsNullOrWhiteSpace(x.Campaign) ? $"niche_{x.Slug}" : x.Campaign))
+        .ToArray() ?? Array.Empty<BioNicheLink>();
+    var html = BuildBioLinksPageHtml(trackedItems, nicheLinks, currentUrl, bioSettings, source, campaign);
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
@@ -1079,11 +2216,11 @@ app.MapGet("/catalogo", async (
         .Select(item =>
         {
             var draft = FindRelatedDraftForCatalogItem(item, draftsById, drafts);
-            item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, draft, recentConversions);
+            item.OfferUrl = ResolvePublicCatalogOfferUrl(item);
             item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(item.ImageUrl, draft is null ? null : ResolveBioImageUrl(draft)));
             if (string.IsNullOrWhiteSpace(item.Store))
             {
-                item.Store = ResolveStoreNameFromUrl(item.OfferUrl);
+                item.Store = ResolveStoreNameFromUrl(FirstNonEmpty(item.AffiliateTargetUrl, item.OriginalProductUrl, item.OfferUrl));
             }
 
             return item;
@@ -1123,13 +2260,13 @@ app.MapGet("/item/{query}", async (
     }
     else if (!string.IsNullOrWhiteSpace(item.DraftId) && draftsById.TryGetValue(item.DraftId, out var storedDraft))
     {
-        item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, storedDraft, recentConversions);
+        item.OfferUrl = ResolvePublicCatalogOfferUrl(item);
         item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, context.Request, FirstNonEmpty(item.ImageUrl, ResolveBioImageUrl(storedDraft)));
     }
     else
     {
         var relatedDraft = FindRelatedDraftForCatalogItem(item, draftsById, drafts);
-        item.OfferUrl = ResolveEffectiveCatalogOfferUrl(item, relatedDraft, recentConversions);
+        item.OfferUrl = ResolvePublicCatalogOfferUrl(item);
         item.ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, context.Request, FirstNonEmpty(item.ImageUrl, relatedDraft is null ? null : ResolveBioImageUrl(relatedDraft)));
     }
 
@@ -1176,14 +2313,17 @@ app.MapGet("/media/remote", async (
 app.MapPost("/webhooks/evolution", async (
     HttpRequest request,
     IOptions<EvolutionOptions> evolution,
+    IOptions<WebhookOptions> webhookOpts,
     IIdempotencyStore idempotency,
     ISettingsStore settingsStore,
+    IWhatsAppGroupMembershipStore membershipStore,
     IAuditTrail audit,
+    ILogger<Program> logger,
     CancellationToken ct) =>
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
 
-    if (!WebhookSignatureVerifier.TryValidate(request, body, evolution.Value.WebhookSecret))
+    if (!IsBotConversorWebhookAuthorized(request, body, evolution.Value.WebhookSecret, webhookOpts.Value.ApiKey))
     {
         return Results.Unauthorized();
     }
@@ -1191,6 +2331,45 @@ app.MapPost("/webhooks/evolution", async (
     using var doc = JsonDocument.Parse(body);
     var root = doc.RootElement;
     var eventName = root.TryGetProperty("event", out var e) ? e.GetString() : "unknown";
+
+    // WhatsApp Group Membership Monitoring
+    if (string.Equals(eventName, "group-participants.update", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            var settingsNode = await settingsStore.GetAsync(ct);
+            var dataNode = root.GetProperty("data");
+            var groupId = dataNode.TryGetProperty("id", out var idNode) ? idNode.GetString() : null;
+
+            if (!string.IsNullOrEmpty(groupId) && settingsNode.MonitoredGroupIds.Contains(groupId, StringComparer.OrdinalIgnoreCase))
+            {
+                var action = dataNode.TryGetProperty("action", out var actionNode) ? actionNode.GetString() : null;
+                if (dataNode.TryGetProperty("participants", out var participantsNode) && participantsNode.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var participant in participantsNode.EnumerateArray())
+                    {
+                        var participantId = participant.ValueKind == JsonValueKind.String
+                            ? participant.GetString()
+                            : GetString(participant, "phoneNumber", "id", "jid", "participant", "user");
+                        if (!string.IsNullOrEmpty(participantId))
+                        {
+                            await membershipStore.AppendAsync(new WhatsAppGroupMembershipEvent
+                            {
+                                GroupId = groupId,
+                                ParticipantId = participantId,
+                                Action = action ?? "unknown",
+                                Timestamp = DateTimeOffset.UtcNow
+                            }, ct);
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Erro ao processar group-participants.update no webhook (Evolution).");
+        }
+    }
     var eventId = root.TryGetProperty("eventId", out var id) ? id.GetString() : null;
 
     var idempotencyKey = $"evolution:{eventName}:{eventId ?? body.GetHashCode().ToString()}";
@@ -1250,6 +2429,27 @@ app.MapPost("/webhook/bot-conversor", async (
         StringComparer.OrdinalIgnoreCase);
 
     var result = await orchestrator.EnqueueBotConversorAsync(body, headers, ct);
+    
+    // Extrair eventos de membership se existirem
+    try
+    {
+        var membershipEvents = ExtractEvolutionMembershipEvents(body);
+        if (membershipEvents.Count > 0)
+        {
+            var memStore = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.IWhatsAppGroupMembershipStore>();
+            var settings = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.ISettingsStore>();
+            var monitoredGroupIds = new HashSet<string>((await settings.GetAsync(ct)).MonitoredGroupIds ?? [], StringComparer.OrdinalIgnoreCase);
+            foreach(var evt in membershipEvents.Where(x => monitoredGroupIds.Contains(x.GroupId)))
+            {
+                await memStore.AppendAsync(evt, ct);
+            }
+            logger.LogInformation("Registrados {Count} eventos de membership via webhook principal.", membershipEvents.Count(x => monitoredGroupIds.Contains(x.GroupId)));
+        }
+    }
+    catch(Exception ex)
+    {
+        logger.LogWarning(ex, "Falha ao processar membership events no webhook principal.");
+    }
     if (!result.Accepted)
     {
         logger.LogWarning(
@@ -1270,18 +2470,27 @@ app.MapPost("/webhook/bot-conversor", async (
     });
 });
 
+if (isWorkerRole)
+{
 app.MapPost("/internal/webhook/bot-conversor", async (
     HttpRequest request,
     IMessageProcessor processor,
     IWhatsAppGateway gateway,
     IMediaStore mediaStore,
     IMediaFailureLogStore mediaFailureLogStore,
+    IOfficialWhatsAppBlockedOfferStore blockedOfferStore,
+    DeliverySafetyPolicy deliverySafetyPolicy,
     ISettingsStore settingsStore,
     IConversionLogStore conversionLogStore,
     ILinkTrackingStore linkTrackingStore,
     IInstagramPostComposer instagramComposer,
+    IInstagramPublishService instagramPublishService,
     IInstagramPublishStore instagramPublishStore,
     IInstagramPublishLogStore instagramPublishLogStore,
+    WhatsAppPublishContentService whatsAppPublishContent,
+    AffiliateTrackedContentService affiliateTrackedContentService,
+    PriceWatchConversationService priceWatchConversation,
+    ICatalogOfferStore catalogOfferStore,
     InstagramConversationStore instagramStore,
     InstagramCommandMenuStore instagramMenuStore,
     WhatsAppHelpMenuStore helpMenuStore,
@@ -1289,7 +2498,10 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     InstagramImageDownloadService instagramImages,
     IIdempotencyStore idempotency,
     OfficialProductDataService officialProductDataService,
+    IOfferImageResolver offerImageResolver,
     IOptions<AffiliateOptions> affiliate,
+    IOptions<MessagingOptions> messagingOptions,
+    IOptions<DeliverySafetyOptions> deliverySafetyOptions,
     IOptions<TelegramOptions> telegramOptions,
     IOptions<EvolutionOptions> evolutionOptions,
     IOptions<WebhookOptions> webhookOptions,
@@ -1309,6 +2521,21 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     if (string.IsNullOrWhiteSpace(body))
     {
         return Results.Ok(new { success = true, ignored = true });
+    }
+
+    var membershipEvents = ExtractEvolutionMembershipEvents(body);
+    if (membershipEvents.Count > 0)
+    {
+        var memStore = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.IWhatsAppGroupMembershipStore>();
+        var resolvedSettingsStore = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.ISettingsStore>();
+        var monitoredGroupIds = new HashSet<string>((await resolvedSettingsStore.GetAsync(ct)).MonitoredGroupIds ?? [], StringComparer.OrdinalIgnoreCase);
+        foreach(var evt in membershipEvents.Where(x => monitoredGroupIds.Contains(x.GroupId)))
+        {
+            await memStore.AppendAsync(evt, ct);
+        }
+        var registeredCount = membershipEvents.Count(x => monitoredGroupIds.Contains(x.GroupId));
+        logger.LogInformation("Registrados {Count} eventos de membership via webhook.", registeredCount);
+        return Results.Ok(new { success = true, ignored = false, membershipEvents = registeredCount });
     }
 
     var messages = ExtractEvolutionMessages(body);
@@ -1363,6 +2590,46 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
         var normalizedText = msg.Text?.Trim() ?? string.Empty;
+        if (!msg.FromMe &&
+            await priceWatchConversation.TryHandleAsync(msg.InstanceName, msg.ChatId, msg.SenderId, normalizedText, ct))
+        {
+            continue;
+        }
+
+        if (TryParseViralReelApprovalKeyword(
+                normalizedText,
+                settings.InstagramPublish ?? new InstagramPublishSettings(),
+                msg.ChatId,
+                out var approvalKeywordCommand))
+        {
+            var commandResponses = await ExecuteViralReelApprovalKeywordAsync(
+                approvalKeywordCommand,
+                settings,
+                instagramComposer,
+                instagramPublishService,
+                instagramPublishStore,
+                instagramPublishLogStore,
+                gateway,
+                whatsAppPublishContent,
+                catalogOfferStore,
+                idempotency,
+                blockedOfferStore,
+                deliverySafetyPolicy,
+                messagingOptions.Value,
+                deliverySafetyOptions.Value,
+                ct);
+
+            foreach (var response in commandResponses)
+            {
+                foreach (var chunk in SplitLongMessage(response, 3000))
+                {
+                    await SendReplyAsync(responderInstance, msg.ChatId, chunk);
+                }
+            }
+
+            continue;
+        }
+
         var isCommandLike = normalizedText.StartsWith("/help", StringComparison.OrdinalIgnoreCase)
                             || normalizedText.StartsWith(@"\help", StringComparison.OrdinalIgnoreCase)
                             || normalizedText.StartsWith("/ig", StringComparison.OrdinalIgnoreCase)
@@ -1610,7 +2877,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         if (!msg.FromMe && !string.IsNullOrWhiteSpace(autoReply))
         {
             var tracked = await ApplyTrackingAsync(autoReply, linkTrackingStore, webhookOptions.Value.PublicBaseUrl, responder.TrackingEnabled, ct);
-            await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
+                        await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
             _ = conversionLogStore.AppendAsync(new ConversionLogEntry
             {
                 Source = "AutoReply",
@@ -1647,8 +2914,6 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             if (ForwardingSafety.TryGetStrictForwardText(responderResult, out var strictResponderText, out var strictResponderReason))
             {
                 var replyText = BuildResponderMessage(responder, strictResponderText);
-
-                // Enriquecer com metadados de produto (Amazon/Shopee/ML)
                 var (enrichedReply, responderProductImageUrl, _) = await processor.EnrichTextWithProductDataAsync(
                     replyText, normalizedText, ct);
                 replyText = enrichedReply;
@@ -1666,12 +2931,35 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                     replyText += $"\n\n{responder.FooterText}";
                 }
 
+                replyText = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(replyText);
+
                 var tracked = await ApplyTrackingAsync(replyText, linkTrackingStore, webhookOptions.Value.PublicBaseUrl, responder.TrackingEnabled, ct);
 
-                if (!string.IsNullOrWhiteSpace(responderProductImageUrl))
+                var responderImageResolution = await offerImageResolver.ResolveAsync(
+                    new OfferImageResolutionRequest(
+                        ExtractUrlsFromText(normalizedText).FirstOrDefault(),
+                        ExtractUrlsFromText(replyText).FirstOrDefault(),
+                        replyText,
+                        TrackingLinkShortenerService.ResolveStoreHint(replyText) ?? TrackingLinkShortenerService.ResolveStoreHint(normalizedText),
+                        responderProductImageUrl),
+                    ct);
+                var responderOutboundMessage = BuildForwardMessageWithResolvedImage(msg, responderImageResolution);
+
+                if (responderOutboundMessage.HasMedia)
                 {
-                    var imgResult = await gateway.SendImageUrlAsync(responderInstance, msg.ChatId, responderProductImageUrl, tracked.Text, "image/jpeg", null, ct);
-                    if (!imgResult.Success)
+                    var imgResult = await SendWhatsAppMessageWithMediaFallbackAsync(
+                        gateway,
+                        httpClientFactory,
+                        evolutionOptions.Value,
+                        mediaStore,
+                        webhookOptions.Value.PublicBaseUrl,
+                        responderInstance,
+                        msg.ChatId,
+                        tracked.Text,
+                        responderOutboundMessage,
+                        logger,
+                        ct);
+                    if (!imgResult.Result.Success)
                     {
                         await gateway.SendTextAsync(responderInstance, msg.ChatId, tracked.Text, ct);
                     }
@@ -1693,14 +2981,14 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 }, ct);
                 
                 // Sprint 1: Auto-Responder Inteligente (Clean Chat)
-                // Remove a mensagem original do membro após postar a conversão bonita
+                // Remove a mensagem original do membro apÃƒÆ’Ã‚Â³s postar a conversÃƒÆ’Ã‚Â£o bonita
                 if (!string.IsNullOrWhiteSpace(msg.MessageId))
                 {
                     var isGroup = IsWhatsAppGroupChat(msg.ChatId);
                     var delResult = await gateway.DeleteMessageAsync(responderInstance, msg.ChatId, msg.MessageId, isGroup, ct);
                     if (!delResult.Success)
                     {
-                        logger.LogWarning("Não foi possível apagar a mensagem original do membro {SenderId} no chat {ChatId}: {Error}", 
+                        logger.LogWarning("NÃƒÆ’Ã‚Â£o foi possÃƒÆ’Ã‚Â­vel apagar a mensagem original do membro {SenderId} no chat {ChatId}: {Error}", 
                             msg.SenderId, msg.ChatId, delResult.Message);
                     }
                 }
@@ -1727,23 +3015,13 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 continue;
             }
 
-            var protectedOfficialGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "120363405661434395@g.us"
-            };
-            var configuredOfficialGroupId = Environment.GetEnvironmentVariable("OFFICIAL_WHATSAPP_GROUP_ID");
-            if (!string.IsNullOrWhiteSpace(configuredOfficialGroupId))
-            {
-                protectedOfficialGroupIds.Add(configuredOfficialGroupId.Trim());
-            }
-
             var isTestRoute = !string.IsNullOrWhiteSpace(waRoute.Name)
                 && (waRoute.Name.Contains("teste", StringComparison.OrdinalIgnoreCase)
                     || waRoute.Name.Contains("test", StringComparison.OrdinalIgnoreCase));
 
             var destinations = waRoute.DestinationGroupIds
                 .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Where(x => !(isTestRoute && protectedOfficialGroupIds.Contains(x.Trim())))
+                .Where(x => !(isTestRoute && deliverySafetyPolicy.IsOfficialWhatsAppDestination(x.Trim())))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
@@ -1781,18 +3059,41 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 continue;
             }
 
-            var result = await processor.ProcessAsync(
-                normalizedText,
-                "WhatsApp",
-                ct,
-                originChatRef: msg.ChatId,
-                destinationChatRef: string.Join(",", destinations),
-                sourceImageUrl: msg.HasMedia &&
-                                !string.IsNullOrWhiteSpace(msg.MediaUrl) &&
-                                (string.IsNullOrWhiteSpace(msg.MediaMimeType) ||
-                                 msg.MediaMimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-                    ? msg.MediaUrl
-                    : null);
+                        if (waRoute.SkipConversionOnlyShorten && 
+                (normalizedText.Contains("\uD83D\uDCB0 Comiss\u00E3o") || 
+                 !ExtractUrlsFromText(normalizedText).Any()))
+            {
+                logger.LogInformation("WhatsApp message ignored in SkipConversion route (either commission msg or no links). Chat={ChatId}", msg.ChatId);
+                continue;
+            }
+
+            ConversionResult result;
+            if (waRoute.SkipConversionOnlyShorten)
+            {
+                var originalLinks = ExtractUrlsFromText(normalizedText).ToList();
+                result = new ConversionResult(
+                    true,
+                    normalizedText,
+                    originalLinks.Count,
+                    "TrackingOnly"
+                );
+                logger.LogInformation("WhatsApp message processed via SkipConversion route. Chat={ChatId} Links={Links}", msg.ChatId, originalLinks.Count);
+            }
+            else
+            {
+                result = await processor.ProcessAsync(
+                    normalizedText,
+                    "WhatsApp",
+                    ct,
+                    originChatRef: msg.ChatId,
+                    destinationChatRef: string.Join(",", destinations),
+                    sourceImageUrl: msg.HasMedia &&
+                                    !string.IsNullOrWhiteSpace(msg.MediaUrl) &&
+                                    (string.IsNullOrWhiteSpace(msg.MediaMimeType) ||
+                                     msg.MediaMimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                        ? msg.MediaUrl
+                        : null);
+            }
 
             if (!ForwardingSafety.TryGetStrictForwardText(result, out var finalText, out var strictForwardReason))
             {
@@ -1845,10 +3146,30 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             var (enrichedFinal, forwardProductImageUrl, _) = await processor.EnrichTextWithProductDataAsync(
                 finalText, normalizedText, ct);
             finalText = enrichedFinal;
+            var routeStoreHint =
+                TrackingLinkShortenerService.ResolveStoreHint(finalText) ??
+                TrackingLinkShortenerService.ResolveStoreHint(normalizedText);
+            if (!IsWhatsAppRouteStoreAllowed(waRoute, routeStoreHint, finalText, normalizedText))
+            {
+                logger.LogInformation(
+                    "WhatsApp forwarding ignorado por filtro de loja. Route={RouteName} Store={Store}",
+                    waRoute.Name,
+                    routeStoreHint ?? "unknown");
+                continue;
+            }
+
+            var imageResolution = await offerImageResolver.ResolveAsync(
+                new OfferImageResolutionRequest(
+                    ExtractUrlsFromText(normalizedText).FirstOrDefault(),
+                    ExtractUrlsFromText(finalText).FirstOrDefault(),
+                    finalText,
+                    routeStoreHint,
+                    forwardProductImageUrl),
+                ct);
 
             var hasImageCandidate =
                 (msg.HasMedia && (!string.IsNullOrWhiteSpace(msg.MediaUrl) || !string.IsNullOrWhiteSpace(msg.MediaBase64)))
-                || !string.IsNullOrWhiteSpace(forwardProductImageUrl);
+                || imageResolution.Success;
             var qualityGate = OfferQualityGate.ValidateForAutoForward(finalText, hasImageCandidate);
             if (!qualityGate.Allowed)
             {
@@ -1909,22 +3230,119 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 finalText += $"\n\n{waRoute.FooterText}";
             }
 
+            finalText = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(finalText);
+
             var instanceToUse = FirstNonEmpty(waRoute.InstanceName, waSettings.InstanceName, msg.InstanceName);
             foreach (var destination in destinations)
             {
+                var isOfficialDestination = deliverySafetyPolicy.IsOfficialWhatsAppDestination(destination);
+                var originSurface = isOfficialDestination ? "whatsapp_grupo_oficial" : "whatsapp_grupo";
+                var outboundText = await affiliateTrackedContentService.RewriteAsync(
+                    finalText,
+                    originSurface,
+                    ct);
+                outboundText = WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(outboundText);
+
+                var outboundMediaMessage = msg.HasMedia
+                    ? msg
+                    : BuildForwardMessageWithResolvedImage(msg, imageResolution);
+                var hasActualMedia = outboundMediaMessage.HasMedia &&
+                                     (!string.IsNullOrWhiteSpace(outboundMediaMessage.MediaUrl) ||
+                                      !string.IsNullOrWhiteSpace(outboundMediaMessage.MediaBase64));
+
+                if (isOfficialDestination && !waRoute.SendMediaEnabled)
+                {
+                    logger.LogWarning(
+                        "WhatsApp forwarding bloqueado no grupo oficial por media desabilitada. Destination={Destination}",
+                        destination);
+                    await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                    {
+                        Source = "WhatsAppWebhook",
+                        InstanceName = instanceToUse,
+                        OriginChatRef = msg.ChatId,
+                        DestinationChatRef = destination,
+                        Reason = "official_group_media_disabled_blocked",
+                        Detail = "Grupo oficial exige imagem e a rota estava com SendMediaEnabled=false.",
+                        Text = outboundText,
+                        HasImageCandidate = outboundMediaMessage.HasMedia,
+                        ImageSource = imageResolution.Source,
+                        Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractUrlsFromText(outboundText).FirstOrDefault()),
+                        OfferUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => !x.Contains("/r/", StringComparison.OrdinalIgnoreCase)),
+                        TrackingUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => x.Contains("/r/", StringComparison.OrdinalIgnoreCase))
+                    }, ct);
+                    continue;
+                }
+
+                var officialGuard = OfficialWhatsAppGroupGuard.Validate(
+                    isOfficialDestination,
+                    outboundText,
+                    outboundMediaMessage.HasMedia,
+                    hasActualMedia);
+                if (!officialGuard.Allowed)
+                {
+                    logger.LogWarning(
+                        "WhatsApp forwarding bloqueado no grupo oficial. Destination={Destination} Reason={Reason} Detail={Detail}",
+                        destination,
+                        officialGuard.Reason,
+                        officialGuard.Detail ?? "n/a");
+                    await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                    {
+                        Source = "WhatsAppWebhook",
+                        InstanceName = instanceToUse,
+                        OriginChatRef = msg.ChatId,
+                        DestinationChatRef = destination,
+                        Reason = $"official_group_{officialGuard.Reason}",
+                        Detail = officialGuard.Detail,
+                        Text = outboundText,
+                        HasImageCandidate = outboundMediaMessage.HasMedia,
+                        ImageSource = imageResolution.Source,
+                        Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractUrlsFromText(outboundText).FirstOrDefault()),
+                        OfferUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => !x.Contains("/r/", StringComparison.OrdinalIgnoreCase)),
+                        TrackingUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => x.Contains("/r/", StringComparison.OrdinalIgnoreCase))
+                    }, ct);
+                    continue;
+                }
+
+                var outboundDedupeKey = BuildWhatsAppOutboundDedupeKey(
+                    instanceToUse,
+                    destination,
+                    outboundText,
+                    outboundMediaMessage.HasMedia);
+                var dedupeWindow = WhatsAppOutboundDeduplicationPolicy.ResolveWindow(isOfficialDestination, messagingOptions.Value);
+                if (!idempotency.TryBegin(outboundDedupeKey, dedupeWindow))
+                {
+                    logger.LogWarning(
+                        "WhatsApp forwarding duplicado bloqueado. Destination={Destination} HasMedia={HasMedia}",
+                        destination,
+                        outboundMediaMessage.HasMedia);
+                    await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                    {
+                        Source = "WhatsAppWebhook",
+                        InstanceName = instanceToUse,
+                        OriginChatRef = msg.ChatId,
+                        DestinationChatRef = destination,
+                        Reason = "duplicate_blocked",
+                        Detail = $"Mensagem duplicada bloqueada por idempotencia de outbound (janela {Math.Round(dedupeWindow.TotalHours, 2)}h).",
+                        Text = outboundText,
+                        HasImageCandidate = outboundMediaMessage.HasMedia,
+                        ImageSource = imageResolution.Source,
+                        Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractUrlsFromText(outboundText).FirstOrDefault()),
+                        OfferUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => !x.Contains("/r/", StringComparison.OrdinalIgnoreCase)),
+                        TrackingUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => x.Contains("/r/", StringComparison.OrdinalIgnoreCase))
+                    }, ct);
+                    continue;
+                }
+
                 WhatsAppForwardSendOutcome outcome;
                 if (waRoute.SendMediaEnabled)
                 {
-                    // Se nao tem midia na msg original mas temos imagem do produto via API, enviar a imagem do produto
-                    if (!msg.HasMedia && !string.IsNullOrWhiteSpace(forwardProductImageUrl))
+                    // So preserva preview nativo quando nao existe midia de origem nem imagem enriquecida do produto.
+                    if (WhatsAppForwardMediaHelper.ShouldPreferLinkPreviewWithoutMedia(
+                            outboundMediaMessage.HasMedia,
+                            waRoute.PreferLinkPreviewWhenNoMedia))
                     {
-                        var imgResult = await gateway.SendImageUrlAsync(
-                            instanceToUse, destination, forwardProductImageUrl, finalText, "image/jpeg", null, ct);
-                        outcome = imgResult.Success
-                            ? new WhatsAppForwardSendOutcome(imgResult, "image_sent_product_api")
-                            : new WhatsAppForwardSendOutcome(
-                                await gateway.SendTextAsync(instanceToUse, destination, finalText, ct),
-                                "text_fallback_product_image_failed");
+                        var textResult = await gateway.SendTextAsync(instanceToUse, destination, outboundText, ct);
+                        outcome = new WhatsAppForwardSendOutcome(textResult, "text_link_preview_preferred");
                     }
                     else
                     {
@@ -1936,15 +3354,16 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                             webhookOptions.Value.PublicBaseUrl,
                             instanceToUse,
                             destination,
-                            finalText,
-                            msg,
+                            outboundText,
+                            outboundMediaMessage,
                             logger,
-                            ct);
+                            ct,
+                            allowTextFallback: !isOfficialDestination);
                     }
                 }
                 else
                 {
-                    var textOnly = await gateway.SendTextAsync(instanceToUse, destination, finalText, ct);
+                    var textOnly = await gateway.SendTextAsync(instanceToUse, destination, outboundText, ct);
                     outcome = new WhatsAppForwardSendOutcome(textOnly, "text_only_media_disabled");
                 }
 
@@ -1954,11 +3373,11 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                     {
                         Source = "WhatsAppWebhook",
                         DestinationChatRef = destination,
-                        Success = outcome.Result.Success && (outcome.Mode.StartsWith("image_", StringComparison.OrdinalIgnoreCase) || !msg.HasMedia),
+                        Success = outcome.Result.Success && (outcome.Mode.StartsWith("image_", StringComparison.OrdinalIgnoreCase) || !outboundMediaMessage.HasMedia),
                         Reason = outcome.Mode,
                         Detail = msg.HasMedia
                             ? $"hasMedia=true,mime={msg.MediaMimeType ?? "n/a"},hasUrl={!string.IsNullOrWhiteSpace(msg.MediaUrl)},diag={outcome.Diagnostic ?? outcome.Result.Message ?? "n/a"}"
-                            : $"hasMedia=false,diag={outcome.Diagnostic ?? outcome.Result.Message ?? "n/a"}"
+                            : $"hasMedia=false,resolvedImage={imageResolution.Success},resolvedSource={imageResolution.Source},resolvedFailure={imageResolution.FailureReason ?? "n/a"},diag={outcome.Diagnostic ?? outcome.Result.Message ?? "n/a"}"
                     }, ct);
                 }
 
@@ -1966,6 +3385,24 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 if (!sendResult.Success)
                 {
                     logger.LogWarning("Falha ao enviar WhatsApp destino {Destination}: {Message}", destination, sendResult.Message);
+                    if (isOfficialDestination)
+                    {
+                        await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+                        {
+                            Source = "WhatsAppWebhook",
+                            InstanceName = instanceToUse,
+                            OriginChatRef = msg.ChatId,
+                            DestinationChatRef = destination,
+                            Reason = "send_failed",
+                            Detail = sendResult.Message,
+                            Text = outboundText,
+                            HasImageCandidate = outboundMediaMessage.HasMedia,
+                            ImageSource = imageResolution.Source,
+                            Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractUrlsFromText(outboundText).FirstOrDefault()),
+                            OfferUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => !x.Contains("/r/", StringComparison.OrdinalIgnoreCase)),
+                            TrackingUrl = ExtractUrlsFromText(outboundText).FirstOrDefault(x => x.Contains("/r/", StringComparison.OrdinalIgnoreCase))
+                        }, ct);
+                    }
                 }
             }
 
@@ -2180,6 +3617,7 @@ app.MapPost("/webhook/instagram", async (
 
     return Results.Ok(new { success = true, commentsProcessed, directMessagesProcessed });
 });
+}
 
 var api = app.MapGroup("/api").RequireAuthorization("ReadAccess");
 
@@ -2265,6 +3703,22 @@ api.MapGet("/settings", async (
     {
         settings.InstagramPublish.ManyChatApiKey = "********";
     }
+    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.LoginUser))
+    {
+        settings.MercadoLivreAffiliateScout.LoginUser = "********";
+    }
+    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.LoginPassword))
+    {
+        settings.MercadoLivreAffiliateScout.LoginPassword = "********";
+    }
+    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.TwoFactorCode))
+    {
+        settings.MercadoLivreAffiliateScout.TwoFactorCode = "********";
+    }
+    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.StorageStateJson))
+    {
+        settings.MercadoLivreAffiliateScout.StorageStateJson = "********";
+    }
 
     var payload = JsonSerializer.SerializeToNode(
         settings,
@@ -2279,6 +3733,96 @@ api.MapGet("/settings", async (
 
     return Results.Json(payload);
 });
+
+api.MapGet("/settings/versions", async (
+    ISettingsVersionStore settingsVersionStore,
+    CancellationToken ct) =>
+{
+    var versions = await settingsVersionStore.ListVersionsAsync(ct);
+    return Results.Ok(new { success = true, versions });
+});
+
+api.MapPost("/settings/restore", async (
+    [FromBody] RestoreSettingsRequest payload,
+    ISettingsVersionStore settingsVersionStore,
+    CancellationToken ct) =>
+{
+    if (payload is null || string.IsNullOrWhiteSpace(payload.VersionFileName))
+    {
+        return Results.BadRequest(new { success = false, error = "versionFileName invalido" });
+    }
+
+    var restored = await settingsVersionStore.RestoreAsync(payload.VersionFileName, ct);
+    if (restored is null)
+    {
+        return Results.NotFound(new { success = false, error = "snapshot nao encontrado" });
+    }
+
+    var settings = restored;
+    MaskProviderKeys(settings);
+    return Results.Ok(new
+    {
+        success = true,
+        restored = payload.VersionFileName,
+        settings
+    });
+});
+
+api.MapPost("/admin/mercadolivre-affiliate-scout/test", async (
+    MercadoLivreAffiliateScoutClient scoutClient,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await scoutClient.TestAsync(ct);
+
+    await audit.WriteAsync("admin.mercadolivre_affiliate_scout.test", context.User.Identity?.Name ?? "unknown", new
+    {
+        result.Success,
+        result.LoggedIn,
+        result.AuthRequired,
+        result.AuthModeDetected,
+        result.CurrentUrl,
+        offerCount = result.Offers?.Count ?? 0,
+        result.Message
+    }, ct);
+
+    return Results.Ok(result);
+});
+
+api.MapPost("/admin/mercadolivre-affiliate-scout/reels/test", async (
+    MercadoLivreAffiliateScoutClient scoutClient,
+    MercadoLivreReelDraftService reelDraftService,
+    ISettingsStore settingsStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var settings = await settingsStore.GetAsync(ct);
+    var scout = settings.MercadoLivreAffiliateScout ?? new MercadoLivreAffiliateScoutSettings();
+    var result = await scoutClient.TestAsync(ct, forceRefreshBeforeScan: true);
+    var created = result.Success
+        ? await reelDraftService.CreateDraftsForApprovalAsync(result.Offers, scout, ct)
+        : 0;
+
+    await audit.WriteAsync("admin.mercadolivre_affiliate_scout.reels.test", context.User.Identity?.Name ?? "unknown", new
+    {
+        result.Success,
+        result.LoggedIn,
+        offerCount = result.Offers?.Count ?? 0,
+        created,
+        result.Message
+    }, ct);
+
+    return Results.Ok(new
+    {
+        result.Success,
+        result.LoggedIn,
+        offerCount = result.Offers?.Count ?? 0,
+        created,
+        result.Message
+    });
+}).RequireAuthorization("AdminOnly");
 
 api.MapPost("/agents/offers/curate", async (
     OfferCurationRequest request,
@@ -2726,6 +4270,26 @@ api.MapPut("/settings", async (
         }
     }
 
+    if (payload.MercadoLivreAffiliateScout is null)
+    {
+        payload.MercadoLivreAffiliateScout = current.MercadoLivreAffiliateScout ?? new MercadoLivreAffiliateScoutSettings();
+    }
+    else
+    {
+        payload.MercadoLivreAffiliateScout.LoginUser = ResolveSecretWithMask(
+            payload.MercadoLivreAffiliateScout.LoginUser,
+            current.MercadoLivreAffiliateScout?.LoginUser);
+        payload.MercadoLivreAffiliateScout.LoginPassword = ResolveSecretWithMask(
+            payload.MercadoLivreAffiliateScout.LoginPassword,
+            current.MercadoLivreAffiliateScout?.LoginPassword);
+        payload.MercadoLivreAffiliateScout.TwoFactorCode = ResolveSecretWithMask(
+            payload.MercadoLivreAffiliateScout.TwoFactorCode,
+            current.MercadoLivreAffiliateScout?.TwoFactorCode);
+        payload.MercadoLivreAffiliateScout.StorageStateJson = ResolveSecretWithMask(
+            payload.MercadoLivreAffiliateScout.StorageStateJson,
+            current.MercadoLivreAffiliateScout?.StorageStateJson);
+    }
+
     await store.SaveAsync(payload, ct);
     await audit.WriteAsync("settings.updated", context.User.Identity?.Name ?? "unknown", new { autoReplies = payload.AutoReplies.Count }, ct);
     return Results.Ok(new { success = true });
@@ -2777,6 +4341,34 @@ api.MapGet("/catalog/items/{query}", async (
     return item is null ? Results.NotFound() : Results.Ok(item);
 });
 
+api.MapGet("/catalog/link-audit", async (
+    [FromQuery] string? target,
+    HttpContext context,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var catalogTarget = string.IsNullOrWhiteSpace(target)
+        ? ResolveCatalogTargetForRequest(context.Request)
+        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
+    var result = await catalogOfferStore.AuditLinksAsync(ct, catalogTarget);
+    return Results.Ok(new { success = true, target = catalogTarget, result });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/catalog/revalidate-links", async (
+    [FromQuery] string? target,
+    IAuditTrail audit,
+    HttpContext context,
+    ICatalogOfferStore catalogOfferStore,
+    CancellationToken ct) =>
+{
+    var catalogTarget = string.IsNullOrWhiteSpace(target)
+        ? ResolveCatalogTargetForRequest(context.Request)
+        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
+    var result = await catalogOfferStore.RevalidateLinksAsync(ct, catalogTarget);
+    await audit.WriteAsync("catalog.links.revalidated", context.User.Identity?.Name ?? "unknown", result, ct);
+    return Results.Ok(new { success = true, target = catalogTarget, result });
+}).RequireAuthorization("AdminOnly");
+
 api.MapPost("/integrations/whatsapp/connect", async (
     WhatsAppInstanceRequest payload,
     IWhatsAppGateway gateway,
@@ -2791,10 +4383,33 @@ api.MapPost("/integrations/whatsapp/connect", async (
     settings.Integrations.WhatsApp.Connected = result.Success;
     settings.Integrations.WhatsApp.Identifier = "evolution-instance";
     settings.Integrations.WhatsApp.LastLoginAt = DateTimeOffset.UtcNow;
-    settings.Integrations.WhatsApp.Notes = result.Message ?? "ConexÃ£o solicitada";
+    settings.Integrations.WhatsApp.Notes = result.Message ?? "ConexÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o solicitada";
     await store.SaveAsync(settings, ct);
 
     await audit.WriteAsync("integration.whatsapp.connect", context.User.Identity?.Name ?? "unknown", new { result.Success, payload.InstanceName }, ct);
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/integrations/whatsapp/test", async (
+    WhatsAppInstanceRequest payload,
+    IWhatsAppGateway gateway,
+    ISettingsStore store,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var result = await gateway.TestConnectionAsync(payload.InstanceName, ct);
+
+    var settings = await store.GetAsync(ct);
+    settings.Integrations.WhatsApp.Connected = result.Success;
+    settings.Integrations.WhatsApp.Identifier = string.IsNullOrWhiteSpace(payload.InstanceName)
+        ? settings.Integrations.WhatsApp.Identifier
+        : payload.InstanceName.Trim();
+    settings.Integrations.WhatsApp.LastLoginAt = DateTimeOffset.UtcNow;
+    settings.Integrations.WhatsApp.Notes = result.Message ?? "Teste de conexÃƒÂ£o solicitado";
+    await store.SaveAsync(settings, ct);
+
+    await audit.WriteAsync("integration.whatsapp.test", context.User.Identity?.Name ?? "unknown", new { result.Success, payload.InstanceName }, ct);
     return Results.Ok(result);
 }).RequireAuthorization("AdminOnly");
 
@@ -2807,7 +4422,7 @@ api.MapPost("/integrations/whatsapp/instance", async (
 {
     if (string.IsNullOrWhiteSpace(payload.InstanceName))
     {
-        return Results.BadRequest(new { success = false, message = "InstanceName obrigatÃ³rio" });
+        return Results.BadRequest(new { success = false, message = "InstanceName obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio" });
     }
 
     var result = await gateway.CreateInstanceAsync(payload.InstanceName, ct);
@@ -2829,7 +4444,7 @@ api.MapPost("/integrations/telegram/connect", async (
     settings.Integrations.Telegram.Connected = result.Success;
     settings.Integrations.Telegram.Identifier = result.Username;
     settings.Integrations.Telegram.LastLoginAt = DateTimeOffset.UtcNow;
-    settings.Integrations.Telegram.Notes = result.Message ?? "ConexÃ£o solicitada";
+    settings.Integrations.Telegram.Notes = result.Message ?? "ConexÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o solicitada";
     await store.SaveAsync(settings, ct);
 
     await audit.WriteAsync("integration.telegram.connect", context.User.Identity?.Name ?? "unknown", new { result.Success, result.Username }, ct);
@@ -3135,6 +4750,7 @@ api.MapPost("/instagram/test", async (
         text = (insta.AiProvider ?? "openai") switch
         {
             "gemini" => await geminiGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.Gemini ?? new GeminiSettings(), ct) ?? "Sem resposta.",
+            "gemma4" => await geminiGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), GeminiInstagramPostGenerator.WithGeminiKeyFallback(settings.Gemma4, settings.Gemini).AsAdvanced(), ct) ?? "Sem resposta.",
             "deepseek" => await deepSeekGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.DeepSeek ?? new DeepSeekSettings(), ct) ?? "Sem resposta.",
             "nemotron" => await nemotronGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.Nemotron ?? new NemotronSettings(), ct) ?? "Sem resposta.",
             "qwen" => await qwenGenerator.GenerateFreeformAsync(string.Join("\n\n", new[] { payload.Input, payload.Context }.Where(x => !string.IsNullOrWhiteSpace(x))), settings.Qwen ?? new QwenSettings(), ct) ?? "Sem resposta.",
@@ -3167,13 +4783,13 @@ api.MapPost("/ai-lab/compare", async (
         return Results.BadRequest(new { error = "Informe o texto para teste." });
     }
 
-    var requestedProviders = (payload.Providers ?? new List<string> { "openai", "gemini", "deepseek", "nemotron", "qwen", "vila" })
+    var requestedProviders = (payload.Providers ?? new List<string> { "gemma4", "openai", "gemini", "deepseek", "nemotron", "qwen", "vila" })
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Select(x => x.Trim().ToLowerInvariant())
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-    var allowedProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "openai", "gemini", "deepseek", "nemotron", "qwen", "vila" };
+    var allowedProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "gemma4", "openai", "gemini", "deepseek", "nemotron", "qwen", "vila" };
     var providers = requestedProviders.Where(allowedProviders.Contains).ToList();
     if (providers.Count == 0)
     {
@@ -3201,6 +4817,7 @@ api.MapPost("/ai-lab/compare", async (
             text = provider switch
             {
                 "gemini" => await geminiGenerator.GenerateFreeformAsync(freeformPrompt, settings.Gemini ?? new GeminiSettings(), ct) ?? "Sem resposta.",
+                "gemma4" => await geminiGenerator.GenerateFreeformAsync(freeformPrompt, GeminiInstagramPostGenerator.WithGeminiKeyFallback(settings.Gemma4, settings.Gemini).AsAdvanced(), ct) ?? "Sem resposta.",
                 "deepseek" => await deepSeekGenerator.GenerateFreeformAsync(freeformPrompt, settings.DeepSeek ?? new DeepSeekSettings(), ct) ?? "Sem resposta.",
                 "nemotron" => await nemotronGenerator.GenerateFreeformAsync(freeformPrompt, settings.Nemotron ?? new NemotronSettings(), ct) ?? "Sem resposta.",
                 "qwen" => await qwenGenerator.GenerateFreeformAsync(freeformPrompt, settings.Qwen ?? new QwenSettings(), ct) ?? "Sem resposta.",
@@ -3337,7 +4954,7 @@ api.MapPost("/instagram/publish/drafts", async (
 
     var draft = new InstagramPublishDraft
     {
-        PostType = NormalizeInstagramPostTypeValue(payload.PostType),
+        PostType = InstagramCommandParser.NormalizeInstagramPostTypeValue(payload.PostType),
         ProductName = payload.ProductName?.Trim() ?? string.Empty,
         Caption = payload.Caption?.Trim() ?? string.Empty,
         Hashtags = payload.Hashtags?.Trim() ?? string.Empty,
@@ -3374,28 +4991,20 @@ api.MapPost("/instagram/autostory/run", async (
     return Results.Ok(result);
 }).RequireAuthorization("AdminOnly");
 
-api.MapPost("/instagram/publish/drafts/{id}/publish", async (
-    string id,
-    ISettingsStore store,
-    IInstagramPublishStore publishStore,
-    IInstagramPublishLogStore publishLogStore,
-    IHttpClientFactory httpClientFactory,
-    IMediaStore mediaStore,
-    IOptions<WebhookOptions> webhookOptions,
+api.MapPost("/instagram/viral-reels/run", async (
+    TelegramViralReelsAutoPilotService viralReelsService,
     CancellationToken ct) =>
 {
-    var settings = await store.GetAsync(ct);
-    var publishResult = await PublishInstagramDraftAsync(
-        id,
-        settings.InstagramPublish ?? new InstagramPublishSettings(),
-        settings.VilaNvidia ?? new VilaNvidiaSettings(),
-        settings.Gemini ?? new GeminiSettings(),
-        publishStore,
-        publishLogStore,
-        httpClientFactory,
-        mediaStore,
-        webhookOptions.Value.PublicBaseUrl,
-        ct);
+    var result = await viralReelsService.RunOnceAsync(ct);
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/instagram/publish/drafts/{id}/publish", async (
+    string id,
+    IInstagramPublishService publishService,
+    CancellationToken ct) =>
+{
+    var publishResult = await publishService.ExecutePublishAsync(id, ct);
 
     return Results.Json(
         new { success = publishResult.Success, mediaId = publishResult.MediaId, error = publishResult.Error },
@@ -3482,6 +5091,47 @@ api.MapPost("/instagram/publish/test", async (
         Success = true,
         Details = "Conexao OK"
     }, ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
+
+api.MapPost("/instagram/story/test", async (
+    ISettingsStore store,
+    IInstagramPublishLogStore publishLogStore,
+    IHttpClientFactory httpClientFactory,
+    CancellationToken ct) =>
+{
+    var settings = await store.GetAsync(ct);
+    var publishSettings = settings.InstagramPublish ?? new InstagramPublishSettings();
+    if (string.IsNullOrWhiteSpace(publishSettings.AccessToken) || publishSettings.AccessToken == "********")
+    {
+        return Results.BadRequest(new { error = "Access token nao configurado." });
+    }
+    if (string.IsNullOrWhiteSpace(publishSettings.InstagramUserId))
+    {
+        return Results.BadRequest(new { error = "Instagram user id nao configurado." });
+    }
+
+    var client = httpClientFactory.CreateClient("default");
+    var baseUrl = string.IsNullOrWhiteSpace(publishSettings.GraphBaseUrl)
+        ? "https://graph.facebook.com/v19.0"
+        : publishSettings.GraphBaseUrl.TrimEnd('/');
+
+    var meUrl = $"{baseUrl}/{publishSettings.InstagramUserId}?fields=id,username&access_token={Uri.EscapeDataString(publishSettings.AccessToken!)}";
+    using var meResp = await client.GetAsync(meUrl, ct);
+    var meBody = await meResp.Content.ReadAsStringAsync(ct);
+    if (!meResp.IsSuccessStatusCode)
+    {
+        return Results.BadRequest(new { error = "Falha ao validar usuario.", details = meBody });
+    }
+
+    var mediaUrl = $"{baseUrl}/{publishSettings.InstagramUserId}/media?limit=1&access_token={Uri.EscapeDataString(publishSettings.AccessToken!)}";
+    using var mediaResp = await client.GetAsync(mediaUrl, ct);
+    var mediaBody = await mediaResp.Content.ReadAsStringAsync(ct);
+    if (!mediaResp.IsSuccessStatusCode)
+    {
+        return Results.BadRequest(new { error = "Falha ao listar midias.", details = mediaBody });
+    }
+
     return Results.Ok(new { success = true });
 }).RequireAuthorization("AdminOnly");
 
@@ -4053,11 +5703,26 @@ api.MapPost("/logs/instagram-ai/clear", async (IInstagramAiLogStore logStore, IA
 
 api.MapGet("/logs/instagram-publish", async (
     [FromQuery] string? q,
+    [FromQuery] string? processName,
     [FromQuery] int? limit,
     IInstagramPublishLogStore logStore,
     CancellationToken ct) =>
 {
     var items = await logStore.ListAsync(Math.Clamp(limit ?? 200, 1, 200), ct);
+    if (!string.IsNullOrWhiteSpace(processName))
+    {
+        var process = processName.Trim();
+        if (string.Equals(process, InstagramProcessNames.Legacy, StringComparison.OrdinalIgnoreCase))
+        {
+            items = items.Where(i => string.IsNullOrWhiteSpace(i.ProcessName)).ToList();
+        }
+        else
+        {
+            items = items.Where(i =>
+                string.Equals(i.ProcessName?.Trim(), process, StringComparison.OrdinalIgnoreCase)
+            ).ToList();
+        }
+    }
     if (!string.IsNullOrWhiteSpace(q))
     {
         var term = q.Trim();
@@ -4066,7 +5731,8 @@ api.MapGet("/logs/instagram-publish", async (
             (i.Error?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
             (i.Details?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
             (i.MediaId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            (i.DraftId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+            (i.DraftId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+            (i.ProcessName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
         ).ToList();
     }
     return Results.Ok(new { items });
@@ -4095,6 +5761,35 @@ api.MapGet("/logs/media", async (
     return Results.Ok(new { items });
 });
 
+api.MapGet("/logs/whatsapp-official-blocked", async (
+    [FromQuery] int? limit,
+    [FromQuery] string? reason,
+    IOfficialWhatsAppBlockedOfferStore logStore,
+    CancellationToken ct) =>
+{
+    var items = await logStore.ListAsync(limit ?? 100, ct);
+    if (!string.IsNullOrWhiteSpace(reason))
+    {
+        items = items
+            .Where(x => (x.Reason?.Contains(reason.Trim(), StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToArray();
+    }
+
+    return Results.Ok(new
+    {
+        items,
+        summary = new
+        {
+            total = items.Count,
+            byReason = items
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Reason) ? "unknown" : x.Reason.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => new { reason = g.Key, count = g.Count() })
+                .OrderByDescending(x => x.count)
+                .ToArray()
+        }
+    });
+});
+
 api.MapPost("/logs/media/clear", async (IMediaFailureLogStore logStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
 {
     await logStore.ClearAsync(ct);
@@ -4102,10 +5797,37 @@ api.MapPost("/logs/media/clear", async (IMediaFailureLogStore logStore, IAuditTr
     return Results.Ok(new { success = true });
 });
 
+api.MapPost("/logs/whatsapp-official-blocked/clear", async (
+    IOfficialWhatsAppBlockedOfferStore logStore,
+    IAuditTrail audit,
+    HttpContext ctx,
+    CancellationToken ct) =>
+{
+    await logStore.ClearAsync(ct);
+    await audit.WriteAsync("logs.whatsapp_official_blocked.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
+    return Results.Ok(new { success = true });
+}).RequireAuthorization("AdminOnly");
+
 api.MapGet("/telegram/userbot/chats", async (ITelegramUserbotService userbot, CancellationToken ct) =>
 {
     var chats = await userbot.GetDialogsAsync(ct);
     return Results.Ok(new { ready = userbot.IsReady, chats });
+});
+
+api.MapGet("/telegram/userbot/recent-offers", async (
+    [FromQuery] long chatId,
+    [FromQuery] int limit,
+    ITelegramUserbotService userbot,
+    CancellationToken ct) =>
+{
+    if (chatId == 0)
+    {
+        return Results.BadRequest(new { success = false, error = "chatId obrigatorio." });
+    }
+
+    var perChatLimit = limit <= 0 ? 10 : Math.Min(limit, 50);
+    var offers = await userbot.ListRecentOffersAsync(new[] { chatId }, perChatLimit, ct);
+    return Results.Ok(new { ready = userbot.IsReady, chatId, limit = perChatLimit, offers });
 });
 
 api.MapPost("/telegram/userbot/refresh", async (ITelegramUserbotService userbot, CancellationToken ct) =>
@@ -4115,7 +5837,80 @@ api.MapPost("/telegram/userbot/refresh", async (ITelegramUserbotService userbot,
     return Results.Ok(new { success = ok, ready = userbot.IsReady, chats });
 });
 
-api.MapPost("/telegram/userbot/auth", async (
+api.MapPost("/telegram/userbot/auth-admin", async (
+    TelegramUserbotAuthUpdateRequest payload,
+    ITelegramUserbotService userbot,
+    IAuditTrail audit,
+    IOptions<WebhookOptions> webhookOptions,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (!AdminAuthorizationHelper.IsAdminAuthorized(context, webhookOptions.Value.ApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await userbot.UpdateRuntimeAuthAsync(payload, ct);
+
+    await audit.WriteAsync("telegram.userbot.auth.update", context.User.Identity?.Name ?? "unknown", new
+    {
+        HasPhone = payload.PhoneNumber is not null,
+        HasCode = payload.VerificationCode is not null,
+        HasPassword = payload.Password is not null,
+        payload.ForceReconnect,
+        result.Success,
+        result.ReconnectRequested
+    }, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = result.Message
+        });
+    }
+
+    return Results.Ok(new
+    {
+        success = true,
+        reconnectRequested = result.ReconnectRequested,
+        hasPhoneNumber = result.HasPhoneNumber,
+        hasVerificationCode = result.HasVerificationCode,
+        hasPassword = result.HasPassword,
+        message = result.Message
+    });
+}).AllowAnonymous();
+
+api.MapPost("/telegram/userbot/replay-to-whatsapp", async (
+    TelegramUserbotReplayRequest payload,
+    ITelegramUserbotService userbot,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (payload.SourceChatId == 0)
+    {
+        return Results.BadRequest(new { success = false, error = "SourceChatId obrigatorio." });
+    }
+
+    var count = payload.Count <= 0 ? 10 : Math.Min(payload.Count, 50);
+    var result = await userbot.ReplayRecentOffersToWhatsAppAsync(payload.SourceChatId, count, payload.AllowOfficialDestination, ct);
+
+    await audit.WriteAsync("telegram.userbot.replay_to_whatsapp", context.User.Identity?.Name ?? "unknown", new
+    {
+        payload.SourceChatId,
+        Count = count,
+        payload.AllowOfficialDestination,
+        result.Success,
+        result.Replayed,
+        result.Failed
+    }, ct);
+
+    return Results.Ok(result);
+}).RequireAuthorization("AdminOnly");
+
+app.MapPost("/api/telegram/userbot/auth", async (
     TelegramUserbotAuthUpdateRequest payload,
     ITelegramUserbotService userbot,
     IAuditTrail audit,
@@ -4152,35 +5947,226 @@ api.MapPost("/telegram/userbot/auth", async (
         hasPassword = result.HasPassword,
         message = result.Message
     });
-}).RequireAuthorization("AdminOnly");
+}).AllowAnonymous();
 
-api.MapPost("/telegram/userbot/replay-to-whatsapp", async (
-    TelegramUserbotReplayRequest payload,
+app.MapPost("/telegram/userbot/auth-local", async (
+    TelegramUserbotAuthUpdateRequest payload,
     ITelegramUserbotService userbot,
     IAuditTrail audit,
     HttpContext context,
     CancellationToken ct) =>
 {
-    if (payload.SourceChatId == 0)
-    {
-        return Results.BadRequest(new { success = false, error = "SourceChatId obrigatorio." });
-    }
+    var result = await userbot.UpdateRuntimeAuthAsync(payload, ct);
 
-    var count = payload.Count <= 0 ? 10 : Math.Min(payload.Count, 50);
-    var result = await userbot.ReplayRecentOffersToWhatsAppAsync(payload.SourceChatId, count, payload.AllowOfficialDestination, ct);
-
-    await audit.WriteAsync("telegram.userbot.replay_to_whatsapp", context.User.Identity?.Name ?? "unknown", new
+    await audit.WriteAsync("telegram.userbot.auth.update", context.User.Identity?.Name ?? "unknown", new
     {
-        payload.SourceChatId,
-        Count = count,
-        payload.AllowOfficialDestination,
+        HasPhone = payload.PhoneNumber is not null,
+        HasCode = payload.VerificationCode is not null,
+        HasPassword = payload.Password is not null,
+        payload.ForceReconnect,
         result.Success,
-        result.Replayed,
-        result.Failed
+        result.ReconnectRequested
     }, ct);
 
-    return Results.Ok(result);
-}).RequireAuthorization("AdminOnly");
+    if (!result.Success)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = result.Message
+        });
+    }
+
+    return Results.Ok(new
+    {
+        success = true,
+        reconnectRequested = result.ReconnectRequested,
+        hasPhoneNumber = result.HasPhoneNumber,
+        hasVerificationCode = result.HasVerificationCode,
+        hasPassword = result.HasPassword,
+        message = result.Message
+    });
+}).AllowAnonymous();
+
+app.MapPost("/telegram/userbot/reel/latest-draft", async (
+    TelegramUserbotCreateReelDraftRequest payload,
+    ITelegramUserbotService userbot,
+    IAuditTrail audit,
+    IOptions<WebhookOptions> webhookOptions,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (!AdminAuthorizationHelper.IsAdminAuthorized(context, webhookOptions.Value.ApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await userbot.CreateLatestReelDraftAsync(payload, ct);
+
+    await audit.WriteAsync("telegram.userbot.reel.latest_draft", context.User.Identity?.Name ?? "unknown", new
+    {
+        RequestedSourceChatId = payload.SourceChatId,
+        RequestedSourceMessageId = payload.SourceMessageId,
+        payload.Limit,
+        result.Success,
+        SelectedSourceChatId = result.SourceChatId,
+        SelectedSourceMessageId = result.SourceMessageId,
+        result.DraftId,
+        result.EditorUrl,
+        result.OfferUrl
+    }, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = result.Message,
+            result.SourceChatId,
+            result.SourceChatTitle,
+            result.SourceMessageId,
+            result.MediaKind,
+            result.MediaUrl,
+            result.OfferUrl,
+            result.ProductName,
+            result.SourceDataOrigin,
+            result.ProductImageUrl,
+            result.PreviewMessage
+        });
+    }
+
+    return Results.Ok(new
+    {
+        success = true,
+        message = result.Message,
+        result.SourceChatId,
+        result.SourceChatTitle,
+        result.SourceMessageId,
+        result.MediaKind,
+        result.MediaUrl,
+        result.OfferUrl,
+        result.ProductName,
+        result.DraftId,
+        result.EditorUrl,
+        result.InstagramCaption,
+        result.AutoReplyMessage,
+        result.SourceDataOrigin,
+        result.ProductImageUrl,
+        result.PreviewMessage
+    });
+}).AllowAnonymous();
+
+api.MapPost("/telegram/userbot/reel/latest-draft", async (
+    TelegramUserbotCreateReelDraftRequest payload,
+    ITelegramUserbotService userbot,
+    ISettingsStore settingsStore,
+    IWhatsAppTransport whatsAppTransport,
+    IOptions<EvolutionOptions> evolutionOptions,
+    IAuditTrail audit,
+    IOptions<WebhookOptions> webhookOptions,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    if (!AdminAuthorizationHelper.IsAdminAuthorized(context, webhookOptions.Value.ApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await userbot.CreateLatestReelDraftAsync(payload, ct);
+    var approvalSent = false;
+    string? approvalTarget = null;
+    string? approvalMessage = null;
+
+    if (result.Success && payload.SendForApproval == true)
+    {
+        var settings = await settingsStore.GetAsync(ct);
+        var publish = settings.InstagramPublish ?? new InstagramPublishSettings();
+        var approvalChannel = FirstNonEmpty(payload.ApprovalChannel, publish.ViralReelsApprovalChannel, "whatsapp");
+
+        if (string.Equals(approvalChannel, "whatsapp", StringComparison.OrdinalIgnoreCase))
+        {
+            var groupId = FirstNonEmpty(payload.ApprovalWhatsAppGroupId, publish.ViralReelsApprovalWhatsAppGroupId);
+            if (string.IsNullOrWhiteSpace(groupId))
+            {
+                approvalMessage = "approval_target_missing";
+            }
+            else
+            {
+                var instanceName = FirstNonEmpty(
+                    payload.ApprovalWhatsAppInstanceName,
+                    publish.ViralReelsApprovalWhatsAppInstanceName,
+                    evolutionOptions.Value.InstanceName);
+                var send = await SendTelegramReelApprovalPackageAsync(whatsAppTransport, instanceName, groupId, result, ct);
+                approvalSent = send.Success;
+                approvalTarget = groupId;
+                approvalMessage = send.Message;
+            }
+        }
+        else
+        {
+            approvalMessage = $"approval_channel_unsupported:{approvalChannel}";
+        }
+    }
+
+    await audit.WriteAsync("telegram.userbot.reel.latest_draft", context.User.Identity?.Name ?? "unknown", new
+    {
+        RequestedSourceChatId = payload.SourceChatId,
+        RequestedSourceMessageId = payload.SourceMessageId,
+        payload.Limit,
+        payload.SendForApproval,
+        result.Success,
+        SelectedSourceChatId = result.SourceChatId,
+        SelectedSourceMessageId = result.SourceMessageId,
+        result.DraftId,
+        result.EditorUrl,
+        result.OfferUrl,
+        ApprovalSent = approvalSent,
+        ApprovalTarget = approvalTarget,
+        ApprovalMessage = approvalMessage
+    }, ct);
+
+    if (!result.Success)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = result.Message,
+            result.SourceChatId,
+            result.SourceChatTitle,
+            result.SourceMessageId,
+            result.MediaKind,
+            result.MediaUrl,
+            result.OfferUrl,
+            result.ProductName,
+            result.SourceDataOrigin,
+            result.ProductImageUrl,
+            result.PreviewMessage
+        });
+    }
+
+    return Results.Ok(new
+    {
+        success = true,
+        message = result.Message,
+        result.SourceChatId,
+        result.SourceChatTitle,
+        result.SourceMessageId,
+        result.MediaKind,
+        result.MediaUrl,
+        result.OfferUrl,
+        result.ProductName,
+        result.DraftId,
+        result.EditorUrl,
+        result.InstagramCaption,
+        result.AutoReplyMessage,
+        result.SourceDataOrigin,
+        result.ProductImageUrl,
+        result.PreviewMessage,
+        approvalSent,
+        approvalTarget,
+        approvalMessage
+    });
+}).AllowAnonymous();
 
 api.MapGet("/whatsapp/groups", async (
     [FromQuery] string? instanceName,
@@ -4191,23 +6177,29 @@ api.MapGet("/whatsapp/groups", async (
     return Results.Ok(new { groups });
 });
 
-app.MapGet("/media/{id}", (string id, IMediaStore store) =>
+app.MapGet("/media/{id}", (string id, IMediaStore store, HttpContext context) =>
 {
     if (!store.TryGet(id, out var item))
     {
         return Results.NotFound();
     }
 
+    context.Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
+    context.Response.Headers.Pragma = "no-cache";
+    context.Response.Headers.Expires = "0";
     return Results.File(item.Bytes, item.MimeType);
 });
 
-app.MapGet("/media/{id}.{ext}", (string id, string ext, IMediaStore store) =>
+app.MapGet("/media/{id}.{ext}", (string id, string ext, IMediaStore store, HttpContext context) =>
 {
     if (!store.TryGet(id, out var item))
     {
         return Results.NotFound();
     }
 
+    context.Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
+    context.Response.Headers.Pragma = "no-cache";
+    context.Response.Headers.Expires = "0";
     return Results.File(item.Bytes, item.MimeType);
 });
 
@@ -4216,35 +6208,222 @@ app.MapGet("/r/{id}", async (
     HttpContext context,
     ILinkTrackingStore trackingStore,
     IClickLogStore clickLogStore,
+    IAffiliateLinkService affiliateLinkService,
+    ILoggerFactory loggerFactory,
     CancellationToken ct) =>
 {
-    var entry = await trackingStore.RegisterClickAsync(id, ct);
+    var trackingLookup = ResolveDecoratedTrackingId(id);
+    var entry = await trackingStore.RegisterClickAsync(trackingLookup.LookupId, ct);
     if (entry is null)
     {
         return Results.NotFound();
     }
 
-    var source = NormalizeTrackingToken(context.Request.Query["src"].ToString(), "LinkTracking") ?? "LinkTracking";
-    var campaign = NormalizeTrackingToken(context.Request.Query["camp"].ToString(), null);
+    var originSurface = TrackingAttributionHelper.NormalizeSurface(entry.OriginSurface);
+    var redirectTarget = await ResolveSafeTrackingRedirectTargetAsync(
+        entry.TargetUrl,
+        originSurface,
+        affiliateLinkService,
+        loggerFactory.CreateLogger("TrackingRedirect"),
+        ct);
+    redirectTarget = NormalizeRedirectLocation(redirectTarget);
+    var originChannel = string.IsNullOrWhiteSpace(entry.OriginChannel)
+        ? TrackingAttributionHelper.ResolveChannelFromSurface(originSurface)
+        : entry.OriginChannel.Trim();
+    var source = NormalizeTrackingToken(
+        FirstNonEmpty(context.Request.Query["src"].ToString(), context.Request.Query["s"].ToString()),
+        trackingLookup.Source ?? TrackingAttributionHelper.ResolveCompatibilitySource(null, originSurface)) ?? "LinkTracking";
+    var campaign = NormalizeTrackingToken(
+        ExpandCompactTrackingCampaign(FirstNonEmpty(context.Request.Query["camp"].ToString(), context.Request.Query["c"].ToString()))
+            ?? trackingLookup.Campaign,
+        null);
     var referrer = TruncateForLog(context.Request.Headers.Referer.ToString(), 600);
     var userAgent = TruncateForLog(context.Request.Headers.UserAgent.ToString(), 320);
     var ip = context.Connection.RemoteIpAddress?.ToString();
 
     await clickLogStore.AppendAsync(new ClickLogEntry
     {
-        TrackingId = entry.Id,
-        TargetUrl = entry.TargetUrl,
+        TrackingId = trackingLookup.Decorated ? id : entry.Id,
+        TargetUrl = redirectTarget,
         Source = source,
         Campaign = campaign,
+        OriginChannel = originChannel,
+        OriginSurface = originSurface,
         Referrer = string.IsNullOrWhiteSpace(referrer) ? null : referrer,
         UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
         IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
     }, null, ct);
 
-    return Results.Redirect(entry.TargetUrl);
+    return Results.Redirect(redirectTarget);
+});
+
+app.MapGet("/{id}", async (
+    string id,
+    HttpContext context,
+    ILinkTrackingStore trackingStore,
+    IClickLogStore clickLogStore,
+    IAffiliateLinkService affiliateLinkService,
+    ILoggerFactory loggerFactory,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(id) || !id.Contains("-"))
+    {
+        return Results.NotFound();
+    }
+
+    var trackingLookup = ResolveDecoratedTrackingId(id);
+    var entry = await trackingStore.GetLinkAsync(trackingLookup.LookupId, ct);
+    if (entry is null)
+    {
+        return Results.NotFound();
+    }
+
+    var originSurface = TrackingAttributionHelper.NormalizeSurface(entry.OriginSurface);
+    var redirectTarget = await ResolveSafeTrackingRedirectTargetAsync(
+        entry.TargetUrl,
+        originSurface,
+        affiliateLinkService,
+        loggerFactory.CreateLogger("TrackingRedirect"),
+        ct);
+    redirectTarget = NormalizeRedirectLocation(redirectTarget);
+    var originChannel = string.IsNullOrWhiteSpace(entry.OriginChannel)
+        ? TrackingAttributionHelper.ResolveChannelFromSurface(originSurface)
+        : entry.OriginChannel.Trim();
+        
+    var source = NormalizeTrackingToken(
+        FirstNonEmpty(context.Request.Query["src"].ToString(), context.Request.Query["s"].ToString()),
+        trackingLookup.Source ?? TrackingAttributionHelper.ResolveCompatibilitySource(null, originSurface)) ?? "RootRedirect";
+        
+    var campaign = NormalizeTrackingToken(
+        ExpandCompactTrackingCampaign(FirstNonEmpty(context.Request.Query["camp"].ToString(), context.Request.Query["c"].ToString()))
+            ?? trackingLookup.Campaign,
+        null);
+    var referrer = context.Request.Headers.Referer.ToString();
+    var userAgent = context.Request.Headers.UserAgent.ToString();
+    var ip = context.Connection.RemoteIpAddress?.ToString();
+
+    await clickLogStore.AppendAsync(new ClickLogEntry
+    {
+        TrackingId = trackingLookup.Decorated ? id : entry.Id,
+        TargetUrl = redirectTarget,
+        Source = source,
+        Campaign = campaign,
+        OriginChannel = originChannel,
+        OriginSurface = originSurface,
+        Referrer = string.IsNullOrWhiteSpace(referrer) ? null : (referrer.Length > 600 ? referrer[..600] : referrer),
+        UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : (userAgent.Length > 320 ? userAgent[..320] : userAgent),
+        IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
+    }, null, ct);
+
+    return Results.Redirect(redirectTarget);
 });
 
 app.Run();
+
+static string NormalizeRedirectLocation(string? url)
+{
+    var candidate = url?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(candidate))
+    {
+        return "https://bio.reidasofertas.ia.br";
+    }
+
+    if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri))
+    {
+        return "https://bio.reidasofertas.ia.br";
+    }
+
+    return uri.AbsoluteUri;
+}
+
+static async Task<string> ResolveSafeTrackingRedirectTargetAsync(
+    string targetUrl,
+    string? originSurface,
+    IAffiliateLinkService affiliateLinkService,
+    ILogger logger,
+    CancellationToken ct)
+{
+    var normalizedTarget = targetUrl?.Trim() ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(normalizedTarget))
+    {
+        return "https://bio.reidasofertas.ia.br";
+    }
+
+    if (IsTrustedMercadoLivreScoutRedirectTarget(normalizedTarget, originSurface))
+    {
+        return normalizedTarget;
+    }
+
+    if (!IsUnsafeMercadoLivreRedirectTarget(normalizedTarget))
+    {
+        return normalizedTarget;
+    }
+
+    var conversion = await affiliateLinkService.ConvertAsync(normalizedTarget, ct, "redirect_repair", forceResolution: true);
+    if (conversion.Success &&
+        conversion.IsAffiliated &&
+        !string.IsNullOrWhiteSpace(conversion.ConvertedUrl) &&
+        !IsUnsafeMercadoLivreRedirectTarget(conversion.ConvertedUrl))
+    {
+        logger.LogWarning(
+            "Tracking redirect Mercado Livre reparado em tempo de clique. Original={OriginalUrl}; Corrigido={ConvertedUrl}",
+            normalizedTarget,
+            conversion.ConvertedUrl);
+        return conversion.ConvertedUrl.Trim();
+    }
+
+    logger.LogError(
+        "Tracking redirect Mercado Livre bloqueado para evitar afiliado de terceiros. Target={TargetUrl}; Error={Error}",
+        normalizedTarget,
+        conversion.Error ?? conversion.ValidationError ?? "conversao_indisponivel");
+    return "https://bio.reidasofertas.ia.br";
+}
+
+static bool IsTrustedMercadoLivreScoutRedirectTarget(string? url, string? originSurface)
+{
+    if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    var normalizedSurface = TrackingAttributionHelper.NormalizeSurface(originSurface);
+    if (string.Equals(normalizedSurface, "whatsapp_grupo_oficial", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var host = uri.Host.Trim().Trim('.').ToLowerInvariant();
+    return host is "meli.la" or "meli.co" &&
+           (string.Equals(normalizedSurface, "whatsapp_grupo", StringComparison.OrdinalIgnoreCase) ||
+            normalizedSurface.StartsWith("whatsapp_niche_", StringComparison.OrdinalIgnoreCase));
+}
+
+static bool IsUnsafeMercadoLivreRedirectTarget(string? url)
+{
+    if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    var host = uri.Host.Trim().Trim('.').ToLowerInvariant();
+    var path = uri.AbsolutePath;
+    if (!host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) &&
+        host is not "meli.la" &&
+        host is not "meli.co")
+    {
+        return false;
+    }
+
+    if (Regex.IsMatch(path, @"/p/MLB\d+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+        Regex.IsMatch(path, @"/MLB-?\d+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+    {
+        return false;
+    }
+
+    return path.Contains("/social/", StringComparison.OrdinalIgnoreCase) ||
+           host is "meli.la" ||
+           host is "meli.co";
+}
 
 static void LoadDotEnvIfPresent()
 {
@@ -4339,7 +6518,7 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     {
         if (string.IsNullOrWhiteSpace(rule.Trigger) || string.IsNullOrWhiteSpace(rule.ResponseTemplate))
         {
-            yield return $"Regra '{rule.Name}' invÃ¡lida (gatilho/resposta obrigatÃ³rios).";
+            yield return $"Regra '{rule.Name}' invÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡lida (gatilho/resposta obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rios).";
             continue;
         }
 
@@ -4430,6 +6609,50 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     if (contentCalendar.MaxAttempts is < 1 or > 10)
     {
         yield return "ContentCalendar.MaxAttempts deve estar entre 1 e 10.";
+    }
+
+    var mercadoLivreScout = settings.MercadoLivreAffiliateScout ?? new MercadoLivreAffiliateScoutSettings();
+    if (mercadoLivreScout.IntervalMinutes is < 5 or > 240)
+    {
+        yield return "MercadoLivreAffiliateScout.IntervalMinutes deve estar entre 5 e 240.";
+    }
+
+    if (mercadoLivreScout.IntervalJitterMinutes is < 0 or > 30)
+    {
+        yield return "MercadoLivreAffiliateScout.IntervalJitterMinutes deve estar entre 0 e 30.";
+    }
+
+    if (mercadoLivreScout.MaxOffersPerRun is < 0 or > 500)
+    {
+        yield return "MercadoLivreAffiliateScout.MaxOffersPerRun deve estar entre 0 e 500. Use 0 para ilimitado no ciclo.";
+    }
+
+    if (mercadoLivreScout.RepeatWindowHours is < 1 or > 168)
+    {
+        yield return "MercadoLivreAffiliateScout.RepeatWindowHours deve estar entre 1 e 168.";
+    }
+
+    if (mercadoLivreScout.MinCommissionPercent is < 0 or > 100)
+    {
+        yield return "MercadoLivreAffiliateScout.MinCommissionPercent deve estar entre 0 e 100.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(mercadoLivreScout.BaseUrl) &&
+        !Uri.TryCreate(mercadoLivreScout.BaseUrl, UriKind.Absolute, out _))
+    {
+        yield return "MercadoLivreAffiliateScout.BaseUrl invalida. Use URL absoluta.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(mercadoLivreScout.LoginUrl) &&
+        !Uri.TryCreate(mercadoLivreScout.LoginUrl, UriKind.Absolute, out _))
+    {
+        yield return "MercadoLivreAffiliateScout.LoginUrl invalida. Use URL absoluta.";
+    }
+
+    if (!string.IsNullOrWhiteSpace(mercadoLivreScout.HomeUrl) &&
+        !Uri.TryCreate(mercadoLivreScout.HomeUrl, UriKind.Absolute, out _))
+    {
+        yield return "MercadoLivreAffiliateScout.HomeUrl invalida. Use URL absoluta.";
     }
 }
 
@@ -4556,6 +6779,68 @@ static bool IsMercadoLivreUrlLike(string url)
            || url.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
            || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
            || url.Contains("compre.link", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsWhatsAppRouteStoreAllowed(WhatsAppForwardingRouteSettings route, string? storeHint, string finalText, string originalText)
+{
+    var detectedStores = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    AddStoreHint(detectedStores, storeHint);
+    AddStoreHint(detectedStores, TrackingLinkShortenerService.ResolveStoreHint(finalText));
+    AddStoreHint(detectedStores, TrackingLinkShortenerService.ResolveStoreHint(originalText));
+
+    if (ExtractUrlsFromText(finalText).Concat(ExtractUrlsFromText(originalText)).Any(IsMercadoLivreUrlLike))
+    {
+        detectedStores.Add("Mercado Livre");
+    }
+
+    if (route.BlockedStores.Any() &&
+        detectedStores.Any(store => route.BlockedStores.Any(blocked => IsStoreNameMatch(store, blocked))))
+    {
+        return false;
+    }
+
+    if (!route.AllowedStores.Any())
+    {
+        return true;
+    }
+
+    return detectedStores.Any(store => route.AllowedStores.Any(allowed => IsStoreNameMatch(store, allowed)));
+}
+
+static void AddStoreHint(HashSet<string> stores, string? store)
+{
+    if (!string.IsNullOrWhiteSpace(store))
+    {
+        stores.Add(store.Trim());
+    }
+}
+
+static bool IsStoreNameMatch(string detected, string configured)
+{
+    var left = NormalizeStoreNameForComparison(detected);
+    var right = NormalizeStoreNameForComparison(configured);
+    return !string.IsNullOrWhiteSpace(left) && left == right;
+}
+
+static string NormalizeStoreNameForComparison(string? value)
+{
+    var normalized = RemoveDiacritics(value ?? string.Empty).ToLowerInvariant();
+    return Regex.Replace(normalized, @"[^a-z0-9]+", string.Empty);
+}
+
+static string RemoveDiacritics(string value)
+{
+    var normalized = value.Normalize(NormalizationForm.FormD);
+    var builder = new StringBuilder(normalized.Length);
+    foreach (var ch in normalized)
+    {
+        if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+        {
+            builder.Append(ch);
+        }
+    }
+
+    return builder.ToString().Normalize(NormalizationForm.FormC);
 }
 
 static int CountUrlsInText(string? text)
@@ -4768,12 +7053,6 @@ static async Task<WhatsAppSendResult> SendWhatsAppManualApprovalWithFallbackAsyn
         return await gateway.SendTextAsync(instanceName, target, text, ct);
     }
 
-    var byUrl = await gateway.SendImageUrlAsync(instanceName, target, imageUrl, text, "image/jpeg", null, ct);
-    if (byUrl.Success)
-    {
-        return byUrl;
-    }
-
     try
     {
         var client = httpClientFactory.CreateClient("default");
@@ -4797,7 +7076,13 @@ static async Task<WhatsAppSendResult> SendWhatsAppManualApprovalWithFallbackAsyn
     }
     catch
     {
-        // Fallback final para texto simples.
+        // Continua para fallback por URL e, por fim, texto simples.
+    }
+
+    var byUrl = await gateway.SendImageUrlAsync(instanceName, target, imageUrl, text, "image/jpeg", null, ct);
+    if (byUrl.Success)
+    {
+        return byUrl;
     }
 
     var textFallback = await gateway.SendTextAsync(instanceName, target, text, ct);
@@ -4830,6 +7115,7 @@ static IReadOnlyList<WhatsAppForwardingRouteSettings> ResolveWhatsAppForwardingR
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             AppendSheinCode = route.AppendSheinCode,
+            SkipConversionOnlyShorten = route.SkipConversionOnlyShorten,
             SendMediaEnabled = route.SendMediaEnabled,
             FooterText = route.FooterText ?? string.Empty,
             InstanceName = string.IsNullOrWhiteSpace(route.InstanceName) ? null : route.InstanceName.Trim()
@@ -4879,6 +7165,758 @@ static string? FirstNonEmpty(params string?[] values)
     return null;
 }
 
+static string? ExpandCompactTrackingCampaign(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
+    }
+
+    var normalized = value.Trim();
+    return normalized.StartsWith("n_", StringComparison.OrdinalIgnoreCase)
+        ? $"niche_live_{normalized[2..]}"
+        : normalized;
+}
+
+static string CompactTrackingCampaign(string campaign)
+{
+    var normalized = campaign.Trim();
+    return normalized.StartsWith("niche_live_", StringComparison.OrdinalIgnoreCase)
+        ? $"n_{normalized["niche_live_".Length..]}"
+        : normalized.StartsWith("niche_", StringComparison.OrdinalIgnoreCase)
+            ? $"n_{normalized["niche_".Length..]}"
+            : normalized;
+}
+
+static string BuildDecoratedTrackingId(string trackingId, string? campaign, string? source = null)
+    => TrackingIdDecorator.Decorate(trackingId, campaign, source);
+
+static (string LookupId, bool Decorated, string? Source, string? Campaign) ResolveDecoratedTrackingId(string id)
+{
+    var resolved = TrackingIdDecorator.Resolve(id);
+    return (resolved.LookupId, resolved.Decorated, resolved.Source, resolved.Campaign);
+}
+
+static bool TryParseViralReelApprovalKeyword(
+    string text,
+    InstagramPublishSettings publishSettings,
+    string chatId,
+    out ViralReelApprovalKeywordCommand command)
+{
+    command = new ViralReelApprovalKeywordCommand("unknown", null, null);
+    if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(chatId))
+    {
+        return false;
+    }
+
+    var approvalGroup = publishSettings.ViralReelsApprovalWhatsAppGroupId?.Trim();
+    if (string.IsNullOrWhiteSpace(approvalGroup) ||
+        !string.Equals(chatId.Trim(), approvalGroup, StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var trimmed = text.Trim();
+    var parts = trimmed.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (parts.Length == 0)
+    {
+        return false;
+    }
+
+    var keyword = NormalizeApprovalKeyword(parts[0]);
+    var action = keyword switch
+    {
+        "sim" or "s" or "aprovar" or "aprovado" => "approve",
+        "nao" or "n" or "reprovar" or "rejeitar" or "recusar" => "reject",
+        "ajustar" or "arrumar" or "melhorar" or "corrigir" => "adjust",
+        _ => null
+    };
+
+    if (action is null)
+    {
+        return false;
+    }
+
+    string? draftRef = null;
+    string? instruction = null;
+    if (parts.Length >= 2)
+    {
+        if (LooksLikeDraftReference(parts[1]))
+        {
+            draftRef = parts[1];
+            instruction = parts.Length >= 3 ? parts[2] : null;
+        }
+        else if (action == "adjust")
+        {
+            instruction = trimmed[(parts[0].Length)..].Trim();
+        }
+    }
+
+    command = new ViralReelApprovalKeywordCommand(action, draftRef, instruction);
+    return true;
+}
+
+static async Task<IReadOnlyList<string>> ExecuteViralReelApprovalKeywordAsync(
+    ViralReelApprovalKeywordCommand command,
+    AutomationSettings settings,
+    IInstagramPostComposer instagramComposer,
+    IInstagramPublishService publishService,
+    IInstagramPublishStore publishStore,
+    IInstagramPublishLogStore publishLogStore,
+    IWhatsAppGateway whatsAppGateway,
+    WhatsAppPublishContentService whatsAppPublishContent,
+    ICatalogOfferStore catalogStore,
+    IIdempotencyStore idempotencyStore,
+    IOfficialWhatsAppBlockedOfferStore blockedOfferStore,
+    DeliverySafetyPolicy deliverySafetyPolicy,
+    MessagingOptions messagingOptions,
+    DeliverySafetyOptions deliverySafetyOptions,
+    CancellationToken ct)
+{
+    var (draft, error) = await ResolveViralReelApprovalDraftAsync(publishStore, command.DraftRef, ct);
+    if (draft is null)
+    {
+        return new[] { error ?? "Não encontrei um draft de Reel viral pendente para essa aprovação." };
+    }
+
+    var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
+    switch (command.Action)
+    {
+        case "approve":
+            try
+            {
+                var publishOutcome = await PublishApprovedViralReelAsync(
+                    draft,
+                    settings,
+                    publishService,
+                    publishStore,
+                    publishLogStore,
+                    whatsAppGateway,
+                    whatsAppPublishContent,
+                    catalogStore,
+                    idempotencyStore,
+                    blockedOfferStore,
+                    deliverySafetyPolicy,
+                    messagingOptions,
+                    deliverySafetyOptions,
+                    ct);
+                return new[] { BuildViralReelApprovalPublishReply(shortId, publishOutcome) };
+            }
+            catch (Exception ex)
+            {
+                draft.Status = "failed";
+                draft.Error = ex.Message;
+                await publishStore.UpdateAsync(draft, ct);
+                await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "viral_reel_whatsapp_publish_failed",
+                    Success = false,
+                    DraftId = draft.Id,
+                    Error = ex.Message,
+                    Details = "Keyword=sim;Action=publish_instagram_whatsapp_catalog",
+                    ProcessName = draft.ProcessName
+                }, ct);
+                return new[]
+                {
+                    $"Draft {shortId} aprovado, mas a publicacao falhou antes de concluir.\nErro: {ex.Message}"
+                };
+            }
+
+        case "reject":
+            draft.Status = "rejected";
+            await publishStore.UpdateAsync(draft, ct);
+            await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+            {
+                Action = "viral_reel_whatsapp_rejected",
+                Success = true,
+                DraftId = draft.Id,
+                Details = "Keyword=nao"
+            }, ct);
+            return new[] { $"Draft {shortId} reprovado.\nStatus: rejected" };
+
+        case "adjust":
+            return await AdjustViralReelCaptionAsync(
+                draft,
+                command.Instruction,
+                settings,
+                instagramComposer,
+                publishStore,
+                publishLogStore,
+                ct);
+
+        default:
+            return new[] { "Comando de aprovação não reconhecido. Use: sim, não ou ajustar." };
+    }
+}
+
+static async Task<ViralReelApprovalPublishOutcome> PublishApprovedViralReelAsync(
+    InstagramPublishDraft draft,
+    AutomationSettings settings,
+    IInstagramPublishService publishService,
+    IInstagramPublishStore publishStore,
+    IInstagramPublishLogStore publishLogStore,
+    IWhatsAppGateway whatsAppGateway,
+    WhatsAppPublishContentService whatsAppPublishContent,
+    ICatalogOfferStore catalogStore,
+    IIdempotencyStore idempotencyStore,
+    IOfficialWhatsAppBlockedOfferStore blockedOfferStore,
+    DeliverySafetyPolicy deliverySafetyPolicy,
+    MessagingOptions messagingOptions,
+    DeliverySafetyOptions deliverySafetyOptions,
+    CancellationToken ct)
+{
+    draft.Status = "approved";
+    draft.Error = null;
+    draft.SendToCatalog = true;
+    draft.CatalogTarget = CatalogTargets.Prod;
+    draft.CatalogIntentLocked = true;
+    await publishStore.UpdateAsync(draft, ct);
+
+    await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+    {
+        Action = "viral_reel_whatsapp_approved",
+        Success = true,
+        DraftId = draft.Id,
+        Details = "Keyword=sim;Action=publish_instagram_whatsapp_catalog"
+    }, ct);
+
+    var instagram = await publishService.ExecutePublishAsync(draft.Id, ct);
+    var refreshedDraft = await publishStore.GetAsync(draft.Id, ct) ?? draft;
+
+    var catalogSuccess = false;
+    string? catalogMessage = null;
+    try
+    {
+        refreshedDraft.SendToCatalog = true;
+        refreshedDraft.CatalogTarget = CatalogTargets.Prod;
+        refreshedDraft.CatalogIntentLocked = true;
+        await publishStore.UpdateAsync(refreshedDraft, ct);
+        var catalog = await catalogStore.SyncExplicitDraftsAsync(new[] { refreshedDraft }, ct);
+        catalogSuccess = true;
+        catalogMessage = $"created={catalog.Created};updated={catalog.Updated};target={CatalogTargets.ResolveDraftTarget(refreshedDraft)}";
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "viral_reel_whatsapp_catalog_synced",
+            Success = true,
+            DraftId = refreshedDraft.Id,
+            MediaId = refreshedDraft.MediaId,
+            Details = catalogMessage,
+            ProcessName = refreshedDraft.ProcessName
+        }, ct);
+    }
+    catch (Exception ex)
+    {
+        catalogMessage = ex.Message;
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "viral_reel_whatsapp_catalog_synced",
+            Success = false,
+            DraftId = refreshedDraft.Id,
+            MediaId = refreshedDraft.MediaId,
+            Error = ex.Message,
+            ProcessName = refreshedDraft.ProcessName
+        }, ct);
+    }
+
+    var officialWhatsAppGroupId = ResolveOfficialWhatsAppGroupId(deliverySafetyOptions);
+    var whatsAppSuccess = false;
+    string? whatsAppMessage = null;
+    if (string.IsNullOrWhiteSpace(officialWhatsAppGroupId))
+    {
+        whatsAppMessage = "official_whatsapp_group_missing";
+    }
+    else
+    {
+        (whatsAppSuccess, whatsAppMessage) = await SendApprovedViralReelOfferToWhatsAppAsync(
+            refreshedDraft,
+            settings,
+            officialWhatsAppGroupId,
+            whatsAppGateway,
+            whatsAppPublishContent,
+            idempotencyStore,
+            blockedOfferStore,
+            deliverySafetyPolicy,
+            messagingOptions,
+            ct);
+    }
+
+    return new ViralReelApprovalPublishOutcome(
+        instagram.Success,
+        instagram.MediaId,
+        instagram.Error,
+        whatsAppSuccess,
+        whatsAppMessage,
+        catalogSuccess,
+        catalogMessage,
+        officialWhatsAppGroupId);
+}
+
+static async Task<(bool Success, string? Message)> SendApprovedViralReelOfferToWhatsAppAsync(
+    InstagramPublishDraft draft,
+    AutomationSettings settings,
+    string targetGroupId,
+    IWhatsAppGateway whatsAppGateway,
+    WhatsAppPublishContentService whatsAppPublishContent,
+    IIdempotencyStore idempotencyStore,
+    IOfficialWhatsAppBlockedOfferStore blockedOfferStore,
+    DeliverySafetyPolicy deliverySafetyPolicy,
+    MessagingOptions messagingOptions,
+    CancellationToken ct)
+{
+    var instanceName = FirstNonEmpty(
+        settings.InstagramPublish?.ViralReelsApprovalWhatsAppInstanceName,
+        settings.WhatsAppForwarding?.InstanceName);
+    var imageUrl = ResolveDraftWhatsAppImageUrl(draft);
+    var content = ResolveDraftWhatsAppOfferContent(draft);
+    var prepared = await whatsAppPublishContent.PrepareForSendAsync(content, imageUrl, targetGroupId, ct);
+    var isOfficialDestination = deliverySafetyPolicy.IsOfficialWhatsAppDestination(targetGroupId);
+    var hasActualImage = prepared.ResolvedImageBytes is { Length: > 0 } || !string.IsNullOrWhiteSpace(prepared.ResolvedImageUrl);
+    var officialGuard = OfficialWhatsAppGroupGuard.Validate(isOfficialDestination, prepared.Content, prepared.HasImageCandidate, hasActualImage);
+    if (!officialGuard.Allowed)
+    {
+        await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+        {
+            Source = "ViralReelWhatsAppApproval",
+            InstanceName = instanceName,
+            DestinationChatRef = targetGroupId,
+            Reason = $"official_group_{officialGuard.Reason}",
+            Detail = officialGuard.Detail,
+            Text = prepared.Content,
+            HasImageCandidate = prepared.HasImageCandidate,
+            ImageSource = prepared.ImageSource,
+            Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractFirstUrl(prepared.Content)),
+            OfferUrl = ExtractFirstUrl(prepared.Content),
+            TrackingUrl = ExtractFirstTrackedUrl(prepared.Content)
+        }, ct);
+        return (false, $"blocked:{officialGuard.Reason}");
+    }
+
+    var dedupeKey = BuildWhatsAppOutboundDedupeKey(instanceName, targetGroupId, prepared.Content, prepared.HasImageCandidate);
+    var dedupeWindow = WhatsAppOutboundDeduplicationPolicy.ResolveWindow(isOfficialDestination, messagingOptions);
+    if (!idempotencyStore.TryBegin(dedupeKey, dedupeWindow))
+    {
+        await blockedOfferStore.AppendAsync(new OfficialWhatsAppBlockedOfferEntry
+        {
+            Source = "ViralReelWhatsAppApproval",
+            InstanceName = instanceName,
+            DestinationChatRef = targetGroupId,
+            Reason = "duplicate_blocked",
+            Detail = $"Mensagem duplicada bloqueada por idempotencia de outbound (janela {Math.Round(dedupeWindow.TotalHours, 2)}h).",
+            Text = prepared.Content,
+            HasImageCandidate = prepared.HasImageCandidate,
+            ImageSource = prepared.ImageSource,
+            Store = TrackingLinkShortenerService.ResolveStoreHint(ExtractFirstUrl(prepared.Content)),
+            OfferUrl = ExtractFirstUrl(prepared.Content),
+            TrackingUrl = ExtractFirstTrackedUrl(prepared.Content)
+        }, ct);
+        return (true, "duplicate_blocked");
+    }
+
+    WhatsAppSendResult result;
+    if (prepared.ResolvedImageBytes is { Length: > 0 })
+    {
+        result = await whatsAppGateway.SendImageAsync(instanceName, targetGroupId, prepared.ResolvedImageBytes, prepared.Content, prepared.ResolvedMimeType, ct);
+    }
+    else if (!string.IsNullOrWhiteSpace(prepared.ResolvedImageUrl))
+    {
+        result = await whatsAppGateway.SendImageUrlAsync(instanceName, targetGroupId, prepared.ResolvedImageUrl, prepared.Content, prepared.ResolvedMimeType, "oferta.jpg", ct);
+    }
+    else
+    {
+        result = await whatsAppGateway.SendTextAsync(instanceName, targetGroupId, prepared.Content, ct);
+    }
+
+    return (result.Success, result.Message);
+}
+
+static string BuildViralReelApprovalPublishReply(string shortId, ViralReelApprovalPublishOutcome outcome)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine($"Draft {shortId} aprovado.");
+    sb.AppendLine($"Instagram: {(outcome.InstagramSuccess ? "publicado" : "falhou")}{(string.IsNullOrWhiteSpace(outcome.InstagramMediaId) ? string.Empty : $" ({outcome.InstagramMediaId})")}");
+    if (!outcome.InstagramSuccess && !string.IsNullOrWhiteSpace(outcome.InstagramError))
+    {
+        sb.AppendLine($"Erro Instagram: {outcome.InstagramError}");
+    }
+
+    sb.AppendLine($"WhatsApp oficial: {(outcome.WhatsAppSuccess ? "enviado" : "falhou")}{(string.IsNullOrWhiteSpace(outcome.WhatsAppTargetId) ? string.Empty : $" para {outcome.WhatsAppTargetId}")}");
+    if (!string.IsNullOrWhiteSpace(outcome.WhatsAppMessage))
+    {
+        sb.AppendLine($"WhatsApp detalhe: {outcome.WhatsAppMessage}");
+    }
+
+    sb.AppendLine($"Catalogo: {(outcome.CatalogSuccess ? "sincronizado" : "falhou")}");
+    if (!string.IsNullOrWhiteSpace(outcome.CatalogMessage))
+    {
+        sb.AppendLine($"Catalogo detalhe: {outcome.CatalogMessage}");
+    }
+
+    return sb.ToString().Trim();
+}
+
+static string ResolveDraftWhatsAppOfferContent(InstagramPublishDraft draft)
+{
+    var offerUrl = FirstNonEmpty(draft.AutoReplyLink, draft.OfferUrl, draft.OriginalOfferUrl, ExtractFirstUrl(draft.AutoReplyMessage), ExtractFirstUrl(draft.Caption));
+    if (!string.IsNullOrWhiteSpace(draft.AutoReplyMessage))
+    {
+        return draft.AutoReplyMessage.Trim();
+    }
+
+    return InstagramWorkflowSupport.BuildWhatsAppCaption(
+        draft.Caption,
+        draft.ProductName,
+        offerUrl,
+        draft.CurrentPrice,
+        draft.PreviousPrice,
+        draft.DiscountPercent);
+}
+
+static string? ResolveDraftWhatsAppImageUrl(InstagramPublishDraft draft)
+{
+    return draft.ImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))
+        ?? draft.SuggestedImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))
+        ?? draft.VideoCoverUrl;
+}
+
+static string? ResolveOfficialWhatsAppGroupId(DeliverySafetyOptions options)
+{
+    var env = Environment.GetEnvironmentVariable("OFFICIAL_WHATSAPP_GROUP_ID");
+    if (!string.IsNullOrWhiteSpace(env))
+    {
+        return env.Trim();
+    }
+
+    return options.OfficialWhatsAppGroupIds
+        .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))
+        ?.Trim();
+}
+
+static async Task<(InstagramPublishDraft? Draft, string? Error)> ResolveViralReelApprovalDraftAsync(
+    IInstagramPublishStore publishStore,
+    string? draftRef,
+    CancellationToken ct)
+{
+    if (!string.IsNullOrWhiteSpace(draftRef))
+    {
+        return await ResolveInstagramDraftAsync(publishStore, draftRef, ct);
+    }
+
+    var items = await publishStore.ListAsync(ct);
+    var latest = items
+        .Where(x => string.Equals(InstagramCommandParser.NormalizeInstagramPostTypeValue(x.PostType), "reel", StringComparison.OrdinalIgnoreCase))
+        .Where(x => !string.Equals(x.Status, "published", StringComparison.OrdinalIgnoreCase))
+        .Where(x => !string.Equals(x.Status, "rejected", StringComparison.OrdinalIgnoreCase))
+        .Where(x =>
+            (x.SourceDataOrigin?.Contains("telegram:", StringComparison.OrdinalIgnoreCase) == true) ||
+            string.Equals(x.ProcessName, InstagramProcessNames.ReelAssistido, StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(x => x.CreatedAt)
+        .FirstOrDefault();
+
+    return latest is null
+        ? (null, "Nenhum draft de Reel viral pendente encontrado.")
+        : (latest, null);
+}
+
+static async Task<IReadOnlyList<string>> AdjustViralReelCaptionAsync(
+    InstagramPublishDraft draft,
+    string? instruction,
+    AutomationSettings settings,
+    IInstagramPostComposer instagramComposer,
+    IInstagramPublishStore publishStore,
+    IInstagramPublishLogStore publishLogStore,
+    CancellationToken ct)
+{
+    var instaSettings = settings.InstagramPosts ?? new InstagramPostSettings();
+    instaSettings.UseAi = true;
+    instaSettings.AiProvider = "gemma4";
+
+    var offerContext = BuildViralReelCaptionAdjustmentContext(draft, instruction);
+    var aiText = await instagramComposer.BuildAsync(draft.ProductName, offerContext, instaSettings, ct);
+    if (string.IsNullOrWhiteSpace(aiText) ||
+        aiText.StartsWith("Nao consegui gerar legenda com IA", StringComparison.OrdinalIgnoreCase) ||
+        aiText.StartsWith("Não consegui gerar legenda com IA", StringComparison.OrdinalIgnoreCase))
+    {
+        await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+        {
+            Action = "viral_reel_whatsapp_adjust_failed",
+            Success = false,
+            DraftId = draft.Id,
+            Details = "Reason=ai_caption_empty_or_failed"
+        }, ct);
+        return new[] { "Não consegui ajustar a legenda com IA agora. Verifique as chaves/modelo da Gemma 4 e tente novamente." };
+    }
+
+    var (captions, hashtags) = ExtractInstagramCaptionOptionsAndHashtags(aiText);
+    var caption = captions.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? aiText.Trim();
+    caption = FormatInstagramCaptionForReadability(caption);
+    SyncDraftCtasFromCaptionIfPresent(draft, caption);
+    caption = EnsureInstagramCaptionContainsCta(caption, draft.Ctas);
+    if (caption.Length > 2200)
+    {
+        caption = caption[..2200].TrimEnd() + "...";
+    }
+
+    draft.Caption = caption;
+    draft.CaptionOptions = captions.Count > 0 ? captions.Take(5).ToList() : new List<string> { caption };
+    draft.SelectedCaptionIndex = 1;
+    if (!string.IsNullOrWhiteSpace(hashtags))
+    {
+        draft.Hashtags = NormalizeInstagramHashtags(hashtags, caption);
+    }
+    draft.Status = "draft";
+    draft.Error = null;
+
+    await publishStore.UpdateAsync(draft, ct);
+    await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+    {
+        Action = "viral_reel_whatsapp_adjusted",
+        Success = true,
+        DraftId = draft.Id,
+        Details = $"Provider={instaSettings.AiProvider};CaptionLength={draft.Caption.Length}"
+    }, ct);
+
+    var shortId = draft.Id.Length > 8 ? draft.Id[..8] : draft.Id;
+    return new[]
+    {
+        $"Texto ajustado no draft {shortId}.",
+        $"Nova legenda:\n{draft.Caption}",
+        "Responda sim para aprovar, não para reprovar ou ajustar para gerar outra versão."
+    };
+}
+
+static string BuildViralReelCaptionAdjustmentContext(InstagramPublishDraft draft, string? instruction)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("Crie uma legenda nova para Instagram Reels, em portugues do Brasil.");
+    sb.AppendLine("Objetivo: vender o produto com CTA claro para comentario/DM, sem prometer preco fixo.");
+    sb.AppendLine("Não invente cupom, estoque, entrega ou características que não estejam nos dados.");
+    if (!string.IsNullOrWhiteSpace(instruction))
+    {
+        sb.AppendLine($"Pedido do revisor: {instruction.Trim()}");
+    }
+
+    sb.AppendLine($"Produto: {draft.ProductName}");
+    sb.AppendLine($"Loja: {draft.Store ?? "-"}");
+    sb.AppendLine($"Preço atual: {draft.CurrentPrice ?? "-"}");
+    sb.AppendLine($"Preço anterior: {draft.PreviousPrice ?? "-"}");
+    sb.AppendLine($"Desconto: {(draft.DiscountPercent.HasValue ? draft.DiscountPercent.Value + "%" : "-")}");
+    sb.AppendLine($"Link afiliado: {draft.OfferUrl ?? draft.AutoReplyLink ?? "-"}");
+    sb.AppendLine($"CTA atual: {(draft.Ctas.Count == 0 ? "-" : string.Join(", ", draft.Ctas.Select(x => x.Keyword).Where(x => !string.IsNullOrWhiteSpace(x))))}");
+    sb.AppendLine($"Legenda atual: {draft.Caption}");
+    sb.AppendLine();
+    sb.AppendLine("Responda com 3 opcoes no formato:");
+    sb.AppendLine("Legenda 1:");
+    sb.AppendLine("Legenda 2:");
+    sb.AppendLine("Legenda 3:");
+    sb.AppendLine("Hashtags sugeridas:");
+    return sb.ToString();
+}
+
+static string NormalizeApprovalKeyword(string value)
+{
+    var normalized = value.Trim().ToLowerInvariant();
+    var formD = normalized.Normalize(System.Text.NormalizationForm.FormD);
+    var sb = new StringBuilder(formD.Length);
+    foreach (var ch in formD)
+    {
+        var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+        if (category != System.Globalization.UnicodeCategory.NonSpacingMark)
+        {
+            sb.Append(ch);
+        }
+    }
+
+    return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+}
+
+static bool LooksLikeDraftReference(string value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return false;
+    }
+
+    var trimmed = value.Trim();
+    return string.Equals(trimmed, "ultimo", StringComparison.OrdinalIgnoreCase) ||
+           int.TryParse(trimmed, out _) ||
+           Regex.IsMatch(trimmed, "^[a-f0-9]{6,32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+}
+
+static async Task<ApprovalPackageSendResult> SendTelegramReelApprovalPackageAsync(
+    IWhatsAppTransport whatsAppGateway,
+    string? instanceName,
+    string groupId,
+    TelegramUserbotReelDraftResult draft,
+    CancellationToken ct)
+{
+    var mediaResults = new List<WhatsAppSendResult>();
+    var requiredResults = new List<WhatsAppSendResult>();
+
+    if (!string.IsNullOrWhiteSpace(draft.MediaUrl))
+    {
+        mediaResults.Add(await whatsAppGateway.SendImageUrlAsync(
+            instanceName,
+            groupId,
+            draft.MediaUrl.Trim(),
+            BuildTelegramReelVideoApprovalCaption(draft),
+            "video/mp4",
+            "reel.mp4",
+            ct));
+    }
+
+    requiredResults.Add(await whatsAppGateway.SendTextAsync(
+        instanceName,
+        groupId,
+        BuildTelegramReelInstagramCaptionMessage(draft),
+        ct));
+
+    if (!string.IsNullOrWhiteSpace(draft.ProductImageUrl))
+    {
+        requiredResults.Add(await whatsAppGateway.SendImageUrlAsync(
+            instanceName,
+            groupId,
+            draft.ProductImageUrl.Trim(),
+            BuildTelegramReelCompleteOfferMessage(draft, includeImageHint: false),
+            "image/jpeg",
+            "oferta.jpg",
+            ct));
+    }
+    else
+    {
+        requiredResults.Add(await whatsAppGateway.SendTextAsync(
+            instanceName,
+            groupId,
+            BuildTelegramReelCompleteOfferMessage(draft, includeImageHint: true),
+            ct));
+    }
+
+    var results = mediaResults.Concat(requiredResults).ToList();
+    var success = requiredResults.Count > 0 && requiredResults.All(x => x.Success);
+    var message = string.Join(" | ", results.Select(x => x.Message).Where(x => !string.IsNullOrWhiteSpace(x)));
+    return new ApprovalPackageSendResult(success, string.IsNullOrWhiteSpace(message) ? "approval_package_sent" : message);
+}
+
+static string BuildTelegramReelVideoApprovalCaption(TelegramUserbotReelDraftResult draft)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("🎬 VIDEO DO REEL");
+    sb.AppendLine($"Draft ID: {draft.DraftId}");
+    sb.AppendLine($"Produto: {draft.ProductName ?? "-"}");
+    return NormalizeWhatsAppApprovalText(sb.ToString().Trim());
+}
+
+static string BuildTelegramReelInstagramCaptionMessage(TelegramUserbotReelDraftResult draft)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("📝 LEGENDA DO INSTAGRAM");
+    sb.AppendLine($"Draft ID: {draft.DraftId}");
+    if (!string.IsNullOrWhiteSpace(draft.EditorUrl))
+    {
+        sb.AppendLine($"Revisar: {draft.EditorUrl}");
+    }
+
+    sb.AppendLine();
+    sb.AppendLine(string.IsNullOrWhiteSpace(draft.InstagramCaption)
+        ? "(sem legenda gerada)"
+        : draft.InstagramCaption.Trim());
+    return NormalizeWhatsAppApprovalText(sb.ToString().Trim());
+}
+
+static string BuildTelegramReelCompleteOfferMessage(TelegramUserbotReelDraftResult draft, bool includeImageHint)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("🔥 POST COMPLETO DA OFERTA");
+    if (includeImageHint)
+    {
+        sb.AppendLine("⚠️ Foto da oferta não encontrada; enviando preview em texto.");
+    }
+
+    sb.AppendLine($"🛍️ Produto: {draft.ProductName ?? "-"}");
+    sb.AppendLine($"👉 Link: {draft.OfferUrl ?? "-"}");
+    if (!string.IsNullOrWhiteSpace(draft.AutoReplyMessage))
+    {
+        sb.AppendLine();
+        sb.AppendLine(draft.AutoReplyMessage.Trim());
+    }
+
+    sb.AppendLine();
+    sb.AppendLine("✅ Comandos no WhatsApp:");
+    sb.AppendLine("- sim: aprova, publica o Reel, envia a oferta no WhatsApp oficial e sincroniza o catalogo");
+    sb.AppendLine("- nao: reprova o draft");
+    sb.AppendLine("- ajustar: gera uma nova versao de legenda com IA");
+    return NormalizeWhatsAppApprovalText(sb.ToString().Trim());
+}
+
+static string NormalizeWhatsAppApprovalText(string? text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return string.Empty;
+    }
+
+    var repaired = RepairCommonMojibake(text.Trim()).Normalize(NormalizationForm.FormC);
+    var sb = new StringBuilder(repaired.Length);
+
+    foreach (var c in repaired)
+    {
+        var category = CharUnicodeInfo.GetUnicodeCategory(c);
+        if (category == UnicodeCategory.Format)
+        {
+            continue;
+        }
+
+        sb.Append(c switch
+        {
+            '\u2018' or '\u2019' or '\u201A' or '\u201B' => '\'',
+            '\u201C' or '\u201D' or '\u201E' or '\u201F' => '"',
+            '\u2013' or '\u2014' or '\u2212' => '-',
+            '\u2026' => '.',
+            '\u00A0' => ' ',
+            '\u00BA' => 'o',
+            '\u00AA' => 'a',
+            _ => c
+        });
+    }
+
+    var ascii = Regex.Replace(sb.ToString().Normalize(NormalizationForm.FormC), "[ \\t]{2,}", " ");
+    ascii = Regex.Replace(ascii, "(\\r?\\n){3,}", "\n\n");
+    return ascii.Trim();
+}
+
+static string RepairCommonMojibake(string text)
+{
+    if (!text.Contains('\u00C3', StringComparison.Ordinal) &&
+        !text.Contains('\u00C2', StringComparison.Ordinal) &&
+        !text.Contains('\u00E2', StringComparison.Ordinal))
+    {
+        return text;
+    }
+
+    try
+    {
+        var repaired = Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(text));
+        return CountMojibakeMarkers(repaired) < CountMojibakeMarkers(text) ? repaired : text;
+    }
+    catch
+    {
+        return text;
+    }
+}
+
+static int CountMojibakeMarkers(string value)
+{
+    var count = 0;
+    foreach (var c in value)
+    {
+        if (c is '\u00C3' or '\u00C2' or '\u00E2' or '\uFFFD')
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 static int? TryComputeDiscountFromDisplayPrices(string? previousDisplay, string? currentDisplay)
 {
     if (string.IsNullOrWhiteSpace(previousDisplay) || string.IsNullOrWhiteSpace(currentDisplay))
@@ -4900,7 +7938,7 @@ static decimal? ParseBrlPrice(string? text)
     var clean = System.Text.RegularExpressions.Regex.Replace(text, @"[^\d\.,]", "", System.Text.RegularExpressions.RegexOptions.CultureInvariant).Trim();
     if (string.IsNullOrWhiteSpace(clean)) return null;
 
-    // BRL: 2.999,99 → dots are thousand separators, comma is decimal
+    // BRL: 2.999,99 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ dots are thousand separators, comma is decimal
     if (clean.Contains(',') && clean.Contains('.'))
     {
         if (clean.LastIndexOf(',') > clean.LastIndexOf('.'))
@@ -4915,9 +7953,6 @@ static decimal? ParseBrlPrice(string? text)
 
     return decimal.TryParse(clean, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : null;
 }
-
-
-
 static async Task<WhatsAppForwardSendOutcome> SendWhatsAppMessageWithMediaFallbackAsync(
     IWhatsAppGateway gateway,
     IHttpClientFactory httpClientFactory,
@@ -4929,10 +7964,18 @@ static async Task<WhatsAppForwardSendOutcome> SendWhatsAppMessageWithMediaFallba
     string text,
     WhatsAppIncomingMessage msg,
     ILogger logger,
-    CancellationToken ct)
+    CancellationToken ct,
+    bool allowTextFallback = true)
 {
     if (!msg.HasMedia)
     {
+        if (!allowTextFallback)
+        {
+            return new WhatsAppForwardSendOutcome(
+                new WhatsAppSendResult(false, "Grupo oficial exige imagem valida."),
+                "media_required_no_text_fallback");
+        }
+
         var textOnly = await gateway.SendTextAsync(instanceName, destination, text, ct);
         return new WhatsAppForwardSendOutcome(textOnly, "text_no_media_in_payload");
     }
@@ -5016,6 +8059,16 @@ static async Task<WhatsAppForwardSendOutcome> SendWhatsAppMessageWithMediaFallba
 
     if (imageBytes is { Length: > 0 })
     {
+        var imageByBytes = await gateway.SendImageAsync(instanceName, destination, imageBytes, text, effectiveMimeType, ct);
+        if (imageByBytes.Success)
+        {
+            diagnostics.Add("send_bytes=ok");
+            return new WhatsAppForwardSendOutcome(imageByBytes, "image_sent_bytes", string.Join(";", diagnostics));
+        }
+
+        diagnostics.Add($"send_bytes=fail:{imageByBytes.Message ?? "unknown"}");
+        logger.LogWarning("Falha ao enviar imagem em base64 para {Destination}: {Message}", destination, imageByBytes.Message);
+
         if (!string.IsNullOrWhiteSpace(publicBaseUrl))
         {
             var mediaId = mediaStore.Add(imageBytes, string.IsNullOrWhiteSpace(effectiveMimeType) ? "image/jpeg" : effectiveMimeType);
@@ -5037,16 +8090,6 @@ static async Task<WhatsAppForwardSendOutcome> SendWhatsAppMessageWithMediaFallba
             diagnostics.Add($"send_hosted_url=fail:{imageByHostedUrl.Message ?? "unknown"}");
             logger.LogWarning("Falha ao enviar imagem por URL hospedada para {Destination}: {Message}", destination, imageByHostedUrl.Message);
         }
-
-        var imageByBytes = await gateway.SendImageAsync(instanceName, destination, imageBytes, text, effectiveMimeType, ct);
-        if (imageByBytes.Success)
-        {
-            diagnostics.Add("send_bytes=ok");
-            return new WhatsAppForwardSendOutcome(imageByBytes, "image_sent_bytes", string.Join(";", diagnostics));
-        }
-
-        diagnostics.Add($"send_bytes=fail:{imageByBytes.Message ?? "unknown"}");
-        logger.LogWarning("Falha ao enviar imagem em base64 para {Destination}: {Message}", destination, imageByBytes.Message);
     }
 
     if (!string.IsNullOrWhiteSpace(msg.MediaUrl))
@@ -5069,12 +8112,64 @@ static async Task<WhatsAppForwardSendOutcome> SendWhatsAppMessageWithMediaFallba
         logger.LogWarning("Falha ao enviar imagem por URL para {Destination}: {Message}", destination, imageByUrl.Message);
     }
 
+    if (!allowTextFallback)
+    {
+        diagnostics.Add("fallback_text=blocked");
+        return new WhatsAppForwardSendOutcome(
+            new WhatsAppSendResult(false, "Grupo oficial exige envio com imagem; fallback em texto bloqueado."),
+            "media_required_no_text_fallback",
+            string.Join(";", diagnostics));
+    }
+
     var fallbackText = await gateway.SendTextAsync(instanceName, destination, text, ct);
     diagnostics.Add(fallbackText.Success ? "fallback_text=ok" : $"fallback_text=fail:{fallbackText.Message ?? "unknown"}");
     return new WhatsAppForwardSendOutcome(
         fallbackText,
         fallbackText.Success ? "text_fallback_after_media_failure" : "send_failed",
         string.Join(";", diagnostics));
+}
+
+static WhatsAppIncomingMessage BuildForwardMessageWithResolvedImage(
+    WhatsAppIncomingMessage original,
+    OfferImageResolutionResult imageResolution)
+{
+    if (original.HasMedia || !imageResolution.Success)
+    {
+        return original;
+    }
+
+    var mimeType = string.IsNullOrWhiteSpace(imageResolution.MimeType)
+        ? "image/jpeg"
+        : imageResolution.MimeType;
+    var fileName = WhatsAppForwardMediaHelper.ResolveMediaFileName(mimeType);
+
+    if (imageResolution.ResolvedImageBytes is { Length: > 0 })
+    {
+        return original with
+        {
+            HasMedia = true,
+            MediaUrl = null,
+            MediaBase64 = Convert.ToBase64String(imageResolution.ResolvedImageBytes),
+            MediaMimeType = mimeType,
+            MediaFileName = fileName,
+            RawPayloadJson = null
+        };
+    }
+
+    if (!string.IsNullOrWhiteSpace(imageResolution.ResolvedImageUrl))
+    {
+        return original with
+        {
+            HasMedia = true,
+            MediaUrl = imageResolution.ResolvedImageUrl,
+            MediaBase64 = null,
+            MediaMimeType = mimeType,
+            MediaFileName = fileName,
+            RawPayloadJson = null
+        };
+    }
+
+    return original;
 }
 
 static async Task<byte[]?> TryDownloadIncomingMediaAsBytesAsync(
@@ -5094,9 +8189,11 @@ static async Task<byte[]?> TryDownloadIncomingMediaAsBytesAsync(
         return DecodeBase64Payload(mediaUrl);
     }
 
-    if (!Uri.TryCreate(mediaUrl, UriKind.Absolute, out var mediaUri) && !string.IsNullOrWhiteSpace(evolutionOptions.BaseUrl))
+    if (!Uri.TryCreate(mediaUrl, UriKind.Absolute, out var mediaUri) && 
+        !string.IsNullOrWhiteSpace(evolutionOptions.BaseUrl) &&
+        Uri.TryCreate(evolutionOptions.BaseUrl.Trim(), UriKind.Absolute, out var baseUri))
     {
-        if (Uri.TryCreate(new Uri(evolutionOptions.BaseUrl), mediaUrl, out var combined))
+        if (Uri.TryCreate(baseUri, mediaUrl, out var combined))
         {
             mediaUri = combined;
         }
@@ -5199,7 +8296,12 @@ static async Task<byte[]?> TryDownloadMediaViaEvolutionMessageApiAsync(
     }
 
     var client = httpClientFactory.CreateClient("evolution");
-    client.BaseAddress = new Uri(evolutionOptions.BaseUrl);
+    if (!Uri.TryCreate(evolutionOptions.BaseUrl?.Trim() ?? string.Empty, UriKind.Absolute, out var baseAddress))
+    {
+        logger.LogWarning("Falha ao baixar midia via Evolution: BaseUrl invalida ({BaseUrl})", evolutionOptions.BaseUrl);
+        return null;
+    }
+    client.BaseAddress = baseAddress;
     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", evolutionOptions.ApiKey);
     if (!client.DefaultRequestHeaders.Contains("apikey"))
     {
@@ -5742,6 +8844,70 @@ static bool TryExtractIncomingMedia(
     }
 
     return hasMedia || !string.IsNullOrWhiteSpace(mediaUrl) || !string.IsNullOrWhiteSpace(mediaBase64);
+}
+
+static List<AchadinhosBot.Next.Domain.Models.WhatsAppGroupMembershipEvent> ExtractEvolutionMembershipEvents(string body)
+{
+    var events = new List<AchadinhosBot.Next.Domain.Models.WhatsAppGroupMembershipEvent>();
+    try
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("event", out var eventNode) || eventNode.ValueKind != JsonValueKind.String)
+        {
+            var dataProp = root.TryGetProperty("data", out var d) ? d : root;
+            if (dataProp.TryGetProperty("action", out var actionNode) && dataProp.TryGetProperty("participants", out _))
+            {
+                // Accept as group event if it has action and participants
+            }
+            else
+            {
+                return events;
+            }
+        }
+        else
+        {
+            var eventName = eventNode.GetString();
+            if (!string.Equals(eventName, "group.participants.update", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(eventName, "group_participants_update", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(eventName, "group-participants.update", StringComparison.OrdinalIgnoreCase))
+                return events;
+        }
+
+        var data = root.TryGetProperty("data", out var dataNode2) ? dataNode2 : root;
+        var groupId = GetString(data, "id", "groupId", "groupJid", "jid");
+        if (string.IsNullOrWhiteSpace(groupId)) return events;
+
+        var action = GetString(data, "action", "updateType");
+        if (string.IsNullOrWhiteSpace(action)) return events;
+
+        if (data.TryGetProperty("participants", out var parts) && parts.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var p in parts.EnumerateArray())
+            {
+                var participantId = p.ValueKind == JsonValueKind.String
+                    ? p.GetString()
+                    : GetString(p, "phoneNumber", "id", "jid", "participant", "user");
+                if (!string.IsNullOrWhiteSpace(participantId))
+                {
+                    events.Add(new AchadinhosBot.Next.Domain.Models.WhatsAppGroupMembershipEvent
+                    {
+                        GroupId = groupId,
+                        GroupName = "Evolution Webhook",
+                        ParticipantId = participantId ?? string.Empty,
+                        Action = action,
+                        Timestamp = DateTimeOffset.UtcNow,
+                        IsSyncDetection = false
+                    });
+                }
+            }
+        }
+    }
+    catch
+    {
+    }
+    return events;
 }
 
 static bool TryGetIncomingMediaNode(JsonElement node, out JsonElement mediaNode)
@@ -6563,7 +9729,7 @@ static async Task<IReadOnlyList<string>> ExecuteInstagramWhatsAppCommandAsync(
 
         case "set_type":
         {
-            var parsedType = ParseInstagramTypeCommandInput(command.Argument);
+            var parsedType = InstagramCommandParser.ParseInstagramTypeCommandInput(command.Argument);
             if (!string.IsNullOrWhiteSpace(parsedType.Error))
             {
                 return new[] { parsedType.Error };
@@ -7303,11 +10469,11 @@ static string BuildPublicLinkConverterPageHtml(PublicLinkConverterViewModel mode
         var couponHint = model.HasCoupon
             ? (string.IsNullOrWhiteSpace(model.CouponDescription) ? "Cupom disponivel para esta loja" : couponDesc)
             : "Se houver cupom, ele aparece no carrinho";
-        var previousDisplay = string.IsNullOrWhiteSpace(previousPrice) ? "—" : previousPrice;
+        var previousDisplay = string.IsNullOrWhiteSpace(previousPrice) ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" : previousPrice;
         var discountText = model.DiscountPercent.HasValue && model.DiscountPercent.Value > 0
             ? System.Net.WebUtility.HtmlEncode($"{model.DiscountPercent.Value}% OFF")
             : string.Empty;
-        var discountDisplay = string.IsNullOrWhiteSpace(discountText) ? "—" : discountText;
+        var discountDisplay = string.IsNullOrWhiteSpace(discountText) ? "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â" : discountText;
         var shareCoupon = model.HasCoupon && !string.IsNullOrWhiteSpace(model.CouponCode)
             ? $"\nCupom: {model.CouponCode}"
             : string.Empty;
@@ -7561,11 +10727,49 @@ static string NormalizeConverterDisplayText(string? value)
     return text;
 }
 
+static string NormalizeCatalogDisplayText(string? value)
+{
+    var text = System.Net.WebUtility.HtmlDecode(value?.Trim()) ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return string.Empty;
+    }
+
+    for (var i = 0; i < 2 && LooksLikeCatalogMojibake(text); i++)
+    {
+        try
+        {
+            var repaired = Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(text));
+            if (string.Equals(repaired, text, StringComparison.Ordinal) ||
+                CountCatalogMojibakeMarkers(repaired) > CountCatalogMojibakeMarkers(text))
+            {
+                break;
+            }
+
+            text = repaired.Trim();
+        }
+        catch
+        {
+            break;
+        }
+    }
+
+    return text;
+}
+
+static bool LooksLikeCatalogMojibake(string value)
+    => value.Contains('Ã', StringComparison.Ordinal)
+       || value.Contains('Â', StringComparison.Ordinal)
+       || value.Contains('\uFFFD', StringComparison.Ordinal);
+
+static int CountCatalogMojibakeMarkers(string value)
+    => value.Count(ch => ch is 'Ã' or 'Â' or '\uFFFD');
+
 static bool LooksLikeMojibake(string value)
-    => value.Contains('Ã') || value.Contains('â') || value.Contains('�') || value.Contains('├');
+    => value.Contains("ÃƒÆ’Ã†â€™", StringComparison.Ordinal) || value.Contains("ÃƒÆ’Ã‚Â¢", StringComparison.Ordinal) || value.Contains("ÃƒÂ¯Ã‚Â¿Ã‚Â½", StringComparison.Ordinal) || value.Contains("ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œ", StringComparison.Ordinal);
 
 static int ScoreMojibake(string value)
-    => Regex.Matches(value, "[Ãâ�├]", RegexOptions.CultureInvariant).Count;
+    => Regex.Matches(value, "[ÃƒÆ’Ã†â€™ÃƒÆ’Ã‚Â¢ÃƒÂ¯Ã‚Â¿Ã‚Â½ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œ]", RegexOptions.CultureInvariant).Count;
 
 static int ScoreConverterTitle(string title)
 {
@@ -7581,7 +10785,7 @@ static int ScoreConverterTitle(string title)
         score -= 60;
     }
 
-    var words = Regex.Matches(normalized, @"[a-z0-9À-ÿ]{2,}", RegexOptions.CultureInvariant).Count;
+    var words = Regex.Matches(normalized, @"[\p{L}\p{Nd}]{2,}", RegexOptions.CultureInvariant).Count;
     score += Math.Min(words * 3, 45);
     score += Math.Min(normalized.Length / 8, 30);
 
@@ -7724,7 +10928,7 @@ static List<string> ExtractConverterImageKeywords(string? title, string? descrip
         "the","and","for","with","from","this","that","produto","oferta","link","loja","comprar","preco"
     };
 
-    return Regex.Matches(text, @"[a-z0-9À-ÿ]{4,}", RegexOptions.CultureInvariant)
+    return Regex.Matches(text, @"[a-z0-9Ãƒâ‚¬-ÃƒÂ¿]{4,}", RegexOptions.CultureInvariant)
         .Select(m => m.Value.Trim())
         .Where(x => !stop.Contains(x))
         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -7748,6 +10952,7 @@ static string ExtractPriceFromText(string? text)
 
 static string BuildBioLinksPageHtml(
     IReadOnlyList<BioLinkItem> items,
+    IReadOnlyList<BioNicheLink> nicheLinks,
     string currentUrl,
     BioHubSettings settings,
     string source,
@@ -7756,7 +10961,7 @@ static string BuildBioLinksPageHtml(
     var sb = new StringBuilder();
     const string instagramUrl = "https://www.instagram.com/reidasofertasvip/";
     const string telegramUrl = "https://t.me/ReiDasOfertasVIP";
-    const string whatsappUrl = "https://chat.whatsapp.com/CYy5lP0VOjTDlefARsexXi";
+    const string whatsappUrl = "https://chat.whatsapp.com/GosnHVUa2lE0nYGhO6an4x";
     var brandName = string.IsNullOrWhiteSpace(settings.BrandName) ? "Rei das Ofertas" : settings.BrandName.Trim();
     var headline = string.IsNullOrWhiteSpace(settings.Headline) ? "Achadinhos em destaque" : settings.Headline.Trim();
     var subheadline = string.IsNullOrWhiteSpace(settings.Subheadline) ? "Toque no botao para abrir a oferta." : settings.Subheadline.Trim();
@@ -7854,7 +11059,7 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("            const h = Math.floor(diff / 3600000);");
     sb.AppendLine("            const m = Math.floor((diff % 3600000) / 60000);");
     sb.AppendLine("            const s = Math.floor((diff % 60000) / 1000);");
-    sb.AppendLine("            el.innerHTML = `⚡ ${h}h ${m}m ${s}s`;");
+    sb.AppendLine("            el.innerHTML = `&#9889; ${h}h ${m}m ${s}s`;");
     sb.AppendLine("        });");
     sb.AppendLine("    }");
     sb.AppendLine("    function localizePublishedAt() {");
@@ -7912,6 +11117,14 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(instagramUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_instagram\"><div><strong>{instagramSymbol} Seguir no Instagram</strong><span>Acompanhe reels, stories e posts com os melhores achadinhos.</span></div><em>Instagram</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(catalogUrl)}\" data-analytics-source=\"bio_catalog\"><div><strong>{catalogSymbol} Abrir Catalogo VIP</strong><span>Veja todas as ofertas publicadas e acesse os links atualizados.</span></div><em>Catalogo</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(converterUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_converter\"><div><strong>{converterSymbol} Abrir Conversor de Links</strong><span>Converta links rapidamente e encontre ofertas prontas para comprar.</span></div><em>Conversor</em></a>");
+    foreach (var niche in nicheLinks)
+    {
+        var nicheLabel = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(niche.DisplayName));
+        var nicheUrl = System.Net.WebUtility.HtmlEncode(niche.InviteUrl);
+        var nicheSlug = System.Net.WebUtility.HtmlEncode(niche.Slug);
+        var nicheCampaign = System.Net.WebUtility.HtmlEncode(niche.Campaign);
+        sb.AppendLine($"    <a class=\"quick-link\" href=\"{nicheUrl}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_whatsapp_niche_{nicheSlug}\" data-analytics-event=\"niche_join_intent\" data-analytics-target=\"{nicheUrl}\"><div><strong>{whatsAppSymbol} {nicheLabel}</strong><span>Entre direto no grupo segmentado e receba ofertas mais relevantes.</span></div><em>{nicheCampaign}</em></a>");
+    }
     sb.AppendLine("  </section>");
 
     if (featuredItems.Count == 0)
@@ -7923,11 +11136,11 @@ static string BuildBioLinksPageHtml(
         sb.AppendLine("  <h2 class=\"section-title\">Top 3 ofertas em destaque</h2>");
         foreach (var item in featuredItems)
         {
-            var title = System.Net.WebUtility.HtmlEncode(item.Title);
+            var title = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Title));
             var link = System.Net.WebUtility.HtmlEncode(item.Link);
             var detailLink = BuildBioDetailLink(detailBaseUrl, item);
-            var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
-            var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
+            var keyword = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Keyword ?? string.Empty));
+            var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : NormalizeCatalogDisplayText(item.Store));
             var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
             var createdAtIso = item.CreatedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
             var imageUrl = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
@@ -7941,7 +11154,7 @@ static string BuildBioLinksPageHtml(
                 var expiryAttr = item.LightningDealExpiry.HasValue 
                     ? $" data-expiry=\"{item.LightningDealExpiry.Value:yyyy-MM-ddTHH:mm:ssZ}\"" 
                     : "";
-                sb.AppendLine($"    <div class=\"badge-lightning\"{expiryAttr}>Oferta Relâmpago</div>");
+                sb.AppendLine($"    <div class=\"badge-lightning\"{expiryAttr}>Oferta Relampago</div>");
             }
             if (!string.IsNullOrWhiteSpace(item.ImageUrl))
             {
@@ -7950,7 +11163,7 @@ static string BuildBioLinksPageHtml(
             sb.AppendLine($"    <div class=\"title\">{GetBioOfferBadgeHtml(item)} <span>{title}</span></div>");
             if (!string.IsNullOrWhiteSpace(item.CouponCode))
             {
-                sb.AppendLine($"    <div class=\"coupon-tag\">🎟️ Cupom: <strong>{System.Net.WebUtility.HtmlEncode(item.CouponCode)}</strong></div>");
+                sb.AppendLine($"    <div class=\"coupon-tag\">Cupom: <strong>{System.Net.WebUtility.HtmlEncode(item.CouponCode)}</strong></div>");
             }
             if (item.ItemNumber.HasValue)
             {
@@ -7968,10 +11181,10 @@ static string BuildBioLinksPageHtml(
             sb.AppendLine("  <h2 class=\"section-title\">Mais ofertas publicadas</h2>");
             foreach (var item in additionalItems)
             {
-                var title = System.Net.WebUtility.HtmlEncode(item.Title);
+                var title = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Title));
                 var link = System.Net.WebUtility.HtmlEncode(item.Link);
-                var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword ?? string.Empty);
-                var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : item.Store);
+                var keyword = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Keyword ?? string.Empty));
+                var store = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(item.Store) ? "Loja" : NormalizeCatalogDisplayText(item.Store));
                 var host = System.Net.WebUtility.HtmlEncode(ExtractHostForDisplay(item.OriginalLink));
                 var createdAtIso = item.CreatedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
                 var imageUrl = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? string.Empty);
@@ -8084,6 +11297,46 @@ static string? BuildBioDetailLink(string baseUrl, BioLinkItem item)
     return $"{baseUrl}/item/{Uri.EscapeDataString(token)}";
 }
 
+static bool IsValidPublicCatalogItem(CatalogOfferItem item)
+    => item.Active &&
+       !string.IsNullOrWhiteSpace(item.ImageUrl) &&
+       string.Equals(item.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Valid, StringComparison.OrdinalIgnoreCase) &&
+       !string.IsNullOrWhiteSpace(item.AffiliateTargetUrl) &&
+       !string.IsNullOrWhiteSpace(item.TrackingId) &&
+       !string.IsNullOrWhiteSpace(item.TrackingUrl) &&
+       item.TrackingUrl.Contains("/r/", StringComparison.OrdinalIgnoreCase);
+
+static IReadOnlyDictionary<int, int> BuildCatalogItemClickCounts(IEnumerable<ClickLogEntry> clicks)
+{
+    var counts = new Dictionary<int, int>();
+    foreach (var click in clicks)
+    {
+        if (!TryExtractCatalogItemNumber(click.TargetUrl, out var itemNumber))
+        {
+            continue;
+        }
+
+        counts[itemNumber] = counts.GetValueOrDefault(itemNumber) + 1;
+    }
+
+    return counts;
+}
+
+static bool TryExtractCatalogItemNumber(string? targetUrl, out int itemNumber)
+{
+    itemNumber = 0;
+    if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    var segments = uri.AbsolutePath
+        .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    return segments.Length >= 2 &&
+           string.Equals(segments[0], "item", StringComparison.OrdinalIgnoreCase) &&
+           int.TryParse(segments[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out itemNumber);
+}
+
 IReadOnlyList<CatalogOfferItem> BuildCatalogFallbackItemsFromDrafts(
     IReadOnlyList<InstagramPublishDraft> drafts,
     IReadOnlyList<ConversionLogEntry> recentConversions,
@@ -8185,11 +11438,22 @@ string? ResolveBioImageUrl(InstagramPublishDraft draft)
         return draft.VideoCoverUrl.Trim();
     }
 
+    var suggestedImage = draft.SuggestedImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    if (!string.IsNullOrWhiteSpace(suggestedImage))
+    {
+        return suggestedImage.Trim();
+    }
+
     return null;
 }
 
 string ResolveCatalogOfferUrlForFallback(InstagramPublishDraft draft, IReadOnlyList<ConversionLogEntry> recentConversions)
 {
+    if (!string.IsNullOrWhiteSpace(draft.OriginalOfferUrl) && !IsInternalCatalogUrl(draft.OriginalOfferUrl))
+    {
+        return draft.OriginalOfferUrl.Trim();
+    }
+
     if (!string.IsNullOrWhiteSpace(draft.OfferUrl) && !IsInternalCatalogUrl(draft.OfferUrl))
     {
         return draft.OfferUrl.Trim();
@@ -8238,7 +11502,7 @@ string ResolveCatalogOfferUrlForFallback(InstagramPublishDraft draft, IReadOnlyL
         return candidate.ConvertedUrl.Trim();
     }
 
-    return string.Empty;
+    return ResolveCatalogSearchFallbackUrl(ResolveDraftMarketplace(draft), draft.ProductName) ?? string.Empty;
 }
 
 string? ResolveDraftMarketplace(InstagramPublishDraft draft)
@@ -8308,7 +11572,115 @@ string ResolveEffectiveCatalogOfferUrl(
         }
     }
 
-    return stored ?? string.Empty;
+    return ResolveCatalogItemSearchFallbackUrl(catalogItem)
+        ?? stored
+        ?? string.Empty;
+}
+
+static string ResolvePublicCatalogOfferUrl(CatalogOfferItem? catalogItem)
+{
+    if (catalogItem is null)
+    {
+        return string.Empty;
+    }
+
+    if (string.Equals(catalogItem.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Valid, StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(catalogItem.TrackingUrl) &&
+        IsOfficialTrackingUrl(catalogItem.TrackingUrl))
+    {
+        return catalogItem.TrackingUrl.Trim();
+    }
+
+    return string.Empty;
+}
+
+static string ResolveCatalogDisplayOfferUrl(CatalogOfferItem? catalogItem)
+{
+    return ResolvePublicCatalogOfferUrl(catalogItem);
+}
+
+static string ResolveCatalogPriceText(string? priceText)
+{
+    return string.IsNullOrWhiteSpace(priceText)
+        ? "Preço indisponível"
+        : priceText.Trim();
+}
+
+static string? ResolveCatalogSearchFallbackUrl(string? store, string? productName)
+{
+    var query = (productName ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        return null;
+    }
+
+    var encodedQuery = Uri.EscapeDataString(query);
+    var normalizedStore = (store ?? string.Empty).Trim();
+
+    if (normalizedStore.Contains("Shopee", StringComparison.OrdinalIgnoreCase))
+    {
+        return $"https://shopee.com.br/search?keyword={encodedQuery}";
+    }
+
+    if (normalizedStore.Contains("Mercado Livre", StringComparison.OrdinalIgnoreCase) ||
+        normalizedStore.Contains("MercadoLivre", StringComparison.OrdinalIgnoreCase) ||
+        normalizedStore.Contains("ML", StringComparison.OrdinalIgnoreCase))
+    {
+        return $"https://lista.mercadolivre.com.br/{encodedQuery}";
+    }
+
+    if (normalizedStore.Contains("Amazon", StringComparison.OrdinalIgnoreCase))
+    {
+        return $"https://www.amazon.com.br/s?k={encodedQuery}";
+    }
+
+    return null;
+}
+
+static string? ResolveCatalogItemSearchFallbackUrl(CatalogOfferItem? catalogItem)
+{
+    if (catalogItem is null)
+    {
+        return null;
+    }
+
+    return ResolveCatalogSearchFallbackUrl(
+        ResolveCatalogStoreHint(catalogItem.Store, catalogItem.ImageUrl, catalogItem.OfferUrl),
+        catalogItem.ProductName);
+}
+
+static string ResolveCatalogStoreHint(params string?[] values)
+{
+    foreach (var raw in values)
+    {
+        var value = raw?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            continue;
+        }
+
+        if (value.Contains("shopee", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("cf.shopee", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Shopee";
+        }
+
+        if (value.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("mercado livre", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("meli.", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("mlstatic", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Mercado Livre";
+        }
+
+        if (value.Contains("amazon", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("amzn.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Amazon";
+        }
+    }
+
+    return values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? "Loja";
 }
 
 InstagramPublishDraft? FindRelatedDraftForCatalogItem(
@@ -8330,7 +11702,7 @@ InstagramPublishDraft? FindRelatedDraftForCatalogItem(
         .FirstOrDefault();
 }
 
-bool IsInternalCatalogUrl(string? url)
+static bool IsInternalCatalogUrl(string? url)
 {
     if (string.IsNullOrWhiteSpace(url))
     {
@@ -8362,6 +11734,18 @@ bool IsInternalCatalogUrl(string? url)
         || path.StartsWith("/bio", StringComparison.OrdinalIgnoreCase);
 }
 
+static bool IsOfficialTrackingUrl(string? url)
+{
+    if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    return (uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase)) &&
+           uri.AbsolutePath.StartsWith("/r/", StringComparison.OrdinalIgnoreCase);
+}
+
 string? BuildPublicImageProxyUrl(string? publicBaseUrl, HttpRequest request, string? imageUrl)
 {
     if (string.IsNullOrWhiteSpace(imageUrl))
@@ -8370,18 +11754,21 @@ string? BuildPublicImageProxyUrl(string? publicBaseUrl, HttpRequest request, str
     }
 
     var trimmed = imageUrl.Trim();
-    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) ||
+        (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
     {
         return trimmed;
     }
 
-    if (string.Equals(uri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase))
+    if (string.Equals(uri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase) ||
+        ((uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
+          uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase)) &&
+         uri.AbsolutePath.StartsWith("/media/", StringComparison.OrdinalIgnoreCase)))
     {
         return trimmed;
     }
 
-    var baseUrl = ResolvePublicBaseUrl(publicBaseUrl, null, request.Scheme, request.Host.ToString()).TrimEnd('/');
-    return $"{baseUrl}/media/remote?url={Uri.EscapeDataString(trimmed)}";
+    return trimmed;
 }
 
 string NormalizeCatalogPostType(string? postType)
@@ -8399,12 +11786,12 @@ static string BuildBioCurrentUrl(string publicBaseUrl, string source, string? ca
     var parameters = new List<string>();
     if (!string.IsNullOrWhiteSpace(source))
     {
-        parameters.Add($"src={Uri.EscapeDataString(source)}");
+        parameters.Add($"s={Uri.EscapeDataString(source)}");
     }
 
     if (!string.IsNullOrWhiteSpace(campaign))
     {
-        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+        parameters.Add($"c={Uri.EscapeDataString(campaign)}");
     }
 
     var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
@@ -8437,6 +11824,67 @@ static string ResolvePublicBaseUrl(string? primaryPublicBaseUrl, string? seconda
     return $"{scheme}://{requestHost}".TrimEnd('/');
 }
 
+static void MaskProviderKeys(AutomationSettings settings)
+{
+    static List<string> MaskList(IEnumerable<string>? values)
+    {
+        return (values ?? Array.Empty<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(_ => "********")
+            .ToList();
+    }
+
+    if (settings.OpenAI is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.OpenAI.ApiKey)) settings.OpenAI.ApiKey = "********";
+        settings.OpenAI.ApiKeys = MaskList(settings.OpenAI.ApiKeys);
+    }
+
+    if (settings.Gemini is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.Gemini.ApiKey)) settings.Gemini.ApiKey = "********";
+        settings.Gemini.ApiKeys = MaskList(settings.Gemini.ApiKeys);
+    }
+
+    if (settings.DeepSeek is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.DeepSeek.ApiKey)) settings.DeepSeek.ApiKey = "********";
+        settings.DeepSeek.ApiKeys = MaskList(settings.DeepSeek.ApiKeys);
+    }
+
+    if (settings.Nemotron is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.Nemotron.ApiKey)) settings.Nemotron.ApiKey = "********";
+        settings.Nemotron.ApiKeys = MaskList(settings.Nemotron.ApiKeys);
+    }
+
+    if (settings.Qwen is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.Qwen.ApiKey)) settings.Qwen.ApiKey = "********";
+        settings.Qwen.ApiKeys = MaskList(settings.Qwen.ApiKeys);
+    }
+
+    if (settings.VilaNvidia is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.VilaNvidia.ApiKey)) settings.VilaNvidia.ApiKey = "********";
+        settings.VilaNvidia.ApiKeys = MaskList(settings.VilaNvidia.ApiKeys);
+    }
+
+    if (settings.InstagramPublish is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.InstagramPublish.AccessToken)) settings.InstagramPublish.AccessToken = "********";
+        if (!string.IsNullOrWhiteSpace(settings.InstagramPublish.ManyChatApiKey)) settings.InstagramPublish.ManyChatApiKey = "********";
+    }
+
+    if (settings.MercadoLivreAffiliateScout is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.LoginUser)) settings.MercadoLivreAffiliateScout.LoginUser = "********";
+        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.LoginPassword)) settings.MercadoLivreAffiliateScout.LoginPassword = "********";
+        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.TwoFactorCode)) settings.MercadoLivreAffiliateScout.TwoFactorCode = "********";
+        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.StorageStateJson)) settings.MercadoLivreAffiliateScout.StorageStateJson = "********";
+    }
+}
+
 static bool TryNormalizePublicBaseUrl(string? value, out string normalized)
 {
     normalized = string.Empty;
@@ -8457,8 +11905,28 @@ static bool TryNormalizePublicBaseUrl(string? value, out string normalized)
         return false;
     }
 
+    if (uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
+        uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
+    {
+        normalized = $"{uri.Scheme}://reidasofertas.ia.br";
+        return true;
+    }
+
     normalized = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
     return !string.IsNullOrWhiteSpace(normalized);
+}
+
+static bool IsInternalLikeHost(string host)
+{
+    var normalized = (host ?? string.Empty).Trim().ToLowerInvariant();
+    return normalized is "localhost"
+        or "127.0.0.1"
+        or "0.0.0.0"
+        or "host.docker.internal"
+        or "host.internal"
+        or "docker.internal"
+        || normalized.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
+        || normalized.EndsWith(".internal", StringComparison.OrdinalIgnoreCase);
 }
 
 static bool TryReadBundledPublicBaseUrl(out string publicBaseUrl)
@@ -8497,14 +11965,18 @@ static bool TryReadBundledPublicBaseUrl(out string publicBaseUrl)
 static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, string source, string? campaign)
 {
     var parameters = new List<string>();
-    if (!string.IsNullOrWhiteSpace(source))
+    var decoratedTrackingId = BuildDecoratedTrackingId(trackingId, campaign, source);
+    if (string.Equals(decoratedTrackingId, trackingId, StringComparison.OrdinalIgnoreCase))
     {
-        parameters.Add($"src={Uri.EscapeDataString(source)}");
-    }
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            parameters.Add($"s={Uri.EscapeDataString(source)}");
+        }
 
-    if (!string.IsNullOrWhiteSpace(campaign))
-    {
-        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+        if (!string.IsNullOrWhiteSpace(campaign))
+        {
+            parameters.Add($"c={Uri.EscapeDataString(CompactTrackingCampaign(campaign))}");
+        }
     }
 
     if (publicBaseUrl.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
@@ -8514,7 +11986,7 @@ static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, s
     }
 
     var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
-    return $"{publicBaseUrl.TrimEnd('/')}/r/{trackingId}{query}";
+    return $"{publicBaseUrl.TrimEnd('/')}/r/{decoratedTrackingId}{query}";
 }
 
 static string AppendBioCampaignParameters(string? url, string source, string medium, string? campaign, string title)
@@ -8820,7 +12292,7 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
                     const h = Math.floor(diff / 3600000);
                     const m = Math.floor((diff % 3600000) / 60000);
                     const s = Math.floor((diff % 60000) / 1000);
-                    el.innerHTML = `⚡ ${h}h ${m}m ${s}s`;
+                    el.innerHTML = `&#9889; ${h}h ${m}m ${s}s`;
                 });
             }
             setInterval(updateCountdowns, 1000);
@@ -8869,14 +12341,16 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
         
         foreach (var item in items)
         {
-            var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
-            var titleShort = title.Length > 60 ? title.Substring(0, 57) + "..." : title;
-            var store = System.Net.WebUtility.HtmlEncode(item.Store);
+            var displayTitle = NormalizeCatalogDisplayText(item.ProductName);
+            var title = System.Net.WebUtility.HtmlEncode(displayTitle);
+            var titleShort = System.Net.WebUtility.HtmlEncode(displayTitle.Length > 60 ? displayTitle[..57] + "..." : displayTitle);
+            var store = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Store));
             var detailLink = $"/item/{item.ItemNumber}";
             var image = string.IsNullOrWhiteSpace(item.ImageUrl) ? "https://via.placeholder.com/400" : System.Net.WebUtility.HtmlEncode(item.ImageUrl);
             
-            var fullPrice = item.PriceText ?? "Indisponível";
-            var price_val = fullPrice.Replace("R$ ", "").Replace("R$", "").Trim();
+            var fullPriceText = NormalizeCatalogDisplayText(ResolveCatalogPriceText(item.PriceText));
+            var fullPrice = System.Net.WebUtility.HtmlEncode(fullPriceText);
+            var price_val = fullPriceText.Replace("R$ ", "").Replace("R$", "").Trim();
             
             var published = item.PublishedAt.ToString("dd/MM/yyyy");
 
@@ -8888,7 +12362,7 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
                     : "";
                 dealBadge = $@"
                     <div class=""absolute top-3 right-3 badge-lightning text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded z-10 border border-white/20 shadow-lg""{expiryAttr}>
-                        Oferta Relâmpago
+                        Oferta Relampago
                     </div>";
             }
             
@@ -8962,23 +12436,42 @@ static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string
 
 static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
 {
-    var title = System.Net.WebUtility.HtmlEncode(item.ProductName);
-    var store = System.Net.WebUtility.HtmlEncode(item.Store);
-    var keyword = System.Net.WebUtility.HtmlEncode(item.Keyword);
-    var fullPrice = System.Net.WebUtility.HtmlEncode(item.PriceText ?? "Preco indisponivel");
-    var price_val = fullPrice.Replace("R$ ", "").Replace("R$", "").Trim();
-    var offerUrl = System.Net.WebUtility.HtmlEncode(item.OfferUrl);
+    var title = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.ProductName));
+    var store = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Store));
+    var keyword = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(item.Keyword));
+    var priceText = NormalizeCatalogDisplayText(ResolveCatalogPriceText(item.PriceText));
+    var fullPrice = System.Net.WebUtility.HtmlEncode(priceText);
+    var price_val = priceText.Replace("R$ ", "").Replace("R$", "").Trim();
+    var rawOfferUrl = ResolveCatalogDisplayOfferUrl(item);
+    var hasPublicOfferUrl = !string.IsNullOrWhiteSpace(rawOfferUrl);
+    var offerUrl = System.Net.WebUtility.HtmlEncode(rawOfferUrl);
     var image = System.Net.WebUtility.HtmlEncode(item.ImageUrl ?? "https://via.placeholder.com/800");
     var catalog = System.Net.WebUtility.HtmlEncode(catalogUrl);
     var previous_price = "---";
     var savings_text = "Desconto aplicado";
     var publish_date = item.PublishedAt.ToString("dd/MM/yyyy HH:mm");
+    var imageLinkOpen = hasPublicOfferUrl ? $"""<a href="{offerUrl}" target="_blank" rel="noopener noreferrer">""" : "<div>";
+    var imageLinkClose = hasPublicOfferUrl ? "</a>" : "</div>";
+    var buyButton = hasPublicOfferUrl
+        ? $$"""
+                        <a href="{{offerUrl}}" target="_blank" class="group relative inline-flex items-center justify-center px-10 py-5 font-bold text-primary transition-all duration-200 bg-accent rounded-xl hover:bg-accentHover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent w-full sm:w-auto shadow-lg shadow-accent/20">
+                            Comprar Agora
+                            <svg class="w-5 h-5 ml-2 transition-transform duration-200 group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                            </svg>
+                        </a>
+        """
+        : """
+                        <div class="inline-flex items-center justify-center px-10 py-5 font-bold text-slate-500 bg-slate-200 rounded-xl w-full sm:w-auto">
+                            Link em validação
+                        </div>
+        """;
     
     // Enrichment
     var isLightning = item.IsLightningDeal;
     var expiry = item.LightningDealExpiry;
     var coupon = item.CouponCode ?? "";
-    var couponDesc = item.CouponDescription ?? "";
+    var couponDesc = NormalizeCatalogDisplayText(item.CouponDescription);
     
     var dealBadge = "";
     if (isLightning)
@@ -8988,7 +12481,7 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
             : "";
         dealBadge = $@"
             <div class=""absolute top-6 right-6 bg-vipRed text-white text-sm font-bold uppercase tracking-wider px-4 py-2 rounded-xl z-20 shadow-2xl animate-pulse""{expiryAttr}>
-                ⚡ Oferta Relâmpago
+                &#128293; Oferta Relampago
             </div>";
     }
     var couponBlock1 = string.IsNullOrWhiteSpace(coupon) ? "" : $$"""
@@ -9155,7 +12648,7 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
                     const h = Math.floor(diff / 3600000);
                     const m = Math.floor((diff % 3600000) / 60000);
                     const s = Math.floor((diff % 60000) / 1000);
-                    el.innerHTML = `⚡ Expira em: ${h}h ${m}m ${s}s`;
+                    el.innerHTML = `&#9889; Expira em: ${h}h ${m}m ${s}s`;
                 });
             }
             setInterval(updateCountdowns, 1000);
@@ -9200,9 +12693,9 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
                     <div class="relative group">
                         <div class="absolute -inset-4 bg-accent/20 rounded-full blur-3xl group-hover:bg-accent/30 transition duration-500"></div>
                         <div class="relative">
-                            <a href="{{offerUrl}}" target="_blank" rel="noopener noreferrer">
+                            {{imageLinkOpen}}
                                 <img src="{{image}}" alt="{{title}}" class="w-full h-auto max-w-md object-contain drop-shadow-[0_20px_50px_rgba(0,0,0,0.5)] transform transition-transform duration-500 hover:scale-105" />
-                            </a>
+                            {{imageLinkClose}}
                         </div>
                     </div>
                 </div>
@@ -9221,16 +12714,11 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
                         Eleve seu estilo a um <span class="text-accent">novo patamar</span>
                     </h2>
                     <p class="text-slate-300 text-lg lg:text-xl font-light leading-relaxed max-w-xl">
-                        🚨 OFERTA EXCLUSIVA VIP! Conheça <strong>{{title}}</strong>. Performance e design premium para cada passo do seu dia.
+                        🔥 OFERTA EXCLUSIVA VIP! Conheça <strong>{{title}}</strong>. Performance e design premium para cada passo do seu dia.
                     </p>
                     
                     <div class="pt-4 flex flex-col sm:flex-row items-center gap-6 justify-center lg:justify-start">
-                        <a href="{{offerUrl}}" target="_blank" class="group relative inline-flex items-center justify-center px-10 py-5 font-bold text-primary transition-all duration-200 bg-accent rounded-xl hover:bg-accentHover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent w-full sm:w-auto shadow-lg shadow-accent/20">
-                            Comprar Agora
-                            <svg class="w-5 h-5 ml-2 transition-transform duration-200 group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                            </svg>
-                        </a>
+                        {{buyButton}}
                         <div class="text-white/60 text-sm font-medium italic">
                             *Estoque limitado
                         </div>
@@ -9328,7 +12816,7 @@ static string BuildCatalogItemPageHtml(CatalogOfferItem item, string catalogUrl)
                 <span class="text-slate-500 text-sm font-medium">Registro no Catálogo Confirmado: <a href="{{catalog}}" class="hover:text-accent">Verificação Ativa</a></span>
             </div>
             <div class="text-slate-400 text-xs">
-                © Vi no: @ReiDasOfertasVIP
+                © ReiDasOfertasVIP
             </div>
         </div>
     </footer>
@@ -9343,7 +12831,7 @@ static string BuildInstagramDraftReviewMessage(InstagramPublishDraft draft)
     var sb = new StringBuilder();
     sb.AppendLine($"Draft: {draft.Id}");
     sb.AppendLine($"Status: {draft.Status}");
-    sb.AppendLine($"Tipo: {NormalizeInstagramPostTypeValue(draft.PostType)}");
+    sb.AppendLine($"Tipo: {InstagramCommandParser.NormalizeInstagramPostTypeValue(draft.PostType)}");
     sb.AppendLine($"Criado em: {draft.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC");
     if (!string.IsNullOrWhiteSpace(draft.ProductName))
     {
@@ -9503,11 +12991,6 @@ static async Task<InstagramDraftBuildResult> BuildInstagramDraftFromCreateInputA
         return new InstagramDraftBuildResult(null, "Uso: /ig criar <produto ou link>");
     }
 
-    if (parsedCreate.PostType == "reel")
-    {
-        return new InstagramDraftBuildResult(null, "Tipo 'reel' ainda nao suportado via API atual. Use tipo=feed ou tipo=story.");
-    }
-
     var input = parsedCreate.Input;
     var postText = await instagramComposer.BuildAsync(input, null, instaSettings, ct);
     var (captionOptionsRaw, hashtags) = ExtractInstagramCaptionOptionsAndHashtags(postText);
@@ -9620,34 +13103,13 @@ static InstagramCreateInput ParseInstagramCreateInput(string raw)
 
         if (key is "tipo" or "formato")
         {
-            postType = NormalizeInstagramPostTypeValue(value);
+            postType = InstagramCommandParser.NormalizeInstagramPostTypeValue(value);
         }
     }
 
     input = pattern.Replace(input, " ").Trim();
     imageUrls = NormalizeExternalUrls(imageUrls, 10);
     return new InstagramCreateInput(input, keywords, imageUrls, postType);
-}
-
-static string NormalizeInstagramPostTypeValue(string? value)
-{
-    if (string.IsNullOrWhiteSpace(value))
-    {
-        return "feed";
-    }
-
-    var normalized = value.Trim().ToLowerInvariant();
-    if (normalized.StartsWith("story", StringComparison.OrdinalIgnoreCase) || normalized == "stories")
-    {
-        return "story";
-    }
-
-    if (normalized.StartsWith("reel", StringComparison.OrdinalIgnoreCase))
-    {
-        return "reel";
-    }
-
-    return "feed";
 }
 
 static List<string> ExtractUrls(string text)
@@ -9840,38 +13302,6 @@ static List<int> ParseImageIndexExpression(string expression)
     }
 
     return result;
-}
-
-static InstagramTypeCommandInput ParseInstagramTypeCommandInput(string? argument)
-{
-    if (string.IsNullOrWhiteSpace(argument))
-    {
-        return new InstagramTypeCommandInput("ultimo", "feed", "Uso: /ig tipo <id|ultimo> <feed|story>");
-    }
-
-    var parts = argument.Trim()
-        .Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-    string draftRef;
-    string requestedType;
-    if (parts.Length == 1)
-    {
-        draftRef = "ultimo";
-        requestedType = parts[0];
-    }
-    else
-    {
-        draftRef = parts[0];
-        requestedType = parts[1];
-    }
-
-    var normalized = NormalizeInstagramPostTypeValue(requestedType);
-    if (normalized == "reel")
-    {
-        return new InstagramTypeCommandInput(draftRef, "feed", "Tipo 'reel' ainda nao suportado. Use feed ou story.");
-    }
-
-    return new InstagramTypeCommandInput(draftRef, normalized, null);
 }
 
 static InstagramCaptionCommandInput ParseInstagramCaptionCommandInput(string? argument)
@@ -10513,6 +13943,17 @@ static string? ExtractFirstUrl(string? text)
     return match.Success ? match.Value.Trim() : null;
 }
 
+static string? ExtractFirstTrackedUrl(string? text)
+{
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        return null;
+    }
+
+    return ExtractUrlsFromText(text)
+        .FirstOrDefault(x => x.Contains("/r/", StringComparison.OrdinalIgnoreCase));
+}
+
 static async Task<List<string>> NormalizeInstagramImagesAsync(
     IHttpClientFactory httpClientFactory,
     IMediaStore mediaStore,
@@ -10581,10 +14022,10 @@ static bool IsInstagramSectionHeader(string line)
     var t = line.Trim();
     return Regex.IsMatch(t, @"^Legenda\s+\d+\b", RegexOptions.IgnoreCase)
            || t.StartsWith("Hashtags sugeridas", StringComparison.OrdinalIgnoreCase)
-           || t.StartsWith("SugestÃµes de imagem", StringComparison.OrdinalIgnoreCase)
+           || t.StartsWith("SugestÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âµes de imagem", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Sugestoes de imagem", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Post extra", StringComparison.OrdinalIgnoreCase)
-           || t.StartsWith("SugestÃ£o rÃ¡pida", StringComparison.OrdinalIgnoreCase)
+           || t.StartsWith("SugestÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡pida", StringComparison.OrdinalIgnoreCase)
            || t.StartsWith("Sugestao rapida", StringComparison.OrdinalIgnoreCase);
 }
 
@@ -10671,10 +14112,25 @@ static async Task<(string Text, List<string> TrackingIds)> ApplyTrackingAsync(st
     foreach (Match match in matches)
     {
         sb.Append(text, lastIndex, match.Index - lastIndex);
-        var url = match.Value;
-        if (url.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
+        var rawUrl = match.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}');
+        var trailing = match.Value[rawUrl.Length..];
+        var url = rawUrl;
+        if (InstitutionalUrlGuard.ShouldPreserve(url))
         {
             sb.Append(url);
+        }
+        else if (url.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            sb.Append(url);
+        }
+        else if (Uri.TryCreate(url, UriKind.Absolute, out var officialUri)
+                 && officialUri.Host.EndsWith("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
+        {
+            sb.Append(url);
+        }
+        else if (WhatsAppInviteLinkNormalizer.IsWhatsAppInviteUrl(url))
+        {
+            sb.Append(WhatsAppInviteLinkNormalizer.OfficialInviteUrl);
         }
         else
         {
@@ -10682,10 +14138,11 @@ static async Task<(string Text, List<string> TrackingIds)> ApplyTrackingAsync(st
             sb.Append($"{baseUrl}/r/{entry.Id}{trackingSuffix}");
             trackingIds.Add(entry.Id);
         }
+        sb.Append(trailing);
         lastIndex = match.Index + match.Length;
     }
     sb.Append(text, lastIndex, text.Length - lastIndex);
-    return (sb.ToString(), trackingIds);
+    return (WhatsAppInviteLinkNormalizer.NormalizeOfficialInviteBlock(sb.ToString()), trackingIds);
 }
 
 static Regex UrlRegex() => new(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -10883,7 +14340,7 @@ static async Task<InstagramPublishExecutionResult> PublishInstagramDraftAsync(
         }, ct);
         return new InstagramPublishExecutionResult(false, StatusCodes.Status400BadRequest, null, qualityCheck.Error, draft.Id);
     }
-    draft.PostType = NormalizeInstagramPostTypeValue(draft.PostType);
+    draft.PostType = InstagramCommandParser.NormalizeInstagramPostTypeValue(draft.PostType);
 
     var (ok, mediaId, errorMessage) = await PublishToInstagramAsync(
         httpClientFactory,
@@ -11608,7 +15065,7 @@ static string FormatInstagramCaptionForReadability(string? caption)
     var normalized = caption.Replace("\r", string.Empty).Trim();
     normalized = Regex.Replace(normalized, @"\\n", "\n", RegexOptions.CultureInvariant);
     normalized = Regex.Replace(normalized, @"[ \t]+", " ", RegexOptions.CultureInvariant);
-    normalized = Regex.Replace(normalized, @"\s*(?=(?:[#â€¢\-]\s*|âœ…|ðŸ”¥|ðŸ‘‰|âœ”))", "\n", RegexOptions.CultureInvariant);
+    normalized = Regex.Replace(normalized, @"\s*(?=(?:[#ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢\-]\s*|ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦|ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â¥|ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°|ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â))", "\n", RegexOptions.CultureInvariant);
     normalized = Regex.Replace(normalized, @"\n{3,}", "\n\n", RegexOptions.CultureInvariant);
 
     if (!normalized.Contains('\n'))
@@ -11935,7 +15392,7 @@ static string NormalizeInstagramHashtags(string hashtags, string caption)
             yield break;
         }
 
-        foreach (Match match in Regex.Matches(input, @"#([A-Za-z0-9_À-ÖØ-öø-ÿ]+)", RegexOptions.CultureInvariant))
+        foreach (Match match in Regex.Matches(input, @"#([\p{L}\p{N}_]+)", RegexOptions.CultureInvariant))
         {
             var raw = match.Groups[1].Value;
             if (string.IsNullOrWhiteSpace(raw))
@@ -12037,7 +15494,7 @@ static async Task<(bool Success, string? MediaId, string? Error)> PublishToInsta
 
         var client = httpClientFactory.CreateClient("default");
         baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://graph.facebook.com/v19.0" : baseUrl.TrimEnd('/');
-        var normalizedType = NormalizeInstagramPostTypeValue(postType);
+        var normalizedType = InstagramCommandParser.NormalizeInstagramPostTypeValue(postType);
         var mediaUrls = imageUrls
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.Trim())
@@ -13190,7 +16647,7 @@ static List<string> ExtractCouponCodesFromText(string text)
 
     var hint = text.Contains("cupom", StringComparison.OrdinalIgnoreCase)
                || text.Contains("coupon", StringComparison.OrdinalIgnoreCase)
-               || text.Contains("código", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("cÃƒÆ’Ã‚Â³digo", StringComparison.OrdinalIgnoreCase)
                || text.Contains("codigo", StringComparison.OrdinalIgnoreCase);
 
     if (!hint)
@@ -13203,7 +16660,7 @@ static List<string> ExtractCouponCodesFromText(string text)
         "CUPOM",
         "COUPON",
         "CODIGO",
-        "CÓDIGO",
+        "CÃƒÆ’Ã¢â‚¬Å“DIGO",
         "OFF",
         "R",
         "RS"
@@ -13253,6 +16710,16 @@ static string NormalizeWebConversorSource(string? source)
     return "conversor_web";
 }
 
+static string BuildWhatsAppOutboundDedupeKey(string? instanceName, string destination, string text, bool hasMedia)
+{
+    var normalizedInstance = string.IsNullOrWhiteSpace(instanceName) ? "default" : instanceName.Trim();
+    var normalizedDestination = string.IsNullOrWhiteSpace(destination) ? "unknown" : destination.Trim();
+    var normalizedText = Regex.Replace(text ?? string.Empty, "\\s+", " ").Trim();
+    var payload = $"{normalizedInstance}|{normalizedDestination}|{(hasMedia ? "img" : "txt")}|{normalizedText}";
+    var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+    return $"wa-outbound:{normalizedInstance}:{normalizedDestination}:{hash}";
+}
+
 internal sealed record LoginRequest(string Username, string Password, bool RememberMe = false);
 internal sealed record PlaygroundRequest(string Text);
 internal sealed record MercadoLivreDecisionRequest(string? Note, bool? SendNow, string? OverrideUrl);
@@ -13279,6 +16746,70 @@ internal sealed record CouponExtractRequest(
     int? Priority,
     string? Source);
 internal sealed record CouponOfficialSyncRequest(string? Store);
+internal sealed record CopyParticipantsRequest(string SourceGroupId, string TargetGroupId, List<string>? ParticipantIds = null, string? InstanceName = null);
+internal sealed record CreateParticipantCopyScheduleRequest(
+    string SourceGroupId,
+    string TargetGroupId,
+    int BatchSize,
+    int IntervalMinutes,
+    string? Name = null,
+    List<string>? ParticipantIds = null,
+    DateTimeOffset? StartAt = null,
+    string? InstanceName = null);
+internal sealed record UpdateParticipantCopyScheduleRequest(
+    string SourceGroupId,
+    string TargetGroupId,
+    int BatchSize,
+    int IntervalMinutes,
+    bool Enabled,
+    string? Name = null,
+    List<string>? ParticipantIds = null,
+    DateTimeOffset? StartAt = null,
+    bool RefreshQueue = false,
+    string? InstanceName = null);
+internal sealed record CreateScheduledGroupMessageRequest(
+    string TargetGroupId,
+    string Text,
+    int IntervalMinutes,
+    string? Name = null,
+    string? ImageUrl = null,
+    DateTimeOffset? StartAt = null,
+    string? InstanceName = null);
+internal sealed record UpdateScheduledGroupMessageRequest(
+    string TargetGroupId,
+    string Text,
+    int IntervalMinutes,
+    bool Enabled,
+    string? Name = null,
+    string? ImageUrl = null,
+    DateTimeOffset? StartAt = null,
+    string? InstanceName = null);
+internal sealed record CreateParticipantBlastScheduleRequest(
+    string? SourceGroupId,
+    List<string>? SourceGroupIds,
+    List<string>? ParticipantIds,
+    bool UseAllParticipantsFromSources,
+    string? Message,
+    string LinkUrl,
+    int IntervalMs = 1500,
+    int MinUserIntervalMs = 1200,
+    int MaxUserIntervalMs = 2600,
+    int BatchSize = 25,
+    int BatchPauseSeconds = 90,
+    bool UseAiDialogue = true,
+    int PreLinkMessages = 3,
+    string WaitMode = "response-or-timeout",
+    int WaitTimeoutSeconds = 120,
+    bool SendLinkOnTimeout = true,
+    string? SecurityPitch = null,
+    string? LinkConfirmation = null,
+    string? InstanceName = null,
+    string? Name = null);
+internal sealed record UpdateWhatsAppParticipantSafetyRequest(
+    int MaxParticipantsAddedPerDay,
+    int MinMinutesBetweenParticipantAdds,
+    bool ParticipantCopyAutomationEnabled,
+    string? InstanceName = null);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
 internal sealed record WhatsAppIncomingMessage(
     string ChatId,
@@ -13334,6 +16865,7 @@ internal sealed record BioLinkItem
     public string? CouponDescription { get; init; }
     public string? ImageUrl { get; init; }
 }
+internal sealed record BioNicheLink(string Slug, string DisplayName, string InviteUrl, string Campaign);
 internal sealed record PublicLinkConverterViewModel
 {
     public string Input { get; set; } = string.Empty;
@@ -13377,8 +16909,24 @@ internal sealed record InstagramDraftRequest(
     List<string> ImageUrls,
     string? PostType);
 internal sealed record InstagramApproveRequest(string Message);
+internal sealed record ViralReelApprovalKeywordCommand(string Action, string? DraftRef, string? Instruction);
+internal sealed record ViralReelApprovalPublishOutcome(
+    bool InstagramSuccess,
+    string? InstagramMediaId,
+    string? InstagramError,
+    bool WhatsAppSuccess,
+    string? WhatsAppMessage,
+    bool CatalogSuccess,
+    string? CatalogMessage,
+    string? WhatsAppTargetId);
+internal sealed record ApprovalPackageSendResult(bool Success, string? Message);
+internal sealed record RestoreSettingsRequest(string VersionFileName);
 
 public record ConversorWebRequest(string Url, string? Source = null);
-public partial class Program { } 
+public partial class Program { }
+
+
+
+
 
 

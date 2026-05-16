@@ -22,6 +22,7 @@ public sealed class WhatsAppOfferScoutAgentService : IWhatsAppOfferScoutAgentSer
     private readonly ISettingsStore _settingsStore;
     private readonly ITelegramUserbotService _telegramUserbotService;
     private readonly IMessageProcessor _messageProcessor;
+    private readonly IAffiliateLinkService _affiliateLinkService;
     private readonly IWhatsAppOfferReasoner _reasoner;
     private readonly OpenAiInstagramPostGenerator _openAiGenerator;
     private readonly GeminiInstagramPostGenerator _geminiGenerator;
@@ -42,6 +43,7 @@ public sealed class WhatsAppOfferScoutAgentService : IWhatsAppOfferScoutAgentSer
         ISettingsStore settingsStore,
         ITelegramUserbotService telegramUserbotService,
         IMessageProcessor messageProcessor,
+        IAffiliateLinkService affiliateLinkService,
         IWhatsAppOfferReasoner reasoner,
         OpenAiInstagramPostGenerator openAiGenerator,
         GeminiInstagramPostGenerator geminiGenerator,
@@ -61,6 +63,7 @@ public sealed class WhatsAppOfferScoutAgentService : IWhatsAppOfferScoutAgentSer
         _settingsStore = settingsStore;
         _telegramUserbotService = telegramUserbotService;
         _messageProcessor = messageProcessor;
+        _affiliateLinkService = affiliateLinkService;
         _reasoner = reasoner;
         _openAiGenerator = openAiGenerator;
         _geminiGenerator = geminiGenerator;
@@ -219,6 +222,28 @@ public sealed class WhatsAppOfferScoutAgentService : IWhatsAppOfferScoutAgentSer
                LooksLikeOfferText(text);
     }
 
+    private static bool IsTinyUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var host = uri.Host.ToLowerInvariant();
+        return host == "tinyurl.com" || host.EndsWith(".tinyurl.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ReplaceFirstUrl(string text, string replacement)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        var regex = new Regex("https?://[^\\s)>\"]+", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        return regex.Replace(text, replacement, 1);
+    }
+
     private static bool ShouldIncludeBySelectionMode(
         WhatsAppOutboundLogEntry entry,
         string targetSelectionMode,
@@ -282,6 +307,35 @@ public sealed class WhatsAppOfferScoutAgentService : IWhatsAppOfferScoutAgentSer
             string? conversionNote = requiresLinkConversion
                 ? "Conversao obrigatoria pendente antes de qualquer acao."
                 : null;
+
+            if (requiresLinkConversion && IsTinyUrl(originalOfferUrl))
+            {
+                var autoConversion = await _affiliateLinkService.ConvertAsync(
+                    originalOfferUrl!,
+                    cancellationToken,
+                    source: "agent_scout_tiny_auto_convert");
+
+                if (autoConversion.Success && !string.IsNullOrWhiteSpace(autoConversion.ConvertedUrl))
+                {
+                    effectiveOfferUrl = autoConversion.ConvertedUrl;
+                    requiresLinkConversion = false;
+                    linkConversionApplied = true;
+                    conversionNote = "TinyURL expandido e convertido automaticamente.";
+                    if (!string.Equals(effectiveOfferUrl, originalOfferUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        effectiveText = ReplaceFirstUrl(sourceText, effectiveOfferUrl!);
+                    }
+                }
+                else
+                {
+                    var conversionFailureReason = !string.IsNullOrWhiteSpace(autoConversion.ValidationError)
+                        ? autoConversion.ValidationError
+                        : autoConversion.Error;
+                    conversionNote = string.IsNullOrWhiteSpace(conversionFailureReason)
+                        ? "Conversao obrigatoria pendente antes de qualquer acao."
+                        : $"Conversao automatica de tinyurl nao concluida: {conversionFailureReason}";
+                }
+            }
 
             var message = new WhatsAppOutboundLogEntry
             {
@@ -799,6 +853,7 @@ public sealed class WhatsAppOfferScoutAgentService : IWhatsAppOfferScoutAgentSer
         return provider switch
         {
             "gemini" => await _geminiGenerator.GenerateFreeformAsync(prompt, settings.Gemini ?? new GeminiSettings(), cancellationToken),
+            "gemma4" => await _geminiGenerator.GenerateFreeformAsync(prompt, GeminiInstagramPostGenerator.WithGeminiKeyFallback(settings.Gemma4, settings.Gemini).AsAdvanced(), cancellationToken),
             "deepseek" => await _deepSeekGenerator.GenerateFreeformAsync(prompt, settings.DeepSeek ?? new DeepSeekSettings(), cancellationToken),
             "nemotron" => await _nemotronGenerator.GenerateFreeformAsync(prompt, settings.Nemotron ?? new NemotronSettings(), cancellationToken),
             "qwen" => await _qwenGenerator.GenerateFreeformAsync(prompt, settings.Qwen ?? new QwenSettings(), cancellationToken),

@@ -31,6 +31,7 @@ public sealed class OperationalAnalyticsSummary
     public InstagramPublishAnalyticsSummary InstagramPublish { get; set; } = new();
     public InstagramAiAnalyticsSummary InstagramAi { get; set; } = new();
     public CatalogAnalyticsSummary Catalog { get; set; } = new();
+    public TrackingAnalyticsSummary Tracking { get; set; } = new();
 }
 
 public sealed class ConversionAnalyticsSummary
@@ -85,6 +86,74 @@ public sealed class CatalogAnalyticsSummary
     public int ActiveItems { get; set; }
     public int TotalPublishedDrafts { get; set; }
     public int SyncEligibleDrafts { get; set; }
+}
+
+public sealed class TrackingAnalyticsSummary
+{
+    public int TotalLinksCreated { get; set; }
+    public int TotalLinksClicked { get; set; }
+    public int LinksWithClicks { get; set; }
+    public double AvgClicksPerLink { get; set; }
+    public TrackingFunnelSummary Funnel { get; set; } = new();
+    public List<OperationalBreakdownItem> TopOriginSurfaces { get; set; } = new();
+    public List<OperationalBreakdownItem> TopClickSurfaces { get; set; } = new();
+    public List<OperationalBreakdownItem> TopCampaigns { get; set; } = new();
+    public List<OperationalBreakdownItem> TopStores { get; set; } = new();
+    public List<TrackingSurfacePerformanceItem> SurfacePerformance { get; set; } = new();
+    public List<TrackingStoreChannelItem> StoreChannelPerformance { get; set; } = new();
+    public List<TrackingSurfaceMatrixItem> SurfaceMatrix { get; set; } = new();
+    public List<TrackingLinkPerformanceItem> LowEngagementLinks { get; set; } = new();
+    public List<TrackingLinkPerformanceItem> TopOffers { get; set; } = new();
+    public List<TrackingInsightItem> StrategicInsights { get; set; } = new();
+}
+
+public sealed class TrackingFunnelSummary
+{
+    public int Generated { get; set; }
+    public int PublishedOrEmitted { get; set; }
+    public int Clicked { get; set; }
+}
+
+public sealed class TrackingSurfacePerformanceItem
+{
+    public string Surface { get; set; } = string.Empty;
+    public int LinksCreated { get; set; }
+    public int Clicks { get; set; }
+    public int ClickedLinks { get; set; }
+    public double Ctr { get; set; }
+}
+
+public sealed class TrackingStoreChannelItem
+{
+    public string Store { get; set; } = string.Empty;
+    public string Channel { get; set; } = string.Empty;
+    public int Clicks { get; set; }
+}
+
+public sealed class TrackingSurfaceMatrixItem
+{
+    public string OriginSurface { get; set; } = string.Empty;
+    public string ClickSurface { get; set; } = string.Empty;
+    public int Count { get; set; }
+}
+
+public sealed class TrackingLinkPerformanceItem
+{
+    public string TrackingId { get; set; } = string.Empty;
+    public string? TrackingSlug { get; set; }
+    public string TargetUrl { get; set; } = string.Empty;
+    public string Store { get; set; } = string.Empty;
+    public string OriginSurface { get; set; } = string.Empty;
+    public string? Campaign { get; set; }
+    public int Clicks { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class TrackingInsightItem
+{
+    public string Title { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string Strength { get; set; } = "sinal_fraco";
 }
 
 public sealed class OperationalBreakdownItem

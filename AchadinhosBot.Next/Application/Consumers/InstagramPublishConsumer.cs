@@ -27,17 +27,33 @@ public sealed class InstagramPublishConsumer : IConsumer<PublishInstagramPostCom
     public async Task Consume(ConsumeContext<PublishInstagramPostCommand> context)
     {
         var command = context.Message;
+        var dedupeKey = $"ig-publish:{command.DeduplicationKey}";
         var ttl = TimeSpan.FromSeconds(Math.Max(30, _messagingOptions.OutboundDeduplicationWindowSeconds));
-        if (!_idempotencyStore.TryBegin($"ig-publish:{command.DeduplicationKey}", ttl))
+        if (!_idempotencyStore.TryBegin(dedupeKey, ttl))
         {
             _logger.LogInformation("Publicacao Instagram duplicada ignorada. Draft={DraftId}", command.DraftId);
             return;
         }
 
-        var result = await _publishService.ExecutePublishAsync(command.DraftId, context.CancellationToken);
-        if (!result.Success && result.ShouldRetry)
+        var releaseDedupeOnFailure = true;
+        try
         {
-            throw new InvalidOperationException(result.Error ?? "Falha transiente na publicacao do Instagram.");
+            var result = await _publishService.ExecutePublishAsync(command.DraftId, context.CancellationToken);
+            if (!result.Success && result.ShouldRetry)
+            {
+                throw new InvalidOperationException(result.Error ?? "Falha transiente na publicacao do Instagram.");
+            }
+
+            releaseDedupeOnFailure = false;
+        }
+        catch
+        {
+            if (releaseDedupeOnFailure)
+            {
+                _idempotencyStore.RemoveByPrefix(dedupeKey);
+            }
+
+            throw;
         }
     }
 }

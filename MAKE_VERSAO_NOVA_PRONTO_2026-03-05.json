@@ -11,7 +11,7 @@
           "module": "Watch updates",
           "type": "trigger",
           "config": {
-            "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg",
+            "connection_bot_token": "{{secrets.telegram_bot_token}}",
             "update_types": [
               "message"
             ]
@@ -90,7 +90,7 @@
           "module": "Get a file",
           "config": {
             "file_id": "{{1.message.photo[length(1.message.photo)-1].file_id}}",
-            "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg"
+            "connection_bot_token": "{{secrets.telegram_bot_token}}"
           }
         },
         {
@@ -104,7 +104,7 @@
               "Content-Type": "application/json"
             },
             "body_type": "raw",
-            "body": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+            "body": "{\"username\":\"{{secrets.admin_username}}\",\"password\":\"{{secrets.admin_password}}\"}",
             "store_cookies": true
           }
         },
@@ -119,7 +119,7 @@
               "Content-Type": "application/json"
             },
             "body_type": "raw",
-            "body": "{\n  \"postType\": \"feed\",\n  \"productName\": \"{{5.product_name}}\",\n  \"caption\": \"{{5.catchy_description}}\\n\\n{{5.product_description}}\\n\\nPreco VIP: {{5.current_price}}\\nPreco original: {{5.original_price}}\",\n  \"hashtags\": \"#achadinhos #oferta #vip\",\n  \"imageUrls\": [\n    \"https://api.telegram.org/file/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/{{6.file_path}}\"\n  ],\n  \"ctas\": [\n    {\n      \"keyword\": \"VIP\",\n      \"link\": \"{{5.affiliate_link}}\"\n    }\n  ]\n}",
+            "body": "{\n  \"postType\": \"feed\",\n  \"productName\": \"{{5.product_name}}\",\n  \"caption\": \"{{5.catchy_description}}\\n\\n{{5.product_description}}\\n\\nPreco VIP: {{5.current_price}}\\nPreco original: {{5.original_price}}\",\n  \"hashtags\": \"#achadinhos #oferta #vip\",\n  \"imageUrls\": [\n    \"https://api.telegram.org/file/bot{{secrets.telegram_bot_token}}/{{6.file_path}}\"\n  ],\n  \"ctas\": [\n    {\n      \"keyword\": \"VIP\",\n      \"link\": \"{{5.affiliate_link}}\"\n    }\n  ]\n}",
             "use_cookies_from_step": 7
           }
         },
@@ -143,7 +143,7 @@
           "module": "Watch updates",
           "type": "trigger",
           "config": {
-            "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg",
+            "connection_bot_token": "{{secrets.telegram_bot_token}}",
             "update_types": [
               "message"
             ]
@@ -182,7 +182,7 @@
               "Content-Type": "application/json"
             },
             "body_type": "raw",
-            "body": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+            "body": "{\"username\":\"{{secrets.admin_username}}\",\"password\":\"{{secrets.admin_password}}\"}",
             "store_cookies": true
           }
         },

@@ -186,9 +186,9 @@
     "TelegramChatIds": [],
     "OfferContextMode": 0,
     "UseOfferContext": false,
-    "UseAi": false,
+    "UseAi": true,
     "VariationsCount": 2,
-    "AiProvider": "openai",
+    "AiProvider": "gemma4",
     "UseUltraPrompt": false,
     "UseShortProductName": false,
     "UseBenefitBullets": false,
@@ -246,7 +246,7 @@
     "StoryAutoPilotSendForApproval": true,
     "StoryAutoPilotApprovalChannel": "whatsapp",
     "StoryAutoPilotApprovalTelegramChatId": 0,
-    "StoryAutoPilotApprovalWhatsAppGroupId": null,
+    "StoryAutoPilotApprovalWhatsAppGroupId": "120363426166665839@g.us",
     "StoryAutoPilotApprovalWhatsAppInstanceName": null
   },
   "OpenAI": {

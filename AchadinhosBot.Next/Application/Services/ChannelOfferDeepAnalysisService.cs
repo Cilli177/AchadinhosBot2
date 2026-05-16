@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Agents;
 using AchadinhosBot.Next.Domain.Instagram;
+using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Settings;
 using AchadinhosBot.Next.Infrastructure.Instagram;
@@ -86,7 +87,7 @@ public sealed class ChannelOfferDeepAnalysisService : IChannelOfferDeepAnalysisS
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
-        var settings = await _settingsStore.GetAsync(cancellationToken);
+        var settings = request.OverrideSettings ?? await _settingsStore.GetAsync(cancellationToken);
         var selectedOffer = await SelectPrimaryOfferUrlAsync(sourceText, candidateUrls, settings, cancellationToken);
         var originalSelectedOfferUrl = selectedOffer.Url;
         var conversion = await ConvertSelectedOfferUrlAsync(candidate, originalSelectedOfferUrl, cancellationToken);
@@ -198,7 +199,7 @@ public sealed class ChannelOfferDeepAnalysisService : IChannelOfferDeepAnalysisS
         }
 
         var draft = existingDraft ?? new InstagramPublishDraft();
-        ApplyAnalysisToDraft(draft, result);
+        ApplyAnalysisToDraft(draft, result, candidate);
         if (existingDraft is null)
         {
             await _publishStore.SaveAsync(draft, cancellationToken);
@@ -209,8 +210,47 @@ public sealed class ChannelOfferDeepAnalysisService : IChannelOfferDeepAnalysisS
         }
 
         result.DraftId = draft.Id;
-        result.EditorUrl = $"/conversor-admin?draftId={draft.Id}";
+        result.EditorUrl = $"/studio-ofertas?draftId={draft.Id}";
+        result.PreviewMessage = BuildPreviewMessage(result);
         return result;
+    }
+
+    private static string BuildPreviewMessage(ChannelOfferDeepAnalysisResult result)
+    {
+        var lines = new List<string>
+        {
+            "PREVIEW DA POSTAGEM",
+            string.IsNullOrWhiteSpace(result.ProductName) ? "Produto nao identificado." : result.ProductName,
+        };
+
+        if (!string.IsNullOrWhiteSpace(result.CurrentPrice))
+        {
+            lines.Add($"Preco: {result.CurrentPrice}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.OfferUrl))
+        {
+            lines.Add($"Link: {result.OfferUrl}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.PrimaryVideoUrl))
+        {
+            lines.Add($"Video: {result.PrimaryVideoUrl}");
+        }
+        else if (!string.IsNullOrWhiteSpace(result.PrimaryImageUrl))
+        {
+            lines.Add($"Imagem: {result.PrimaryImageUrl}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.Caption))
+        {
+            lines.Add(string.Empty);
+            lines.Add(result.Caption.Trim());
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("A publicacao real continua separada. Aprove o draft antes de publicar.");
+        return string.Join(Environment.NewLine, lines.Where(x => x is not null));
     }
 
     private async Task<WhatsAppOutboundLogEntry?> LoadMessageAsync(
@@ -524,14 +564,23 @@ public sealed class ChannelOfferDeepAnalysisService : IChannelOfferDeepAnalysisS
                 (!string.IsNullOrWhiteSpace(sourceText) && string.Equals(NormalizeWhitespace(x.Caption), NormalizeWhitespace(sourceText), StringComparison.OrdinalIgnoreCase)));
     }
 
-    private static void ApplyAnalysisToDraft(InstagramPublishDraft draft, ChannelOfferDeepAnalysisResult result)
+    private static void ApplyAnalysisToDraft(InstagramPublishDraft draft, ChannelOfferDeepAnalysisResult result, ChannelOfferCandidate? candidate)
     {
         var isReel = string.Equals(result.SuggestedPostType, WhatsAppOfferScoutPostTypes.Reel, StringComparison.OrdinalIgnoreCase);
+        var shouldSendToCatalog = draft.SendToCatalog ||
+                                  string.Equals(candidate?.SourceChannel, "telegram", StringComparison.OrdinalIgnoreCase);
+        draft.SendToCatalog = shouldSendToCatalog;
+        if (shouldSendToCatalog &&
+            (string.IsNullOrWhiteSpace(draft.CatalogTarget) || string.Equals(draft.CatalogTarget, "none", StringComparison.OrdinalIgnoreCase)))
+        {
+            draft.CatalogTarget = CatalogTargets.Prod;
+        }
         draft.ProductName = result.ProductName;
-        draft.Caption = result.Caption;
+        draft.Caption = InstagramWorkflowSupport.BuildInstagramCaption(result.Caption, result.ProductName, shouldSendToCatalog);
         draft.CaptionOptions = result.CaptionOptions.ToList();
         draft.SelectedCaptionIndex = draft.CaptionOptions.Count > 0 ? 1 : 0;
         draft.Hashtags = result.Hashtags;
+        draft.OriginalOfferUrl = FirstNonEmpty(result.OriginalSelectedOfferUrl, candidate?.OriginalOfferUrl, result.OfferUrl);
         draft.OfferUrl = result.OfferUrl;
         draft.PostType = isReel ? "reel" : "feed";
         draft.VideoUrl = isReel ? result.PrimaryVideoUrl : draft.VideoUrl;
@@ -544,6 +593,13 @@ public sealed class ChannelOfferDeepAnalysisService : IChannelOfferDeepAnalysisS
         draft.AutoReplyEnabled = !string.IsNullOrWhiteSpace(result.OfferUrl);
         draft.AutoReplyKeyword = result.CtaKeywords.FirstOrDefault();
         draft.AutoReplyLink = result.OfferUrl;
+        draft.AutoReplyMessage = InstagramWorkflowSupport.BuildWhatsAppCaption(
+            result.Caption,
+            result.ProductName,
+            result.OfferUrl,
+            result.CurrentPrice,
+            result.PreviousPrice,
+            result.DiscountPercent);
         draft.Status = string.Equals(draft.Status, "published", StringComparison.OrdinalIgnoreCase) ? draft.Status : "draft";
         draft.Store = result.Store;
         draft.CurrentPrice = result.CurrentPrice;
@@ -554,9 +610,38 @@ public sealed class ChannelOfferDeepAnalysisService : IChannelOfferDeepAnalysisS
         draft.LightningDealExpiry = result.LightningDealExpiry;
         draft.CouponCode = result.CouponCode;
         draft.CouponDescription = result.CouponDescription;
-        draft.SourceDataOrigin = result.DataSource;
+        draft.SourceDataOrigin = BuildSourceDataOrigin(result.DataSource, candidate);
         draft.SuggestedImageUrls = result.ImageUrls.ToList();
         draft.SuggestedVideoUrls = result.VideoUrls.ToList();
+        result.Caption = draft.Caption;
+        result.AutoReplyMessage = draft.AutoReplyMessage;
+        result.SourceDataOrigin = draft.SourceDataOrigin;
+        result.SendToCatalog = draft.SendToCatalog;
+        result.CatalogTarget = draft.CatalogTarget;
+    }
+
+    private static string? BuildSourceDataOrigin(string? dataSource, ChannelOfferCandidate? candidate)
+    {
+        var sourceLabel = string.IsNullOrWhiteSpace(dataSource) ? null : dataSource.Trim();
+        if (candidate is null || !string.Equals(candidate.SourceChannel, "telegram", StringComparison.OrdinalIgnoreCase))
+        {
+            return sourceLabel;
+        }
+
+        var chatTitle = string.IsNullOrWhiteSpace(candidate.ChatTitle) ? null : candidate.ChatTitle.Trim();
+        var chatId = string.IsNullOrWhiteSpace(candidate.ChatId) ? null : candidate.ChatId.Trim();
+
+        var telegramOrigin = chatTitle is not null && chatId is not null
+            ? $"telegram:{chatTitle} ({chatId})"
+            : chatTitle is not null
+                ? $"telegram:{chatTitle}"
+                : chatId is not null
+                    ? $"telegram:{chatId}"
+                    : "telegram";
+
+        return sourceLabel is null
+            ? telegramOrigin
+            : $"{sourceLabel} | {telegramOrigin}";
     }
 
     private static List<string> BuildReasons(OfficialProductDataResult? official, LinkMetaResult meta, IReadOnlyCollection<string> imageUrls, IReadOnlyCollection<string> videoUrls, DataEnrichmentResult enrichment, IReadOnlyCollection<OfferMediaInsight> mediaInsights, WhatsAppAgentMemoryEntry? latestMemory)
@@ -1169,6 +1254,7 @@ public sealed class ChannelOfferDeepAnalysisService : IChannelOfferDeepAnalysisS
         return provider switch
         {
             "gemini" => await _geminiGenerator.GenerateFreeformAsync(prompt, settings.Gemini ?? new GeminiSettings(), cancellationToken),
+            "gemma4" => await _geminiGenerator.GenerateFreeformAsync(prompt, GeminiInstagramPostGenerator.WithGeminiKeyFallback(settings.Gemma4, settings.Gemini).AsAdvanced(), cancellationToken),
             "deepseek" => await _deepSeekGenerator.GenerateFreeformAsync(prompt, settings.DeepSeek ?? new DeepSeekSettings(), cancellationToken),
             "nemotron" => await _nemotronGenerator.GenerateFreeformAsync(prompt, settings.Nemotron ?? new NemotronSettings(), cancellationToken),
             "qwen" => await _qwenGenerator.GenerateFreeformAsync(prompt, settings.Qwen ?? new QwenSettings(), cancellationToken),

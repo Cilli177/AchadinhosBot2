@@ -85,7 +85,7 @@ Texto da oferta: {{ifempty(1.message.caption;1.message.text)}}
 - Headers: `Content-Type: application/json`
 - Body (Raw):
 ```json
-{"username":"admin","password":"admin123"}
+{"username":"{{secrets.admin_username}}","password":"{{secrets.admin_password}}"}
 ```
 - Cookie handling: habilitar para reutilizar no proximo request
 
@@ -102,7 +102,7 @@ Texto da oferta: {{ifempty(1.message.caption;1.message.text)}}
   "caption": "{{5.catchy_description}}\n\n{{5.product_description}}\n\nPreco VIP: {{5.current_price}}\nPreco original: {{5.original_price}}",
   "hashtags": "#achadinhos #oferta #vip",
   "imageUrls": [
-    "https://api.telegram.org/file/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/{{6.file_path}}"
+    "https://api.telegram.org/file/bot{{secrets.telegram_bot_token}}/{{6.file_path}}"
   ],
   "ctas": [
     {

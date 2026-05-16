@@ -10,4 +10,5 @@ public sealed class InstagramPublishLogEntry
     public string? DraftId { get; set; }
     public string? MediaId { get; set; }
     public string? Details { get; set; }
+    public string? ProcessName { get; set; }
 }
