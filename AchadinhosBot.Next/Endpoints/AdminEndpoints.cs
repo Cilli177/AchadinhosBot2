@@ -163,6 +163,15 @@ public static class AdminEndpoints
             return Results.Ok(new { success = true, total = results.Count, results });
         });
 
+        app.MapPost("/api/admin/whatsapp/niche-reviews/{id}/reject", async (string id, WhatsAppNicheReviewRejectRequest req, HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            return await service.RejectReviewAsync(id, req.Note, ct)
+                ? Results.Ok(new { success = true })
+                : Results.NotFound(new { success = false });
+        });
+
         app.MapGet("/api/admin/whatsapp/niche-overrides", async (HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -1939,6 +1948,7 @@ public sealed record AdminAddToCatalogRequest(string DraftId, string? CatalogTar
 public sealed record AdminHighlightOnBioRequest(string DraftId);
 public sealed record WhatsAppNicheReviewApproveRequest(string Slug);
 public sealed record WhatsAppNicheReviewBatchApproveRequest(IReadOnlyList<string>? Ids, string Slug);
+public sealed record WhatsAppNicheReviewRejectRequest(string? Note);
 
 
 

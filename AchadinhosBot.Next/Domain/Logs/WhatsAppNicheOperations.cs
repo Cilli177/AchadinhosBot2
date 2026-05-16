@@ -37,4 +37,5 @@ public sealed class WhatsAppNicheReviewItem
     public string? SourceGroupId { get; set; }
     public DateTimeOffset? DecidedAtUtc { get; set; }
     public string? DecidedSlug { get; set; }
+    public string? DecisionNote { get; set; }
 }

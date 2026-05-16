@@ -18,6 +18,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
     private readonly IWhatsAppOutboundLogStore _outboundLogStore;
     private readonly ILinkTrackingStore _linkTrackingStore;
     private readonly ISettingsStore _settingsStore;
+    private readonly IWhatsAppNicheOperationsStore _operationsStore;
     private readonly WhatsAppNicheGroupService _nicheGroupService;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<WhatsAppNicheAutoRouteWorker> _logger;
@@ -28,6 +29,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         IWhatsAppOutboundLogStore outboundLogStore,
         ILinkTrackingStore linkTrackingStore,
         ISettingsStore settingsStore,
+        IWhatsAppNicheOperationsStore operationsStore,
         WhatsAppNicheGroupService nicheGroupService,
         IWebHostEnvironment environment,
         ILogger<WhatsAppNicheAutoRouteWorker> logger)
@@ -35,6 +37,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         _outboundLogStore = outboundLogStore;
         _linkTrackingStore = linkTrackingStore;
         _settingsStore = settingsStore;
+        _operationsStore = operationsStore;
         _nicheGroupService = nicheGroupService;
         _environment = environment;
         _logger = logger;
@@ -125,12 +128,14 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var category = ClassifyForActiveNiche(title) ?? ClassifyForActiveNiche(text);
         if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(category))
         {
+            await SaveReviewAsync(entry, text, title, "auto_route_missing_product_or_niche", 10, null, ct);
             return Array.Empty<WhatsAppNicheRouteOfferRequest>();
         }
 
         var url = ExtractBestOfferUrl(text);
         if (string.IsNullOrWhiteSpace(url))
         {
+            await SaveReviewAsync(entry, text, title, "auto_route_missing_offer_url", 10, category, ct);
             return Array.Empty<WhatsAppNicheRouteOfferRequest>();
         }
 
@@ -150,6 +155,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
                 "Oferta ignorada no auto-route por convite WhatsApp nao aprovado. MessageId={MessageId} Url={Url}",
                 entry.MessageId,
                 unapprovedInviteUrl);
+            await SaveReviewAsync(entry, text, title, "unapproved_whatsapp_invite", 0, category, ct);
             return Array.Empty<WhatsAppNicheRouteOfferRequest>();
         }
 
@@ -167,6 +173,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
                 "Oferta ignorada no auto-route por URL institucional ou de grupo. MessageId={MessageId} Url={Url}",
                 entry.MessageId,
                 target);
+            await SaveReviewAsync(entry, text, title, "institutional_or_group_url_as_offer", 0, category, ct);
             return Array.Empty<WhatsAppNicheRouteOfferRequest>();
         }
 
@@ -190,6 +197,30 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
 
     private static string StripScoutCommissionForAudience(string text)
         => ScoutCommissionLineRegex().Replace(text, string.Empty);
+
+    private async Task SaveReviewAsync(
+        WhatsAppOutboundLogEntry entry,
+        string text,
+        string? title,
+        string reason,
+        int confidence,
+        string? suggestedSlug,
+        CancellationToken ct)
+    {
+        await _operationsStore.SaveReviewAsync(new WhatsAppNicheReviewItem
+        {
+            Reason = reason,
+            Confidence = confidence,
+            SuggestedSlug = suggestedSlug,
+            ProductName = title,
+            ProductUrl = ExtractBestOfferUrl(text),
+            StoreName = ResolveStore(ExtractTrackingId(ExtractBestOfferUrl(text)), text),
+            PriceText = ExtractPrice(text),
+            ImageUrl = entry.MediaUrl,
+            OriginalText = text,
+            SourceGroupId = entry.To
+        }, ct);
+    }
 
     private static IReadOnlyList<string> ResolveTargetCategories(string primaryCategory, string? title)
     {

@@ -344,6 +344,17 @@ public sealed partial class WhatsAppNicheGroupService
         return results;
     }
 
+    public async Task<bool> RejectReviewAsync(string id, string? note, CancellationToken ct)
+    {
+        var review = await _operationsStore.GetReviewAsync(id, ct);
+        if (review is null) return false;
+        review.Status = "rejected";
+        review.DecidedAtUtc = DateTimeOffset.UtcNow;
+        review.DecisionNote = NormalizeOptional(note);
+        await _operationsStore.UpdateReviewAsync(review, ct);
+        return true;
+    }
+
     public async Task<IReadOnlyList<WhatsAppNicheOverrideSettings>> ListOverridesAsync(CancellationToken ct)
         => (await _settingsStore.GetAsync(ct)).WhatsAppNicheOverrides;
 

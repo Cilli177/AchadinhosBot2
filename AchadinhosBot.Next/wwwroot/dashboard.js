@@ -412,7 +412,7 @@ function showAuthState(authenticated, username = '', role = '') {
 }
 
 function showSection(name) {
-  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach', 'wa-niches'];
+  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach', 'wa-niches', 'wa-niche-review'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -498,6 +498,9 @@ function showSection(name) {
   if (name === 'wa-niches') {
     loadWhatsAppNicheGroups();
     loadWhatsAppNicheOps();
+  }
+  if (name === 'wa-niche-review') {
+    loadWhatsAppNicheReviewBoard();
   }
 }
 
@@ -7325,9 +7328,149 @@ function renderWhatsAppNicheReviews(items) {
     </div>`).join('') || '<div class="muted">Nenhuma revisao pendente.</div>';
 }
 
+let waNicheReviewBoardItems = [];
+
+function normalizeWhatsAppNicheReview(item) {
+  return {
+    id: String(item.id || item.Id || ''),
+    createdAtUtc: item.createdAtUtc || item.CreatedAtUtc || '',
+    status: String(item.status || item.Status || ''),
+    reason: String(item.reason || item.Reason || ''),
+    confidence: Number(item.confidence ?? item.Confidence ?? 0),
+    suggestedSlug: String(item.suggestedSlug || item.SuggestedSlug || ''),
+    productName: String(item.productName || item.ProductName || ''),
+    productUrl: String(item.productUrl || item.ProductUrl || ''),
+    storeName: String(item.storeName || item.StoreName || ''),
+    priceText: String(item.priceText || item.PriceText || ''),
+    imageUrl: String(item.imageUrl || item.ImageUrl || ''),
+    originalText: String(item.originalText || item.OriginalText || ''),
+    sourceGroupId: String(item.sourceGroupId || item.SourceGroupId || '')
+  };
+}
+
+function getWhatsAppNicheReviewSeverity(item) {
+  if (item.reason === 'unapproved_whatsapp_invite' || item.reason === 'institutional_or_group_url_as_offer') return 'critical';
+  if (item.reason === 'auto_route_missing_product_or_niche' || item.reason === 'auto_route_missing_offer_url') return 'warning';
+  return item.confidence <= 20 ? 'warning' : 'neutral';
+}
+
+function getWhatsAppNicheReviewReasonLabel(reason) {
+  const labels = {
+    unapproved_whatsapp_invite: 'Convite WhatsApp nao aprovado',
+    institutional_or_group_url_as_offer: 'Link institucional usado como oferta',
+    auto_route_missing_product_or_niche: 'Sem titulo ou nicho confiavel',
+    auto_route_missing_offer_url: 'Sem link de oferta',
+    nicho_ambiguo_requer_revisao: 'Nicho ambiguo',
+    mercado_livre_sem_comissao_explicita: 'Mercado Livre sem comissao explicita'
+  };
+  return labels[reason] || reason || 'Sem motivo';
+}
+
+async function loadWhatsAppNicheReviewBoard() {
+  setSafeText('waNicheReviewBoardStatus', 'Carregando fila...');
+  try {
+    const response = await api('/api/admin/whatsapp/niche-reviews?status=pending&limit=200');
+    waNicheReviewBoardItems = (response?.items || []).map(normalizeWhatsAppNicheReview);
+    hydrateWhatsAppNicheReviewFilters();
+    renderWhatsAppNicheReviewBoard();
+    setSafeText('waNicheReviewBoardStatus', `${waNicheReviewBoardItems.length} item(ns) pendente(s).`);
+  } catch (err) {
+    setSafeText('waNicheReviewBoardStatus', 'Erro ao carregar fila: ' + extractApiErrorMessage(err));
+  }
+}
+
+function hydrateWhatsAppNicheReviewFilters() {
+  const select = document.getElementById('waNicheReviewReasonFilter');
+  if (!select) return;
+  const current = select.value;
+  const reasons = [...new Set(waNicheReviewBoardItems.map(item => item.reason).filter(Boolean))].sort();
+  select.innerHTML = '<option value="">Todos os motivos</option>' + reasons
+    .map(reason => `<option value="${escapeHtml(reason)}">${escapeHtml(getWhatsAppNicheReviewReasonLabel(reason))}</option>`)
+    .join('');
+  select.value = reasons.includes(current) ? current : '';
+}
+
+function renderWhatsAppNicheReviewBoard() {
+  const search = (document.getElementById('waNicheReviewSearch')?.value || '').trim().toLowerCase();
+  const reasonFilter = document.getElementById('waNicheReviewReasonFilter')?.value || '';
+  const slugFilter = document.getElementById('waNicheReviewSlugFilter')?.value || '';
+  const filtered = waNicheReviewBoardItems.filter(item => {
+    const haystack = `${item.productName} ${item.reason} ${item.storeName} ${item.originalText}`.toLowerCase();
+    return (!search || haystack.includes(search))
+      && (!reasonFilter || item.reason === reasonFilter)
+      && (!slugFilter || item.suggestedSlug === slugFilter);
+  });
+
+  const pending = waNicheReviewBoardItems.length;
+  const critical = waNicheReviewBoardItems.filter(item => getWhatsAppNicheReviewSeverity(item) === 'critical').length;
+  const content = waNicheReviewBoardItems.filter(item => item.reason === 'auto_route_missing_product_or_niche' || item.reason === 'auto_route_missing_offer_url').length;
+  const invites = waNicheReviewBoardItems.filter(item => item.reason === 'unapproved_whatsapp_invite').length;
+  setSafeText('waNicheReviewMetricPending', String(pending));
+  setSafeText('waNicheReviewMetricCritical', String(critical));
+  setSafeText('waNicheReviewMetricContent', String(content));
+  setSafeText('waNicheReviewMetricInvites', String(invites));
+
+  const reasonBox = document.getElementById('waNicheReviewReasons');
+  if (reasonBox) {
+    const counts = waNicheReviewBoardItems.reduce((map, item) => {
+      map[item.reason] = (map[item.reason] || 0) + 1;
+      return map;
+    }, {});
+    reasonBox.innerHTML = Object.entries(counts).map(([reason, count]) => `
+      <div class="row" style="justify-content:space-between; gap:8px;">
+        <span>${escapeHtml(getWhatsAppNicheReviewReasonLabel(reason))}</span>
+        <strong>${count}</strong>
+      </div>`).join('') || '<div class="muted">Sem pendencias.</div>';
+  }
+
+  const board = document.getElementById('waNicheReviewBoard');
+  if (!board) return;
+  board.innerHTML = filtered.map(item => {
+    const severity = getWhatsAppNicheReviewSeverity(item);
+    const severityClass = severity === 'critical' ? 'warn' : (severity === 'warning' ? 'muted' : 'ok');
+    const title = item.productName || 'Sem titulo confiavel';
+    const textPreview = item.originalText
+      ? escapeHtml(item.originalText.length > 280 ? `${item.originalText.slice(0, 280)}...` : item.originalText)
+      : 'Sem texto original.';
+    const image = item.imageUrl
+      ? `<img src="${escapeHtml(item.imageUrl)}" alt="" style="width:84px; height:84px; object-fit:cover; border-radius:6px; border:1px solid var(--border);" />`
+      : '<div class="muted" style="width:84px; height:84px; display:grid; place-items:center; border:1px dashed var(--border); border-radius:6px;">sem foto</div>';
+    return `
+      <div class="card" style="padding:14px;">
+        <div class="row" style="justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+          <div class="row" style="gap:12px; align-items:flex-start; flex:1; min-width:280px;">
+            <input type="checkbox" class="wa-niche-board-checkbox" value="${escapeHtml(item.id)}" style="margin-top:4px;" />
+            ${image}
+            <div style="flex:1; min-width:220px;">
+              <div class="row" style="gap:8px; flex-wrap:wrap; align-items:center;">
+                <strong>${escapeHtml(title)}</strong>
+                <span class="badge ${severityClass}">${escapeHtml(getWhatsAppNicheReviewReasonLabel(item.reason))}</span>
+              </div>
+              <div class="muted" style="margin-top:6px;">
+                ${escapeHtml(item.storeName || '-')} | sugestao ${escapeHtml(item.suggestedSlug || '-')} | confianca ${item.confidence} | ${escapeHtml(formatTs(item.createdAtUtc))}
+              </div>
+              <div class="muted" style="margin-top:6px;">${escapeHtml(item.productUrl || 'Sem URL de oferta')}</div>
+            </div>
+          </div>
+          <div class="row" style="gap:8px; flex-wrap:wrap;">
+            ${['casa','beleza','fitness_health','moda','tech'].map(slug => `<button class="secondary" onclick="approveWhatsAppNicheReview('${escapeHtml(item.id)}','${slug}')">${slug}</button>`).join('')}
+            <button class="secondary" onclick="rejectWhatsAppNicheReview('${escapeHtml(item.id)}')">Reprovar</button>
+          </div>
+        </div>
+        <details style="margin-top:12px;">
+          <summary>Ver texto original</summary>
+          <pre class="muted" style="white-space:pre-wrap; margin-top:8px;">${textPreview}</pre>
+        </details>
+      </div>`;
+  }).join('') || '<div class="muted">Nenhum item combina com os filtros.</div>';
+}
+
 async function approveWhatsAppNicheReview(id, slug) {
   await api(`/api/admin/whatsapp/niche-reviews/${encodeURIComponent(id)}/approve`, 'POST', { slug });
   await loadWhatsAppNicheOps();
+  if (document.getElementById('section-wa-niche-review') && !document.getElementById('section-wa-niche-review').classList.contains('hidden')) {
+    await loadWhatsAppNicheReviewBoard();
+  }
 }
 
 async function approveSelectedWhatsAppNicheReviews() {
@@ -7336,6 +7479,20 @@ async function approveSelectedWhatsAppNicheReviews() {
   if (!ids.length || !slug) return;
   await api('/api/admin/whatsapp/niche-reviews/approve-batch', 'POST', { ids, slug });
   await loadWhatsAppNicheOps();
+}
+
+async function approveSelectedWhatsAppNicheBoardReviews() {
+  const ids = Array.from(document.querySelectorAll('.wa-niche-board-checkbox:checked')).map(input => input.value);
+  const slug = document.getElementById('waNicheReviewBatchSlug')?.value || '';
+  if (!ids.length || !slug) return;
+  await api('/api/admin/whatsapp/niche-reviews/approve-batch', 'POST', { ids, slug });
+  await loadWhatsAppNicheReviewBoard();
+}
+
+async function rejectWhatsAppNicheReview(id) {
+  const note = window.prompt('Motivo da reprovacao (opcional):', '') || null;
+  await api(`/api/admin/whatsapp/niche-reviews/${encodeURIComponent(id)}/reject`, 'POST', { note });
+  await loadWhatsAppNicheReviewBoard();
 }
 
 function renderWhatsAppNicheRoutes(items) {
