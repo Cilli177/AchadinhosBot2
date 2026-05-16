@@ -87,4 +87,20 @@ public sealed class WhatsAppNicheGroupServiceTests
         Assert.True(decision.RequiresReview);
         Assert.Equal(WhatsAppNicheDefinitions.Geral, decision.Slug);
     }
+
+    [Fact]
+    public void InvitePolicy_AcceptsOnlyConfiguredOrOfficialLinks()
+    {
+        var approved = new[] { "https://chat.whatsapp.com/GrupoCasa123" };
+
+        Assert.True(WhatsAppInviteLinkNormalizer.IsApprovedInviteUrl(
+            WhatsAppInviteLinkNormalizer.OfficialInviteUrl,
+            approved));
+        Assert.True(WhatsAppInviteLinkNormalizer.IsApprovedInviteUrl(
+            "https://chat.whatsapp.com/GrupoCasa123/",
+            approved));
+        Assert.False(WhatsAppInviteLinkNormalizer.IsApprovedInviteUrl(
+            "https://chat.whatsapp.com/OutroGrupo999",
+            approved));
+    }
 }

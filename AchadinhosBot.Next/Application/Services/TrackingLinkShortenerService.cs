@@ -139,7 +139,7 @@ public sealed partial class TrackingLinkShortenerService
 
         if (IsWhatsAppInviteUrl(normalizedUrl))
         {
-            return WhatsAppInviteLinkNormalizer.OfficialInviteUrl;
+            return normalizedUrl;
         }
 
         if (!Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var normalizedUri))
@@ -247,7 +247,7 @@ public sealed partial class TrackingLinkShortenerService
 
         if (IsWhatsAppInviteUrl(normalizedUrl))
         {
-            return WhatsAppInviteLinkNormalizer.OfficialInviteUrl;
+            return normalizedUrl;
         }
 
         if (!Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var normalizedUri))

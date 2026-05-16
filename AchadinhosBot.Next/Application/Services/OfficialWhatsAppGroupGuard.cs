@@ -41,6 +41,14 @@ public static partial class OfficialWhatsAppGroupGuard
             return new OfficialWhatsAppGroupGuardResult(false, "visible_tracking_query", $"Link rastreado deve usar ID decorado, sem src/camp visivel: {trackedWithVisibleAttribution}");
         }
 
+        var unapprovedInvite = urls.FirstOrDefault(url =>
+            WhatsAppInviteLinkNormalizer.IsWhatsAppInviteUrl(url)
+            && !WhatsAppInviteLinkNormalizer.IsApprovedInviteUrl(url, Array.Empty<string>()));
+        if (!string.IsNullOrWhiteSpace(unapprovedInvite))
+        {
+            return new OfficialWhatsAppGroupGuardResult(false, "unapproved_whatsapp_invite", $"Convite de WhatsApp nao aprovado para o grupo oficial: {unapprovedInvite}");
+        }
+
         if (!urls.Any(IsAllowedTrackedOfferUrl))
         {
             return new OfficialWhatsAppGroupGuardResult(false, "no_tracked_offer_link", "Grupo oficial exige link rastreado aprovado do dominio oficial.");

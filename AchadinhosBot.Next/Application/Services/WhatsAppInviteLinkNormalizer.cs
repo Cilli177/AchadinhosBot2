@@ -45,6 +45,37 @@ public static partial class WhatsAppInviteLinkNormalizer
         return string.Equals(uri.Host, "chat.whatsapp.com", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsApprovedInviteUrl(string? url, IEnumerable<string?> additionalApprovedUrls)
+    {
+        if (!TryNormalizeInviteUrl(url, out var normalizedUrl))
+        {
+            return false;
+        }
+
+        if (TryNormalizeInviteUrl(OfficialInviteUrl, out var normalizedOfficial)
+            && string.Equals(normalizedUrl, normalizedOfficial, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return additionalApprovedUrls
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Any(candidate => TryNormalizeInviteUrl(candidate, out var normalizedCandidate)
+                              && string.Equals(normalizedUrl, normalizedCandidate, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TryNormalizeInviteUrl(string? url, out string normalized)
+    {
+        normalized = string.Empty;
+        if (!IsWhatsAppInviteUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        normalized = $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath.TrimEnd('/')}";
+        return true;
+    }
+
     [GeneratedRegex(@"LINK DOS GRUPOS:\s*https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex LinkDosGruposRegex();
 

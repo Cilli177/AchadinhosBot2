@@ -204,6 +204,23 @@ public sealed class TrackingLinkShortenerServiceTests
         Assert.Equal(0, trackingStore.CreateCalls);
     }
 
+    [Fact]
+    public async Task TrackSingleUrlAsync_ShouldNotRewriteUnknownWhatsAppInvite()
+    {
+        var trackingStore = new FakeLinkTrackingStore();
+        var service = CreateService(trackingStore: trackingStore);
+        const string inviteUrl = "https://chat.whatsapp.com/OutroGrupo999";
+
+        var result = await service.TrackSingleUrlAsync(
+            inviteUrl,
+            "whatsapp_grupo_oficial",
+            CancellationToken.None,
+            "WhatsApp");
+
+        Assert.Equal(inviteUrl, result);
+        Assert.Equal(0, trackingStore.CreateCalls);
+    }
+
     [Theory]
     [InlineData("https://www.amazon.com.br/dp/B08N5M7S6K", "Amazon", "https://reidasofertas.ia.br/r/AM-000001?src=cw")]
     [InlineData("https://www.mercadolivre.com.br/p/MLB19761624?matt_tool=98187057&matt_word=land177", "Mercado Livre", "https://reidasofertas.ia.br/r/ML-000001?src=cw")]

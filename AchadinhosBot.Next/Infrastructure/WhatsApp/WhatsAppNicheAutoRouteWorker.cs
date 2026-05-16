@@ -17,6 +17,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
 
     private readonly IWhatsAppOutboundLogStore _outboundLogStore;
     private readonly ILinkTrackingStore _linkTrackingStore;
+    private readonly ISettingsStore _settingsStore;
     private readonly WhatsAppNicheGroupService _nicheGroupService;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<WhatsAppNicheAutoRouteWorker> _logger;
@@ -26,12 +27,14 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
     public WhatsAppNicheAutoRouteWorker(
         IWhatsAppOutboundLogStore outboundLogStore,
         ILinkTrackingStore linkTrackingStore,
+        ISettingsStore settingsStore,
         WhatsAppNicheGroupService nicheGroupService,
         IWebHostEnvironment environment,
         ILogger<WhatsAppNicheAutoRouteWorker> logger)
     {
         _outboundLogStore = outboundLogStore;
         _linkTrackingStore = linkTrackingStore;
+        _settingsStore = settingsStore;
         _nicheGroupService = nicheGroupService;
         _environment = environment;
         _logger = logger;
@@ -128,6 +131,25 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var url = ExtractBestOfferUrl(text);
         if (string.IsNullOrWhiteSpace(url))
         {
+            return Array.Empty<WhatsAppNicheRouteOfferRequest>();
+        }
+
+        var settings = await _settingsStore.GetAsync(ct);
+        var whatsappInviteUrls = UrlRegex().Matches(text)
+            .Cast<Match>()
+            .Select(match => match.Value.Trim())
+            .Where(WhatsAppInviteLinkNormalizer.IsWhatsAppInviteUrl)
+            .ToArray();
+        var unapprovedInviteUrl = whatsappInviteUrls.FirstOrDefault(inviteUrl =>
+            !WhatsAppInviteLinkNormalizer.IsApprovedInviteUrl(
+                inviteUrl,
+                settings.WhatsAppNicheGroups.Select(group => group.InviteUrl)));
+        if (!string.IsNullOrWhiteSpace(unapprovedInviteUrl))
+        {
+            _logger.LogWarning(
+                "Oferta ignorada no auto-route por convite WhatsApp nao aprovado. MessageId={MessageId} Url={Url}",
+                entry.MessageId,
+                unapprovedInviteUrl);
             return Array.Empty<WhatsAppNicheRouteOfferRequest>();
         }
 
