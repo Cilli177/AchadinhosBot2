@@ -58,6 +58,17 @@ public sealed partial class OfferImageResolver : IOfferImageResolver
             }
         }
 
+        // Para links diretos do Mercado Livre, a imagem declarada na propria pagina
+        // tende a ser mais fiel ao item aberto do que respostas externas/cacheadas.
+        if (IsMercadoLivreUrl(request.OriginalUrl))
+        {
+            var mercadoLivreMetadata = await TryResolveFromGenericMetadataAsync(request.OriginalUrl!, diagnostics, cancellationToken);
+            if (mercadoLivreMetadata.Success)
+            {
+                return CacheAndReturn(cacheKey, mercadoLivreMetadata with { Source = "mercadolivre_page_metadata" });
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(request.OriginalUrl) || !string.IsNullOrWhiteSpace(request.ConvertedUrl))
         {
             try
@@ -289,6 +300,11 @@ public sealed partial class OfferImageResolver : IOfferImageResolver
             _ => null
         };
     }
+
+    private static bool IsMercadoLivreUrl(string? url)
+        => !string.IsNullOrWhiteSpace(url)
+           && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+           && uri.Host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase);
 
     private static string? GuessMimeType(byte[] bytes)
     {

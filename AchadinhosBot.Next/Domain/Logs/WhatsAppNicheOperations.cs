@@ -17,6 +17,8 @@ public sealed class WhatsAppNicheRouteEvent
     public string? TrackingId { get; set; }
     public string? TargetGroupId { get; set; }
     public bool HadImage { get; set; }
+    public string? ImageSource { get; set; }
+    public string? ResolvedImageUrl { get; set; }
     public bool ReusedCanonicalTracking { get; set; }
 }
 

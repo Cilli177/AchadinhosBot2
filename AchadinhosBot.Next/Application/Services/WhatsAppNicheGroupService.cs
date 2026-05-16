@@ -210,21 +210,21 @@ public sealed partial class WhatsAppNicheGroupService
                 ImageUrl = offer.ImageUrl,
                 OriginalText = request.OriginalText
             }, ct);
-            await AppendRouteEventAsync(request, offer, new(false, "review_required", decision.Slug, decision.Reason, decision.Confidence, null, null, null), false, ct);
+            await AppendRouteEventAsync(request, offer, new(false, "review_required", decision.Slug, decision.Reason, decision.Confidence, null, null, null), null, ct);
             return new WhatsAppNicheRouteResult(false, "review_required", decision.Slug, decision.Reason, decision.Confidence, null, null, null);
         }
 
         var group = settings.WhatsAppNicheGroups.FirstOrDefault(x => string.Equals(x.Slug, decision.Slug, StringComparison.OrdinalIgnoreCase));
         if (group is null || !group.Enabled || string.IsNullOrWhiteSpace(group.GroupId))
         {
-            await AppendRouteEventAsync(request, offer, new(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", decision.Confidence, null, null, null), false, ct);
+            await AppendRouteEventAsync(request, offer, new(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", decision.Confidence, null, null, null), null, ct);
             return new WhatsAppNicheRouteResult(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", decision.Confidence, null, null, null);
         }
 
         var offerUrl = FirstNonEmpty(offer.ProductUrl, request.ProductUrl);
         if (string.IsNullOrWhiteSpace(offerUrl))
         {
-            await AppendRouteEventAsync(request, offer, new(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", decision.Confidence, null, group.GroupId, null), false, ct);
+            await AppendRouteEventAsync(request, offer, new(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", decision.Confidence, null, group.GroupId, null), null, ct);
             return new WhatsAppNicheRouteResult(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", decision.Confidence, null, group.GroupId, null);
         }
 
@@ -242,7 +242,7 @@ public sealed partial class WhatsAppNicheGroupService
                 null,
                 group.GroupId,
                 null);
-            await AppendRouteEventAsync(request, offer, duplicate, false, ct);
+            await AppendRouteEventAsync(request, offer, duplicate, null, ct);
             return duplicate;
         }
 
@@ -264,7 +264,7 @@ public sealed partial class WhatsAppNicheGroupService
             _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
             await SaveGuardReviewAsync(offer, request, group.Slug, "blocked_unapproved_tracking", decision.Confidence, ct);
             var blocked = new WhatsAppNicheRouteResult(false, "blocked_unapproved_tracking", group.Slug, "Tracking nao aprovado para envio automatico em nichos.", decision.Confidence, trackedUrl, group.GroupId, message);
-            await AppendRouteEventAsync(request, offer, blocked, image is not null, ct);
+            await AppendRouteEventAsync(request, offer, blocked, image, ct);
             return blocked;
         }
 
@@ -273,7 +273,7 @@ public sealed partial class WhatsAppNicheGroupService
             _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
             await SaveGuardReviewAsync(offer, request, group.Slug, "missing_image_for_niche_send", decision.Confidence, ct);
             var missingImage = new WhatsAppNicheRouteResult(false, "review_required", group.Slug, "Oferta sem imagem confiavel para envio automatico em nichos.", decision.Confidence, trackedUrl, group.GroupId, message);
-            await AppendRouteEventAsync(request, offer, missingImage, false, ct);
+            await AppendRouteEventAsync(request, offer, missingImage, null, ct);
             return missingImage;
         }
         if (request.SendNow)
@@ -281,7 +281,7 @@ public sealed partial class WhatsAppNicheGroupService
             if (!TryReserveDailySlot(group, DateTimeOffset.UtcNow, out var quotaMessage))
             {
                 var quota = new WhatsAppNicheRouteResult(false, "daily_limit_reached", group.Slug, quotaMessage, decision.Confidence, trackedUrl, group.GroupId, null);
-                await AppendRouteEventAsync(request, offer, quota, image is not null, ct);
+                await AppendRouteEventAsync(request, offer, quota, image, ct);
                 return quota;
             }
 
@@ -290,18 +290,18 @@ public sealed partial class WhatsAppNicheGroupService
             {
                 _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
                 var failed = new WhatsAppNicheRouteResult(false, "send_failed", group.Slug, send.Message ?? "Falha ao enviar.", decision.Confidence, trackedUrl, group.GroupId, message);
-                await AppendRouteEventAsync(request, offer, failed, image is not null, ct);
+                await AppendRouteEventAsync(request, offer, failed, image, ct);
                 return failed;
             }
 
             await _settingsStore.SaveAsync(settings, ct);
             var sent = new WhatsAppNicheRouteResult(true, "sent", group.Slug, decision.Reason, decision.Confidence, trackedUrl, group.GroupId, message);
-            await AppendRouteEventAsync(request, offer, sent, image is not null, ct);
+            await AppendRouteEventAsync(request, offer, sent, image, ct);
             return sent;
         }
 
         var prepared = new WhatsAppNicheRouteResult(true, "prepared", group.Slug, decision.Reason, decision.Confidence, trackedUrl, group.GroupId, message);
-        await AppendRouteEventAsync(request, offer, prepared, image is not null, ct);
+        await AppendRouteEventAsync(request, offer, prepared, image, ct);
         return prepared;
     }
 
@@ -1105,7 +1105,7 @@ public sealed partial class WhatsAppNicheGroupService
             x.TargetSlugs.Count > 0);
     }
 
-    private async Task AppendRouteEventAsync(WhatsAppNicheRouteOfferRequest request, WhatsAppNicheRouteOfferInput offer, WhatsAppNicheRouteResult result, bool hadImage, CancellationToken ct)
+    private async Task AppendRouteEventAsync(WhatsAppNicheRouteOfferRequest request, WhatsAppNicheRouteOfferInput offer, WhatsAppNicheRouteResult result, OfferImageResolutionResult? image, CancellationToken ct)
     {
         var trackingId = result.TrackingUrl is null ? null : result.TrackingUrl.Split('/').LastOrDefault();
         var resolvedOfferId = TrackingIdDecorator.Resolve(request.OfferId ?? string.Empty).LookupId;
@@ -1122,7 +1122,9 @@ public sealed partial class WhatsAppNicheGroupService
             TrackingUrl = result.TrackingUrl,
             TrackingId = trackingId,
             TargetGroupId = result.TargetGroupId,
-            HadImage = hadImage,
+            HadImage = image is not null,
+            ImageSource = image?.Source,
+            ResolvedImageUrl = image?.ResolvedImageUrl,
             ReusedCanonicalTracking = IsCanonicalOfferTrackingId(resolvedOfferId)
         }, ct);
     }
