@@ -139,6 +139,15 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
             target = tracking?.TargetUrl ?? url;
         }
 
+        if (LooksLikeBioOrHubUrl(target))
+        {
+            _logger.LogWarning(
+                "Oferta ignorada no auto-route por URL institucional ou de grupo. MessageId={MessageId} Url={Url}",
+                entry.MessageId,
+                target);
+            return Array.Empty<WhatsAppNicheRouteOfferRequest>();
+        }
+
         return ResolveTargetCategories(category, title)
             .Select(targetCategory => new WhatsAppNicheRouteOfferRequest(
                 title,
@@ -165,7 +174,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var categories = new List<string> { primaryCategory };
         var normalized = Normalize(title ?? string.Empty);
 
-        if (ContainsAny(normalized, "lixeira inteligente", "lixeira com sensor", "lampada inteligente", "aspirador robo", "smart home"))
+        if (ContainsAny(normalized, "lixeira inteligente", "lixeira com sensor", "lampada inteligente", "aspirador robo", "smart home", "mesa de apoio"))
         {
             AddHybridCategory(categories, WhatsAppNicheDefinitions.Casa);
             AddHybridCategory(categories, WhatsAppNicheDefinitions.Tech);
@@ -249,7 +258,8 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         => InstitutionalUrlGuard.ShouldPreserve(url)
            || url.Contains("bio.reidasofertas", StringComparison.OrdinalIgnoreCase)
            || url.Contains("destaque", StringComparison.OrdinalIgnoreCase)
-           || url.Contains("grupo-vip", StringComparison.OrdinalIgnoreCase);
+           || url.Contains("grupo-vip", StringComparison.OrdinalIgnoreCase)
+           || url.Contains("chat.whatsapp.com", StringComparison.OrdinalIgnoreCase);
 
     private static string? ExtractTitle(string text)
     {
@@ -283,7 +293,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
 
         return text.Split('\n')
             .Select(x => x.Trim().Trim('*'))
-            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)
+            .FirstOrDefault(x => IsLikelyProductTitle(x)
                                  && !x.StartsWith("Preco", StringComparison.OrdinalIgnoreCase)
                                  && !x.StartsWith("Preço", StringComparison.OrdinalIgnoreCase)
                                  && !x.StartsWith("Loja", StringComparison.OrdinalIgnoreCase)
@@ -304,13 +314,18 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
             return false;
         }
 
+        if (LooksLikeGenericPromoLine(normalized))
+        {
+            return false;
+        }
+
         return normalized.Length >= 8
                && ContainsAny(
                    normalized,
-                   "iphone", "celular", "smartphone", "fone", "notebook", "monitor", "gamer", "carregador", "teclado", "mouse", "ssd", "tv",
+                   "iphone", "celular", "smartphone", "fone", "notebook", "monitor", "gamer", "carregador", "teclado", "mouse", "ssd", "tv", "camera", "dji", "osmo", "gopro",
                    "chapinha", "perfume", "skincare", "creme", "maquiagem", "cabelo", "secador", "shampoo", "gloss", "batom",
                    "whey", "creatina", "pre treino", "pre-treino", "suplemento", "vitamina",
-                   "cozinha", "pote", "marmita", "cadeira", "organizador", "mesa", "banho", "casa", "panela", "air fryer", "toalha", "tapete", "purificador", "filtro",
+                   "cozinha", "pote", "marmita", "cadeira", "organizador", "mesa", "banho", "casa", "panela", "air fryer", "toalha", "tapete", "purificador", "filtro", "tinta", "ferramenta",
                    "calca", "tenis", "meia", "cueca", "camiseta", "bolsa", "sandalia", "vestido", "terno", "paleto", "blazer", "puma", "kappa", "reebok");
     }
 
@@ -330,13 +345,14 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
                || value.StartsWith("Pegar oferta", StringComparison.OrdinalIgnoreCase)
                || value.StartsWith("Link", StringComparison.OrdinalIgnoreCase)
                || value.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+               || PriceOnlyRegex().IsMatch(value)
                || value.Contains("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? ClassifyForActiveNiche(string? title)
     {
         var text = Normalize(title ?? string.Empty);
-        if (ContainsAny(text, "iphone", "celular", "smartphone", "fone", "headset", "notebook", "monitor", "smart tv", "qled", "oled", "pc gamer", "gamer", "carregador", "teclado", "mouse", "ssd", "placa de video", "processador", "ryzen", "rtx", "periferico", "caixa de som"))
+        if (ContainsAny(text, "iphone", "celular", "smartphone", "fone", "headset", "notebook", "monitor", "smart tv", "qled", "oled", "pc gamer", "gamer", "carregador", "teclado", "mouse", "ssd", "placa de video", "processador", "ryzen", "rtx", "periferico", "caixa de som", "camera", "dji", "osmo", "gopro"))
         {
             return WhatsAppNicheDefinitions.Tech;
         }
@@ -351,12 +367,13 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
             return WhatsAppNicheDefinitions.Beleza;
         }
 
-        if (ContainsAny(text, "cozinha", "pote", "potes", "hermetico", "marmita", "cadeira", "organizador", "mesa", "banho", "casa", "panela", "air fryer", "toalha", "tapete", "assadeira", "cama", "beliche", "sofa", "almofada", "guarda roupa", "armario", "balcao", "comoda", "lixeira", "jogo de jantar", "sala de jantar", "travesseiro", "mixer", "liquidificador", "batedeira", "eletroportatil", "porta escova", "saboneteira", "purificador", "filtro"))
+        if (ContainsAny(text, "cozinha", "pote", "potes", "hermetico", "marmita", "cadeira", "organizador", "mesa", "banho", "casa", "panela", "air fryer", "toalha", "tapete", "assadeira", "cama", "beliche", "sofa", "almofada", "guarda roupa", "armario", "balcao", "comoda", "lixeira", "jogo de jantar", "sala de jantar", "travesseiro", "mixer", "liquidificador", "batedeira", "eletroportatil", "porta escova", "saboneteira", "purificador", "filtro", "tinta", "ferramenta", "bolsa ferramenta", "bolsa de ferramenta"))
         {
             return WhatsAppNicheDefinitions.Casa;
         }
 
-        if (ContainsAny(text, "calca", "tenis", "meia", "cueca", "camiseta", "camisa", "bolsa", "mochila", "sandalia", "vestido", "pijama", "sobretudo", "kimono", "blusa", "tricot", "terno", "paleto", "blazer", "lupo", "puma", "kappa", "reebok", "calvin klein"))
+        if (!ContainsAny(text, "bolsa ferramenta", "bolsa de ferramenta", "tinta")
+            && ContainsAny(text, "calca", "tenis", "meia", "cueca", "camiseta", "camisa", "bolsa", "mochila", "sandalia", "vestido", "pijama", "sobretudo", "kimono", "blusa", "tricot", "terno", "paleto", "blazer", "lupo", "puma", "kappa", "reebok", "calvin klein"))
         {
             return WhatsAppNicheDefinitions.Moda;
         }
@@ -457,6 +474,17 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         return new string(normalized.Where(ch => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark).ToArray());
     }
 
+    private static bool LooksLikeGenericPromoLine(string normalized)
+        => ContainsAny(
+            normalized,
+            "para deixar o link ativo",
+            "sei que voce precisa",
+            "e uma cozinha toda nova",
+            "pra quem quer ter",
+            "unico cardio",
+            "corre aqui antes",
+            "achadinho mercado livre selecionado");
+
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlRegex();
 
@@ -480,6 +508,9 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
 
     [GeneratedRegex(@"R\$\s*[0-9.]+,[0-9]{2}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PriceRegex();
+
+    [GeneratedRegex(@"^\s*(?:[^\p{L}\p{N}]*\s*)?R\$\s*[0-9.]+,[0-9]{2}\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PriceOnlyRegex();
 
     [GeneratedRegex(@"Comiss[aã]o da oferta:\s*\*?([^*\r\n]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CommissionRegex();

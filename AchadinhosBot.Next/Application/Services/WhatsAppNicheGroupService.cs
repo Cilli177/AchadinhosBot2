@@ -866,7 +866,8 @@ public sealed partial class WhatsAppNicheGroupService
         => InstitutionalUrlGuard.ShouldPreserve(url)
            || url.Contains("bio.reidasofertas", StringComparison.OrdinalIgnoreCase)
            || url.Contains("destaque", StringComparison.OrdinalIgnoreCase)
-           || url.Contains("grupo-vip", StringComparison.OrdinalIgnoreCase);
+           || url.Contains("grupo-vip", StringComparison.OrdinalIgnoreCase)
+           || url.Contains("chat.whatsapp.com", StringComparison.OrdinalIgnoreCase);
 
     private static string BuildGeneratedOfferMessage(WhatsAppNicheRouteOfferInput offer, string trackedUrl, string slug)
     {
@@ -1131,7 +1132,7 @@ public static partial class WhatsAppNicheClassifier
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.FitnessHealth, false, "termos_fitness_health", 90);
         }
 
-        if (ContainsAny(text, "celular", "smartphone", "iphone", "fone", "headset", "notebook", "laptop", "smart home", "alexa", "periferico", "teclado", "mouse", "game", "gamer", "console", "ssd", "monitor"))
+        if (ContainsAny(text, "celular", "smartphone", "iphone", "fone", "headset", "notebook", "laptop", "smart home", "alexa", "periferico", "teclado", "mouse", "game", "gamer", "console", "ssd", "monitor", "camera", "dji", "osmo", "gopro"))
         {
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Tech, false, "termos_tech", 90);
         }
@@ -1141,12 +1142,13 @@ public static partial class WhatsAppNicheClassifier
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Beleza, false, "termos_beleza", 90);
         }
 
-        if (ContainsAny(text, "cozinha", "organizador", "organizacao", "casa", "decoracao", "cama", "mesa", "banho", "utensilio", "panela", "air fryer", "limpeza", "purificador", "filtro"))
+        if (ContainsAny(text, "cozinha", "organizador", "organizacao", "casa", "decoracao", "cama", "mesa", "banho", "utensilio", "panela", "air fryer", "limpeza", "purificador", "filtro", "tinta", "ferramenta", "bolsa ferramenta", "bolsa de ferramenta"))
         {
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Casa, false, "termos_casa", 90);
         }
 
-        if (ContainsAny(text, "vestido", "camiseta", "blusa", "calca", "tenis", "sandalia", "bolsa", "relogio", "oculos", "moda", "calcado", "acessorio", "terno", "paleto", "blazer"))
+        if (!ContainsAny(text, "bolsa ferramenta", "bolsa de ferramenta", "tinta")
+            && ContainsAny(text, "vestido", "camiseta", "blusa", "calca", "tenis", "sandalia", "bolsa", "relogio", "oculos", "moda", "calcado", "acessorio", "terno", "paleto", "blazer"))
         {
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Moda, false, "termos_moda", 90);
         }

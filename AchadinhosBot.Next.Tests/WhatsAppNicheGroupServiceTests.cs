@@ -36,6 +36,42 @@ public sealed class WhatsAppNicheGroupServiceTests
         Assert.Equal(WhatsAppNicheDefinitions.Tech, decision.Slug);
     }
 
+    [Theory]
+    [InlineData("Camera DJI Osmo Pocket 3 Creator Kit")]
+    [InlineData("GoPro Hero 13")]
+    public void Classify_RoutesCameraTerms_ToTech(string title)
+    {
+        var decision = WhatsAppNicheClassifier.Classify(new WhatsAppNicheRouteOfferInput(
+            title,
+            "https://example.com/camera",
+            "Mercado Livre",
+            null,
+            "R$ 1.999,90",
+            null,
+            null));
+
+        Assert.False(decision.RequiresReview);
+        Assert.Equal(WhatsAppNicheDefinitions.Tech, decision.Slug);
+    }
+
+    [Theory]
+    [InlineData("Tinta Extra Piso Eucatex 18L")]
+    [InlineData("Bolsa de ferramentas reforcada 16 bolsos")]
+    public void Classify_RoutesHomeMaintenanceTerms_ToCasa(string title)
+    {
+        var decision = WhatsAppNicheClassifier.Classify(new WhatsAppNicheRouteOfferInput(
+            title,
+            "https://example.com/casa",
+            "Loja",
+            null,
+            "R$ 129,90",
+            null,
+            null));
+
+        Assert.False(decision.RequiresReview);
+        Assert.Equal(WhatsAppNicheDefinitions.Casa, decision.Slug);
+    }
+
     [Fact]
     public void Classify_AmbiguousOffer_RequiresReview()
     {
