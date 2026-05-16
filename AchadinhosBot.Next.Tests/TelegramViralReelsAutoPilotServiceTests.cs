@@ -187,6 +187,7 @@ public sealed class TelegramViralReelsAutoPilotServiceTests
             telegram,
             logs,
             whatsApp,
+            null!,
             Options.Create(new EvolutionOptions { InstanceName = "ZapOfertas" }),
             NullLogger<TelegramViralReelsAutoPilotService>.Instance);
 

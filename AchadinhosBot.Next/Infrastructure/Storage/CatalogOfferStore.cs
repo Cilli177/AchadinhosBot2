@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
@@ -255,7 +256,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
                     item.AffiliateValidationError = secured.Error;
                     item.AffiliateValidatedAt = DateTimeOffset.UtcNow;
                     item.OfferUrl = secured.AffiliateTargetUrl ?? sourceUrl.Trim();
-                    item.Active = secured.IsValid;
+                    item.Active = secured.IsValid && !string.IsNullOrWhiteSpace(item.ImageUrl);
                     item.UpdatedAt = DateTimeOffset.UtcNow;
                     changed = true;
                 }
@@ -337,7 +338,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
             existing.PostType = NormalizePostType(draft.PostType);
             existing.CatalogTarget = target;
             existing.Niche = ResolveNicheFromDraft(draft);
-            existing.Active = secured.IsValid;
+            existing.Active = secured.IsValid && !string.IsNullOrWhiteSpace(existing.ImageUrl);
             existing.PublishedAt = draft.CreatedAt;
             existing.UpdatedAt = now;
             
@@ -1123,8 +1124,7 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
     private string BuildTrackingUrl(string trackingId)
     {
         var baseUrl = NormalizePublicBaseUrl(_webhookOptions.PublicBaseUrl);
-        var query = "src=c&camp=catalogo_prod";
-        return $"{baseUrl}/r/{Uri.EscapeDataString(trackingId)}?{query}";
+        return $"{baseUrl}/r/{Uri.EscapeDataString(TrackingIdDecorator.Decorate(trackingId, "catalogo_prod"))}";
     }
 
     private static string NormalizePublicBaseUrl(string? publicBaseUrl)

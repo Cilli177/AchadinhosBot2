@@ -3090,13 +3090,13 @@ function renderSettings(s) {
     setSafeChecked('igViralReelsEnabled', !!pub.viralReelsAutoPilotEnabled);
     setSafeVal('igViralReelsSourceChatId', pub.viralReelsSourceTelegramChatId ?? 2425105459);
     setSafeVal('igViralReelsIntervalHours', pub.viralReelsIntervalHours ?? 12);
-    setSafeVal('igViralReelsScheduleTimes', Array.isArray(pub.viralReelsScheduleTimes) ? pub.viralReelsScheduleTimes.join(', ') : '07:30, 17:30');
+    setSafeVal('igViralReelsScheduleTimes', Array.isArray(pub.viralReelsScheduleTimes) ? pub.viralReelsScheduleTimes.join(', ') : '07:30, 11:30, 14:30, 17:30');
     setSafeVal('igViralReelsLookbackHours', pub.viralReelsLookbackHours ?? 24);
     setSafeVal('igViralReelsRepeatWindowHours', pub.viralReelsRepeatWindowHours ?? 72);
     setSafeChecked('igViralReelsSendApproval', pub.viralReelsSendForApproval ?? true);
     setSafeVal('igViralReelsApprovalWhatsAppGroupId', pub.viralReelsApprovalWhatsAppGroupId || '');
     setSafeVal('igViralReelsApprovalWhatsAppInstanceName', pub.viralReelsApprovalWhatsAppInstanceName || 'ZapOfertas');
-    setSafeChecked('igViralReelsAutoPublish', false);
+    setSafeChecked('igViralReelsAutoPublish', !!pub.viralReelsAutoPublishEnabled);
 
     const story = s.instagramStory || {};
     setSafeVal('igStoryToken', story.accessToken || '');
@@ -3939,7 +3939,7 @@ async function saveInstagramPublishSettings() {
   existing.instagramPublish.viralReelsAutoPilotEnabled = document.getElementById('igViralReelsEnabled')?.checked ?? false;
   existing.instagramPublish.viralReelsSourceTelegramChatId = parseInt(document.getElementById('igViralReelsSourceChatId')?.value || '2425105459', 10) || 2425105459;
   existing.instagramPublish.viralReelsIntervalHours = parseInt(document.getElementById('igViralReelsIntervalHours')?.value || '12', 10) || 12;
-  existing.instagramPublish.viralReelsScheduleTimes = String(document.getElementById('igViralReelsScheduleTimes')?.value || '07:30,17:30')
+  existing.instagramPublish.viralReelsScheduleTimes = String(document.getElementById('igViralReelsScheduleTimes')?.value || '07:30,11:30,14:30,17:30')
     .split(',')
     .map(x => x.trim())
     .filter(Boolean);
@@ -7133,7 +7133,8 @@ function renderWhatsAppNicheGroups(groups) {
           </div>
           <div>
             <label>Limite diario</label>
-            <input id="waNicheDailyLimit-${slug}" type="number" min="0" max="50" class="form-control" value="${escapeHtml(String(group.dailyLimit || 0))}" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+            <input id="waNicheDailyLimit-${slug}" type="number" min="0" max="10000" class="form-control" value="${escapeHtml(String(group.dailyLimit || 0))}" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+            <small class="muted">Use 0 para rodar sem limite durante testes.</small>
           </div>
           <div style="grid-column: 1 / -1;">
             <label>Link oficial de convite</label>
@@ -7189,7 +7190,7 @@ async function saveWhatsAppNicheGroup(slug) {
     groupId: read('waNicheGroupId') || null,
     inviteUrl: read('waNicheInviteUrl') || null,
     campaign: read('waNicheCampaign') || `niche_${slug}`,
-    dailyLimit: Number.isFinite(dailyLimitRaw) && dailyLimitRaw > 0 ? dailyLimitRaw : null
+    dailyLimit: Number.isFinite(dailyLimitRaw) && dailyLimitRaw >= 0 ? dailyLimitRaw : null
   };
 
   setSafeText('waNicheStatus', `Salvando ${slug}...`);

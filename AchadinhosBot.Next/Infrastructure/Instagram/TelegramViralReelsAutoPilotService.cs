@@ -21,6 +21,7 @@ public sealed class TelegramViralReelsAutoPilotService
     private readonly ITelegramUserbotService _telegramUserbot;
     private readonly IInstagramPublishLogStore _publishLogStore;
     private readonly IWhatsAppTransport _whatsAppTransport;
+    private readonly ReelAutoPublishService _reelAutoPublishService;
     private readonly EvolutionOptions _evolutionOptions;
     private readonly ILogger<TelegramViralReelsAutoPilotService> _logger;
 
@@ -29,6 +30,7 @@ public sealed class TelegramViralReelsAutoPilotService
         ITelegramUserbotService telegramUserbot,
         IInstagramPublishLogStore publishLogStore,
         IWhatsAppTransport whatsAppTransport,
+        ReelAutoPublishService reelAutoPublishService,
         IOptions<EvolutionOptions> evolutionOptions,
         ILogger<TelegramViralReelsAutoPilotService> logger)
     {
@@ -36,6 +38,7 @@ public sealed class TelegramViralReelsAutoPilotService
         _telegramUserbot = telegramUserbot;
         _publishLogStore = publishLogStore;
         _whatsAppTransport = whatsAppTransport;
+        _reelAutoPublishService = reelAutoPublishService;
         _evolutionOptions = evolutionOptions.Value;
         _logger = logger;
     }
@@ -95,11 +98,6 @@ public sealed class TelegramViralReelsAutoPilotService
                 cancellationToken);
         }
 
-        if (publish.ViralReelsAutoPublishEnabled)
-        {
-            _logger.LogWarning("Viral Reels auto publish is configured true, but this phase keeps publishing disabled.");
-        }
-
         var draft = await _telegramUserbot.CreateLatestReelDraftAsync(
             new TelegramUserbotCreateReelDraftRequest(sourceChatId, selected.MessageId, perChatLimit),
             cancellationToken);
@@ -124,6 +122,24 @@ public sealed class TelegramViralReelsAutoPilotService
 
         var approvalSent = false;
         string? approvalTarget = null;
+        if (publish.ViralReelsAutoPublishEnabled)
+        {
+            var autoPublish = await _reelAutoPublishService.ApprovePublishAndVerifyAsync(draft.DraftId, cancellationToken);
+            if (string.Equals(publish.ViralReelsApprovalChannel, "whatsapp", StringComparison.OrdinalIgnoreCase))
+            {
+                var groupId = publish.ViralReelsApprovalWhatsAppGroupId?.Trim();
+                if (!string.IsNullOrWhiteSpace(groupId))
+                {
+                    var instanceName = FirstNotEmpty(publish.ViralReelsApprovalWhatsAppInstanceName, _evolutionOptions.InstanceName);
+                    var feedback = await _whatsAppTransport.SendTextAsync(instanceName, groupId, BuildAutoPublishFeedbackMessage(autoPublish), cancellationToken);
+                    approvalSent = feedback.Success;
+                    approvalTarget = groupId;
+                }
+            }
+
+            return new TelegramViralReelsAutoPilotRunResult(autoPublish.Success, autoPublish.Success ? "viral_reel_auto_published" : "viral_reel_auto_publish_failed", sourceKey, draft.DraftId, approvalSent, approvalTarget);
+        }
+
         if (publish.ViralReelsSendForApproval && string.Equals(publish.ViralReelsApprovalChannel, "whatsapp", StringComparison.OrdinalIgnoreCase))
         {
             var groupId = publish.ViralReelsApprovalWhatsAppGroupId?.Trim();
@@ -311,6 +327,21 @@ public sealed class TelegramViralReelsAutoPilotService
         sb.AppendLine("- ajustar: gera uma nova versão de legenda com IA");
         sb.AppendLine();
         sb.AppendLine("Publicação automática no Instagram: desativada. Aprovar não publica automaticamente.");
+        return sb.ToString().Trim();
+    }
+
+    private static string BuildAutoPublishFeedbackMessage(ReelAutoPublishResult result)
+    {
+        var status = result.Success ? "✅" : "⚠️";
+        var sb = new StringBuilder();
+        sb.AppendLine($"{status} *REEL AUTOMATICO*");
+        sb.AppendLine();
+        sb.AppendLine($"Draft: `{result.DraftId[..Math.Min(8, result.DraftId.Length)]}`");
+        sb.AppendLine($"Produto: *{result.ProductName ?? "-"}*");
+        sb.AppendLine($"Reels: {(result.InstagramPosted ? "ok" : $"falhou ({result.InstagramError ?? "sem detalhe"})")}");
+        sb.AppendLine($"Catalogo: {(result.CatalogVerified ? "ok" : $"falhou ({result.CatalogError ?? "nao confirmado"})")}");
+        sb.AppendLine($"WhatsApp geral: {(result.GeneralWhatsAppPosted ? "ok" : $"falhou ({result.GeneralWhatsAppError ?? "nao confirmado"})")}");
+        sb.AppendLine($"WhatsApp nicho: {(result.NicheWhatsAppPosted ? $"ok ({result.NicheSlug})" : $"falhou ({result.NicheMessage ?? "nao confirmado"})")}");
         return sb.ToString().Trim();
     }
 

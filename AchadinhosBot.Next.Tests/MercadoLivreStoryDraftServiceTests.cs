@@ -36,6 +36,33 @@ public sealed class MercadoLivreStoryDraftServiceTests
     }
 
     [Fact]
+    public void GetCurrentStorySlot_ReturnsLatestDueSlotOnlyOnce()
+    {
+        var settings = new MercadoLivreAffiliateScoutSettings
+        {
+            StoryScheduleTimes = new List<string> { "09:00", "11:00", "13:00" }
+        };
+        var nowUtc = new DateTimeOffset(2026, 4, 30, 14, 5, 0, TimeSpan.Zero);
+
+        var slot = MercadoLivreStoryDraftService.GetCurrentStorySlot(settings, Array.Empty<InstagramPublishDraft>(), nowUtc);
+
+        Assert.Equal(new DateTimeOffset(2026, 4, 30, 14, 0, 0, TimeSpan.Zero), slot);
+
+        var existing = new[]
+        {
+            new InstagramPublishDraft
+            {
+                PostType = "story",
+                SourceDataOrigin = "mercadolivre_scout_story",
+                ScheduledFor = slot,
+                Status = "draft"
+            }
+        };
+
+        Assert.Null(MercadoLivreStoryDraftService.GetCurrentStorySlot(settings, existing, nowUtc));
+    }
+
+    [Fact]
     public void Compose_AddsStoryBadgeAndReturnsJpeg()
     {
         using var image = new Image<Rgba32>(320, 320, Color.White);

@@ -29,21 +29,21 @@ public static partial class OfficialWhatsAppGroupGuard
             return new OfficialWhatsAppGroupGuardResult(false, "no_urls", "Oferta sem links.");
         }
 
-        var mercadoLivreUrl = urls.FirstOrDefault(IsMercadoLivreUrl);
-        if (!string.IsNullOrWhiteSpace(mercadoLivreUrl))
+        var insecureTrackingUrl = urls.FirstOrDefault(IsInsecureTrackedOfferUrl);
+        if (!string.IsNullOrWhiteSpace(insecureTrackingUrl))
         {
-            return new OfficialWhatsAppGroupGuardResult(false, "mercado_livre_paused", $"Envios Mercado Livre pausados ate validacao segura: {mercadoLivreUrl}");
+            return new OfficialWhatsAppGroupGuardResult(false, "insecure_tracking_link", $"Link rastreado nao permitido no grupo oficial: {insecureTrackingUrl}");
         }
 
-        var genericTrackingUrl = urls.FirstOrDefault(IsGenericTrackedOfferUrl);
-        if (!string.IsNullOrWhiteSpace(genericTrackingUrl))
+        var trackedWithVisibleAttribution = urls.FirstOrDefault(HasVisibleTrackingAttribution);
+        if (!string.IsNullOrWhiteSpace(trackedWithVisibleAttribution))
         {
-            return new OfficialWhatsAppGroupGuardResult(false, "generic_tracking_link", $"Link rastreado generico nao permitido no grupo oficial: {genericTrackingUrl}");
+            return new OfficialWhatsAppGroupGuardResult(false, "visible_tracking_query", $"Link rastreado deve usar ID decorado, sem src/camp visivel: {trackedWithVisibleAttribution}");
         }
 
-        if (!urls.Any(IsTrackedOfferUrl))
+        if (!urls.Any(IsAllowedTrackedOfferUrl))
         {
-            return new OfficialWhatsAppGroupGuardResult(false, "no_tracked_offer_link", "Grupo oficial exige link rastreado do dominio oficial.");
+            return new OfficialWhatsAppGroupGuardResult(false, "no_tracked_offer_link", "Grupo oficial exige link rastreado aprovado do dominio oficial.");
         }
 
         var rawMarketplaceUrl = urls.FirstOrDefault(IsRawMarketplaceUrl);
@@ -66,15 +66,55 @@ public static partial class OfficialWhatsAppGroupGuard
     private static bool IsTrackedOfferUrl(string url)
         => url.Contains("reidasofertas.ia.br/r/", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsGenericTrackedOfferUrl(string url)
-        => Regex.IsMatch(url, @"reidasofertas\.ia\.br/r/LK-", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static bool IsAllowedTrackedOfferUrl(string url)
+        => TryExtractTrackingId(url, out var id) && TrackingIdDecorator.IsAllowedOfferTrackingId(id);
 
-    private static bool IsMercadoLivreUrl(string url)
-        => url.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
-           || url.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase)
-           || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
-           || url.Contains("meli.co", StringComparison.OrdinalIgnoreCase)
-           || Regex.IsMatch(url, @"reidasofertas\.ia\.br/r/ML-", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static bool IsInsecureTrackedOfferUrl(string url)
+    {
+        if (!TryExtractTrackingId(url, out var id))
+        {
+            return false;
+        }
+
+        return TrackingIdDecorator.IsBlockedOfferTrackingId(id)
+               || !TrackingIdDecorator.IsAllowedOfferTrackingId(id);
+    }
+
+    private static bool HasVisibleTrackingAttribution(string url)
+    {
+        if (!IsTrackedOfferUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var query = uri.Query;
+        return query.Contains("src=", StringComparison.OrdinalIgnoreCase)
+               || query.Contains("camp=", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryExtractTrackingId(string url, out string id)
+    {
+        id = string.Empty;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) &&
+            !uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var match = Regex.Match(uri.AbsolutePath, @"^/r/([^/?#]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        id = Uri.UnescapeDataString(match.Groups[1].Value);
+        return true;
+    }
 
     private static bool IsAllowedNonOfferUrl(string url)
         => url.Contains("reidasofertas.ia.br/bio", StringComparison.OrdinalIgnoreCase)
@@ -95,8 +135,12 @@ public static partial class OfficialWhatsAppGroupGuard
                || url.Contains("meli.la", StringComparison.OrdinalIgnoreCase)
                || url.Contains("meli.co", StringComparison.OrdinalIgnoreCase)
                || (url.Contains("shopee.", StringComparison.OrdinalIgnoreCase) && !url.Contains("shope.ee", StringComparison.OrdinalIgnoreCase))
+               || url.Contains("magalu", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("magazineluiza", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("magazinevoce", StringComparison.OrdinalIgnoreCase)
                || url.Contains("compre.link", StringComparison.OrdinalIgnoreCase)
-               || url.Contains("bit.ly", StringComparison.OrdinalIgnoreCase);
+               || url.Contains("bit.ly", StringComparison.OrdinalIgnoreCase)
+               || url.Contains("tidd.ly", StringComparison.OrdinalIgnoreCase);
     }
 
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

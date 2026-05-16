@@ -1,6 +1,9 @@
 using System.Net.Http.Headers;
+using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Logs;
@@ -14,12 +17,15 @@ namespace AchadinhosBot.Next.Infrastructure.MercadoLivre;
 public sealed class MercadoLivreStoryDraftService
 {
     private const string SourceOrigin = "mercadolivre_scout_story";
+    private const int StorySelectionLookbackHours = 2;
+    private const int StoryCandidateRetentionHours = 8;
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IInstagramPublishStore _publishStore;
     private readonly IInstagramPublishLogStore _publishLogStore;
     private readonly IMediaStore _mediaStore;
     private readonly IWhatsAppGateway _whatsAppGateway;
+    private readonly StoryAutoPublishService _storyAutoPublishService;
     private readonly WebhookOptions _webhookOptions;
     private readonly EvolutionOptions _evolutionOptions;
     private readonly ILogger<MercadoLivreStoryDraftService> _logger;
@@ -30,6 +36,7 @@ public sealed class MercadoLivreStoryDraftService
         IInstagramPublishLogStore publishLogStore,
         IMediaStore mediaStore,
         IWhatsAppGateway whatsAppGateway,
+        StoryAutoPublishService storyAutoPublishService,
         IOptions<WebhookOptions> webhookOptions,
         IOptions<EvolutionOptions> evolutionOptions,
         ILogger<MercadoLivreStoryDraftService> logger)
@@ -39,6 +46,7 @@ public sealed class MercadoLivreStoryDraftService
         _publishLogStore = publishLogStore;
         _mediaStore = mediaStore;
         _whatsAppGateway = whatsAppGateway;
+        _storyAutoPublishService = storyAutoPublishService;
         _webhookOptions = webhookOptions.Value;
         _evolutionOptions = evolutionOptions.Value;
         _logger = logger;
@@ -50,96 +58,149 @@ public sealed class MercadoLivreStoryDraftService
         CancellationToken ct)
     {
         var result = new MercadoLivreStoryDraftRunResult();
-        if (!settings.CreateStoryDrafts || offers.Count == 0)
+        if (!settings.CreateStoryDrafts)
         {
             return result;
         }
 
-        var allDrafts = await _publishStore.ListAsync(ct);
         var nowUtc = DateTimeOffset.UtcNow;
-        var slots = GetNextAvailableStorySlots(settings, allDrafts, nowUtc)
-            .Take(Math.Clamp(settings.StoryDraftsPerDay, 1, 24))
-            .ToList();
-        if (slots.Count == 0)
+        var recentCandidates = await UpdateRecentCandidatesAsync(offers, nowUtc, ct);
+        var allDrafts = await _publishStore.ListAsync(ct);
+        var slot = GetCurrentStorySlot(settings, allDrafts, nowUtc);
+        if (!slot.HasValue)
         {
-            result.Message = "no_story_slots_available";
+            result.Message = "no_story_slot_due";
             return result;
         }
 
         var usedKeys = LoadRecentStoryKeys(allDrafts, settings, nowUtc);
-        foreach (var offer in offers)
+        var bestCandidate = recentCandidates
+            .Where(candidate => candidate.CapturedAtUtc >= nowUtc.AddHours(-StorySelectionLookbackHours))
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Key) && !usedKeys.Contains(candidate.Key))
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenByDescending(candidate => candidate.CapturedAtUtc)
+            .FirstOrDefault();
+        if (bestCandidate is null)
         {
-            if (result.CreatedCount >= slots.Count)
+            result.SkippedCount = recentCandidates.Count;
+            result.Message = "no_story_candidate_in_window";
+            return result;
+        }
+
+        var offer = bestCandidate.ToOffer();
+        var offerUrl = FirstNotEmpty(offer.SharedUrl, offer.ProductUrl);
+        try
+        {
+            var mediaUrl = await BuildStoryMediaUrlAsync(offer, ct);
+            var originalImageUrl = string.IsNullOrWhiteSpace(offer.ImageUrl) ? null : offer.ImageUrl!.Trim();
+            var publishImageUrls = new List<string>();
+            var catalogImageUrls = new List<string>();
+            if (!string.IsNullOrWhiteSpace(originalImageUrl))
             {
-                break;
+                catalogImageUrls.Add(originalImageUrl);
             }
 
-            var offerUrl = FirstNotEmpty(offer.SharedUrl, offer.ProductUrl);
-            var key = NormalizeUrlKey(offerUrl);
-            if (string.IsNullOrWhiteSpace(key) || usedKeys.Contains(key))
+            if (!string.IsNullOrWhiteSpace(mediaUrl))
             {
-                result.SkippedCount++;
-                continue;
+                publishImageUrls.Add(mediaUrl);
+            }
+            else if (!string.IsNullOrWhiteSpace(originalImageUrl))
+            {
+                publishImageUrls.Add(originalImageUrl);
             }
 
-            try
+            var draft = BuildDraft(offer, offerUrl, publishImageUrls, catalogImageUrls, slot.Value);
+            await _publishStore.SaveAsync(draft, ct);
+            await AppendLogAsync(
+                "mercadolivre_story_draft_created",
+                true,
+                draft.Id,
+                $"Url={Sanitize(offerUrl)};ScheduledFor={slot.Value:O};ImageEdited={!string.IsNullOrWhiteSpace(mediaUrl)};CatalogImageOriginal={catalogImageUrls.Count > 0};CatalogTarget={draft.CatalogTarget};SelectionScore={bestCandidate.Score:0.##};WindowHours={StorySelectionLookbackHours}",
+                ct);
+
+            result.CreatedCount = 1;
+
+            if (settings.StoryAutoApproveAndPublish)
             {
-                var scheduledFor = slots[result.CreatedCount];
-                var mediaUrl = await BuildStoryMediaUrlAsync(offer, ct);
-                var originalImageUrl = string.IsNullOrWhiteSpace(offer.ImageUrl) ? null : offer.ImageUrl!.Trim();
-                var publishImageUrls = new List<string>();
-                var catalogImageUrls = new List<string>();
-                if (!string.IsNullOrWhiteSpace(originalImageUrl))
+                var autoPublish = await _storyAutoPublishService.ApprovePublishAndVerifyAsync(draft.Id, ct);
+                await SendAutoPublishResultAsync(draft, settings, autoPublish, ct);
+            }
+            else if (settings.StorySendForApproval)
+            {
+                var approval = await SendApprovalAsync(draft, settings, ct);
+                if (approval.Success)
                 {
-                    catalogImageUrls.Add(originalImageUrl);
+                    result.ApprovalSentCount++;
                 }
-
-                if (!string.IsNullOrWhiteSpace(mediaUrl))
+                else
                 {
-                    publishImageUrls.Add(mediaUrl);
-                }
-                else if (!string.IsNullOrWhiteSpace(originalImageUrl))
-                {
-                    publishImageUrls.Add(originalImageUrl);
-                }
-
-                var draft = BuildDraft(offer, offerUrl, publishImageUrls, catalogImageUrls, scheduledFor);
-                await _publishStore.SaveAsync(draft, ct);
-                await AppendLogAsync(
-                    "mercadolivre_story_draft_created",
-                    true,
-                    draft.Id,
-                    $"Url={Sanitize(offerUrl)};ScheduledFor={scheduledFor:O};ImageEdited={!string.IsNullOrWhiteSpace(mediaUrl)};CatalogImageOriginal={catalogImageUrls.Count > 0};CatalogTarget={draft.CatalogTarget}",
-                    ct);
-
-                result.CreatedCount++;
-                usedKeys.Add(key);
-
-                if (settings.StorySendForApproval)
-                {
-                    var approval = await SendApprovalAsync(draft, settings, ct);
-                    if (approval.Success)
-                    {
-                        result.ApprovalSentCount++;
-                    }
-                    else
-                    {
-                        result.ApprovalFailedCount++;
-                    }
+                    result.ApprovalFailedCount++;
                 }
             }
-            catch (Exception ex)
-            {
-                result.FailedCount++;
-                _logger.LogWarning(ex, "Falha ao criar story ML para oferta {Title}", offer.Title);
-                await AppendLogAsync("mercadolivre_story_draft_failed", false, null, $"Url={Sanitize(offerUrl)};Error={Sanitize(ex.Message)}", ct);
-            }
+        }
+        catch (Exception ex)
+        {
+            result.FailedCount++;
+            _logger.LogWarning(ex, "Falha ao criar story ML para oferta {Title}", offer.Title);
+            await AppendLogAsync("mercadolivre_story_draft_failed", false, null, $"Url={Sanitize(offerUrl)};Error={Sanitize(ex.Message)}", ct);
         }
 
         result.Success = true;
         result.Message = $"created={result.CreatedCount};approvalSent={result.ApprovalSentCount};skipped={result.SkippedCount};failed={result.FailedCount}";
         return result;
     }
+
+    private async Task<List<MercadoLivreStoryCandidate>> UpdateRecentCandidatesAsync(
+        IReadOnlyList<MercadoLivreAffiliateScoutOffer> offers,
+        DateTimeOffset nowUtc,
+        CancellationToken ct)
+    {
+        var candidates = await ReadCandidatesAsync(ct);
+        foreach (var offer in offers)
+        {
+            var key = NormalizeUrlKey(FirstNotEmpty(offer.SharedUrl, offer.ProductUrl));
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            candidates.RemoveAll(candidate => string.Equals(candidate.Key, key, StringComparison.OrdinalIgnoreCase));
+            candidates.Add(MercadoLivreStoryCandidate.FromOffer(offer, key, nowUtc));
+        }
+
+        var cutoff = nowUtc.AddHours(-StoryCandidateRetentionHours);
+        candidates = candidates
+            .Where(candidate => candidate.CapturedAtUtc >= cutoff)
+            .OrderByDescending(candidate => candidate.CapturedAtUtc)
+            .Take(500)
+            .ToList();
+        await WriteCandidatesAsync(candidates, ct);
+        return candidates;
+    }
+
+    private async Task<List<MercadoLivreStoryCandidate>> ReadCandidatesAsync(CancellationToken ct)
+    {
+        var path = StoryCandidatesPath();
+        if (!File.Exists(path))
+        {
+            return new List<MercadoLivreStoryCandidate>();
+        }
+
+        var json = await File.ReadAllTextAsync(path, ct);
+        return string.IsNullOrWhiteSpace(json)
+            ? new List<MercadoLivreStoryCandidate>()
+            : JsonSerializer.Deserialize<List<MercadoLivreStoryCandidate>>(json) ?? new List<MercadoLivreStoryCandidate>();
+    }
+
+    private async Task WriteCandidatesAsync(List<MercadoLivreStoryCandidate> candidates, CancellationToken ct)
+    {
+        var path = StoryCandidatesPath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(candidates), ct);
+    }
+
+    private static string StoryCandidatesPath()
+        => Path.Combine(AppContext.BaseDirectory, "data", "mercadolivre-story-candidates.json");
 
     internal static IReadOnlyList<DateTimeOffset> GetNextAvailableStorySlots(
         MercadoLivreAffiliateScoutSettings settings,
@@ -201,6 +262,46 @@ public sealed class MercadoLivreStoryDraftService
         }
 
         return slots;
+    }
+
+    internal static DateTimeOffset? GetCurrentStorySlot(
+        MercadoLivreAffiliateScoutSettings settings,
+        IReadOnlyList<InstagramPublishDraft> existingDrafts,
+        DateTimeOffset nowUtc)
+    {
+        var timeZone = ResolveBrazilTimeZone();
+        var localNow = TimeZoneInfo.ConvertTime(nowUtc, timeZone);
+        var scheduleTimes = ResolveScheduleTimes(settings);
+        var latestDueLocal = scheduleTimes
+            .Select(time => localNow.Date.Add(time))
+            .Where(candidate => candidate <= localNow.DateTime)
+            .OrderByDescending(candidate => candidate)
+            .FirstOrDefault();
+        if (latestDueLocal == default)
+        {
+            return null;
+        }
+
+        var latestDueUtc = ToUtc(latestDueLocal, timeZone);
+        var alreadyCreated = existingDrafts
+            .Where(IsMercadoLivreStoryDraft)
+            .Where(draft => !string.Equals(draft.Status, "failed", StringComparison.OrdinalIgnoreCase))
+            .Where(draft => draft.ScheduledFor.HasValue)
+            .Any(draft => Math.Abs((draft.ScheduledFor!.Value - latestDueUtc).TotalMinutes) < 1);
+        return alreadyCreated ? null : latestDueUtc;
+    }
+
+    private static List<TimeSpan> ResolveScheduleTimes(MercadoLivreAffiliateScoutSettings settings)
+    {
+        var scheduleTimes = (settings.StoryScheduleTimes ?? new List<string>())
+            .Select(ParseScheduleTime)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .OrderBy(x => x)
+            .ToList();
+        return scheduleTimes.Count > 0
+            ? scheduleTimes
+            : new List<TimeSpan> { new(9, 0, 0), new(11, 0, 0), new(13, 0, 0), new(15, 0, 0), new(17, 0, 0), new(19, 0, 0), new(21, 0, 0), new(23, 0, 0) };
     }
 
     private async Task<string?> BuildStoryMediaUrlAsync(MercadoLivreAffiliateScoutOffer offer, CancellationToken ct)
@@ -271,6 +372,45 @@ public sealed class MercadoLivreStoryDraftService
             $"Target={groupId};Instance={Sanitize(instanceName)};Message={Sanitize(send.Message)}",
             ct);
         return send;
+    }
+
+    private async Task<WhatsAppSendResult> SendAutoPublishResultAsync(
+        InstagramPublishDraft draft,
+        MercadoLivreAffiliateScoutSettings settings,
+        StoryAutoPublishResult result,
+        CancellationToken ct)
+    {
+        var groupId = settings.StoryApprovalWhatsAppGroupId?.Trim();
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            await AppendLogAsync("mercadolivre_story_auto_publish_feedback_missing", true, draft.Id, "Channel=whatsapp", ct);
+            return new WhatsAppSendResult(false, "Grupo de feedback nao configurado.");
+        }
+
+        var instanceName = FirstNotEmpty(settings.StoryApprovalWhatsAppInstanceName, _evolutionOptions.InstanceName, "ZapOfertas");
+        var send = await _whatsAppGateway.SendTextAsync(instanceName, groupId, BuildAutoPublishFeedbackMessage(draft, result), ct);
+        await AppendLogAsync(
+            "mercadolivre_story_auto_publish_feedback_sent",
+            send.Success,
+            draft.Id,
+            $"Target={groupId};Instance={Sanitize(instanceName)};Success={result.Success};Message={Sanitize(send.Message)}",
+            ct);
+        return send;
+    }
+
+    private static string BuildAutoPublishFeedbackMessage(InstagramPublishDraft draft, StoryAutoPublishResult result)
+    {
+        var status = result.Success ? "✅" : "⚠️";
+        return string.Join(Environment.NewLine, new[]
+        {
+            $"{status} *STORY ML - APROVACAO AUTOMATICA*",
+            string.Empty,
+            $"Draft: `{draft.Id[..Math.Min(8, draft.Id.Length)]}`",
+            $"Produto: *{draft.ProductName}*",
+            $"Stories: {(result.InstagramPosted ? "ok" : $"falhou ({result.InstagramError ?? "sem detalhe"})")}",
+            $"Catalogo: {(result.CatalogVerified ? "ok" : $"falhou ({result.CatalogError ?? "nao confirmado"})")}",
+            $"WhatsApp: {(result.WhatsAppPosted ? "ok" : $"falhou ({result.WhatsAppError ?? "nao confirmado"})")}"
+        });
     }
 
     private static InstagramPublishDraft BuildDraft(
@@ -353,6 +493,75 @@ public sealed class MercadoLivreStoryDraftService
             .Select(NormalizeUrlKey)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class MercadoLivreStoryCandidate
+    {
+        public string Key { get; set; } = string.Empty;
+        public string? Title { get; set; }
+        public string? ProductUrl { get; set; }
+        public string? SharedUrl { get; set; }
+        public string? PriceText { get; set; }
+        public string? CommissionText { get; set; }
+        public string? ImageUrl { get; set; }
+        public decimal Price { get; set; }
+        public decimal CommissionPercent { get; set; }
+        public decimal Score { get; set; }
+        public DateTimeOffset CapturedAtUtc { get; set; }
+
+        public static MercadoLivreStoryCandidate FromOffer(MercadoLivreAffiliateScoutOffer offer, string key, DateTimeOffset capturedAtUtc)
+        {
+            var price = MercadoLivreAffiliateScoutWorker.TryParsePrice(offer.PriceText);
+            var commission = MercadoLivreAffiliateScoutWorker.TryParseCommission(offer.CommissionText);
+            return new MercadoLivreStoryCandidate
+            {
+                Key = key,
+                Title = offer.Title,
+                ProductUrl = offer.ProductUrl,
+                SharedUrl = offer.SharedUrl,
+                PriceText = offer.PriceText,
+                CommissionText = offer.CommissionText,
+                ImageUrl = offer.ImageUrl,
+                Price = price,
+                CommissionPercent = commission,
+                Score = ComputeScore(offer, price, commission),
+                CapturedAtUtc = capturedAtUtc
+            };
+        }
+
+        public MercadoLivreAffiliateScoutOffer ToOffer()
+            => new(Title, ProductUrl, SharedUrl, PriceText, CommissionText, ImageUrl);
+
+        private static decimal ComputeScore(MercadoLivreAffiliateScoutOffer offer, decimal price, decimal commission)
+        {
+            var normalizedTitle = NormalizeTitle(offer.Title);
+            var estimatedCommissionValue = price * commission / 100m;
+            var priceBonus = price switch
+            {
+                >= 50m and <= 250m => 18m,
+                > 250m and <= 600m => 12m,
+                > 600m => 6m,
+                _ => 3m
+            };
+            var interestBonus = ContainsAny(
+                normalizedTitle,
+                "tenis", "perfume", "air fryer", "fone", "celular", "smartphone", "kit", "camiseta", "calca",
+                "organizador", "panela", "copo", "garrafa", "mixer", "cadeira", "sofa")
+                ? 12m
+                : 0m;
+            var imageBonus = string.IsNullOrWhiteSpace(offer.ImageUrl) ? 0m : 10m;
+
+            return (commission * 3m) + estimatedCommissionValue + priceBonus + interestBonus + imageBonus;
+        }
+
+        private static string NormalizeTitle(string? value)
+        {
+            var normalized = (value ?? string.Empty).Normalize(NormalizationForm.FormD).ToLowerInvariant();
+            return new string(normalized.Where(ch => CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark).ToArray());
+        }
+
+        private static bool ContainsAny(string text, params string[] terms)
+            => terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task AppendLogAsync(string action, bool success, string? draftId, string? details, CancellationToken ct)

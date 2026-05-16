@@ -64,7 +64,9 @@ public sealed partial class TrackingLinkShortenerService
             rebuilt.Append(text, cursor, match.Index - cursor);
             var rawUrl = match.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}');
             var trailing = match.Value.Substring(rawUrl.Length);
-            var tracked = await TrackSingleUrlAsync(rawUrl, originSurface, cancellationToken, store);
+            var tracked = InstitutionalUrlGuard.ShouldPreserve(rawUrl)
+                ? rawUrl
+                : await TrackSingleUrlAsync(rawUrl, originSurface, cancellationToken, store);
             rebuilt.Append(tracked);
             rebuilt.Append(trailing);
             cursor = match.Index + match.Length;
@@ -105,7 +107,9 @@ public sealed partial class TrackingLinkShortenerService
             rebuilt.Append(text, cursor, match.Index - cursor);
             var rawUrl = match.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}');
             var trailing = match.Value.Substring(rawUrl.Length);
-            var tracked = await TrackTrustedUrlAsync(rawUrl, originSurface, cancellationToken, store);
+            var tracked = InstitutionalUrlGuard.ShouldPreserve(rawUrl)
+                ? rawUrl
+                : await TrackTrustedUrlAsync(rawUrl, originSurface, cancellationToken, store);
             rebuilt.Append(tracked);
             rebuilt.Append(trailing);
             cursor = match.Index + match.Length;
@@ -126,6 +130,11 @@ public sealed partial class TrackingLinkShortenerService
         if (TryNormalizeOfficialTrackedUrl(normalizedUrl, out var normalizedTrackedUrl))
         {
             return normalizedTrackedUrl;
+        }
+
+        if (InstitutionalUrlGuard.ShouldPreserve(normalizedUrl))
+        {
+            return normalizedUrl;
         }
 
         if (IsWhatsAppInviteUrl(normalizedUrl))
@@ -166,10 +175,10 @@ public sealed partial class TrackingLinkShortenerService
         }
 
         var normalizedSurface = TrackingAttributionHelper.NormalizeSurface(originSurface);
-        if (WouldCreateGenericTrackingSlug(resolvedTargetUrl.TargetUrl))
+        if (WouldCreateGenericTrackingSlug(resolvedTargetUrl.TargetUrl) || IsBlockedUntilAffiliateValidated(resolvedTargetUrl.TargetUrl))
         {
             _logger.LogWarning(
-                "Tracking bloqueado porque geraria slug generico LK. Url={Url}; Resolved={Resolved}; Store={Store}; Surface={Surface}",
+                "Tracking bloqueado porque geraria slug inseguro ou loja sem afiliado validado. Url={Url}; Resolved={Resolved}; Store={Store}; Surface={Surface}",
                 normalizedUrl,
                 resolvedTargetUrl.TargetUrl,
                 effectiveStore,
@@ -229,6 +238,11 @@ public sealed partial class TrackingLinkShortenerService
         if (TryNormalizeOfficialTrackedUrl(normalizedUrl, out var normalizedTrackedUrl))
         {
             return normalizedTrackedUrl;
+        }
+
+        if (InstitutionalUrlGuard.ShouldPreserve(normalizedUrl))
+        {
+            return normalizedUrl;
         }
 
         if (IsWhatsAppInviteUrl(normalizedUrl))
@@ -497,10 +511,22 @@ public sealed partial class TrackingLinkShortenerService
                && !host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
                && !host.Contains("meli.", StringComparison.OrdinalIgnoreCase)
                && !host.Contains("shein", StringComparison.OrdinalIgnoreCase)
-               && !host.Contains("magalu", StringComparison.OrdinalIgnoreCase)
-               && !host.Contains("magazineluiza", StringComparison.OrdinalIgnoreCase)
                && !host.Contains("americanas", StringComparison.OrdinalIgnoreCase)
                && !host.Contains("aliexpress", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBlockedUntilAffiliateValidated(string? url)
+    {
+        if (!Uri.TryCreate(url ?? string.Empty, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var host = uri.Host.Trim().Trim('.').ToLowerInvariant();
+        return host.Contains("magalu", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("magazineluiza", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("magazinevoce", StringComparison.OrdinalIgnoreCase)
+               || host.Contains("tidd.ly", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsWhatsAppInviteUrl(string? url)
@@ -542,11 +568,14 @@ public sealed partial class TrackingLinkShortenerService
 
     private static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, string source)
     {
+        var decoratedTrackingId = TrackingIdDecorator.Decorate(trackingId, null, source);
         var compactSource = ToTrackingSourceAlias(source);
         var parameters = new List<string>();
-        if (!string.IsNullOrWhiteSpace(compactSource) && ShouldAppendSourceParameter(compactSource))
+        if (string.Equals(decoratedTrackingId, trackingId, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(compactSource)
+            && ShouldAppendSourceParameter(compactSource))
         {
-            parameters.Add($"src={Uri.EscapeDataString(compactSource)}");
+            parameters.Add($"s={Uri.EscapeDataString(compactSource)}");
         }
 
         if (publicBaseUrl.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
@@ -556,7 +585,7 @@ public sealed partial class TrackingLinkShortenerService
         }
 
         var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
-        return $"{publicBaseUrl.TrimEnd('/')}/r/{trackingId}{query}";
+        return $"{publicBaseUrl.TrimEnd('/')}/r/{decoratedTrackingId}{query}";
     }
 
     private async Task<bool> IsTrackedUrlResolvableAsync(string trackedUrl, CancellationToken cancellationToken)

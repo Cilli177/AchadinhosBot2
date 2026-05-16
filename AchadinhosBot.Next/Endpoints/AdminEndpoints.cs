@@ -938,7 +938,7 @@ public static class AdminEndpoints
             AdminApproveAllStoriesRequest req,
             HttpContext context,
             IInstagramPublishStore draftStore,
-            IInstagramPublishService publishService,
+            StoryAutoPublishService storyAutoPublishService,
             IOptions<WebhookOptions> opts,
             IAuditTrail audit,
             CancellationToken ct) =>
@@ -967,16 +967,18 @@ public static class AdminEndpoints
                 draft.Error = null;
                 await draftStore.UpdateAsync(draft, ct);
 
-                var publishResult = await publishService.ExecutePublishAsync(draft.Id, ct);
+                var publishResult = await storyAutoPublishService.ApprovePublishAndVerifyAsync(draft.Id, ct);
                 results.Add(new AdminApproveAllStoriesItemResult(
                     draft.Id,
                     draft.ProductName,
                     previousStatus,
                     publishResult.Success ? "published" : "failed",
                     publishResult.Success,
-                    publishResult.MediaId,
-                    publishResult.StatusCode,
-                    publishResult.Error));
+                    publishResult.InstagramMediaId,
+                    publishResult.Success ? StatusCodes.Status200OK : StatusCodes.Status502BadGateway,
+                    publishResult.Success
+                        ? null
+                        : $"stories={(publishResult.InstagramPosted ? "ok" : "falhou")}; catalogo={(publishResult.CatalogVerified ? "ok" : "falhou")}; whatsapp={(publishResult.WhatsAppPosted ? "ok" : "falhou")}"));
             }
 
             foreach (var draft in candidates.Skip(publishNow.Count))

@@ -19,6 +19,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
     private readonly WhatsAppAutomationQueueService _queueService;
     private readonly IWhatsAppGateway _whatsappGateway;
     private readonly MercadoLivreStoryDraftService _storyDraftService;
+    private readonly MercadoLivreReelDraftService _reelDraftService;
     private readonly ILogger<MercadoLivreAffiliateScoutWorker> _logger;
 
     private static readonly TimeSpan RefreshRetryAfter = TimeSpan.FromMinutes(5);
@@ -32,6 +33,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
         WhatsAppAutomationQueueService queueService,
         IWhatsAppGateway whatsappGateway,
         MercadoLivreStoryDraftService storyDraftService,
+        MercadoLivreReelDraftService reelDraftService,
         ILogger<MercadoLivreAffiliateScoutWorker> logger)
     {
         _scoutClient = scoutClient;
@@ -40,6 +42,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
         _queueService = queueService;
         _whatsappGateway = whatsappGateway;
         _storyDraftService = storyDraftService;
+        _reelDraftService = reelDraftService;
         _logger = logger;
     }
 
@@ -99,6 +102,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
         var stats = new MercadoLivreScoutCycleStats();
         var result = await _scoutClient.TestAsync(ct, forceRefreshBeforeScan: true);
         await ProcessScoutResultAsync(result, stats, scout, scoutGroupId, officialGroupId, instanceName, cycleStartedAt, ct);
+        await _reelDraftService.CreateDraftsForApprovalAsync(result.Offers, scout, ct);
 
         if (ShouldRunRefreshRetry(cycleStartedAt, stats.SentOfferCount))
         {

@@ -124,7 +124,10 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<VilaNvidiaGenerator>();
         builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
         builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
+        builder.Services.AddSingleton<StoryAutoPublishService>();
+        builder.Services.AddSingleton<ReelAutoPublishService>();
         builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
+        builder.Services.AddSingleton<MercadoLivreReelDraftService>();
         builder.Services.AddSingleton<ContentCalendarAutomationService>();
         builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
         builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
@@ -208,6 +211,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddHostedService<UptimeHeartbeatService>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<WhatsAppMembershipSyncService>());
         builder.Services.AddHostedService<WhatsAppAdminAutomationWorker>();
+        builder.Services.AddHostedService<WhatsAppNicheAutoRouteWorker>();
 
         builder.Services.AddMassTransit(x =>
         {

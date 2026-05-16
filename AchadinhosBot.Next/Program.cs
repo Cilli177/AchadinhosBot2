@@ -252,7 +252,10 @@ builder.Services.AddSingleton<VilaNvidiaGenerator>();
 builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
 builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
 builder.Services.AddSingleton<TelegramViralReelsAutoPilotService>();
+builder.Services.AddSingleton<StoryAutoPublishService>();
+builder.Services.AddSingleton<ReelAutoPublishService>();
 builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
+builder.Services.AddSingleton<MercadoLivreReelDraftService>();
 builder.Services.AddSingleton<ContentCalendarAutomationService>();
 builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
@@ -335,6 +338,7 @@ if (isWorkerRole)
     builder.Services.AddHostedService(provider => provider.GetRequiredService<WhatsAppMembershipSyncService>());
     builder.Services.AddHostedService<WhatsAppAdminAutomationWorker>();
     builder.Services.AddHostedService<MercadoLivreAffiliateScoutWorker>();
+    builder.Services.AddHostedService<WhatsAppNicheAutoRouteWorker>();
 }
 
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
@@ -2041,6 +2045,7 @@ app.MapGet("/bio", async (
     IInstagramPublishStore publishStore,
     ICatalogOfferStore catalogOfferStore,
     IConversionLogStore conversionLogStore,
+    IClickLogStore clickLogStore,
     ILinkTrackingStore trackingStore,
     ISettingsStore settingsStore,
     IOptions<WebhookOptions> webhookOptions,
@@ -2064,12 +2069,19 @@ app.MapGet("/bio", async (
     var maxItems = Math.Clamp(bioSettings.MaxItems, 5, 80);
     var catalogTarget = ResolveCatalogTargetForRequest(request);
     var recentConversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 500 }, ct);
+    var catalogItems = await catalogOfferStore.ListAsync(null, 500, ct, catalogTarget);
+    var validCatalogItemsByDraftId = catalogItems
+        .Where(IsValidPublicCatalogItem)
+        .Where(x => !string.IsNullOrWhiteSpace(x.DraftId))
+        .ToDictionary(x => x.DraftId, StringComparer.OrdinalIgnoreCase);
+    var catalogClicks = await clickLogStore.QueryAsync("catalog", null, 5000, ct);
+    var catalogClickCounts = BuildCatalogItemClickCounts(catalogClicks);
 
     var drafts = await publishStore.ListAsync(ct);
     var draftsById = drafts
         .Where(d => !string.IsNullOrWhiteSpace(d.Id))
         .ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
-    var catalogByDraftId = await catalogOfferStore.GetByDraftIdAsync(ct, catalogTarget);
+    var catalogByDraftId = validCatalogItemsByDraftId;
     if (catalogByDraftId.Count == 0)
     {
         catalogByDraftId = BuildCatalogFallbackItemsFromDrafts(drafts, recentConversions, catalogTarget)
@@ -2081,37 +2093,61 @@ app.MapGet("/bio", async (
                 StringComparer.OrdinalIgnoreCase);
     }
 
-    var baseItems = drafts
-        .Where(d => string.Equals(d.Status, "published", StringComparison.OrdinalIgnoreCase))
-        .Select(d =>
+    var baseItems = catalogByDraftId
+        .Values
+        .Select(catalogItem =>
         {
-            catalogByDraftId.TryGetValue(d.Id, out var catalogItem);
-            var effectiveOfferUrl = ResolveEffectiveCatalogOfferUrl(catalogItem, d, recentConversions);
-            var title = !string.IsNullOrWhiteSpace(d.ProductName) ? d.ProductName : "Oferta";
+            draftsById.TryGetValue(catalogItem.DraftId, out var draft);
+            var effectiveOfferUrl = FirstNonEmpty(catalogItem.AffiliateTargetUrl, catalogItem.OfferUrl, catalogItem.TrackingUrl);
+            var title = !string.IsNullOrWhiteSpace(catalogItem.ProductName)
+                ? catalogItem.ProductName
+                : !string.IsNullOrWhiteSpace(draft?.ProductName)
+                    ? draft.ProductName
+                    : "Oferta";
             return new BioLinkItem
             {
-                CreatedAt = d.CreatedAt,
+                CreatedAt = catalogItem.PublishedAt,
                 Title = title.Trim(),
                 Link = effectiveOfferUrl,
                 OriginalLink = effectiveOfferUrl,
-                Store = ResolveStoreNameFromUrl(FirstNonEmpty(effectiveOfferUrl, catalogItem?.Store)),
-                ItemNumber = catalogItem?.ItemNumber,
-                IsHighlightedOnBio = d.IsBioHighlighted,
-                BioHighlightedAt = d.BioHighlightedAt,
-                Keyword = FirstNonEmpty(catalogItem?.Keyword, d.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Keyword))?.Keyword?.Trim()),
-                IsLightningDeal = catalogItem?.IsLightningDeal ?? false,
-                LightningDealExpiry = catalogItem?.LightningDealExpiry,
-                CouponCode = catalogItem?.CouponCode,
-                CouponDescription = catalogItem?.CouponDescription,
-                ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(catalogItem?.ImageUrl, ResolveBioImageUrl(d)))
+                Store = ResolveStoreNameFromUrl(FirstNonEmpty(effectiveOfferUrl, catalogItem.Store)),
+                ItemNumber = catalogItem.ItemNumber,
+                IsHighlightedOnBio = draft?.IsBioHighlighted ?? false,
+                BioHighlightedAt = draft?.BioHighlightedAt,
+                Keyword = FirstNonEmpty(catalogItem.Keyword, draft?.Ctas.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Keyword))?.Keyword?.Trim()),
+                IsLightningDeal = catalogItem.IsLightningDeal,
+                LightningDealExpiry = catalogItem.LightningDealExpiry,
+                CouponCode = catalogItem.CouponCode,
+                CouponDescription = catalogItem.CouponDescription,
+                ImageUrl = BuildPublicImageProxyUrl(publicBaseUrl: null, request, FirstNonEmpty(catalogItem.ImageUrl, draft is null ? null : ResolveBioImageUrl(draft)))
             };
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Link))
-        .OrderByDescending(x => x.IsHighlightedOnBio)
-        .ThenByDescending(x => x.BioHighlightedAt ?? DateTimeOffset.MinValue)
-        .ThenByDescending(x => x.CreatedAt)
         .GroupBy(x => x.Link, StringComparer.OrdinalIgnoreCase)
         .Select(g => g.First())
+        .ToList();
+
+    var latestItems = baseItems
+        .OrderByDescending(x => x.CreatedAt)
+        .Take(3)
+        .ToList();
+    var latestItemNumbers = latestItems
+        .Where(x => x.ItemNumber.HasValue)
+        .Select(x => x.ItemNumber!.Value)
+        .ToHashSet();
+    var mostClickedItems = baseItems
+        .Where(x => x.ItemNumber.HasValue && !latestItemNumbers.Contains(x.ItemNumber.Value))
+        .OrderByDescending(x => catalogClickCounts.GetValueOrDefault(x.ItemNumber!.Value))
+        .ThenByDescending(x => x.CreatedAt)
+        .Take(2)
+        .ToList();
+    var remainingItems = baseItems
+        .Where(x => !latestItems.Contains(x) && !mostClickedItems.Contains(x))
+        .OrderByDescending(x => x.CreatedAt)
+        .ToList();
+    baseItems = latestItems
+        .Concat(mostClickedItems)
+        .Concat(remainingItems)
         .Take(maxItems)
         .ToList();
 
@@ -3752,6 +3788,40 @@ api.MapPost("/admin/mercadolivre-affiliate-scout/test", async (
 
     return Results.Ok(result);
 });
+
+api.MapPost("/admin/mercadolivre-affiliate-scout/reels/test", async (
+    MercadoLivreAffiliateScoutClient scoutClient,
+    MercadoLivreReelDraftService reelDraftService,
+    ISettingsStore settingsStore,
+    IAuditTrail audit,
+    HttpContext context,
+    CancellationToken ct) =>
+{
+    var settings = await settingsStore.GetAsync(ct);
+    var scout = settings.MercadoLivreAffiliateScout ?? new MercadoLivreAffiliateScoutSettings();
+    var result = await scoutClient.TestAsync(ct, forceRefreshBeforeScan: true);
+    var created = result.Success
+        ? await reelDraftService.CreateDraftsForApprovalAsync(result.Offers, scout, ct)
+        : 0;
+
+    await audit.WriteAsync("admin.mercadolivre_affiliate_scout.reels.test", context.User.Identity?.Name ?? "unknown", new
+    {
+        result.Success,
+        result.LoggedIn,
+        offerCount = result.Offers?.Count ?? 0,
+        created,
+        result.Message
+    }, ct);
+
+    return Results.Ok(new
+    {
+        result.Success,
+        result.LoggedIn,
+        offerCount = result.Offers?.Count ?? 0,
+        created,
+        result.Message
+    });
+}).RequireAuthorization("AdminOnly");
 
 api.MapPost("/agents/offers/curate", async (
     OfferCurationRequest request,
@@ -6141,7 +6211,8 @@ app.MapGet("/r/{id}", async (
     ILoggerFactory loggerFactory,
     CancellationToken ct) =>
 {
-    var entry = await trackingStore.RegisterClickAsync(id, ct);
+    var trackingLookup = ResolveDecoratedTrackingId(id);
+    var entry = await trackingStore.RegisterClickAsync(trackingLookup.LookupId, ct);
     if (entry is null)
     {
         return Results.NotFound();
@@ -6159,16 +6230,19 @@ app.MapGet("/r/{id}", async (
         ? TrackingAttributionHelper.ResolveChannelFromSurface(originSurface)
         : entry.OriginChannel.Trim();
     var source = NormalizeTrackingToken(
-        context.Request.Query["src"].ToString(),
-        TrackingAttributionHelper.ResolveCompatibilitySource(null, originSurface)) ?? "LinkTracking";
-    var campaign = NormalizeTrackingToken(context.Request.Query["camp"].ToString(), null);
+        FirstNonEmpty(context.Request.Query["src"].ToString(), context.Request.Query["s"].ToString()),
+        trackingLookup.Source ?? TrackingAttributionHelper.ResolveCompatibilitySource(null, originSurface)) ?? "LinkTracking";
+    var campaign = NormalizeTrackingToken(
+        ExpandCompactTrackingCampaign(FirstNonEmpty(context.Request.Query["camp"].ToString(), context.Request.Query["c"].ToString()))
+            ?? trackingLookup.Campaign,
+        null);
     var referrer = TruncateForLog(context.Request.Headers.Referer.ToString(), 600);
     var userAgent = TruncateForLog(context.Request.Headers.UserAgent.ToString(), 320);
     var ip = context.Connection.RemoteIpAddress?.ToString();
 
     await clickLogStore.AppendAsync(new ClickLogEntry
     {
-        TrackingId = entry.Id,
+        TrackingId = trackingLookup.Decorated ? id : entry.Id,
         TargetUrl = redirectTarget,
         Source = source,
         Campaign = campaign,
@@ -6196,7 +6270,8 @@ app.MapGet("/{id}", async (
         return Results.NotFound();
     }
 
-    var entry = await trackingStore.GetLinkAsync(id, ct);
+    var trackingLookup = ResolveDecoratedTrackingId(id);
+    var entry = await trackingStore.GetLinkAsync(trackingLookup.LookupId, ct);
     if (entry is null)
     {
         return Results.NotFound();
@@ -6215,17 +6290,20 @@ app.MapGet("/{id}", async (
         : entry.OriginChannel.Trim();
         
     var source = NormalizeTrackingToken(
-        context.Request.Query["src"].ToString(),
-        TrackingAttributionHelper.ResolveCompatibilitySource(null, originSurface)) ?? "RootRedirect";
+        FirstNonEmpty(context.Request.Query["src"].ToString(), context.Request.Query["s"].ToString()),
+        trackingLookup.Source ?? TrackingAttributionHelper.ResolveCompatibilitySource(null, originSurface)) ?? "RootRedirect";
         
-    var campaign = NormalizeTrackingToken(context.Request.Query["camp"].ToString(), null);
+    var campaign = NormalizeTrackingToken(
+        ExpandCompactTrackingCampaign(FirstNonEmpty(context.Request.Query["camp"].ToString(), context.Request.Query["c"].ToString()))
+            ?? trackingLookup.Campaign,
+        null);
     var referrer = context.Request.Headers.Referer.ToString();
     var userAgent = context.Request.Headers.UserAgent.ToString();
     var ip = context.Connection.RemoteIpAddress?.ToString();
 
     await clickLogStore.AppendAsync(new ClickLogEntry
     {
-        TrackingId = entry.Id,
+        TrackingId = trackingLookup.Decorated ? id : entry.Id,
         TargetUrl = redirectTarget,
         Source = source,
         Campaign = campaign,
@@ -6315,7 +6393,8 @@ static bool IsTrustedMercadoLivreScoutRedirectTarget(string? url, string? origin
 
     var host = uri.Host.Trim().Trim('.').ToLowerInvariant();
     return host is "meli.la" or "meli.co" &&
-           string.Equals(normalizedSurface, "whatsapp_grupo", StringComparison.OrdinalIgnoreCase);
+           (string.Equals(normalizedSurface, "whatsapp_grupo", StringComparison.OrdinalIgnoreCase) ||
+            normalizedSurface.StartsWith("whatsapp_niche_", StringComparison.OrdinalIgnoreCase));
 }
 
 static bool IsUnsafeMercadoLivreRedirectTarget(string? url)
@@ -7085,6 +7164,38 @@ static string? FirstNonEmpty(params string?[] values)
     return null;
 }
 
+static string? ExpandCompactTrackingCampaign(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
+    }
+
+    var normalized = value.Trim();
+    return normalized.StartsWith("n_", StringComparison.OrdinalIgnoreCase)
+        ? $"niche_live_{normalized[2..]}"
+        : normalized;
+}
+
+static string CompactTrackingCampaign(string campaign)
+{
+    var normalized = campaign.Trim();
+    return normalized.StartsWith("niche_live_", StringComparison.OrdinalIgnoreCase)
+        ? $"n_{normalized["niche_live_".Length..]}"
+        : normalized.StartsWith("niche_", StringComparison.OrdinalIgnoreCase)
+            ? $"n_{normalized["niche_".Length..]}"
+            : normalized;
+}
+
+static string BuildDecoratedTrackingId(string trackingId, string? campaign, string? source = null)
+    => TrackingIdDecorator.Decorate(trackingId, campaign, source);
+
+static (string LookupId, bool Decorated, string? Source, string? Campaign) ResolveDecoratedTrackingId(string id)
+{
+    var resolved = TrackingIdDecorator.Resolve(id);
+    return (resolved.LookupId, resolved.Decorated, resolved.Source, resolved.Campaign);
+}
+
 static bool TryParseViralReelApprovalKeyword(
     string text,
     InstagramPublishSettings publishSettings,
@@ -7171,22 +7282,44 @@ static async Task<IReadOnlyList<string>> ExecuteViralReelApprovalKeywordAsync(
     switch (command.Action)
     {
         case "approve":
-            var publishOutcome = await PublishApprovedViralReelAsync(
-                draft,
-                settings,
-                publishService,
-                publishStore,
-                publishLogStore,
-                whatsAppGateway,
-                whatsAppPublishContent,
-                catalogStore,
-                idempotencyStore,
-                blockedOfferStore,
-                deliverySafetyPolicy,
-                messagingOptions,
-                deliverySafetyOptions,
-                ct);
-            return new[] { BuildViralReelApprovalPublishReply(shortId, publishOutcome) };
+            try
+            {
+                var publishOutcome = await PublishApprovedViralReelAsync(
+                    draft,
+                    settings,
+                    publishService,
+                    publishStore,
+                    publishLogStore,
+                    whatsAppGateway,
+                    whatsAppPublishContent,
+                    catalogStore,
+                    idempotencyStore,
+                    blockedOfferStore,
+                    deliverySafetyPolicy,
+                    messagingOptions,
+                    deliverySafetyOptions,
+                    ct);
+                return new[] { BuildViralReelApprovalPublishReply(shortId, publishOutcome) };
+            }
+            catch (Exception ex)
+            {
+                draft.Status = "failed";
+                draft.Error = ex.Message;
+                await publishStore.UpdateAsync(draft, ct);
+                await publishLogStore.AppendAsync(new InstagramPublishLogEntry
+                {
+                    Action = "viral_reel_whatsapp_publish_failed",
+                    Success = false,
+                    DraftId = draft.Id,
+                    Error = ex.Message,
+                    Details = "Keyword=sim;Action=publish_instagram_whatsapp_catalog",
+                    ProcessName = draft.ProcessName
+                }, ct);
+                return new[]
+                {
+                    $"Draft {shortId} aprovado, mas a publicacao falhou antes de concluir.\nErro: {ex.Message}"
+                };
+            }
 
         case "reject":
             draft.Status = "rejected";
@@ -11163,6 +11296,46 @@ static string? BuildBioDetailLink(string baseUrl, BioLinkItem item)
     return $"{baseUrl}/item/{Uri.EscapeDataString(token)}";
 }
 
+static bool IsValidPublicCatalogItem(CatalogOfferItem item)
+    => item.Active &&
+       !string.IsNullOrWhiteSpace(item.ImageUrl) &&
+       string.Equals(item.AffiliateValidationStatus, CatalogAffiliateValidationStatuses.Valid, StringComparison.OrdinalIgnoreCase) &&
+       !string.IsNullOrWhiteSpace(item.AffiliateTargetUrl) &&
+       !string.IsNullOrWhiteSpace(item.TrackingId) &&
+       !string.IsNullOrWhiteSpace(item.TrackingUrl) &&
+       item.TrackingUrl.Contains("/r/", StringComparison.OrdinalIgnoreCase);
+
+static IReadOnlyDictionary<int, int> BuildCatalogItemClickCounts(IEnumerable<ClickLogEntry> clicks)
+{
+    var counts = new Dictionary<int, int>();
+    foreach (var click in clicks)
+    {
+        if (!TryExtractCatalogItemNumber(click.TargetUrl, out var itemNumber))
+        {
+            continue;
+        }
+
+        counts[itemNumber] = counts.GetValueOrDefault(itemNumber) + 1;
+    }
+
+    return counts;
+}
+
+static bool TryExtractCatalogItemNumber(string? targetUrl, out int itemNumber)
+{
+    itemNumber = 0;
+    if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    var segments = uri.AbsolutePath
+        .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    return segments.Length >= 2 &&
+           string.Equals(segments[0], "item", StringComparison.OrdinalIgnoreCase) &&
+           int.TryParse(segments[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out itemNumber);
+}
+
 IReadOnlyList<CatalogOfferItem> BuildCatalogFallbackItemsFromDrafts(
     IReadOnlyList<InstagramPublishDraft> drafts,
     IReadOnlyList<ConversionLogEntry> recentConversions,
@@ -11612,12 +11785,12 @@ static string BuildBioCurrentUrl(string publicBaseUrl, string source, string? ca
     var parameters = new List<string>();
     if (!string.IsNullOrWhiteSpace(source))
     {
-        parameters.Add($"src={Uri.EscapeDataString(source)}");
+        parameters.Add($"s={Uri.EscapeDataString(source)}");
     }
 
     if (!string.IsNullOrWhiteSpace(campaign))
     {
-        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+        parameters.Add($"c={Uri.EscapeDataString(campaign)}");
     }
 
     var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
@@ -11791,14 +11964,18 @@ static bool TryReadBundledPublicBaseUrl(out string publicBaseUrl)
 static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, string source, string? campaign)
 {
     var parameters = new List<string>();
-    if (!string.IsNullOrWhiteSpace(source))
+    var decoratedTrackingId = BuildDecoratedTrackingId(trackingId, campaign, source);
+    if (string.Equals(decoratedTrackingId, trackingId, StringComparison.OrdinalIgnoreCase))
     {
-        parameters.Add($"src={Uri.EscapeDataString(source)}");
-    }
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            parameters.Add($"s={Uri.EscapeDataString(source)}");
+        }
 
-    if (!string.IsNullOrWhiteSpace(campaign))
-    {
-        parameters.Add($"camp={Uri.EscapeDataString(campaign)}");
+        if (!string.IsNullOrWhiteSpace(campaign))
+        {
+            parameters.Add($"c={Uri.EscapeDataString(CompactTrackingCampaign(campaign))}");
+        }
     }
 
     if (publicBaseUrl.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
@@ -11808,7 +11985,7 @@ static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, s
     }
 
     var query = parameters.Count == 0 ? string.Empty : "?" + string.Join("&", parameters);
-    return $"{publicBaseUrl.TrimEnd('/')}/r/{trackingId}{query}";
+    return $"{publicBaseUrl.TrimEnd('/')}/r/{decoratedTrackingId}{query}";
 }
 
 static string AppendBioCampaignParameters(string? url, string source, string medium, string? campaign, string title)
@@ -13937,7 +14114,11 @@ static async Task<(string Text, List<string> TrackingIds)> ApplyTrackingAsync(st
         var rawUrl = match.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}');
         var trailing = match.Value[rawUrl.Length..];
         var url = rawUrl;
-        if (url.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
+        if (InstitutionalUrlGuard.ShouldPreserve(url))
+        {
+            sb.Append(url);
+        }
+        else if (url.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
         {
             sb.Append(url);
         }

@@ -987,6 +987,11 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
     private static bool ShouldAttemptAffiliateConversion(string url)
     {
+        if (InstitutionalUrlGuard.ShouldPreserve(url))
+        {
+            return false;
+        }
+
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
             return false;

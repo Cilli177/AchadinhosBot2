@@ -12,7 +12,6 @@ public sealed class LinkTrackingStore : ILinkTrackingStore
         "SP",
         "ML",
         "SHE",
-        "MGL",
         "AME",
         "ALI",
         "LK"
@@ -433,11 +432,6 @@ public sealed class LinkTrackingStore : ILinkTrackingStore
         if (host.Contains("shein"))
         {
             return "SHE";
-        }
-
-        if (host.Contains("magalu") || host.Contains("magazineluiza"))
-        {
-            return "MGL";
         }
 
         if (host.Contains("americanas"))

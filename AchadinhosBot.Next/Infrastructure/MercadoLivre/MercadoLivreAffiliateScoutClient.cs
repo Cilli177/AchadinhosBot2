@@ -154,7 +154,8 @@ public sealed record MercadoLivreAffiliateScoutOffer(
     string? SharedUrl,
     string? PriceText,
     string? CommissionText,
-    string? ImageUrl);
+    string? ImageUrl,
+    string? VideoUrl = null);
 
 public sealed record MercadoLivreAffiliateScoutResult(
     bool Success,

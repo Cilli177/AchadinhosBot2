@@ -548,7 +548,7 @@ public sealed class InstagramPublishSettings
     public bool ViralReelsAutoPilotEnabled { get; set; }
     public long ViralReelsSourceTelegramChatId { get; set; } = 2425105459;
     public int ViralReelsIntervalHours { get; set; } = 12;
-    public List<string> ViralReelsScheduleTimes { get; set; } = new() { "07:30", "17:30" };
+    public List<string> ViralReelsScheduleTimes { get; set; } = new() { "07:30", "11:30", "14:30", "17:30" };
     public int ViralReelsLookbackHours { get; set; } = 24;
     public int ViralReelsRepeatWindowHours { get; set; } = 72;
     public bool ViralReelsSendForApproval { get; set; } = true;
@@ -747,6 +747,13 @@ public sealed class MercadoLivreAffiliateScoutSettings
     public bool StorySendForApproval { get; set; } = true;
     public string? StoryApprovalWhatsAppGroupId { get; set; } = "1203634261666665839@g.us";
     public string? StoryApprovalWhatsAppInstanceName { get; set; } = "ZapOfertas";
+    public bool StoryAutoApproveAndPublish { get; set; } = false;
+    public string? StoryAutoPublishWhatsAppTargetId { get; set; } = "120363405661434395@g.us";
+    public string? StoryAutoPublishWhatsAppInstanceName { get; set; } = "ZapOfertas";
+    public bool CreateReelDraftsFromScout { get; set; } = true;
+    public bool ReelSendForApproval { get; set; } = true;
+    public string? ReelApprovalWhatsAppGroupId { get; set; } = "120363427071180581@g.us";
+    public string? ReelApprovalWhatsAppInstanceName { get; set; } = "ZapOfertas";
     public bool PublishViaProductionRelay { get; set; } = false;
     public string? ProductionRelayBaseUrl { get; set; } = "http://host.docker.internal:5005";
     public string? ProductionRelayAdminKey { get; set; } = "dev-local-key";
