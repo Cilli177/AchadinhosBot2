@@ -7337,8 +7337,9 @@ function renderWhatsAppNicheReviews(items) {
         <strong>${escapeHtml(item.productName || item.ProductName || '-')}</strong>
       </label>
       <div class="muted">${escapeHtml(item.reason || item.Reason || '')} | confianca ${item.confidence ?? item.Confidence ?? 0}</div>
-      <div class="row" style="gap:8px; margin-top:8px; flex-wrap:wrap;">
-        ${['casa','beleza','fitness_health','moda','tech'].map(slug => `<button class="secondary" onclick="approveWhatsAppNicheReview('${escapeHtml(item.id || item.Id)}','${slug}')">${slug}</button>`).join('')}
+      <div class="row" style="gap:10px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+        ${renderWhatsAppNicheReviewTargetInputs(item.id || item.Id, 'compact')}
+        <button class="secondary" onclick="approveWhatsAppNicheReviewSelection('${escapeHtml(item.id || item.Id)}','compact')">Aprovar</button>
       </div>
     </div>`).join('') || '<div class="muted">Nenhuma revisao pendente.</div>';
 }
@@ -7467,9 +7468,14 @@ function renderWhatsAppNicheReviewBoard() {
               <div class="muted" style="margin-top:6px;">${escapeHtml(item.productUrl || 'Sem URL de oferta')}</div>
             </div>
           </div>
-          <div class="row" style="gap:8px; flex-wrap:wrap;">
-            ${['casa','beleza','fitness_health','moda','tech'].map(slug => `<button class="secondary" onclick="approveWhatsAppNicheReview('${escapeHtml(item.id)}','${slug}')">${slug}</button>`).join('')}
-            <button class="secondary" onclick="rejectWhatsAppNicheReview('${escapeHtml(item.id)}')">Reprovar</button>
+          <div style="display:grid; gap:8px;">
+            <div class="row" style="gap:10px; flex-wrap:wrap;">
+              ${renderWhatsAppNicheReviewTargetInputs(item.id, 'board')}
+            </div>
+            <div class="row" style="gap:8px; flex-wrap:wrap;">
+              <button class="secondary" onclick="approveWhatsAppNicheReviewSelection('${escapeHtml(item.id)}','board')">Aprovar nicho(s)</button>
+              <button class="secondary" onclick="rejectWhatsAppNicheReview('${escapeHtml(item.id)}')">Reprovar</button>
+            </div>
           </div>
         </div>
         <details style="margin-top:12px;">
@@ -7480,8 +7486,29 @@ function renderWhatsAppNicheReviewBoard() {
   }).join('') || '<div class="muted">Nenhum item combina com os filtros.</div>';
 }
 
-async function approveWhatsAppNicheReview(id, slug) {
-  await api(`/api/admin/whatsapp/niche-reviews/${encodeURIComponent(id)}/approve`, 'POST', { slug });
+function renderWhatsAppNicheReviewTargetInputs(id, scope) {
+  return ['casa','beleza','fitness_health','moda','tech']
+    .map(slug => `
+      <label style="display:flex; align-items:center; gap:5px; margin:0;">
+        <input type="checkbox" data-review-id="${escapeHtml(id)}" data-review-scope="${escapeHtml(scope)}" value="${slug}" />
+        ${slug}
+      </label>`)
+    .join('');
+}
+
+function getSelectedWhatsAppNicheReviewSlugs(id, scope) {
+  return Array.from(document.querySelectorAll(`input[data-review-id="${CSS.escape(id)}"][data-review-scope="${CSS.escape(scope)}"]:checked`))
+    .map(input => input.value);
+}
+
+async function approveWhatsAppNicheReviewSelection(id, scope) {
+  const slugs = getSelectedWhatsAppNicheReviewSlugs(id, scope);
+  if (!slugs.length) return;
+  await approveWhatsAppNicheReview(id, slugs);
+}
+
+async function approveWhatsAppNicheReview(id, slugs) {
+  await api(`/api/admin/whatsapp/niche-reviews/${encodeURIComponent(id)}/approve`, 'POST', { slugs });
   await loadWhatsAppNicheOps();
   if (document.getElementById('waNichePanelReview') && !document.getElementById('waNichePanelReview').classList.contains('hidden')) {
     await loadWhatsAppNicheReviewBoard();

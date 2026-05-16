@@ -318,26 +318,40 @@ public sealed partial class WhatsAppNicheGroupService
     public Task<IReadOnlyList<WhatsAppNicheReviewItem>> ListReviewsAsync(string? status, int limit, CancellationToken ct)
         => _operationsStore.ListReviewsAsync(status, limit, ct);
 
-    public async Task<WhatsAppNicheRouteResult?> ApproveReviewAsync(string id, string slug, CancellationToken ct)
+    public async Task<IReadOnlyList<WhatsAppNicheRouteResult>?> ApproveReviewAsync(string id, IReadOnlyList<string> slugs, CancellationToken ct)
     {
         var review = await _operationsStore.GetReviewAsync(id, ct);
         if (review is null) return null;
+        var normalizedSlugs = slugs
+            .Select(WhatsAppNicheDefinitions.NormalizeSlug)
+            .Where(WhatsAppNicheDefinitions.IsKnown)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (normalizedSlugs.Count == 0) return [];
         review.Status = "approved";
         review.DecidedAtUtc = DateTimeOffset.UtcNow;
-        review.DecidedSlug = WhatsAppNicheDefinitions.NormalizeSlug(slug);
+        review.DecidedSlug = normalizedSlugs[0];
+        review.DecidedSlugs = normalizedSlugs;
         await _operationsStore.UpdateReviewAsync(review, ct);
-        return await RouteOfferAsync(new(review.ProductName, review.ProductUrl, review.StoreName, review.DecidedSlug, review.PriceText, null, null, null, null, review.ImageUrl, review.OriginalText, $"niche_live_{review.DecidedSlug}", true), ct);
+
+        var results = new List<WhatsAppNicheRouteResult>();
+        foreach (var slug in normalizedSlugs)
+        {
+            results.Add(await RouteOfferAsync(new(review.ProductName, review.ProductUrl, review.StoreName, slug, review.PriceText, null, null, null, null, review.ImageUrl, review.OriginalText, $"niche_live_{slug}", true), ct));
+        }
+
+        return results;
     }
 
-    public async Task<IReadOnlyList<WhatsAppNicheRouteResult>> ApproveReviewsAsync(IReadOnlyList<string> ids, string slug, CancellationToken ct)
+    public async Task<IReadOnlyList<WhatsAppNicheRouteResult>> ApproveReviewsAsync(IReadOnlyList<string> ids, IReadOnlyList<string> slugs, CancellationToken ct)
     {
         var results = new List<WhatsAppNicheRouteResult>();
         foreach (var id in ids.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var result = await ApproveReviewAsync(id, slug, ct);
-            if (result is not null)
+            var itemResults = await ApproveReviewAsync(id, slugs, ct);
+            if (itemResults is not null)
             {
-                results.Add(result);
+                results.AddRange(itemResults);
             }
         }
 

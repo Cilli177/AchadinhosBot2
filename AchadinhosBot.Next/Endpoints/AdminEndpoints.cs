@@ -151,15 +151,19 @@ public static class AdminEndpoints
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
-            var result = await service.ApproveReviewAsync(id, req.Slug, ct);
-            return result is null ? Results.NotFound(new { success = false }) : Results.Ok(new { success = result.Success, result });
+            var slugs = ResolveReviewSlugs(req.Slug, req.Slugs);
+            var results = await service.ApproveReviewAsync(id, slugs, ct);
+            return results is null
+                ? Results.NotFound(new { success = false })
+                : Results.Ok(new { success = results.All(x => x.Success), total = results.Count, results });
         });
 
         app.MapPost("/api/admin/whatsapp/niche-reviews/approve-batch", async (WhatsAppNicheReviewBatchApproveRequest req, HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
-            var results = await service.ApproveReviewsAsync(req.Ids ?? Array.Empty<string>(), req.Slug, ct);
+            var slugs = ResolveReviewSlugs(req.Slug, req.Slugs);
+            var results = await service.ApproveReviewsAsync(req.Ids ?? Array.Empty<string>(), slugs, ct);
             return Results.Ok(new { success = true, total = results.Count, results });
         });
 
@@ -1930,6 +1934,12 @@ publish_instagram_label:
 
     private static int ParseLimit(HttpContext context, int fallback)
         => int.TryParse(context.Request.Query["limit"], out var limit) ? Math.Clamp(limit, 1, 5000) : fallback;
+
+    private static IReadOnlyList<string> ResolveReviewSlugs(string? slug, IReadOnlyList<string>? slugs)
+    {
+        if (slugs is { Count: > 0 }) return slugs;
+        return string.IsNullOrWhiteSpace(slug) ? Array.Empty<string>() : [slug];
+    }
 }
 
 // --- Request DTOs ---
@@ -1946,8 +1956,8 @@ public sealed record AdminCreateDraftFromWhatsAppRequest(string MessageId, bool 
 public sealed record AdminApplyWhatsAppOfferRecommendationRequest(string MessageId, string RecommendedAction, string? ExistingDraftId = null, bool UseAiCaption = false, bool SendToCatalog = false, string? CatalogTarget = null, string? SuggestedPostType = null);
 public sealed record AdminAddToCatalogRequest(string DraftId, string? CatalogTarget = null);
 public sealed record AdminHighlightOnBioRequest(string DraftId);
-public sealed record WhatsAppNicheReviewApproveRequest(string Slug);
-public sealed record WhatsAppNicheReviewBatchApproveRequest(IReadOnlyList<string>? Ids, string Slug);
+public sealed record WhatsAppNicheReviewApproveRequest(string? Slug, IReadOnlyList<string>? Slugs);
+public sealed record WhatsAppNicheReviewBatchApproveRequest(IReadOnlyList<string>? Ids, string? Slug, IReadOnlyList<string>? Slugs);
 public sealed record WhatsAppNicheReviewRejectRequest(string? Note);
 
 
