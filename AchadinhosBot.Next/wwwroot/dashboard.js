@@ -7283,8 +7283,10 @@ async function loadWhatsAppNicheOps() {
 
 function renderWhatsAppNicheMetricsOps(report) {
   const rows = report?.rows || report?.Rows || [];
+  const topProducts = report?.topProducts || report?.TopProducts || [];
   const alerts = report?.alerts || report?.Alerts || [];
   setSafeText('waNicheOpsAlerts', alerts.length ? alerts.join(' | ') : 'Sem alertas operacionais no momento.');
+  setSafeText('waNicheDailySummary', report?.dailySummary || report?.DailySummary || '');
   const box = document.getElementById('waNicheOpsMetrics');
   if (!box) return;
   box.innerHTML = rows.map(r => `
@@ -7294,7 +7296,17 @@ function renderWhatsAppNicheMetricsOps(report) {
       <div class="muted">Repetidas: ${r.duplicateRecent ?? r.DuplicateRecent ?? 0}</div>
       <div class="muted">Revisao: ${r.reviewRequired ?? r.ReviewRequired ?? 0}</div>
       <div class="muted">Cliques: ${r.clicks ?? r.Clicks ?? 0}</div>
+      <div class="muted">Cliques/envio: ${r.clicksPerSend ?? r.ClicksPerSend ?? 0}</div>
+      <div class="muted">Ofertas unicas: ${r.uniqueTrackedOffers ?? r.UniqueTrackedOffers ?? 0}</div>
     </div>`).join('') || '<div class="muted">Sem dados ainda.</div>';
+  const topBox = document.getElementById('waNicheTopProducts');
+  if (topBox) {
+    topBox.innerHTML = topProducts.map(item => `
+      <div class="row" style="justify-content:space-between; gap:8px;">
+        <span><strong>${escapeHtml(item.productName || item.ProductName || '-')}</strong> <span class="muted">(${escapeHtml(item.slug || item.Slug || '-')})</span></span>
+        <span>${item.clicks ?? item.Clicks ?? 0} clique(s)</span>
+      </div>`).join('') || '<div class="muted">Sem produto lider ainda.</div>';
+  }
 }
 
 function renderWhatsAppNicheReviews(items) {
@@ -7302,8 +7314,11 @@ function renderWhatsAppNicheReviews(items) {
   if (!box) return;
   box.innerHTML = items.map(item => `
     <div class="card" style="padding:12px;">
-      <strong>${escapeHtml(item.productName || item.ProductName || '-')}</strong>
-      <div class="muted">${escapeHtml(item.reason || item.Reason || '')}</div>
+      <label style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" class="wa-niche-review-checkbox" value="${escapeHtml(item.id || item.Id)}" />
+        <strong>${escapeHtml(item.productName || item.ProductName || '-')}</strong>
+      </label>
+      <div class="muted">${escapeHtml(item.reason || item.Reason || '')} | confianca ${item.confidence ?? item.Confidence ?? 0}</div>
       <div class="row" style="gap:8px; margin-top:8px; flex-wrap:wrap;">
         ${['casa','beleza','fitness_health','moda','tech'].map(slug => `<button class="secondary" onclick="approveWhatsAppNicheReview('${escapeHtml(item.id || item.Id)}','${slug}')">${slug}</button>`).join('')}
       </div>
@@ -7312,6 +7327,14 @@ function renderWhatsAppNicheReviews(items) {
 
 async function approveWhatsAppNicheReview(id, slug) {
   await api(`/api/admin/whatsapp/niche-reviews/${encodeURIComponent(id)}/approve`, 'POST', { slug });
+  await loadWhatsAppNicheOps();
+}
+
+async function approveSelectedWhatsAppNicheReviews() {
+  const ids = Array.from(document.querySelectorAll('.wa-niche-review-checkbox:checked')).map(input => input.value);
+  const slug = document.getElementById('waNicheBatchReviewSlug')?.value || '';
+  if (!ids.length || !slug) return;
+  await api('/api/admin/whatsapp/niche-reviews/approve-batch', 'POST', { ids, slug });
   await loadWhatsAppNicheOps();
 }
 
@@ -7324,9 +7347,11 @@ function renderWhatsAppNicheRoutes(items) {
       <td>${escapeHtml(item.productName || item.ProductName || '-')}</td>
       <td>${escapeHtml(item.slug || item.Slug || '-')}</td>
       <td>${escapeHtml(item.status || item.Status || '-')}</td>
+      <td>${escapeHtml(item.reason || item.Reason || '-')}</td>
+      <td>${item.confidence ?? item.Confidence ?? 0}</td>
       <td><code>${escapeHtml(item.trackingId || item.TrackingId || '-')}</code></td>
       <td>${(item.hadImage ?? item.HadImage) ? 'sim' : 'nao'}</td>
-    </tr>`).join('') || '<tr><td colspan="6" class="muted">Sem roteamentos.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="8" class="muted">Sem roteamentos.</td></tr>';
 }
 
 function renderWhatsAppNicheOverrides(items) {

@@ -8,6 +8,7 @@ public sealed class WhatsAppNicheRouteEvent
     public string Slug { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
+    public int Confidence { get; set; }
     public string? ProductName { get; set; }
     public string? ProductUrl { get; set; }
     public string? ProductIdentity { get; set; }
@@ -25,6 +26,7 @@ public sealed class WhatsAppNicheReviewItem
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string Status { get; set; } = "pending";
     public string Reason { get; set; } = string.Empty;
+    public int Confidence { get; set; }
     public string? SuggestedSlug { get; set; }
     public string? ProductName { get; set; }
     public string? ProductUrl { get; set; }

@@ -201,6 +201,7 @@ public sealed partial class WhatsAppNicheGroupService
             await _operationsStore.SaveReviewAsync(new WhatsAppNicheReviewItem
             {
                 Reason = decision.Reason,
+                Confidence = decision.Confidence,
                 SuggestedSlug = decision.Slug,
                 ProductName = offer.ProductName,
                 ProductUrl = offer.ProductUrl,
@@ -209,22 +210,22 @@ public sealed partial class WhatsAppNicheGroupService
                 ImageUrl = offer.ImageUrl,
                 OriginalText = request.OriginalText
             }, ct);
-            await AppendRouteEventAsync(request, offer, new(false, "review_required", decision.Slug, decision.Reason, null, null, null), false, ct);
-            return new WhatsAppNicheRouteResult(false, "review_required", decision.Slug, decision.Reason, null, null, null);
+            await AppendRouteEventAsync(request, offer, new(false, "review_required", decision.Slug, decision.Reason, decision.Confidence, null, null, null), false, ct);
+            return new WhatsAppNicheRouteResult(false, "review_required", decision.Slug, decision.Reason, decision.Confidence, null, null, null);
         }
 
         var group = settings.WhatsAppNicheGroups.FirstOrDefault(x => string.Equals(x.Slug, decision.Slug, StringComparison.OrdinalIgnoreCase));
         if (group is null || !group.Enabled || string.IsNullOrWhiteSpace(group.GroupId))
         {
-            await AppendRouteEventAsync(request, offer, new(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", null, null, null), false, ct);
-            return new WhatsAppNicheRouteResult(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", null, null, null);
+            await AppendRouteEventAsync(request, offer, new(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", decision.Confidence, null, null, null), false, ct);
+            return new WhatsAppNicheRouteResult(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", decision.Confidence, null, null, null);
         }
 
         var offerUrl = FirstNonEmpty(offer.ProductUrl, request.ProductUrl);
         if (string.IsNullOrWhiteSpace(offerUrl))
         {
-            await AppendRouteEventAsync(request, offer, new(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", null, group.GroupId, null), false, ct);
-            return new WhatsAppNicheRouteResult(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", null, group.GroupId, null);
+            await AppendRouteEventAsync(request, offer, new(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", decision.Confidence, null, group.GroupId, null), false, ct);
+            return new WhatsAppNicheRouteResult(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", decision.Confidence, null, group.GroupId, null);
         }
 
         var repeatDedupeKey = BuildRepeatDedupeKey(group.Slug, offer);
@@ -237,6 +238,7 @@ public sealed partial class WhatsAppNicheGroupService
                 "duplicate_recent",
                 group.Slug,
                 $"Mesmo produto ja enviado para {group.DisplayName} nas ultimas {NicheRepeatWindow.TotalDays:0} dias.",
+                decision.Confidence,
                 null,
                 group.GroupId,
                 null);
@@ -260,7 +262,7 @@ public sealed partial class WhatsAppNicheGroupService
         {
             if (!TryReserveDailySlot(group, DateTimeOffset.UtcNow, out var quotaMessage))
             {
-                var quota = new WhatsAppNicheRouteResult(false, "daily_limit_reached", group.Slug, quotaMessage, trackedUrl, group.GroupId, null);
+                var quota = new WhatsAppNicheRouteResult(false, "daily_limit_reached", group.Slug, quotaMessage, decision.Confidence, trackedUrl, group.GroupId, null);
                 await AppendRouteEventAsync(request, offer, quota, image is not null, ct);
                 return quota;
             }
@@ -269,18 +271,18 @@ public sealed partial class WhatsAppNicheGroupService
             if (!send.Success)
             {
                 _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
-                var failed = new WhatsAppNicheRouteResult(false, "send_failed", group.Slug, send.Message ?? "Falha ao enviar.", trackedUrl, group.GroupId, message);
+                var failed = new WhatsAppNicheRouteResult(false, "send_failed", group.Slug, send.Message ?? "Falha ao enviar.", decision.Confidence, trackedUrl, group.GroupId, message);
                 await AppendRouteEventAsync(request, offer, failed, image is not null, ct);
                 return failed;
             }
 
             await _settingsStore.SaveAsync(settings, ct);
-            var sent = new WhatsAppNicheRouteResult(true, "sent", group.Slug, decision.Reason, trackedUrl, group.GroupId, message);
+            var sent = new WhatsAppNicheRouteResult(true, "sent", group.Slug, decision.Reason, decision.Confidence, trackedUrl, group.GroupId, message);
             await AppendRouteEventAsync(request, offer, sent, image is not null, ct);
             return sent;
         }
 
-        var prepared = new WhatsAppNicheRouteResult(true, "prepared", group.Slug, decision.Reason, trackedUrl, group.GroupId, message);
+        var prepared = new WhatsAppNicheRouteResult(true, "prepared", group.Slug, decision.Reason, decision.Confidence, trackedUrl, group.GroupId, message);
         await AppendRouteEventAsync(request, offer, prepared, image is not null, ct);
         return prepared;
     }
@@ -325,6 +327,21 @@ public sealed partial class WhatsAppNicheGroupService
         review.DecidedSlug = WhatsAppNicheDefinitions.NormalizeSlug(slug);
         await _operationsStore.UpdateReviewAsync(review, ct);
         return await RouteOfferAsync(new(review.ProductName, review.ProductUrl, review.StoreName, review.DecidedSlug, review.PriceText, null, null, null, null, review.ImageUrl, review.OriginalText, $"niche_live_{review.DecidedSlug}", true), ct);
+    }
+
+    public async Task<IReadOnlyList<WhatsAppNicheRouteResult>> ApproveReviewsAsync(IReadOnlyList<string> ids, string slug, CancellationToken ct)
+    {
+        var results = new List<WhatsAppNicheRouteResult>();
+        foreach (var id in ids.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var result = await ApproveReviewAsync(id, slug, ct);
+            if (result is not null)
+            {
+                results.Add(result);
+            }
+        }
+
+        return results;
     }
 
     public async Task<IReadOnlyList<WhatsAppNicheOverrideSettings>> ListOverridesAsync(CancellationToken ct)
@@ -372,15 +389,35 @@ public sealed partial class WhatsAppNicheGroupService
         var groups = slugs.Select(slug =>
         {
             var rows = grouped.TryGetValue(slug, out var entries) ? entries : Array.Empty<WhatsAppNicheRouteEvent>();
+            var sentRows = rows.Where(x => x.Status == "sent").ToArray();
+            var trackedIds = sentRows.Select(x => x.TrackingId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var slugClicks = clicks.Where(x =>
+                x.Timestamp >= since &&
+                trackedIds.Contains(x.TrackingId, StringComparer.OrdinalIgnoreCase)).ToArray();
             return new WhatsAppNicheMetricRow(
                 slug,
-                rows.Count(x => x.Status == "sent"),
+                sentRows.Length,
                 rows.Count(x => x.Status == "duplicate_recent"),
                 rows.Count(x => x.Status == "review_required"),
-                clicks.Count(x => x.Timestamp >= since && string.Equals(x.Campaign, $"niche_live_{slug}", StringComparison.OrdinalIgnoreCase)));
+                slugClicks.Length,
+                sentRows.Length == 0 ? 0 : Math.Round((decimal)slugClicks.Length / sentRows.Length, 2),
+                trackedIds.Length);
         }).ToArray();
+        var topProducts = events
+            .Where(x => x.Timestamp >= since && x.Status == "sent" && !string.IsNullOrWhiteSpace(x.TrackingId))
+            .Select(x => new
+            {
+                Event = x,
+                Clicks = clicks.Count(c => c.Timestamp >= since && string.Equals(c.TrackingId, x.TrackingId, StringComparison.OrdinalIgnoreCase))
+            })
+            .Where(x => x.Clicks > 0)
+            .OrderByDescending(x => x.Clicks)
+            .ThenByDescending(x => x.Event.Timestamp)
+            .Take(5)
+            .Select(x => new WhatsAppNicheTopProduct(x.Event.Slug, x.Event.ProductName, x.Event.TrackingId, x.Clicks))
+            .ToArray();
         var alerts = BuildAlerts(groups, events);
-        return new(groups, alerts);
+        return new(groups, topProducts, alerts, BuildDailySummary(groups, topProducts, alerts));
     }
 
     private async Task<WhatsAppNicheGroupSettings> GetConfiguredGroupAsync(string slug, CancellationToken ct)
@@ -965,7 +1002,7 @@ public sealed partial class WhatsAppNicheGroupService
     private static WhatsAppNicheDecision? ResolveOverride(AutomationSettings settings, WhatsAppNicheRouteOfferInput offer)
     {
         var item = ResolveOverrideItem(settings, offer);
-        return item is null ? null : new WhatsAppNicheDecision(item.TargetSlugs[0], false, $"override_{item.Mode}");
+        return item is null ? null : new WhatsAppNicheDecision(item.TargetSlugs[0], false, $"override_{item.Mode}", 100);
     }
 
     private static WhatsAppNicheOverrideSettings? ResolveOverrideItem(AutomationSettings settings, WhatsAppNicheRouteOfferInput offer)
@@ -987,6 +1024,7 @@ public sealed partial class WhatsAppNicheGroupService
             Slug = result.Slug,
             Status = result.Status,
             Reason = result.Reason,
+            Confidence = result.Confidence,
             ProductName = offer.ProductName,
             ProductUrl = offer.ProductUrl,
             ProductIdentity = BuildProductIdentity(offer),
@@ -1024,6 +1062,22 @@ public sealed partial class WhatsAppNicheGroupService
             alerts.Add("LK detectado em roteamento recente; revisar origem antes de escalar.");
         return alerts;
     }
+
+    private static string BuildDailySummary(IReadOnlyList<WhatsAppNicheMetricRow> rows, IReadOnlyList<WhatsAppNicheTopProduct> topProducts, IReadOnlyList<string> alerts)
+    {
+        var best = rows.Where(x => x.Clicks > 0)
+            .OrderByDescending(x => x.ClicksPerSend)
+            .ThenByDescending(x => x.Clicks)
+            .FirstOrDefault();
+        var top = topProducts.FirstOrDefault();
+        return string.Join(" ", new[]
+        {
+            $"Nichos nas ultimas 24h: {rows.Sum(x => x.Sent)} envios, {rows.Sum(x => x.Clicks)} cliques e {rows.Sum(x => x.ReviewRequired)} revisoes.",
+            best is null ? "Ainda sem nicho lider." : $"Melhor eficiencia: {best.Slug} com {best.ClicksPerSend:0.##} clique(s) por envio.",
+            top is null ? "Ainda sem produto lider." : $"Produto lider: {top.ProductName} ({top.Slug}) com {top.Clicks} clique(s).",
+            alerts.Count == 0 ? "Sem alertas operacionais." : $"Alertas ativos: {alerts.Count}."
+        });
+    }
 }
 
 public static partial class WhatsAppNicheClassifier
@@ -1055,7 +1109,7 @@ public static partial class WhatsAppNicheClassifier
         var explicitNiche = WhatsAppNicheDefinitions.NormalizeSlug(offer.Category);
         if (WhatsAppNicheDefinitions.IsKnown(explicitNiche) && explicitNiche != WhatsAppNicheDefinitions.Geral)
         {
-            return new WhatsAppNicheDecision(explicitNiche, false, "nicho_explicito");
+            return new WhatsAppNicheDecision(explicitNiche, false, "nicho_explicito", 100);
         }
 
         var text = Normalize($"{offer.ProductName} {offer.StoreName} {offer.Category} {offer.ProductUrl} {offer.CommissionRaw}");
@@ -1064,45 +1118,45 @@ public static partial class WhatsAppNicheClassifier
         var hasCommissionSignal = ContainsAny(text, "comissao", "commission", "%") || !string.IsNullOrWhiteSpace(offer.CommissionRaw);
         if (isMercadoLivre && hasCommissionSignal)
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.MercadoLivre, false, "mercado_livre_com_comissao");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.MercadoLivre, false, "mercado_livre_com_comissao", 95);
         }
 
         if (price is > 0 and <= 50)
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Ate50, false, "preco_ate_50");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Ate50, false, "preco_ate_50", 80);
         }
 
         if (ContainsAny(text, "creatina", "whey", "pre treino", "pre-treino", "vitamina", "suplemento", "protein", "colageno", "omega 3", "omega3", "termogenico"))
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.FitnessHealth, false, "termos_fitness_health");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.FitnessHealth, false, "termos_fitness_health", 90);
         }
 
         if (ContainsAny(text, "celular", "smartphone", "iphone", "fone", "headset", "notebook", "laptop", "smart home", "alexa", "periferico", "teclado", "mouse", "game", "gamer", "console", "ssd", "monitor"))
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Tech, false, "termos_tech");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Tech, false, "termos_tech", 90);
         }
 
         if (ContainsAny(text, "creme", "perfume", "skincare", "skin care", "maquiagem", "higiene", "cabelo", "shampoo", "condicionador", "protetor solar", "gloss", "batom", "secador", "prancha"))
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Beleza, false, "termos_beleza");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Beleza, false, "termos_beleza", 90);
         }
 
         if (ContainsAny(text, "cozinha", "organizador", "organizacao", "casa", "decoracao", "cama", "mesa", "banho", "utensilio", "panela", "air fryer", "limpeza", "purificador", "filtro"))
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Casa, false, "termos_casa");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Casa, false, "termos_casa", 90);
         }
 
         if (ContainsAny(text, "vestido", "camiseta", "blusa", "calca", "tenis", "sandalia", "bolsa", "relogio", "oculos", "moda", "calcado", "acessorio", "terno", "paleto", "blazer"))
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Moda, false, "termos_moda");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Moda, false, "termos_moda", 90);
         }
 
         if (isMercadoLivre)
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.MercadoLivre, false, "mercado_livre_sem_comissao_explicita");
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.MercadoLivre, false, "mercado_livre_sem_comissao_explicita", 70);
         }
 
-        return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Geral, true, "nicho_ambiguo_requer_revisao");
+        return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Geral, true, "nicho_ambiguo_requer_revisao", 20);
     }
 
     private static decimal? TryParsePrice(string? value)
@@ -1207,7 +1261,7 @@ public static class WhatsAppNicheDefinitions
 
 public sealed record WhatsAppNicheDefinition(string Slug, string DisplayName, string Description, int DailyLimit);
 
-public sealed record WhatsAppNicheDecision(string Slug, bool RequiresReview, string Reason);
+public sealed record WhatsAppNicheDecision(string Slug, bool RequiresReview, string Reason, int Confidence);
 
 public sealed record WhatsAppNicheRouteOfferInput(
     string? ProductName,
@@ -1276,10 +1330,12 @@ public sealed record WhatsAppNicheRouteResult(
     string Status,
     string Slug,
     string Reason,
+    int Confidence,
     string? TrackingUrl,
     string? TargetGroupId,
     string? Message);
 
 public sealed record WhatsAppNicheOverrideUpsertRequest(string? Id, string MatchText, string Mode, bool Enabled, IReadOnlyList<string> TargetSlugs);
-public sealed record WhatsAppNicheMetricRow(string Slug, int Sent, int DuplicateRecent, int ReviewRequired, int Clicks);
-public sealed record WhatsAppNicheMetricsReport(IReadOnlyList<WhatsAppNicheMetricRow> Rows, IReadOnlyList<string> Alerts);
+public sealed record WhatsAppNicheMetricRow(string Slug, int Sent, int DuplicateRecent, int ReviewRequired, int Clicks, decimal ClicksPerSend, int UniqueTrackedOffers);
+public sealed record WhatsAppNicheTopProduct(string Slug, string? ProductName, string? TrackingId, int Clicks);
+public sealed record WhatsAppNicheMetricsReport(IReadOnlyList<WhatsAppNicheMetricRow> Rows, IReadOnlyList<WhatsAppNicheTopProduct> TopProducts, IReadOnlyList<string> Alerts, string DailySummary);

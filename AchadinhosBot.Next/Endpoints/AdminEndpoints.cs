@@ -155,6 +155,14 @@ public static class AdminEndpoints
             return result is null ? Results.NotFound(new { success = false }) : Results.Ok(new { success = result.Success, result });
         });
 
+        app.MapPost("/api/admin/whatsapp/niche-reviews/approve-batch", async (WhatsAppNicheReviewBatchApproveRequest req, HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            var results = await service.ApproveReviewsAsync(req.Ids ?? Array.Empty<string>(), req.Slug, ct);
+            return Results.Ok(new { success = true, total = results.Count, results });
+        });
+
         app.MapGet("/api/admin/whatsapp/niche-overrides", async (HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -1930,6 +1938,7 @@ public sealed record AdminApplyWhatsAppOfferRecommendationRequest(string Message
 public sealed record AdminAddToCatalogRequest(string DraftId, string? CatalogTarget = null);
 public sealed record AdminHighlightOnBioRequest(string DraftId);
 public sealed record WhatsAppNicheReviewApproveRequest(string Slug);
+public sealed record WhatsAppNicheReviewBatchApproveRequest(IReadOnlyList<string>? Ids, string Slug);
 
 
 
