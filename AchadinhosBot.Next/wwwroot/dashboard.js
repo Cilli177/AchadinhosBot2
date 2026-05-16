@@ -497,6 +497,7 @@ function showSection(name) {
   }
   if (name === 'wa-niches') {
     loadWhatsAppNicheGroups();
+    loadWhatsAppNicheOps();
   }
 }
 
@@ -7261,6 +7262,97 @@ async function routeWhatsAppNicheTest(forceSend = false) {
     const message = extractApiErrorMessage(err, 'Nao foi possivel rotear a oferta.');
     setSafeText('waNicheRouteStatus', `Roteamento: ${slug} (${status}) - ${message}`);
   }
+}
+
+async function loadWhatsAppNicheOps() {
+  try {
+    const [metricsRes, reviewsRes, routesRes, overridesRes] = await Promise.all([
+      api('/api/admin/whatsapp/niche-metrics'),
+      api('/api/admin/whatsapp/niche-reviews?status=pending&limit=50'),
+      api('/api/admin/whatsapp/niche-routes?limit=100'),
+      api('/api/admin/whatsapp/niche-overrides')
+    ]);
+    renderWhatsAppNicheMetricsOps(metricsRes?.report || {});
+    renderWhatsAppNicheReviews(reviewsRes?.items || []);
+    renderWhatsAppNicheRoutes(routesRes?.items || []);
+    renderWhatsAppNicheOverrides(overridesRes?.items || []);
+  } catch (err) {
+    setSafeText('waNicheOpsAlerts', 'Erro ao carregar operacao: ' + extractApiErrorMessage(err));
+  }
+}
+
+function renderWhatsAppNicheMetricsOps(report) {
+  const rows = report?.rows || report?.Rows || [];
+  const alerts = report?.alerts || report?.Alerts || [];
+  setSafeText('waNicheOpsAlerts', alerts.length ? alerts.join(' | ') : 'Sem alertas operacionais no momento.');
+  const box = document.getElementById('waNicheOpsMetrics');
+  if (!box) return;
+  box.innerHTML = rows.map(r => `
+    <div class="card" style="padding:12px;">
+      <strong>${escapeHtml(r.slug || r.Slug)}</strong>
+      <div class="muted">Enviadas: ${r.sent ?? r.Sent ?? 0}</div>
+      <div class="muted">Repetidas: ${r.duplicateRecent ?? r.DuplicateRecent ?? 0}</div>
+      <div class="muted">Revisao: ${r.reviewRequired ?? r.ReviewRequired ?? 0}</div>
+      <div class="muted">Cliques: ${r.clicks ?? r.Clicks ?? 0}</div>
+    </div>`).join('') || '<div class="muted">Sem dados ainda.</div>';
+}
+
+function renderWhatsAppNicheReviews(items) {
+  const box = document.getElementById('waNicheReviews');
+  if (!box) return;
+  box.innerHTML = items.map(item => `
+    <div class="card" style="padding:12px;">
+      <strong>${escapeHtml(item.productName || item.ProductName || '-')}</strong>
+      <div class="muted">${escapeHtml(item.reason || item.Reason || '')}</div>
+      <div class="row" style="gap:8px; margin-top:8px; flex-wrap:wrap;">
+        ${['casa','beleza','fitness_health','moda','tech'].map(slug => `<button class="secondary" onclick="approveWhatsAppNicheReview('${escapeHtml(item.id || item.Id)}','${slug}')">${slug}</button>`).join('')}
+      </div>
+    </div>`).join('') || '<div class="muted">Nenhuma revisao pendente.</div>';
+}
+
+async function approveWhatsAppNicheReview(id, slug) {
+  await api(`/api/admin/whatsapp/niche-reviews/${encodeURIComponent(id)}/approve`, 'POST', { slug });
+  await loadWhatsAppNicheOps();
+}
+
+function renderWhatsAppNicheRoutes(items) {
+  const body = document.getElementById('waNicheRoutesBody');
+  if (!body) return;
+  body.innerHTML = items.map(item => `
+    <tr>
+      <td>${escapeHtml(formatTs(item.timestamp || item.Timestamp))}</td>
+      <td>${escapeHtml(item.productName || item.ProductName || '-')}</td>
+      <td>${escapeHtml(item.slug || item.Slug || '-')}</td>
+      <td>${escapeHtml(item.status || item.Status || '-')}</td>
+      <td><code>${escapeHtml(item.trackingId || item.TrackingId || '-')}</code></td>
+      <td>${(item.hadImage ?? item.HadImage) ? 'sim' : 'nao'}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">Sem roteamentos.</td></tr>';
+}
+
+function renderWhatsAppNicheOverrides(items) {
+  const box = document.getElementById('waNicheOverrides');
+  if (!box) return;
+  box.innerHTML = items.map(item => `
+    <div class="row" style="justify-content:space-between; gap:8px;">
+      <span><strong>${escapeHtml(item.matchText || item.MatchText)}</strong> -> ${escapeHtml((item.targetSlugs || item.TargetSlugs || []).join(', '))}</span>
+      <button class="secondary" onclick="deleteWhatsAppNicheOverride('${escapeHtml(item.id || item.Id)}')">Remover</button>
+    </div>`).join('') || '<div class="muted">Nenhum override cadastrado.</div>';
+}
+
+async function saveWhatsAppNicheOverride() {
+  const matchText = (document.getElementById('waNicheOverrideText')?.value || '').trim();
+  const targetSlugs = Array.from(document.querySelectorAll('#waNicheOverrideTargets input[type="checkbox"]:checked'))
+    .map(input => String(input.value || '').trim())
+    .filter(Boolean);
+  if (!matchText || targetSlugs.length === 0) return;
+  await api('/api/admin/whatsapp/niche-overrides', 'PUT', { id: null, matchText, mode: targetSlugs.length > 1 ? 'additive' : 'force', enabled: true, targetSlugs });
+  document.getElementById('waNicheOverrideText').value = '';
+  await loadWhatsAppNicheOps();
+}
+
+async function deleteWhatsAppNicheOverride(id) {
+  await api(`/api/admin/whatsapp/niche-overrides/${encodeURIComponent(id)}`, 'DELETE');
+  await loadWhatsAppNicheOps();
 }
 
 // WhatsApp Monitoring

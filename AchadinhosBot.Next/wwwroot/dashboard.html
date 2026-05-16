@@ -3196,6 +3196,46 @@
               </div>
               <pre id="waNicheRouteResult" class="muted" style="margin-top:12px; white-space:pre-wrap; overflow:auto; max-height:220px;"></pre>
             </section>
+
+            <section class="card" style="margin-top:16px;">
+              <div class="row" style="justify-content:space-between; gap:10px;">
+                <h3 style="margin:0;">Operacao dos nichos</h3>
+                <button class="secondary" onclick="loadWhatsAppNicheOps()">Atualizar operacao</button>
+              </div>
+              <div id="waNicheOpsAlerts" class="status muted" style="margin-top:10px;"></div>
+              <div id="waNicheOpsMetrics" class="grid" style="gap:10px; margin-top:12px;"></div>
+            </section>
+
+            <section class="card" style="margin-top:16px;">
+              <h3 style="margin-top:0;">Revisar nicho</h3>
+              <div id="waNicheReviews" style="display:grid; gap:10px;"></div>
+            </section>
+
+            <section class="card" style="margin-top:16px;">
+              <h3 style="margin-top:0;">Overrides manuais</h3>
+              <div class="row" style="gap:8px; flex-wrap:wrap;">
+                <input id="waNicheOverrideText" class="form-control" placeholder="termo ou produto" />
+                <div id="waNicheOverrideTargets" class="row" style="gap:8px; flex-wrap:wrap;">
+                  <label><input type="checkbox" value="casa" /> casa</label>
+                  <label><input type="checkbox" value="beleza" /> beleza</label>
+                  <label><input type="checkbox" value="fitness_health" /> fitness_health</label>
+                  <label><input type="checkbox" value="moda" /> moda</label>
+                  <label><input type="checkbox" value="tech" /> tech</label>
+                </div>
+                <button onclick="saveWhatsAppNicheOverride()">Adicionar override</button>
+              </div>
+              <div id="waNicheOverrides" style="display:grid; gap:8px; margin-top:12px;"></div>
+            </section>
+
+            <section class="card" style="margin-top:16px;">
+              <h3 style="margin-top:0;">Ultimos roteamentos</h3>
+              <div style="overflow-x:auto;">
+                <table class="table">
+                  <thead><tr><th>Hora</th><th>Produto</th><th>Nicho</th><th>Status</th><th>Tracking</th><th>Imagem</th></tr></thead>
+                  <tbody id="waNicheRoutesBody"><tr><td colspan="6" class="muted">Carregue a operacao.</td></tr></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </section>
       </div>

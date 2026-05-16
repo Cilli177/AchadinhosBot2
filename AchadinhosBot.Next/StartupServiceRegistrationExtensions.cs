@@ -132,6 +132,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
         builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
         builder.Services.AddSingleton<IWhatsAppOutboundLogStore, WhatsAppOutboundLogStore>();
+        builder.Services.AddSingleton<IWhatsAppNicheOperationsStore, WhatsAppNicheOperationsStore>();
         builder.Services.AddSingleton<ITelegramOutboundLogStore, TelegramOutboundLogStore>();
         builder.Services.AddSingleton<IWhatsAppAgentMemoryStore, WhatsAppAgentMemoryStore>();
         builder.Services.AddSingleton<IChannelMonitorSelectionStore, ChannelMonitorSelectionStore>();

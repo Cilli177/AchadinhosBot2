@@ -24,6 +24,8 @@ public sealed partial class WhatsAppNicheGroupService
     private readonly ICatalogOfferStore _catalogOfferStore;
     private readonly IOfferImageResolver _offerImageResolver;
     private readonly IIdempotencyStore _idempotencyStore;
+    private readonly IWhatsAppNicheOperationsStore _operationsStore;
+    private readonly IClickLogStore _clickLogStore;
     private readonly WebhookOptions _webhookOptions;
 
     public WhatsAppNicheGroupService(
@@ -35,6 +37,8 @@ public sealed partial class WhatsAppNicheGroupService
         ICatalogOfferStore catalogOfferStore,
         IOfferImageResolver offerImageResolver,
         IIdempotencyStore idempotencyStore,
+        IWhatsAppNicheOperationsStore operationsStore,
+        IClickLogStore clickLogStore,
         IOptions<WebhookOptions> webhookOptions)
     {
         _settingsStore = settingsStore;
@@ -45,6 +49,8 @@ public sealed partial class WhatsAppNicheGroupService
         _catalogOfferStore = catalogOfferStore;
         _offerImageResolver = offerImageResolver;
         _idempotencyStore = idempotencyStore;
+        _operationsStore = operationsStore;
+        _clickLogStore = clickLogStore;
         _webhookOptions = webhookOptions.Value;
     }
 
@@ -183,23 +189,41 @@ public sealed partial class WhatsAppNicheGroupService
     public async Task<WhatsAppNicheRouteResult> RouteOfferAsync(WhatsAppNicheRouteOfferRequest request, CancellationToken ct)
     {
         var offer = await ResolveRouteOfferAsync(request, ct);
-        var decision = WhatsAppNicheClassifier.Classify(offer);
+        var settings = await _settingsStore.GetAsync(ct);
+        EnsureDefaults(settings);
+        var explicitRequestSlug = WhatsAppNicheDefinitions.NormalizeSlug(request.Category);
+        var hasExplicitRequestSlug = WhatsAppNicheDefinitions.IsKnown(explicitRequestSlug)
+            && !string.Equals(explicitRequestSlug, WhatsAppNicheDefinitions.Geral, StringComparison.OrdinalIgnoreCase);
+        var overrideDecision = hasExplicitRequestSlug ? null : ResolveOverride(settings, offer);
+        var decision = overrideDecision ?? WhatsAppNicheClassifier.Classify(offer);
         if (decision.RequiresReview)
         {
+            await _operationsStore.SaveReviewAsync(new WhatsAppNicheReviewItem
+            {
+                Reason = decision.Reason,
+                SuggestedSlug = decision.Slug,
+                ProductName = offer.ProductName,
+                ProductUrl = offer.ProductUrl,
+                StoreName = offer.StoreName,
+                PriceText = offer.PriceText,
+                ImageUrl = offer.ImageUrl,
+                OriginalText = request.OriginalText
+            }, ct);
+            await AppendRouteEventAsync(request, offer, new(false, "review_required", decision.Slug, decision.Reason, null, null, null), false, ct);
             return new WhatsAppNicheRouteResult(false, "review_required", decision.Slug, decision.Reason, null, null, null);
         }
 
-        var settings = await _settingsStore.GetAsync(ct);
-        EnsureDefaults(settings);
         var group = settings.WhatsAppNicheGroups.FirstOrDefault(x => string.Equals(x.Slug, decision.Slug, StringComparison.OrdinalIgnoreCase));
         if (group is null || !group.Enabled || string.IsNullOrWhiteSpace(group.GroupId))
         {
+            await AppendRouteEventAsync(request, offer, new(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", null, null, null), false, ct);
             return new WhatsAppNicheRouteResult(false, "missing_group", decision.Slug, "Nicho classificado, mas sem grupo WhatsApp ativo configurado.", null, null, null);
         }
 
         var offerUrl = FirstNonEmpty(offer.ProductUrl, request.ProductUrl);
         if (string.IsNullOrWhiteSpace(offerUrl))
         {
+            await AppendRouteEventAsync(request, offer, new(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", null, group.GroupId, null), false, ct);
             return new WhatsAppNicheRouteResult(false, "missing_url", decision.Slug, "Oferta sem URL roteavel.", null, group.GroupId, null);
         }
 
@@ -208,7 +232,7 @@ public sealed partial class WhatsAppNicheGroupService
             (await WasRecentlySentToGroupAsync(group, offer, ct) ||
              !_idempotencyStore.TryBegin(repeatDedupeKey, NicheRepeatWindow)))
         {
-            return new WhatsAppNicheRouteResult(
+            var duplicate = new WhatsAppNicheRouteResult(
                 false,
                 "duplicate_recent",
                 group.Slug,
@@ -216,6 +240,8 @@ public sealed partial class WhatsAppNicheGroupService
                 null,
                 group.GroupId,
                 null);
+            await AppendRouteEventAsync(request, offer, duplicate, false, ct);
+            return duplicate;
         }
 
         var campaign = NormalizeOptional(request.Campaign) ?? group.Campaign;
@@ -234,21 +260,127 @@ public sealed partial class WhatsAppNicheGroupService
         {
             if (!TryReserveDailySlot(group, DateTimeOffset.UtcNow, out var quotaMessage))
             {
-                return new WhatsAppNicheRouteResult(false, "daily_limit_reached", group.Slug, quotaMessage, trackedUrl, group.GroupId, null);
+                var quota = new WhatsAppNicheRouteResult(false, "daily_limit_reached", group.Slug, quotaMessage, trackedUrl, group.GroupId, null);
+                await AppendRouteEventAsync(request, offer, quota, image is not null, ct);
+                return quota;
             }
 
             var send = await SendOfferAsync(group, message, image, ct);
             if (!send.Success)
             {
                 _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
-                return new WhatsAppNicheRouteResult(false, "send_failed", group.Slug, send.Message ?? "Falha ao enviar.", trackedUrl, group.GroupId, message);
+                var failed = new WhatsAppNicheRouteResult(false, "send_failed", group.Slug, send.Message ?? "Falha ao enviar.", trackedUrl, group.GroupId, message);
+                await AppendRouteEventAsync(request, offer, failed, image is not null, ct);
+                return failed;
             }
 
             await _settingsStore.SaveAsync(settings, ct);
-            return new WhatsAppNicheRouteResult(true, "sent", group.Slug, decision.Reason, trackedUrl, group.GroupId, message);
+            var sent = new WhatsAppNicheRouteResult(true, "sent", group.Slug, decision.Reason, trackedUrl, group.GroupId, message);
+            await AppendRouteEventAsync(request, offer, sent, image is not null, ct);
+            return sent;
         }
 
-        return new WhatsAppNicheRouteResult(true, "prepared", group.Slug, decision.Reason, trackedUrl, group.GroupId, message);
+        var prepared = new WhatsAppNicheRouteResult(true, "prepared", group.Slug, decision.Reason, trackedUrl, group.GroupId, message);
+        await AppendRouteEventAsync(request, offer, prepared, image is not null, ct);
+        return prepared;
+    }
+
+    public async Task<IReadOnlyList<WhatsAppNicheRouteResult>> RouteOfferWithOverridesAsync(WhatsAppNicheRouteOfferRequest request, CancellationToken ct)
+    {
+        var offer = await ResolveRouteOfferAsync(request, ct);
+        var settings = await _settingsStore.GetAsync(ct);
+        EnsureDefaults(settings);
+        var overrideItem = ResolveOverrideItem(settings, offer);
+        if (overrideItem is null || overrideItem.TargetSlugs.Count <= 1)
+        {
+            return [await RouteOfferAsync(request, ct)];
+        }
+
+        var results = new List<WhatsAppNicheRouteResult>();
+        foreach (var slug in overrideItem.TargetSlugs)
+        {
+            var forced = request with
+            {
+                Category = slug,
+                Campaign = NormalizeOptional(request.Campaign) ?? $"niche_live_{slug}"
+            };
+            results.Add(await RouteOfferAsync(forced, ct));
+        }
+
+        return results;
+    }
+
+    public Task<IReadOnlyList<WhatsAppNicheRouteEvent>> ListRouteEventsAsync(int limit, CancellationToken ct)
+        => _operationsStore.ListRouteEventsAsync(limit, ct);
+
+    public Task<IReadOnlyList<WhatsAppNicheReviewItem>> ListReviewsAsync(string? status, int limit, CancellationToken ct)
+        => _operationsStore.ListReviewsAsync(status, limit, ct);
+
+    public async Task<WhatsAppNicheRouteResult?> ApproveReviewAsync(string id, string slug, CancellationToken ct)
+    {
+        var review = await _operationsStore.GetReviewAsync(id, ct);
+        if (review is null) return null;
+        review.Status = "approved";
+        review.DecidedAtUtc = DateTimeOffset.UtcNow;
+        review.DecidedSlug = WhatsAppNicheDefinitions.NormalizeSlug(slug);
+        await _operationsStore.UpdateReviewAsync(review, ct);
+        return await RouteOfferAsync(new(review.ProductName, review.ProductUrl, review.StoreName, review.DecidedSlug, review.PriceText, null, null, null, null, review.ImageUrl, review.OriginalText, $"niche_live_{review.DecidedSlug}", true), ct);
+    }
+
+    public async Task<IReadOnlyList<WhatsAppNicheOverrideSettings>> ListOverridesAsync(CancellationToken ct)
+        => (await _settingsStore.GetAsync(ct)).WhatsAppNicheOverrides;
+
+    public async Task<WhatsAppNicheOverrideSettings> UpsertOverrideAsync(WhatsAppNicheOverrideUpsertRequest request, CancellationToken ct)
+    {
+        var settings = await _settingsStore.GetAsync(ct);
+        var item = string.IsNullOrWhiteSpace(request.Id) ? null : settings.WhatsAppNicheOverrides.FirstOrDefault(x => x.Id == request.Id);
+        item ??= new WhatsAppNicheOverrideSettings();
+        item.MatchText = request.MatchText.Trim();
+        item.Mode = request.Mode.Trim().ToLowerInvariant();
+        item.Enabled = request.Enabled;
+        item.TargetSlugs = request.TargetSlugs.Select(WhatsAppNicheDefinitions.NormalizeSlug).Where(WhatsAppNicheDefinitions.IsKnown).Distinct().ToList();
+        if (!settings.WhatsAppNicheOverrides.Any(x => x.Id == item.Id)) settings.WhatsAppNicheOverrides.Add(item);
+        await _settingsStore.SaveAsync(settings, ct);
+        return item;
+    }
+
+    public async Task<bool> DeleteOverrideAsync(string id, CancellationToken ct)
+    {
+        var settings = await _settingsStore.GetAsync(ct);
+        var removed = settings.WhatsAppNicheOverrides.RemoveAll(x => x.Id == id) > 0;
+        if (removed) await _settingsStore.SaveAsync(settings, ct);
+        return removed;
+    }
+
+    public async Task<WhatsAppNicheMetricsReport> GetMetricsAsync(CancellationToken ct)
+    {
+        var events = await _operationsStore.ListRouteEventsAsync(5000, ct);
+        var since = DateTimeOffset.UtcNow.AddDays(-1);
+        var clicks = await _clickLogStore.QueryAsync(null, null, 5000, ct);
+        var settings = await _settingsStore.GetAsync(ct);
+        EnsureDefaults(settings);
+        var grouped = events.Where(x => x.Timestamp >= since)
+            .GroupBy(x => x.Slug, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.ToArray(), StringComparer.OrdinalIgnoreCase);
+        var slugs = settings.WhatsAppNicheGroups
+            .Where(x => x.Enabled)
+            .Select(x => x.Slug)
+            .Concat(grouped.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(WhatsAppNicheDefinitions.GetOrder)
+            .ToArray();
+        var groups = slugs.Select(slug =>
+        {
+            var rows = grouped.TryGetValue(slug, out var entries) ? entries : Array.Empty<WhatsAppNicheRouteEvent>();
+            return new WhatsAppNicheMetricRow(
+                slug,
+                rows.Count(x => x.Status == "sent"),
+                rows.Count(x => x.Status == "duplicate_recent"),
+                rows.Count(x => x.Status == "review_required"),
+                clicks.Count(x => x.Timestamp >= since && string.Equals(x.Campaign, $"niche_live_{slug}", StringComparison.OrdinalIgnoreCase)));
+        }).ToArray();
+        var alerts = BuildAlerts(groups, events);
+        return new(groups, alerts);
     }
 
     private async Task<WhatsAppNicheGroupSettings> GetConfiguredGroupAsync(string slug, CancellationToken ct)
@@ -341,13 +473,24 @@ public sealed partial class WhatsAppNicheGroupService
         WhatsAppNicheRouteOfferInput offer,
         CancellationToken ct)
     {
-        var titleToken = NormalizeIdentityToken(offer.ProductName);
-        if (string.IsNullOrWhiteSpace(titleToken))
+        var identity = BuildProductIdentity(offer);
+        if (string.IsNullOrWhiteSpace(identity))
         {
             return false;
         }
 
         var cutoff = DateTimeOffset.UtcNow - NicheRepeatWindow;
+        var routeEvents = await _operationsStore.ListRouteEventsAsync(2000, ct);
+        if (routeEvents.Any(entry =>
+            entry.Timestamp >= cutoff &&
+            string.Equals(entry.Slug, group.Slug, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(entry.Status, "sent", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(entry.ProductIdentity, identity, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        var titleToken = NormalizeIdentityToken(offer.ProductName);
         var recent = await _whatsAppOutboundLogStore.ListRecentAsync(1000, ct);
         return recent.Any(entry =>
             entry.CreatedAtUtc >= cutoff &&
@@ -357,6 +500,11 @@ public sealed partial class WhatsAppNicheGroupService
 
     private static string BuildNormalizedProductIdentity(string? store, string? title)
         => $"{NormalizeIdentityToken(store)}|{NormalizeIdentityToken(title)}";
+
+    private static string BuildProductIdentity(WhatsAppNicheRouteOfferInput offer)
+        => FirstNonEmpty(
+            ExtractMarketplaceProductIdentity(offer.ProductUrl),
+            BuildNormalizedProductIdentity(offer.StoreName, offer.ProductName));
 
     private static string? ExtractMarketplaceProductIdentity(string? url)
     {
@@ -813,6 +961,69 @@ public sealed partial class WhatsAppNicheGroupService
 
     private static string? NormalizeOptional(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static WhatsAppNicheDecision? ResolveOverride(AutomationSettings settings, WhatsAppNicheRouteOfferInput offer)
+    {
+        var item = ResolveOverrideItem(settings, offer);
+        return item is null ? null : new WhatsAppNicheDecision(item.TargetSlugs[0], false, $"override_{item.Mode}");
+    }
+
+    private static WhatsAppNicheOverrideSettings? ResolveOverrideItem(AutomationSettings settings, WhatsAppNicheRouteOfferInput offer)
+    {
+        var text = $"{offer.ProductName} {offer.ProductUrl} {offer.StoreName}";
+        return settings.WhatsAppNicheOverrides.FirstOrDefault(x =>
+            x.Enabled &&
+            !string.IsNullOrWhiteSpace(x.MatchText) &&
+            text.Contains(x.MatchText, StringComparison.OrdinalIgnoreCase) &&
+            x.TargetSlugs.Count > 0);
+    }
+
+    private async Task AppendRouteEventAsync(WhatsAppNicheRouteOfferRequest request, WhatsAppNicheRouteOfferInput offer, WhatsAppNicheRouteResult result, bool hadImage, CancellationToken ct)
+    {
+        var trackingId = result.TrackingUrl is null ? null : result.TrackingUrl.Split('/').LastOrDefault();
+        var resolvedOfferId = TrackingIdDecorator.Resolve(request.OfferId ?? string.Empty).LookupId;
+        await _operationsStore.AppendRouteEventAsync(new WhatsAppNicheRouteEvent
+        {
+            Slug = result.Slug,
+            Status = result.Status,
+            Reason = result.Reason,
+            ProductName = offer.ProductName,
+            ProductUrl = offer.ProductUrl,
+            ProductIdentity = BuildProductIdentity(offer),
+            StoreName = offer.StoreName,
+            TrackingUrl = result.TrackingUrl,
+            TrackingId = trackingId,
+            TargetGroupId = result.TargetGroupId,
+            HadImage = hadImage,
+            ReusedCanonicalTracking = IsCanonicalOfferTrackingId(resolvedOfferId)
+        }, ct);
+    }
+
+    private static IReadOnlyList<string> BuildAlerts(IReadOnlyList<WhatsAppNicheMetricRow> rows, IReadOnlyList<WhatsAppNicheRouteEvent> events)
+    {
+        var alerts = new List<string>();
+        var now = DateTimeOffset.UtcNow;
+        foreach (var row in rows)
+        {
+            var latestSent = events.Where(x => x.Slug == row.Slug && x.Status == "sent").MaxBy(x => x.Timestamp);
+            if (row.Sent == 0)
+                alerts.Add($"{row.Slug}: nenhum envio nas ultimas 24h.");
+            if (latestSent is not null && now - latestSent.Timestamp > TimeSpan.FromHours(8))
+                alerts.Add($"{row.Slug}: sem envio ha mais de 8h.");
+            if (row.ReviewRequired >= 5)
+                alerts.Add($"{row.Slug}: {row.ReviewRequired} ofertas em revisao nas ultimas 24h.");
+            var sentWithoutImage = events.Count(x => x.Timestamp >= now.AddHours(-24)
+                && x.Slug == row.Slug
+                && x.Status == "sent"
+                && !x.HadImage);
+            if (sentWithoutImage > 0)
+                alerts.Add($"{row.Slug}: {sentWithoutImage} envio(s) sem imagem nas ultimas 24h.");
+        }
+
+        if (events.Any(x => x.Timestamp >= now.AddHours(-24) && (x.TrackingId?.StartsWith("LK-", StringComparison.OrdinalIgnoreCase) ?? false)))
+            alerts.Add("LK detectado em roteamento recente; revisar origem antes de escalar.");
+        return alerts;
+    }
 }
 
 public static partial class WhatsAppNicheClassifier
@@ -1068,3 +1279,7 @@ public sealed record WhatsAppNicheRouteResult(
     string? TrackingUrl,
     string? TargetGroupId,
     string? Message);
+
+public sealed record WhatsAppNicheOverrideUpsertRequest(string? Id, string MatchText, string Mode, bool Enabled, IReadOnlyList<string> TargetSlugs);
+public sealed record WhatsAppNicheMetricRow(string Slug, int Sent, int DuplicateRecent, int ReviewRequired, int Clicks);
+public sealed record WhatsAppNicheMetricsReport(IReadOnlyList<WhatsAppNicheMetricRow> Rows, IReadOnlyList<string> Alerts);

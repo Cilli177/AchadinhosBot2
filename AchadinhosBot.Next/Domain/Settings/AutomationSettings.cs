@@ -44,6 +44,7 @@ public sealed class AutomationSettings
     public List<WhatsAppMonitoredGroup> MonitoredWhatsAppGroups { get; set; } = new();
     public WhatsAppAdminAutomationSettings WhatsAppAdminAutomation { get; set; } = new();
     public List<WhatsAppNicheGroupSettings> WhatsAppNicheGroups { get; set; } = new();
+    public List<WhatsAppNicheOverrideSettings> WhatsAppNicheOverrides { get; set; } = new();
     public ConverterCouponAndPriceCompareSkillSettings ConverterCouponAndPriceCompareSkill { get; set; } = new();
     public WhatsAppAiAgentSettings WhatsAppAiAgent { get; set; } = new();
     public AmazonPlaywrightScraperSettings AmazonPlaywrightScraper { get; set; } = new();
@@ -89,6 +90,16 @@ public sealed class WhatsAppNicheGroupSettings
     public DateTimeOffset? UpdatedAtUtc { get; set; }
     public string? LastCreationStatus { get; set; }
     public string? LastCreationMessage { get; set; }
+}
+
+public sealed class WhatsAppNicheOverrideSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public bool Enabled { get; set; } = true;
+    public string MatchText { get; set; } = string.Empty;
+    public string Mode { get; set; } = "force";
+    public List<string> TargetSlugs { get; set; } = new();
+    public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public sealed class IntegrationSettings

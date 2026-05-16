@@ -131,6 +131,60 @@ public static class AdminEndpoints
                 : Results.BadRequest(new { success = false, result });
         });
 
+        app.MapGet("/api/admin/whatsapp/niche-routes", async (HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            var items = await service.ListRouteEventsAsync(ParseLimit(context, 100), ct);
+            return Results.Ok(new { success = true, total = items.Count, items });
+        });
+
+        app.MapGet("/api/admin/whatsapp/niche-reviews", async (HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            var items = await service.ListReviewsAsync(context.Request.Query["status"], ParseLimit(context, 100), ct);
+            return Results.Ok(new { success = true, total = items.Count, items });
+        });
+
+        app.MapPost("/api/admin/whatsapp/niche-reviews/{id}/approve", async (string id, WhatsAppNicheReviewApproveRequest req, HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            var result = await service.ApproveReviewAsync(id, req.Slug, ct);
+            return result is null ? Results.NotFound(new { success = false }) : Results.Ok(new { success = result.Success, result });
+        });
+
+        app.MapGet("/api/admin/whatsapp/niche-overrides", async (HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            var items = await service.ListOverridesAsync(ct);
+            return Results.Ok(new { success = true, total = items.Count, items });
+        });
+
+        app.MapPut("/api/admin/whatsapp/niche-overrides", async (WhatsAppNicheOverrideUpsertRequest req, HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            var item = await service.UpsertOverrideAsync(req, ct);
+            return Results.Ok(new { success = true, item });
+        });
+
+        app.MapDelete("/api/admin/whatsapp/niche-overrides/{id}", async (string id, HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            return await service.DeleteOverrideAsync(id, ct) ? Results.Ok(new { success = true }) : Results.NotFound(new { success = false });
+        });
+
+        app.MapGet("/api/admin/whatsapp/niche-metrics", async (HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+            return Results.Ok(new { success = true, report = await service.GetMetricsAsync(ct) });
+        });
+
         app.MapGet("/api/admin/price-watch", async (
             HttpContext context,
             PriceWatchService service,
@@ -1856,6 +1910,9 @@ publish_instagram_label:
 
         return includeFailed || !string.Equals(draft.Status, "failed", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static int ParseLimit(HttpContext context, int fallback)
+        => int.TryParse(context.Request.Query["limit"], out var limit) ? Math.Clamp(limit, 1, 5000) : fallback;
 }
 
 // --- Request DTOs ---
@@ -1872,6 +1929,7 @@ public sealed record AdminCreateDraftFromWhatsAppRequest(string MessageId, bool 
 public sealed record AdminApplyWhatsAppOfferRecommendationRequest(string MessageId, string RecommendedAction, string? ExistingDraftId = null, bool UseAiCaption = false, bool SendToCatalog = false, string? CatalogTarget = null, string? SuggestedPostType = null);
 public sealed record AdminAddToCatalogRequest(string DraftId, string? CatalogTarget = null);
 public sealed record AdminHighlightOnBioRequest(string DraftId);
+public sealed record WhatsAppNicheReviewApproveRequest(string Slug);
 
 
 

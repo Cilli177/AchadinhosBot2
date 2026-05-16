@@ -96,13 +96,16 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
 
             foreach (var candidate in candidates)
             {
-                var result = await _nicheGroupService.RouteOfferAsync(candidate, ct);
-                _logger.LogInformation(
-                    "Oferta roteada automaticamente para nicho. Source={Source} Slug={Slug} Status={Status} Success={Success}",
-                    entry.To,
-                    result.Slug,
-                    result.Status,
-                    result.Success);
+                var results = await _nicheGroupService.RouteOfferWithOverridesAsync(candidate, ct);
+                foreach (var result in results)
+                {
+                    _logger.LogInformation(
+                        "Oferta roteada automaticamente para nicho. Source={Source} Slug={Slug} Status={Status} Success={Success}",
+                        entry.To,
+                        result.Slug,
+                        result.Status,
+                        result.Success);
+                }
             }
         }
 
