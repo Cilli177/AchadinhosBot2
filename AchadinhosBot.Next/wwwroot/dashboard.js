@@ -7376,6 +7376,8 @@ function getWhatsAppNicheReviewReasonLabel(reason) {
     institutional_or_group_url_as_offer: 'Link institucional usado como oferta',
     auto_route_missing_product_or_niche: 'Sem titulo ou nicho confiavel',
     auto_route_missing_offer_url: 'Sem link de oferta',
+    blocked_unapproved_tracking: 'Tracking nao aprovado',
+    missing_image_for_niche_send: 'Sem imagem para envio automatico',
     nicho_ambiguo_requer_revisao: 'Nicho ambiguo',
     mercado_livre_sem_comissao_explicita: 'Mercado Livre sem comissao explicita'
   };

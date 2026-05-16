@@ -258,6 +258,24 @@ public sealed partial class WhatsAppNicheGroupService
 
         var message = BuildOfferMessage(offer, trackedUrl, group.Slug, request.OriginalText, offerUrl);
         var image = await ResolveOfferImageAsync(offer, request, offerUrl, trackedUrl, ct);
+        var trackedId = ExtractTrackingIdFromRedirectUrl(trackedUrl);
+        if (request.SendNow && TrackingIdDecorator.IsBlockedOfferTrackingId(trackedId))
+        {
+            _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
+            await SaveGuardReviewAsync(offer, request, group.Slug, "blocked_unapproved_tracking", decision.Confidence, ct);
+            var blocked = new WhatsAppNicheRouteResult(false, "blocked_unapproved_tracking", group.Slug, "Tracking nao aprovado para envio automatico em nichos.", decision.Confidence, trackedUrl, group.GroupId, message);
+            await AppendRouteEventAsync(request, offer, blocked, image is not null, ct);
+            return blocked;
+        }
+
+        if (request.SendNow && image is null)
+        {
+            _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
+            await SaveGuardReviewAsync(offer, request, group.Slug, "missing_image_for_niche_send", decision.Confidence, ct);
+            var missingImage = new WhatsAppNicheRouteResult(false, "review_required", group.Slug, "Oferta sem imagem confiavel para envio automatico em nichos.", decision.Confidence, trackedUrl, group.GroupId, message);
+            await AppendRouteEventAsync(request, offer, missingImage, false, ct);
+            return missingImage;
+        }
         if (request.SendNow)
         {
             if (!TryReserveDailySlot(group, DateTimeOffset.UtcNow, out var quotaMessage))
@@ -698,6 +716,52 @@ public sealed partial class WhatsAppNicheGroupService
         {
             return null;
         }
+    }
+
+    private async Task SaveGuardReviewAsync(
+        WhatsAppNicheRouteOfferInput offer,
+        WhatsAppNicheRouteOfferRequest request,
+        string slug,
+        string reason,
+        int confidence,
+        CancellationToken ct)
+    {
+        await _operationsStore.SaveReviewAsync(new WhatsAppNicheReviewItem
+        {
+            Reason = reason,
+            Confidence = confidence,
+            SuggestedSlug = slug,
+            ProductName = offer.ProductName,
+            ProductUrl = offer.ProductUrl,
+            StoreName = offer.StoreName,
+            PriceText = offer.PriceText,
+            ImageUrl = offer.ImageUrl,
+            OriginalText = request.OriginalText
+        }, ct);
+    }
+
+    private static string? ExtractTrackingIdFromRedirectUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var marker = "/r/";
+        var index = url.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var id = url[(index + marker.Length)..];
+        var separator = id.IndexOfAny(['?', '#', '&']);
+        if (separator >= 0)
+        {
+            id = id[..separator];
+        }
+
+        return Uri.UnescapeDataString(id);
     }
 
     private async Task<WhatsAppSendResult> SendOfferAsync(

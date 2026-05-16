@@ -227,7 +227,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var categories = new List<string> { primaryCategory };
         var normalized = Normalize(title ?? string.Empty);
 
-        if (ContainsAny(normalized, "lixeira inteligente", "lixeira com sensor", "lampada inteligente", "aspirador robo", "smart home", "mesa de apoio"))
+        if (ContainsAny(normalized, "lixeira inteligente", "lixeira com sensor", "lampada inteligente", "aspirador robo", "smart home", "mesa de apoio", "caixa de som", "soundbar", "smart tv", "televisao", "tv "))
         {
             AddHybridCategory(categories, WhatsAppNicheDefinitions.Casa);
             AddHybridCategory(categories, WhatsAppNicheDefinitions.Tech);
@@ -277,12 +277,12 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var product = LinkProdutoRegex().Match(text);
         if (product.Success)
         {
-            return product.Groups[1].Value.Trim();
+            return NormalizeCapturedUrl(product.Groups[1].Value);
         }
 
         var cta = OfferCtaUrlRegex().Matches(text)
             .Cast<Match>()
-            .Select(match => match.Groups["url"].Value.Trim())
+            .Select(match => NormalizeCapturedUrl(match.Groups["url"].Value))
             .FirstOrDefault(url => !LooksLikeBioOrHubUrl(url));
         if (!string.IsNullOrWhiteSpace(cta))
         {
@@ -292,7 +292,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var matches = UrlRegex().Matches(text);
         return matches
             .Cast<Match>()
-            .Select(match => match.Value.Trim())
+            .Select(match => NormalizeCapturedUrl(match.Value))
             .LastOrDefault(url => !LooksLikeBioOrHubUrl(url));
     }
 
@@ -304,7 +304,20 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         }
 
         var match = TrackingRegex().Match(url);
-        return match.Success ? match.Groups[1].Value : null;
+        return match.Success ? NormalizeTrackingId(match.Groups[1].Value) : null;
+    }
+
+    private static string NormalizeCapturedUrl(string url)
+        => url.Trim().TrimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '⚡');
+
+    private static string? NormalizeTrackingId(string trackingId)
+    {
+        var normalized = Regex.Replace(
+            trackingId.Trim(),
+            @"[^A-Za-z0-9-].*$",
+            string.Empty,
+            RegexOptions.CultureInvariant);
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
     }
 
     private static bool LooksLikeBioOrHubUrl(string url)
