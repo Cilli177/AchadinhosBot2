@@ -36,7 +36,6 @@
           <button data-tab="wa-automation" onclick="showSection('wa-automation')">Automação WhatsApp</button>
           <button data-tab="wa-outreach" onclick="showSection('wa-outreach')">Disparo para participantes</button>
           <button data-tab="wa-niches" onclick="showSection('wa-niches')">Nichos WhatsApp</button>
-          <button data-tab="wa-niche-review" onclick="showSection('wa-niche-review')">Revisao de Nichos</button>
         </div>
         <div class="nav-group">
           <div class="nav-label">Automação</div>
@@ -3118,6 +3117,14 @@
           </div>
           <div id="section-wa-niches" class="hidden">
             <section class="card" style="margin-top:16px;">
+              <div class="row" style="gap:8px; flex-wrap:wrap;">
+                <button id="waNicheSubtabConfig" class="secondary" onclick="showWhatsAppNicheSubtab('config')">Configuracao</button>
+                <button id="waNicheSubtabOps" class="secondary" onclick="showWhatsAppNicheSubtab('ops')">Operacao</button>
+                <button id="waNicheSubtabReview" class="secondary" onclick="showWhatsAppNicheSubtab('review')">Revisao</button>
+              </div>
+            </section>
+            <div id="waNichePanelConfig">
+            <section class="card" style="margin-top:16px;">
               <div class="row" style="justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
                 <div>
                   <h2 style="margin-bottom:6px;">Nichos WhatsApp</h2>
@@ -3197,7 +3204,9 @@
               </div>
               <pre id="waNicheRouteResult" class="muted" style="margin-top:12px; white-space:pre-wrap; overflow:auto; max-height:220px;"></pre>
             </section>
+            </div>
 
+            <div id="waNichePanelOps" class="hidden">
             <section class="card" style="margin-top:16px;">
               <div class="row" style="justify-content:space-between; gap:10px;">
                 <h3 style="margin:0;">Operacao dos nichos</h3>
@@ -3211,7 +3220,7 @@
 
             <section class="card" style="margin-top:16px;">
               <h3 style="margin-top:0;">Revisar nicho</h3>
-              <p class="muted">A fila completa agora fica na aba <strong>Revisao de Nichos</strong>, com filtros, contexto e acoes de decisao.</p>
+              <p class="muted">A fila completa agora fica na subaba <strong>Revisao</strong>, com filtros, contexto e acoes de decisao.</p>
               <div class="row" style="gap:8px; flex-wrap:wrap; margin-bottom:10px;">
                 <select id="waNicheBatchReviewSlug" class="form-control">
                   <option value="casa">casa</option><option value="beleza">beleza</option><option value="fitness_health">fitness_health</option>
@@ -3247,8 +3256,9 @@
                 </table>
               </div>
             </section>
-          </div>
-          <div id="section-wa-niche-review" class="hidden">
+            </div>
+
+            <div id="waNichePanelReview" class="hidden">
             <section class="card" style="margin-top:16px;">
               <div class="row" style="justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
                 <div>
@@ -3306,13 +3316,14 @@
               <div id="waNicheReviewReasons" style="display:grid; gap:8px; margin-top:12px;"></div>
               <div id="waNicheReviewBoard" style="display:grid; gap:12px; margin-top:14px;"></div>
             </section>
+            </div>
           </div>
         </section>
       </div>
     </main>
   </div>
   <script src="/flow-endpoints-map.js?v=20260422-flow-map"></script>
-  <script src="/dashboard.js?v=20260516-wa-niche-review"></script>
+  <script src="/dashboard.js?v=20260516-wa-niches-review-panel"></script>
   <div id="toastContainer"></div>
   <div id="docModal" class="modal">
     <div class="modal-content">

@@ -412,7 +412,7 @@ function showAuthState(authenticated, username = '', role = '') {
 }
 
 function showSection(name) {
-  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach', 'wa-niches', 'wa-niche-review'];
+  const sections = ['overview', 'ops', 'connections', 'route', 'linkresponder', 'mercadolivre', 'instagram', 'agents', 'offers', 'ai-lab', 'ai-ops', 'instagram-publish', 'instagram-story', 'bio-growth', 'autoreplies', 'logs', 'playground', 'debug', 'skills', 'analytics', 'wa-monitoring', 'wa-automation', 'engagement-plan', 'wa-outreach', 'wa-niches'];
   sections.forEach(s => {
     const el = document.getElementById(`section-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -498,8 +498,23 @@ function showSection(name) {
   if (name === 'wa-niches') {
     loadWhatsAppNicheGroups();
     loadWhatsAppNicheOps();
+    showWhatsAppNicheSubtab(localStorage.getItem('waNicheSubtab') || 'config');
   }
-  if (name === 'wa-niche-review') {
+}
+
+function showWhatsAppNicheSubtab(name) {
+  const normalized = ['config', 'ops', 'review'].includes(name) ? name : 'config';
+  ['config', 'ops', 'review'].forEach(key => {
+    const panel = document.getElementById(`waNichePanel${key[0].toUpperCase()}${key.slice(1)}`);
+    const button = document.getElementById(`waNicheSubtab${key[0].toUpperCase()}${key.slice(1)}`);
+    if (panel) panel.classList.toggle('hidden', key !== normalized);
+    if (button) button.classList.toggle('active', key === normalized);
+  });
+  localStorage.setItem('waNicheSubtab', normalized);
+  if (normalized === 'ops') {
+    loadWhatsAppNicheOps();
+  }
+  if (normalized === 'review') {
     loadWhatsAppNicheReviewBoard();
   }
 }
@@ -7468,7 +7483,7 @@ function renderWhatsAppNicheReviewBoard() {
 async function approveWhatsAppNicheReview(id, slug) {
   await api(`/api/admin/whatsapp/niche-reviews/${encodeURIComponent(id)}/approve`, 'POST', { slug });
   await loadWhatsAppNicheOps();
-  if (document.getElementById('section-wa-niche-review') && !document.getElementById('section-wa-niche-review').classList.contains('hidden')) {
+  if (document.getElementById('waNichePanelReview') && !document.getElementById('waNichePanelReview').classList.contains('hidden')) {
     await loadWhatsAppNicheReviewBoard();
   }
 }
