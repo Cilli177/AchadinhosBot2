@@ -19,6 +19,12 @@ AchadinhosBot.Next/WTelegram.session
 AchadinhosBot.Next/bin/**/WTelegram.session
 .dotnet
 
+# Local build/audit scratch outputs
+_build_check/
+.build-check/
+conversion_audit*.json
+conversion_audit*.csv
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
