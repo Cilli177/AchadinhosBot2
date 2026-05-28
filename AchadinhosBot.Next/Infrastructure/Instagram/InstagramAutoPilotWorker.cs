@@ -1,4 +1,5 @@
 using AchadinhosBot.Next.Application.Abstractions;
+using AchadinhosBot.Next.Application.Services;
 using AchadinhosBot.Next.Domain.Settings;
 
 namespace AchadinhosBot.Next.Infrastructure.Instagram;
@@ -7,15 +8,18 @@ public sealed class InstagramAutoPilotWorker : BackgroundService
 {
     private readonly ISettingsStore _settingsStore;
     private readonly IInstagramAutoPilotService _autoPilotService;
+    private readonly StoryAutoPublishService _storyAutoPublishService;
     private readonly ILogger<InstagramAutoPilotWorker> _logger;
 
     public InstagramAutoPilotWorker(
         ISettingsStore settingsStore,
         IInstagramAutoPilotService autoPilotService,
+        StoryAutoPublishService storyAutoPublishService,
         ILogger<InstagramAutoPilotWorker> logger)
     {
         _settingsStore = settingsStore;
         _autoPilotService = autoPilotService;
+        _storyAutoPublishService = storyAutoPublishService;
         _logger = logger;
     }
 
@@ -95,6 +99,11 @@ public sealed class InstagramAutoPilotWorker : BackgroundService
                         result.ApprovalSent,
                         result.Message);
 
+                    if (!insta.StoryAutoPilotSendForApproval)
+                    {
+                        await AutoPublishStoriesAsync(result, stoppingToken);
+                    }
+
                     nextStoryRun = now.Add(interval);
                 }
 
@@ -109,6 +118,28 @@ public sealed class InstagramAutoPilotWorker : BackgroundService
                 _logger.LogWarning(ex, "Instagram autopilot worker iteration failed.");
                 await SafeDelay(TimeSpan.FromMinutes(2), stoppingToken);
             }
+        }
+    }
+
+    private async Task AutoPublishStoriesAsync(InstagramAutoPilotRunResult result, CancellationToken ct)
+    {
+        var draftIds = result.Selected
+            .Select(x => x.DraftId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var draftId in draftIds)
+        {
+            var publish = await _storyAutoPublishService.ApprovePublishAndVerifyAsync(draftId!, ct);
+            _logger.LogInformation(
+                "Instagram autopilot story auto-publish: draftId={DraftId} instagramPosted={InstagramPosted} mediaId={MediaId} catalogVerified={CatalogVerified} whatsappPosted={WhatsAppPosted} error={Error}",
+                publish.DraftId,
+                publish.InstagramPosted,
+                publish.InstagramMediaId,
+                publish.CatalogVerified,
+                publish.WhatsAppPosted,
+                publish.InstagramError ?? publish.CatalogError ?? publish.WhatsAppError);
         }
     }
 

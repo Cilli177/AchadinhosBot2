@@ -18,6 +18,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
     private readonly WhatsAppPublishContentService _publishService;
     private readonly WhatsAppAutomationQueueService _queueService;
     private readonly IWhatsAppGateway _whatsappGateway;
+    private readonly WhatsAppNicheGroupService _nicheGroupService;
     private readonly MercadoLivreStoryDraftService _storyDraftService;
     private readonly MercadoLivreReelDraftService _reelDraftService;
     private readonly ILogger<MercadoLivreAffiliateScoutWorker> _logger;
@@ -32,6 +33,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
         WhatsAppPublishContentService publishService,
         WhatsAppAutomationQueueService queueService,
         IWhatsAppGateway whatsappGateway,
+        WhatsAppNicheGroupService nicheGroupService,
         MercadoLivreStoryDraftService storyDraftService,
         MercadoLivreReelDraftService reelDraftService,
         ILogger<MercadoLivreAffiliateScoutWorker> logger)
@@ -41,6 +43,7 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
         _publishService = publishService;
         _queueService = queueService;
         _whatsappGateway = whatsappGateway;
+        _nicheGroupService = nicheGroupService;
         _storyDraftService = storyDraftService;
         _reelDraftService = reelDraftService;
         _logger = logger;
@@ -580,6 +583,11 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
                     sendResult = await _whatsappGateway.SendTextAsync(instanceName, targetGroupId, prepared.Content, token);
                 }
 
+                if (sendResult.Success && string.Equals(targetGroupId, OfficialOffersGroupId, StringComparison.OrdinalIgnoreCase))
+                {
+                    await RouteOfficialOfferToNichesAsync(offer, prepared.Content, prepared.ResolvedImageUrl ?? offer.ImageUrl, token);
+                }
+
                 return (sendResult.Success, sendResult.Message ?? (sendResult.Success ? "Enviado com sucesso" : "Falha no envio"));
             }, 
             ct,
@@ -587,6 +595,47 @@ public sealed class MercadoLivreAffiliateScoutWorker : BackgroundService
         
         _logger.LogInformation("Oferta ML enfileirada para {Target}: {Title}", targetGroupId, offer.Title);
         return true;
+    }
+
+    private async Task RouteOfficialOfferToNichesAsync(
+        MercadoLivreAffiliateScoutOffer offer,
+        string preparedContent,
+        string? imageUrl,
+        CancellationToken ct)
+    {
+        try
+        {
+            var results = await _nicheGroupService.RouteOfferWithOverridesAsync(
+                new WhatsAppNicheRouteOfferRequest(
+                    offer.Title,
+                    FirstNonEmpty(offer.SharedUrl, offer.ProductUrl),
+                    "Mercado Livre",
+                    null,
+                    offer.PriceText,
+                    offer.CommissionText,
+                    null,
+                    null,
+                    null,
+                    imageUrl,
+                    preparedContent,
+                    null,
+                    true),
+                ct);
+
+            foreach (var result in results)
+            {
+                _logger.LogInformation(
+                    "Oferta ML oficial roteada para nicho. Slug={Slug} Status={Status} Success={Success} Title={Title}",
+                    result.Slug,
+                    result.Status,
+                    result.Success,
+                    offer.Title);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao rotear oferta ML oficial para nichos. Title={Title}", offer.Title);
+        }
     }
 
     private Task<bool> ProcessAndSendCommissionAsync(

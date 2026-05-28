@@ -20,6 +20,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
     private readonly ISettingsStore _settingsStore;
     private readonly IWhatsAppNicheOperationsStore _operationsStore;
     private readonly WhatsAppNicheGroupService _nicheGroupService;
+    private readonly WhatsAppNicheAiClassifier _nicheAiClassifier;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<WhatsAppNicheAutoRouteWorker> _logger;
     private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
@@ -31,6 +32,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         ISettingsStore settingsStore,
         IWhatsAppNicheOperationsStore operationsStore,
         WhatsAppNicheGroupService nicheGroupService,
+        WhatsAppNicheAiClassifier nicheAiClassifier,
         IWebHostEnvironment environment,
         ILogger<WhatsAppNicheAutoRouteWorker> logger)
     {
@@ -39,6 +41,7 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         _settingsStore = settingsStore;
         _operationsStore = operationsStore;
         _nicheGroupService = nicheGroupService;
+        _nicheAiClassifier = nicheAiClassifier;
         _environment = environment;
         _logger = logger;
     }
@@ -91,12 +94,11 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
                 continue;
             }
 
-            _seen.Add(seenKey);
-            changed = true;
-
             var candidates = await TryBuildRequestsAsync(entry, ct);
             if (candidates.Count == 0)
             {
+                _seen.Add(seenKey);
+                changed = true;
                 continue;
             }
 
@@ -113,6 +115,9 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
                         result.Success);
                 }
             }
+
+            _seen.Add(seenKey);
+            changed = true;
         }
 
         if (changed)
@@ -126,6 +131,31 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var text = StripScoutCommissionForAudience(entry.Text ?? string.Empty);
         var title = ExtractTitle(text);
         var category = ClassifyForActiveNiche(title) ?? ClassifyForActiveNiche(text);
+        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(category))
+        {
+            var aiSettings = await _settingsStore.GetAsync(ct);
+            var aiDecision = await _nicheAiClassifier.ClassifyAsync(text, title, aiSettings, ct);
+            if (aiDecision is not null
+                && !aiDecision.RequiresReview
+                && !string.IsNullOrWhiteSpace(aiDecision.ProductName)
+                && !string.IsNullOrWhiteSpace(aiDecision.Slug))
+            {
+                title = aiDecision.ProductName;
+                category = aiDecision.Slug;
+                _logger.LogInformation(
+                    "IA resolveu nicho automatico. Slug={Slug} Confidence={Confidence} Provider={Provider} Product={Product}",
+                    aiDecision.Slug,
+                    aiDecision.Confidence,
+                    aiDecision.Provider,
+                    aiDecision.ProductName);
+            }
+            else
+            {
+                await SaveReviewAsync(entry, text, aiDecision?.ProductName ?? title, "auto_route_missing_product_or_niche", aiDecision?.Confidence ?? 10, aiDecision?.Slug, ct);
+                return Array.Empty<WhatsAppNicheRouteOfferRequest>();
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(category))
         {
             await SaveReviewAsync(entry, text, title, "auto_route_missing_product_or_niche", 10, null, ct);
@@ -227,7 +257,12 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var categories = new List<string> { primaryCategory };
         var normalized = Normalize(title ?? string.Empty);
 
-        if (ContainsAny(normalized, "lixeira inteligente", "lixeira com sensor", "lampada inteligente", "aspirador robo", "smart home", "mesa de apoio", "caixa de som", "soundbar", "smart tv", "televisao", "tv "))
+        if (ContainsAny(normalized, "album figurinha", "album de figurinha", "album copa", "figurinhas copa", "panini copa", "copa do mundo 2026", "cupom de desconto", "cupom amazon", "cupom mercado livre", "cupons mercado livre", "cupom shopee", "cupons shopee", "cupom generico", "cupom app"))
+        {
+            return AllAudienceCategories();
+        }
+
+        if (ContainsAny(normalized, "lixeira inteligente", "lixeira com sensor", "lampada inteligente", "aspirador robo", "smart home", "mesa de apoio", "caixa de som", "soundbar", "smart tv", "televisao", "tv ", "projetor", "projector", "hy300", "hy320", "magcubic"))
         {
             AddHybridCategory(categories, WhatsAppNicheDefinitions.Casa);
             AddHybridCategory(categories, WhatsAppNicheDefinitions.Tech);
@@ -247,6 +282,16 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
 
         return categories;
     }
+
+    private static IReadOnlyList<string> AllAudienceCategories()
+        =>
+        [
+            WhatsAppNicheDefinitions.Casa,
+            WhatsAppNicheDefinitions.Beleza,
+            WhatsAppNicheDefinitions.FitnessHealth,
+            WhatsAppNicheDefinitions.Moda,
+            WhatsAppNicheDefinitions.Tech
+        ];
 
     private static void AddHybridCategory(List<string> categories, string category)
     {
@@ -280,20 +325,87 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
             return NormalizeCapturedUrl(product.Groups[1].Value);
         }
 
+        var multilineCta = ExtractUrlAfterCtaLine(text);
+        if (!string.IsNullOrWhiteSpace(multilineCta))
+        {
+            return multilineCta;
+        }
+
         var cta = OfferCtaUrlRegex().Matches(text)
             .Cast<Match>()
             .Select(match => NormalizeCapturedUrl(match.Groups["url"].Value))
-            .FirstOrDefault(url => !LooksLikeBioOrHubUrl(url));
+            .FirstOrDefault(url => !LooksLikeBioOrHubUrl(url) && !LooksLikeCouponUrl(url, text));
         if (!string.IsNullOrWhiteSpace(cta))
         {
             return cta;
         }
 
         var matches = UrlRegex().Matches(text);
+        var urls = matches
+            .Cast<Match>()
+            .Select(match => NormalizeCapturedUrl(match.Value))
+            .Where(url => !LooksLikeBioOrHubUrl(url))
+            .ToArray();
+
+        if (LooksLikeCouponCampaignText(text))
+        {
+            var storeTracking = urls.FirstOrDefault(IsAllowedOfferTrackingUrl);
+            if (!string.IsNullOrWhiteSpace(storeTracking))
+            {
+                return storeTracking;
+            }
+        }
+
         return matches
             .Cast<Match>()
             .Select(match => NormalizeCapturedUrl(match.Value))
-            .LastOrDefault(url => !LooksLikeBioOrHubUrl(url));
+            .FirstOrDefault(url => !LooksLikeBioOrHubUrl(url) && !LooksLikeCouponUrl(url, text))
+            ?? matches
+                .Cast<Match>()
+                .Select(match => NormalizeCapturedUrl(match.Value))
+                .LastOrDefault(url => !LooksLikeBioOrHubUrl(url));
+    }
+
+    private static string? ExtractUrlAfterCtaLine(string text)
+    {
+        var lines = text.Split('\n').Select(x => x.Trim()).ToArray();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!LooksLikeOfferCtaLine(lines[i]))
+            {
+                continue;
+            }
+
+            var sameLine = UrlRegex().Match(lines[i]);
+            if (sameLine.Success)
+            {
+                var url = NormalizeCapturedUrl(sameLine.Value);
+                if (!LooksLikeBioOrHubUrl(url) && !LooksLikeCouponCtaLine(lines[i]))
+                {
+                    return url;
+                }
+            }
+
+            for (var j = i + 1; j < Math.Min(lines.Length, i + 4); j++)
+            {
+                if (LooksLikeCouponCtaLine(lines[j]))
+                {
+                    break;
+                }
+
+                var match = UrlRegex().Match(lines[j]);
+                if (match.Success)
+                {
+                    var url = NormalizeCapturedUrl(match.Value);
+                    if (!LooksLikeBioOrHubUrl(url))
+                    {
+                        return url;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private static string? ExtractTrackingId(string? url)
@@ -326,6 +438,47 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
            || url.Contains("destaque", StringComparison.OrdinalIgnoreCase)
            || url.Contains("grupo-vip", StringComparison.OrdinalIgnoreCase)
            || url.Contains("chat.whatsapp.com", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LooksLikeCouponUrl(string url, string text)
+    {
+        var index = text.IndexOf(url, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        var start = Math.Max(0, index - 80);
+        var context = Normalize(text[start..Math.Min(text.Length, index + url.Length + 20)]);
+        return ContainsAny(context, "cupom", "cupons", "resgate");
+    }
+
+    private static bool LooksLikeCouponCampaignText(string text)
+    {
+        var normalized = Normalize(text);
+        return ContainsAny(normalized, "cupom", "cupons", "resgate")
+               && !ContainsAny(normalized, "compre aqui", "comprar aqui", "pegar oferta", "ver oferta", "link do produto", "link produto");
+    }
+
+    private static bool IsAllowedOfferTrackingUrl(string url)
+    {
+        var id = ExtractTrackingId(url);
+        return !string.IsNullOrWhiteSpace(id)
+               && TrackingIdDecorator.IsAllowedOfferTrackingId(id)
+               && !TrackingIdDecorator.IsBlockedOfferTrackingId(id);
+    }
+
+    private static bool LooksLikeOfferCtaLine(string line)
+    {
+        var normalized = Normalize(line);
+        return ContainsAny(normalized, "compre aqui", "comprar aqui", "pegar oferta", "ver oferta", "link do produto", "link produto")
+               && !LooksLikeCouponCtaLine(line);
+    }
+
+    private static bool LooksLikeCouponCtaLine(string line)
+    {
+        var normalized = Normalize(line);
+        return ContainsAny(normalized, "cupom", "cupons", "resgate");
+    }
 
     private static string? ExtractTitle(string text)
     {
@@ -389,10 +542,11 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
                && ContainsAny(
                    normalized,
                    "iphone", "celular", "smartphone", "fone", "notebook", "monitor", "gamer", "carregador", "teclado", "mouse", "ssd", "tv", "camera", "dji", "osmo", "gopro",
-                   "chapinha", "perfume", "skincare", "creme", "maquiagem", "cabelo", "secador", "shampoo", "gloss", "batom",
-                   "whey", "creatina", "pre treino", "pre-treino", "suplemento", "vitamina",
-                   "cozinha", "pote", "marmita", "cadeira", "organizador", "mesa", "banho", "casa", "panela", "air fryer", "toalha", "tapete", "purificador", "filtro", "tinta", "ferramenta",
-                   "calca", "tenis", "meia", "cueca", "camiseta", "bolsa", "sandalia", "vestido", "terno", "paleto", "blazer", "puma", "kappa", "reebok");
+                   "placa mae", "placa-mae", "processador", "tablet", "ipad", "joystick", "controle", "soundbar", "smart band",
+                   "chapinha", "perfume", "skincare", "creme", "maquiagem", "cabelo", "secador", "shampoo", "gloss", "batom", "protetor solar", "hidratante", "serum", "deo colonia", "aparador", "barba",
+                   "whey", "creatina", "pre treino", "pre-treino", "suplemento", "vitamina", "body splash", "balanca", "bioimpedancia",
+                   "cozinha", "pote", "marmita", "cadeira", "organizador", "mesa", "banho", "panela", "air fryer", "cooktop", "sanduicheira", "misteira", "grill", "toalha", "tapete", "purificador", "filtro", "tinta", "ferramenta", "aspirador", "fogao", "micro ondas", "micro-ondas", "lavadora", "lavadora de alta pressao", "lavadora alta pressao", "alta pressao", "tanquinho", "colcha", "geladeira", "refrigerador", "cama", "travesseiro", "liquidificador", "lava e seca", "lava loucas", "luminaria", "luminaria de lava", "lava lamp", "sapateira", "persiana", "ar condicionado", "faqueiro", "xicara", "petisqueira", "quadros", "aromatizador", "prateleira", "estante", "guarda roupa", "guarda-roupa", "decoracao", "quarto",
+                   "calca", "short", "bermuda", "tenis", "meia", "cueca", "camiseta", "camisa", "chinelo", "bolsa", "sandalia", "scarpin", "bota", "sapato", "regata", "moletom", "poncho", "colar", "relogio", "relogios", "watch", "oculos", "vestido", "blusao", "terno", "paleto", "blazer", "puma", "kappa", "reebok");
     }
 
     private static bool LooksLikeOperationalLine(string line)
@@ -405,6 +559,12 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
         var value = line.Trim().Trim('*');
         return value.StartsWith("Preco", StringComparison.OrdinalIgnoreCase)
                || value.StartsWith("Pre", StringComparison.OrdinalIgnoreCase) && value.Contains("o:", StringComparison.OrdinalIgnoreCase)
+               || value.StartsWith("Cupom", StringComparison.OrdinalIgnoreCase)
+               || value.StartsWith("-Cupom", StringComparison.OrdinalIgnoreCase)
+               || value.StartsWith("Aplique o cupom", StringComparison.OrdinalIgnoreCase)
+               || value.StartsWith("Use o cupom", StringComparison.OrdinalIgnoreCase)
+               || value.StartsWith("Resgate o cupom", StringComparison.OrdinalIgnoreCase)
+               || value.StartsWith("- Resgate o cupom", StringComparison.OrdinalIgnoreCase)
                || value.StartsWith("Loja", StringComparison.OrdinalIgnoreCase)
                || value.StartsWith("Comprar", StringComparison.OrdinalIgnoreCase)
                || value.StartsWith("Compre", StringComparison.OrdinalIgnoreCase)
@@ -418,9 +578,29 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
     private static string? ClassifyForActiveNiche(string? title)
     {
         var text = Normalize(title ?? string.Empty);
-        if (ContainsAny(text, "iphone", "celular", "smartphone", "fone", "headset", "notebook", "monitor", "smart tv", "qled", "oled", "pc gamer", "gamer", "carregador", "teclado", "mouse", "ssd", "placa de video", "processador", "ryzen", "rtx", "periferico", "caixa de som", "camera", "dji", "osmo", "gopro"))
+        if (ContainsAny(text, "secadora de roupas", "secadora healthguard", "secadora midea"))
+        {
+            return WhatsAppNicheDefinitions.Casa;
+        }
+
+        if (ContainsAny(text, "relogio masculino", "relogio feminino", "relogio unissex", "relogio analogico", "relogio digital", "relogios masculino", "relogios feminino", "g-shock", "casio vintage", "poedagar"))
+        {
+            return WhatsAppNicheDefinitions.Moda;
+        }
+
+        if (ContainsAny(text, "iphone", "celular", "smartphone", "fone", "headset", "notebook", "monitor", "smart tv", "qled", "oled", "projetor", "projector", "hy300", "hy320", "magcubic", "pc gamer", "gamer", "carregador", "teclado", "mouse", "ssd", "placa de video", "placa mae", "placa-mae", "processador", "ryzen", "rtx", "periferico", "tablet", "ipad", "joystick", "controle", "caixa de som", "soundbar", "camera", "dji", "osmo", "gopro"))
         {
             return WhatsAppNicheDefinitions.Tech;
+        }
+
+        if (ContainsAny(text, "bicicleta eletrica", "bike eletrica", "bici eletrica"))
+        {
+            return WhatsAppNicheDefinitions.Tech;
+        }
+
+        if (ContainsAny(text, "album figurinha", "album de figurinha", "album copa", "figurinhas copa", "panini copa", "copa do mundo 2026", "cupom de desconto", "cupom amazon", "cupom mercado livre", "cupons mercado livre", "cupom shopee", "cupons shopee", "cupom generico", "cupom app"))
+        {
+            return WhatsAppNicheDefinitions.Casa;
         }
 
         if (ContainsAny(text, "creatina", "whey", "pre treino", "pre-treino", "suplemento", "multivitaminico", "vitamina", "growth", "dark lab"))
@@ -428,18 +608,29 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
             return WhatsAppNicheDefinitions.FitnessHealth;
         }
 
-        if (ContainsAny(text, "chapinha", "prancha", "perfume", "skincare", "creme", "maquiagem", "cabelo", "secador", "shampoo", "condicionador", "hidratante", "cerave", "natura", "lattafa", "wella", "oleo capilar", "gloss", "batom"))
+        if (ContainsAny(text, "prateleira", "estante", "multiuso", "decoracao", "decorativo", "espelho", "quarto", "guarda roupa", "guarda-roupa", "organizador", "organizadora"))
+        {
+            return WhatsAppNicheDefinitions.Casa;
+        }
+
+        if (ContainsAny(text, "chapinha", "prancha", "perfume", "body splash", "depilador", "skincare", "creme", "maquiagem", "cabelo", "secador de cabelo", "escova secadora", "shampoo", "condicionador", "hidratante", "cerave", "natura", "lattafa", "wella", "oleo capilar", "gloss", "batom", "protetor solar", "fps", "serum", "deo colonia", "aparador", "barba"))
         {
             return WhatsAppNicheDefinitions.Beleza;
         }
 
-        if (ContainsAny(text, "cozinha", "pote", "potes", "hermetico", "marmita", "cadeira", "organizador", "mesa", "banho", "casa", "panela", "air fryer", "toalha", "tapete", "assadeira", "cama", "beliche", "sofa", "almofada", "guarda roupa", "armario", "balcao", "comoda", "lixeira", "jogo de jantar", "sala de jantar", "travesseiro", "mixer", "liquidificador", "batedeira", "eletroportatil", "porta escova", "saboneteira", "purificador", "filtro", "tinta", "ferramenta", "bolsa ferramenta", "bolsa de ferramenta"))
+        if (ContainsAny(text, "cozinha", "pote", "potes", "hermetico", "marmita", "cadeira", "organizador", "mesa", "banho", "panela", "air fryer", "cooktop", "sanduicheira", "misteira", "grill", "toalha", "tapete", "assadeira", "cama", "beliche", "sofa", "almofada", "guarda roupa", "guarda-roupa", "armario", "balcao", "comoda", "lixeira", "jogo de jantar", "sala de jantar", "travesseiro", "mixer", "liquidificador", "batedeira", "eletroportatil", "porta escova", "saboneteira", "purificador", "filtro", "tinta", "ferramenta", "bolsa ferramenta", "bolsa de ferramenta", "aspirador", "fogao", "micro ondas", "micro-ondas", "lavadora", "lavadora de alta pressao", "lavadora alta pressao", "alta pressao", "lava e seca", "lava loucas", "tanquinho", "colcha", "geladeira", "refrigerador", "luminaria", "luminaria de lava", "lava lamp", "sapateira", "persiana", "ar condicionado", "faqueiro", "xicara", "petisqueira", "quadro", "quadros", "aromatizador", "prateleira", "estante", "decoracao", "decorativo", "espelho", "quarto"))
+        {
+            return WhatsAppNicheDefinitions.Casa;
+        }
+
+        if (ContainsAny(text, "cafe", "achocolatado", "alimento", "supermercado", "graos", "grao", "vinho", "cerveja", "amaciante", "detergente", "sabao")
+            || ContainsWholeWordAny(text, "gin", "vodka"))
         {
             return WhatsAppNicheDefinitions.Casa;
         }
 
         if (!ContainsAny(text, "bolsa ferramenta", "bolsa de ferramenta", "tinta")
-            && ContainsAny(text, "calca", "tenis", "meia", "cueca", "camiseta", "camisa", "bolsa", "mochila", "sandalia", "vestido", "pijama", "sobretudo", "kimono", "blusa", "tricot", "terno", "paleto", "blazer", "lupo", "puma", "kappa", "reebok", "calvin klein"))
+            && ContainsAny(text, "calca", "short", "bermuda", "tenis", "meia", "cueca", "camiseta", "camisa", "chinelo", "bolsa", "mochila", "sandalia", "scarpin", "bota", "sapato", "regata", "colar", "relogio", "relogios", "watch", "oculos", "vestido", "pijama", "sobretudo", "kimono", "blusa", "blusao", "moletom", "poncho", "tricot", "terno", "paleto", "blazer", "lupo", "puma", "kappa", "reebok", "calvin klein"))
         {
             return WhatsAppNicheDefinitions.Moda;
         }
@@ -534,8 +725,15 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
     private static bool ContainsAny(string text, params string[] terms)
         => terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
 
+    private static bool ContainsWholeWordAny(string text, params string[] terms)
+    {
+        var tokens = text.Split(new[] { ' ', '\r', '\n', '\t', '.', ',', ';', ':', '/', '\\', '-', '_', '|', '(', ')', '[', ']', '{', '}', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+        return terms.Any(term => tokens.Contains(term, StringComparer.OrdinalIgnoreCase));
+    }
+
     private static string Normalize(string value)
     {
+        value = new string(value.Where(ch => !char.IsSurrogate(ch)).ToArray());
         var normalized = value.Normalize(System.Text.NormalizationForm.FormD).ToLowerInvariant();
         return new string(normalized.Where(ch => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark).ToArray());
     }
@@ -549,7 +747,17 @@ public sealed partial class WhatsAppNicheAutoRouteWorker : BackgroundService
             "pra quem quer ter",
             "unico cardio",
             "corre aqui antes",
-            "achadinho mercado livre selecionado");
+            "achadinho mercado livre selecionado",
+            "diga adeus",
+            "imagine preparar",
+            "nao perca essa oportunidade",
+            "garanta ja o seu",
+            "misture com estilo",
+            "sua coluna vai te agradecer",
+            "esse e confortavel e estiloso",
+            "compra logo que ta esfriando",
+            "pra ficar grandinho",
+            "pra tua rotina de treino");
 
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlRegex();

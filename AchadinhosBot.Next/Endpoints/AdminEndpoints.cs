@@ -131,6 +131,45 @@ public static class AdminEndpoints
                 : Results.BadRequest(new { success = false, result });
         });
 
+        app.MapPost("/api/admin/whatsapp/niche-ai/test", async (
+            WhatsAppNicheAiTestRequest req,
+            HttpContext context,
+            WhatsAppNicheAiClassifier classifier,
+            ISettingsStore settingsStore,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            if (string.IsNullOrWhiteSpace(req.Text))
+                return Results.BadRequest(new { success = false, error = "Informe o texto da oferta." });
+
+            var settings = await settingsStore.GetAsync(ct);
+            var decision = await classifier.ClassifyAsync(req.Text, req.HeuristicTitle, settings, ct);
+            return Results.Ok(new
+            {
+                success = true,
+                aiEnabled = settings.InstagramPosts?.UseAi == true,
+                provider = settings.InstagramPosts?.AiProvider,
+                decision
+            });
+        });
+
+        app.MapPost("/api/admin/whatsapp/niche-reviews/ai-review", async (
+            WhatsAppNicheAiReviewBatchRequest req,
+            HttpContext context,
+            WhatsAppNicheAiReviewService service,
+            IOptions<WebhookOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+                return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
+
+            var result = await service.ReviewPendingAsync(req, ct);
+            return Results.Ok(new { success = true, result });
+        });
+
         app.MapGet("/api/admin/whatsapp/niche-routes", async (HttpContext context, WhatsAppNicheGroupService service, IOptions<WebhookOptions> opts, CancellationToken ct) =>
         {
             if (!IsAdminAuthorized(context, opts.Value.ApiKey))
@@ -1363,16 +1402,15 @@ publish_instagram_label:
             {
                 try
                 {
-                    var igResult = await publishService.QueuePublishAsync(req.DraftId, "admin_master", ct);
+                    var igResult = await publishService.ExecutePublishAsync(req.DraftId, ct);
                     results["instagram"] = new
                     {
-                        success = igResult.Accepted,
-                        mode = igResult.Mode,
-                        messageId = igResult.MessageId,
-                        persistedLocally = igResult.PersistedLocally,
+                        success = igResult.Success,
+                        statusCode = igResult.StatusCode,
+                        mediaId = igResult.MediaId,
                         error = igResult.Error
                     };
-                    allSucceeded &= igResult.Accepted;
+                    allSucceeded &= igResult.Success;
                 }
                 catch (Exception ex)
                 {
@@ -1959,6 +1997,7 @@ public sealed record AdminHighlightOnBioRequest(string DraftId);
 public sealed record WhatsAppNicheReviewApproveRequest(string? Slug, IReadOnlyList<string>? Slugs);
 public sealed record WhatsAppNicheReviewBatchApproveRequest(IReadOnlyList<string>? Ids, string? Slug, IReadOnlyList<string>? Slugs);
 public sealed record WhatsAppNicheReviewRejectRequest(string? Note);
+public sealed record WhatsAppNicheAiTestRequest(string Text, string? HeuristicTitle);
 
 
 
