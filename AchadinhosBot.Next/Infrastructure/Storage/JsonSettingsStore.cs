@@ -6,6 +6,7 @@ namespace AchadinhosBot.Next.Infrastructure.Storage;
 
 public sealed class JsonSettingsStore : ISettingsStore, ISettingsVersionStore
 {
+    private const int MaxVersionSnapshots = 200;
     private readonly string _path;
     private readonly string _versionsDir;
     private readonly SemaphoreSlim _mutex = new(1, 1);
@@ -172,6 +173,20 @@ public sealed class JsonSettingsStore : ISettingsStore, ISettingsVersionStore
         await using var source = File.OpenRead(_path);
         await using var dest = File.Create(target);
         await source.CopyToAsync(dest, cancellationToken);
+
+        TryPruneVersionSnapshots();
+    }
+
+    private void TryPruneVersionSnapshots()
+    {
+        try
+        {
+            VersionRetentionPolicy.Prune(_versionsDir, "settings-*.json", MaxVersionSnapshots);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to prune settings snapshots.");
+        }
     }
 
     private async Task SaveInternalAsync(AutomationSettings settings, CancellationToken cancellationToken)

@@ -16,6 +16,7 @@ namespace AchadinhosBot.Next.Infrastructure.Storage;
 
 public sealed class CatalogOfferStore : ICatalogOfferStore
 {
+    private const int MaxVersionBackups = 100;
     private readonly string _dataDirectory;
     private readonly ICatalogOfferEnrichmentService? _enrichmentService;
     private readonly IAffiliateLinkService? _affiliateLinkService;
@@ -982,6 +983,20 @@ public sealed class CatalogOfferStore : ICatalogOfferStore
         await using var source = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         await using var destination = File.Create(backupPath);
         await source.CopyToAsync(destination, cancellationToken);
+
+        TryPruneVersionBackups(versionsDirectory);
+    }
+
+    private void TryPruneVersionBackups(string versionsDirectory)
+    {
+        try
+        {
+            VersionRetentionPolicy.Prune(versionsDirectory, "catalog-offers.*.json.bak", MaxVersionBackups);
+        }
+        catch
+        {
+            // Backup retention must never block catalog writes.
+        }
     }
 
     private static IReadOnlyList<string> ResolveReadableTargets(string? catalogTarget)

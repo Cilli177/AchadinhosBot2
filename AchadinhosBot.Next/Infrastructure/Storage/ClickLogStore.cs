@@ -119,7 +119,7 @@ public sealed class ClickLogStore : IClickLogStore
             var json = JsonSerializer.Serialize(entry);
             await writer.WriteLineAsync(json);
             await writer.FlushAsync();
-            await JsonlLogRetention.TrimIfNeededAsync(path, 15000, 8 * 1024 * 1024, cancellationToken);
+            await JsonlLogRetention.TrimIfNeededAsync(path, 15000, 8 * 1024 * 1024, CancellationToken.None);
         }
         finally
         {
