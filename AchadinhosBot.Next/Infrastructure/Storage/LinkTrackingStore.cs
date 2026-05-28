@@ -6,6 +6,7 @@ namespace AchadinhosBot.Next.Infrastructure.Storage;
 
 public sealed class LinkTrackingStore : ILinkTrackingStore
 {
+    private const int MaxVersionBackups = 200;
     private static readonly HashSet<string> PreferredPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
         "AM",
@@ -355,6 +356,20 @@ public sealed class LinkTrackingStore : ILinkTrackingStore
         await using var source = File.Open(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         await using var destination = File.Create(backupPath);
         await source.CopyToAsync(destination, cancellationToken);
+
+        TryPruneVersionBackups();
+    }
+
+    private void TryPruneVersionBackups()
+    {
+        try
+        {
+            VersionRetentionPolicy.Prune(_versionsDir, "link-tracking.*.json.bak", MaxVersionBackups);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to prune link tracking backups.");
+        }
     }
 
     private static LinkTrackingEntry BuildEntry(LinkTrackingCreateRequest request, System.Collections.Concurrent.ConcurrentDictionary<string, LinkTrackingEntry> data)

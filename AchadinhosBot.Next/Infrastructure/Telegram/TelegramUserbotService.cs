@@ -1937,7 +1937,14 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
                 continue;
             }
 
-            var outboundDedupeKey = BuildWhatsAppOutboundDedupeKey(wa.InstanceName, destination, text, hasMediaCandidate);
+            var outboundDedupeKey = await WhatsAppOutboundDedupeKeyBuilder.BuildAsync(
+                wa.InstanceName,
+                destination,
+                text,
+                hasMediaCandidate,
+                isOfficialDestination,
+                _linkTrackingStore,
+                CancellationToken.None);
             var dedupeWindow = WhatsAppOutboundDeduplicationPolicy.ResolveWindow(isOfficialDestination, _messagingOptions);
             if (!_idempotencyStore.TryBegin(outboundDedupeKey, dedupeWindow))
             {
@@ -3435,16 +3442,6 @@ public sealed class TelegramUserbotService : BackgroundService, ITelegramUserbot
         }
 
         return 5169049471;
-    }
-
-    private static string BuildWhatsAppOutboundDedupeKey(string? instanceName, string destination, string text, bool hasMedia)
-    {
-        var normalizedInstance = string.IsNullOrWhiteSpace(instanceName) ? "default" : instanceName.Trim();
-        var normalizedDestination = destination.Trim();
-        var normalizedText = Regex.Replace(text ?? string.Empty, "\\s+", " ").Trim();
-        var payload = $"{normalizedInstance}|{normalizedDestination}|{(hasMedia ? "img" : "txt")}|{normalizedText}";
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
-        return $"wa-outbound:{normalizedInstance}:{normalizedDestination}:{hash}";
     }
 
     private static string? ExtractFirstUrl(string? text)
