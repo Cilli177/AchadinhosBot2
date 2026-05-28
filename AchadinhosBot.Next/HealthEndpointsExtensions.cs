@@ -6,10 +6,16 @@ public static class HealthEndpointsExtensions
 {
     public static void MapOperationalHealthEndpoints(this WebApplication app, bool startTelegramBotWorker, bool startTelegramUserbotWorker)
     {
-        app.MapGet("/health", async (OperationalReadinessService readiness, CancellationToken ct) =>
+        app.MapMethods("/health", new[] { "GET", "HEAD" }, async (HttpContext context, OperationalReadinessService readiness, CancellationToken ct) =>
         {
             var report = await readiness.EvaluateAsync(startTelegramBotWorker, startTelegramUserbotWorker, ct);
             var statusCode = report.Ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable;
+
+            if (HttpMethods.IsHead(context.Request.Method))
+            {
+                context.Response.ContentLength = 0;
+                return Results.StatusCode(statusCode);
+            }
 
             return Results.Json(new
             {
@@ -22,17 +28,32 @@ public static class HealthEndpointsExtensions
             }, statusCode: statusCode);
         });
 
-        app.MapGet("/health/live", () => Results.Ok(new
+        app.MapMethods("/health/live", new[] { "GET", "HEAD" }, (HttpContext context) =>
+        {
+            if (HttpMethods.IsHead(context.Request.Method))
+            {
+                context.Response.ContentLength = 0;
+                return Results.Ok();
+            }
+
+            return Results.Ok(new
         {
             status = "ok",
             service = "AchadinhosBot.Next",
             kind = "liveness",
             ts = DateTimeOffset.UtcNow
-        }));
+        });
+        });
 
-        app.MapGet("/health/ready", async (OperationalReadinessService readiness, CancellationToken ct) =>
+        app.MapMethods("/health/ready", new[] { "GET", "HEAD" }, async (HttpContext context, OperationalReadinessService readiness, CancellationToken ct) =>
         {
             var report = await readiness.EvaluateAsync(startTelegramBotWorker, startTelegramUserbotWorker, ct);
+
+            if (HttpMethods.IsHead(context.Request.Method))
+            {
+                context.Response.ContentLength = 0;
+                return report.Ready ? Results.Ok() : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
 
             if (!report.Ready)
             {

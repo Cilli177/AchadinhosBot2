@@ -12,6 +12,8 @@ let waNicheGroupsCache = [];
 let waScheduleEditState = null;
 let waQrPollTimer = null;
 let waQrPollInstanceName = null;
+let waQrHideTimer = null;
+let waQrVisibleUntil = 0;
 let opsOverviewTimer = null;
 let currentOfferNormalizationRunId = null;
 const WA_MANUAL_COPY_MAX_PARTICIPANTS = 50;
@@ -129,11 +131,26 @@ function isPublicAbsoluteUrl(value) {
   }
 }
 
-function hideWhatsAppQr() {
+const WA_QR_MIN_VISIBLE_MS = 10000;
+
+function hideWhatsAppQr(options = {}) {
   const card = document.getElementById('waQrCard');
   const image = document.getElementById('qrImage');
   const hint = document.getElementById('qrHint');
   const badge = document.getElementById('qrStateBadge');
+  const force = options.force === true;
+  const now = Date.now();
+  if (!force && waQrVisibleUntil > now) {
+    if (waQrHideTimer) clearTimeout(waQrHideTimer);
+    waQrHideTimer = setTimeout(() => hideWhatsAppQr({ force: true }), waQrVisibleUntil - now);
+    return;
+  }
+
+  if (waQrHideTimer) {
+    clearTimeout(waQrHideTimer);
+    waQrHideTimer = null;
+  }
+  waQrVisibleUntil = 0;
   if (card) card.classList.add('hidden');
   if (image) {
     image.classList.add('hidden');
@@ -156,6 +173,11 @@ function showWhatsAppQr(qrCode, hintText = 'Escaneie com o WhatsApp para conclui
   const hint = document.getElementById('qrHint');
   const badge = document.getElementById('qrStateBadge');
   if (!card || !image) return;
+  if (waQrHideTimer) {
+    clearTimeout(waQrHideTimer);
+    waQrHideTimer = null;
+  }
+  waQrVisibleUntil = Date.now() + WA_QR_MIN_VISIBLE_MS;
   image.src = qrCode;
   image.classList.remove('hidden');
   card.classList.remove('hidden');

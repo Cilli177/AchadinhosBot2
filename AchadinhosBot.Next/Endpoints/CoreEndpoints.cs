@@ -462,27 +462,51 @@ public static class CoreEndpoints
 
     public static void MapHealthEndpoints(this WebApplication app, bool startTelegramBotWorker, bool startTelegramUserbotWorker)
     {
-        app.MapGet("/health", () => Results.Ok(new
+        app.MapMethods("/health", new[] { "GET", "HEAD" }, (HttpContext context) =>
+        {
+            if (HttpMethods.IsHead(context.Request.Method))
+            {
+                context.Response.ContentLength = 0;
+                return Results.Ok();
+            }
+
+            return Results.Ok(new
         {
             status = "ok",
             service = "AchadinhosBot.Next",
             ts = DateTimeOffset.UtcNow,
             telegramBotWorkerEnabled = startTelegramBotWorker,
             telegramUserbotWorkerEnabled = startTelegramUserbotWorker
-        }));
+        });
+        });
 
-        app.MapGet("/health/live", () => Results.Ok(new
+        app.MapMethods("/health/live", new[] { "GET", "HEAD" }, (HttpContext context) =>
+        {
+            if (HttpMethods.IsHead(context.Request.Method))
+            {
+                context.Response.ContentLength = 0;
+                return Results.Ok();
+            }
+
+            return Results.Ok(new
         {
             status = "ok",
             service = "AchadinhosBot.Next",
             kind = "liveness",
             ts = DateTimeOffset.UtcNow
-        }));
+        });
+        });
 
-        app.MapGet("/health/ready", (ITelegramUserbotService userbot) =>
+        app.MapMethods("/health/ready", new[] { "GET", "HEAD" }, (HttpContext context, ITelegramUserbotService userbot) =>
         {
             var userbotReady = !startTelegramUserbotWorker || userbot.IsReady;
             var ready = userbotReady;
+
+            if (HttpMethods.IsHead(context.Request.Method))
+            {
+                context.Response.ContentLength = 0;
+                return ready ? Results.Ok() : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
 
             if (!ready)
             {
