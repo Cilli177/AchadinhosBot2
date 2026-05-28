@@ -6,6 +6,8 @@ namespace AchadinhosBot.Next.Domain.Settings;
 
 public static class AutomationSettingsSanitizer
 {
+    private const string SecretMask = "********";
+
     public static void NormalizeInPlace(AutomationSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -154,6 +156,35 @@ public static class AutomationSettingsSanitizer
         automation.InviteConversationSkill.LinkAfterTimeoutTemplates = NormalizeTemplateList(automation.InviteConversationSkill.LinkAfterTimeoutTemplates);
     }
 
+    public static void MaskSecretsInPlace(AutomationSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        MaskProvider(settings.OpenAI);
+        MaskProvider(settings.Gemini);
+        MaskProvider(settings.Gemma4);
+        MaskProvider(settings.DeepSeek);
+        MaskProvider(settings.Nemotron);
+        MaskProvider(settings.Qwen);
+        MaskProvider(settings.VilaNvidia);
+
+        if (settings.InstagramPublish is not null)
+        {
+            settings.InstagramPublish.AccessToken = MaskIfPresent(settings.InstagramPublish.AccessToken);
+            settings.InstagramPublish.VerifyToken = MaskIfPresent(settings.InstagramPublish.VerifyToken);
+            settings.InstagramPublish.ManyChatApiKey = MaskIfPresent(settings.InstagramPublish.ManyChatApiKey);
+        }
+
+        if (settings.MercadoLivreAffiliateScout is not null)
+        {
+            settings.MercadoLivreAffiliateScout.LoginUser = MaskIfPresent(settings.MercadoLivreAffiliateScout.LoginUser);
+            settings.MercadoLivreAffiliateScout.LoginPassword = MaskIfPresent(settings.MercadoLivreAffiliateScout.LoginPassword);
+            settings.MercadoLivreAffiliateScout.TwoFactorCode = MaskIfPresent(settings.MercadoLivreAffiliateScout.TwoFactorCode);
+            settings.MercadoLivreAffiliateScout.StorageStateJson = MaskIfPresent(settings.MercadoLivreAffiliateScout.StorageStateJson);
+            settings.MercadoLivreAffiliateScout.ProductionRelayAdminKey = MaskIfPresent(settings.MercadoLivreAffiliateScout.ProductionRelayAdminKey);
+        }
+    }
+
     public static string Normalize(string? value)
     {
         var normalized = NormalizeNullable(value);
@@ -186,6 +217,64 @@ public static class AutomationSettingsSanitizer
 
         return normalized.Trim();
     }
+
+    private static void MaskProvider(OpenAISettings? settings)
+    {
+        if (settings is null) return;
+        settings.ApiKey = MaskIfPresent(settings.ApiKey);
+        settings.ApiKeys = MaskList(settings.ApiKeys);
+    }
+
+    private static void MaskProvider(GeminiSettings? settings)
+    {
+        if (settings is null) return;
+        settings.ApiKey = MaskIfPresent(settings.ApiKey);
+        settings.ApiKeys = MaskList(settings.ApiKeys);
+    }
+
+    private static void MaskProvider(Gemma4Settings? settings)
+    {
+        if (settings is null) return;
+        settings.ApiKey = MaskIfPresent(settings.ApiKey);
+        settings.ApiKeys = MaskList(settings.ApiKeys);
+    }
+
+    private static void MaskProvider(DeepSeekSettings? settings)
+    {
+        if (settings is null) return;
+        settings.ApiKey = MaskIfPresent(settings.ApiKey);
+        settings.ApiKeys = MaskList(settings.ApiKeys);
+    }
+
+    private static void MaskProvider(NemotronSettings? settings)
+    {
+        if (settings is null) return;
+        settings.ApiKey = MaskIfPresent(settings.ApiKey);
+        settings.ApiKeys = MaskList(settings.ApiKeys);
+    }
+
+    private static void MaskProvider(QwenSettings? settings)
+    {
+        if (settings is null) return;
+        settings.ApiKey = MaskIfPresent(settings.ApiKey);
+        settings.ApiKeys = MaskList(settings.ApiKeys);
+    }
+
+    private static void MaskProvider(VilaNvidiaSettings? settings)
+    {
+        if (settings is null) return;
+        settings.ApiKey = MaskIfPresent(settings.ApiKey);
+        settings.ApiKeys = MaskList(settings.ApiKeys);
+    }
+
+    private static string? MaskIfPresent(string? value)
+        => string.IsNullOrWhiteSpace(value) ? value : SecretMask;
+
+    private static List<string> MaskList(IEnumerable<string>? values)
+        => (values ?? Array.Empty<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(_ => SecretMask)
+            .ToList();
 
     private static List<string> NormalizeTemplateList(List<string>? values)
     {
@@ -303,7 +392,9 @@ public static class AutomationSettingsSanitizer
         {
             var bytes = Encoding.GetEncoding("ISO-8859-1").GetBytes(text);
             var repaired = Encoding.UTF8.GetString(bytes);
-            if (!string.IsNullOrWhiteSpace(repaired) && repaired != text)
+            if (!string.IsNullOrWhiteSpace(repaired) &&
+                repaired != text &&
+                ShouldAcceptEncodingRepair(text, repaired))
             {
                 text = repaired;
             }
@@ -313,6 +404,54 @@ public static class AutomationSettingsSanitizer
         }
 
         return text.Replace("\uFFFD", string.Empty, StringComparison.Ordinal);
+    }
+
+    private static bool ShouldAcceptEncodingRepair(string original, string repaired)
+    {
+        var originalBrokenScore = GetBrokenTextScore(original);
+        var repairedBrokenScore = GetBrokenTextScore(repaired);
+        if (repairedBrokenScore < originalBrokenScore)
+        {
+            return true;
+        }
+
+        // Avoid degrading valid emoji/non-Latin text when a template already contains
+        // literal question marks from an older broken save.
+        return repairedBrokenScore == originalBrokenScore &&
+               CountQuestionMarks(repaired) <= CountQuestionMarks(original);
+    }
+
+    private static int GetBrokenTextScore(string text)
+    {
+        var score = 0;
+        score += CountOccurrences(text, "\uFFFD") * 4;
+        score += CountOccurrences(text, "Ãƒ") * 3;
+        score += CountOccurrences(text, "Ã°Å¸") * 3;
+        score += CountOccurrences(text, "Ã¢") * 3;
+        score += CountOccurrences(text, "??") * 2;
+        score += CountOccurrences(text, "?o");
+        score += CountOccurrences(text, "C????") * 3;
+        return score;
+    }
+
+    private static int CountQuestionMarks(string text) => text.Count(c => c == '?');
+
+    private static int CountOccurrences(string text, string value)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(value))
+        {
+            return 0;
+        }
+
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
     }
 
     private static readonly IReadOnlyDictionary<string, string> Replacements = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -326,6 +465,19 @@ public static class AutomationSettingsSanitizer
         ["YZPara mais novidades, acesse: bio.reidasofertas.ia.br"] = "Para mais novidades, acesse: https://bio.reidasofertas.ia.br",
         ["??Segue seu Link convertido:"] = "Segue seu link convertido:",
         ["C????pia "] = "C\u00F3pia ",
+        ["????Use nosso conversor para transformar qualquer link em link pronto para oferta:\n??https://reidasofertas.ia.br/conversor"] =
+            "\uD83D\uDD17 Use nosso conversor para transformar qualquer link em link pronto para oferta:\nhttps://reidasofertas.ia.br/conversor",
+        ["?? Use nosso conversor para transformar qualquer link em link pronto para oferta:\nhttps://reidasofertas.ia.br/conversor"] =
+            "Use nosso conversor para transformar qualquer link em link pronto para oferta:\nhttps://reidasofertas.ia.br/conversor",
+        ["?? *Quer mais ofertas? Entre no grupo VIP!*?? Links e destaques: https://bio.reidasofertas.ia.br"] =
+            "*Quer mais ofertas?* Links e destaques: https://bio.reidasofertas.ia.br",
+        ["?? *Mais ofertas no grupo VIP!*?? Acesse nossos destaques: https://bio.reidasofertas.ia.br"] =
+            "*Mais ofertas no grupo VIP!* Acesse nossos destaques: https://bio.reidasofertas.ia.br",
+        ["?? Nossa bio est? atualizada com os principais atalhos e destaques:"] =
+            "\uD83D\uDD17 Nossa bio est\u00E1 atualizada com os principais atalhos e destaques:",
+        ["?? Para no perder as ofertas e evitar excesso de notificaes, deixe este grupo silenciado."] =
+            "\uD83D\uDD15 Para n\u00E3o perder as ofertas e evitar excesso de notifica\u00E7\u00F5es, deixe este grupo silenciado.",
+        ["Silenciar notificaes"] = "Silenciar notifica\u00E7\u00F5es",
         ["Para n?o perder as ofertas e evitar excesso de notifica??es, deixe este grupo silenciado.\n\nNo WhatsApp: abra o grupo -> toque no nome -> Silenciar notifica??es -> Sempre.\n\nEnquanto isso, acompanhe o conversor aqui:\nhttps://reidasofertas.ia.br/conversor"] =
             "Para n\u00E3o perder as ofertas e evitar excesso de notifica\u00E7\u00F5es, deixe este grupo silenciado.\n\nNo WhatsApp: abra o grupo -> toque no nome -> Silenciar notifica\u00E7\u00F5es -> Sempre.\n\nEnquanto isso, acompanhe o conversor aqui:\nhttps://reidasofertas.ia.br/conversor",
         ["n?o"] = "n\u00E3o",

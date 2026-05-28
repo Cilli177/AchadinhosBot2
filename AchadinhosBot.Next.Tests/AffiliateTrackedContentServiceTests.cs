@@ -36,7 +36,7 @@ public sealed class AffiliateTrackedContentServiceTests
             "whatsapp_dm",
             CancellationToken.None);
 
-        Assert.Equal("Oferta teste https://reidasofertas.ia.br/r/SP-000001", result);
+        Assert.Equal("Oferta teste https://reidasofertas.ia.br/r/SP-W000001", result);
         Assert.Equal("https://s.shopee.com.br/LjAwdaCJu?lp=aff", trackingStore.LastTargetUrl);
         Assert.Equal("Shopee", trackingStore.LastStore);
     }
@@ -125,7 +125,7 @@ public sealed class AffiliateTrackedContentServiceTests
             "whatsapp_grupo_oficial",
             CancellationToken.None);
 
-        Assert.Equal("Oferta https://reidasofertas.ia.br/r/AM-000001", result);
+        Assert.Equal("Oferta https://reidasofertas.ia.br/r/AM-W000001", result);
         Assert.Equal("https://www.amazon.com.br/dp/B0TESTE?tag=reidasofer022-20", trackingStore.LastTargetUrl);
         Assert.Equal("Amazon", trackingStore.LastStore);
     }

@@ -12,7 +12,9 @@ public sealed partial class MessageProcessor : IMessageProcessor
 {
     private readonly IAffiliateLinkService _affiliateLinkService;
     private const string OfficialWhatsAppDemandGroupId = "120363405661434395@g.us";
-    private readonly IConversionLogStore _conversionLogStore;
+    private const int MaxConcurrentConversionsPerMessage = 4;
+    private readonly IConversionAuditLogger _conversionAuditLogger;
+    private readonly IOfferUrlExtractor _offerUrlExtractor;
     private readonly ICouponSelector _couponSelector;
     private readonly ISettingsStore _settingsStore;
     private readonly IMercadoLivreApprovalStore _mercadoLivreApprovalStore;
@@ -21,7 +23,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
     public MessageProcessor(
         IAffiliateLinkService affiliateLinkService,
-        IConversionLogStore conversionLogStore,
+        IConversionAuditLogger conversionAuditLogger,
+        IOfferUrlExtractor offerUrlExtractor,
         ICouponSelector couponSelector,
         ISettingsStore settingsStore,
         IMercadoLivreApprovalStore mercadoLivreApprovalStore,
@@ -29,7 +32,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
         ILogger<MessageProcessor> logger)
     {
         _affiliateLinkService = affiliateLinkService;
-        _conversionLogStore = conversionLogStore;
+        _conversionAuditLogger = conversionAuditLogger;
+        _offerUrlExtractor = offerUrlExtractor;
         _couponSelector = couponSelector;
         _settingsStore = settingsStore;
         _mercadoLivreApprovalStore = mercadoLivreApprovalStore;
@@ -52,22 +56,17 @@ public sealed partial class MessageProcessor : IMessageProcessor
             return new ConversionResult(false, null, 0, source);
         }
 
-        var matches = UrlRegex().Matches(input);
-        if (matches.Count == 0)
+        var candidates = _offerUrlExtractor.Extract(input);
+        if (candidates.Count == 0)
         {
             return new ConversionResult(false, null, 0, source);
         }
 
         var sw = Stopwatch.StartNew();
         var settings = await _settingsStore.GetAsync(cancellationToken);
-        var items = new List<UrlWorkItem>(matches.Count);
-        foreach (Match match in matches)
-        {
-            var cleanedUrl = CleanUrl(match.Value, out var prefix, out var suffix);
-            var isBlocked = IsBlockedUrl(cleanedUrl);
-            var shouldConvert = !isBlocked && ShouldAttemptAffiliateConversion(cleanedUrl);
-            items.Add(new UrlWorkItem(match, cleanedUrl, prefix, suffix, isBlocked, shouldConvert));
-        }
+        var items = candidates
+            .Select(x => new UrlWorkItem(x.Raw, x.CleanedUrl, x.Prefix, x.Suffix, x.Index, x.Length, x.IsBlocked, x.ShouldConvert))
+            .ToList();
 
         var mercadoLivreUrls = items
             .Where(x => IsMercadoLivreUrl(x.CleanedUrl))
@@ -113,7 +112,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     }, cancellationToken);
                 }
 
-                await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                 {
                     Source = source,
                     Store = "Mercado Livre",
@@ -141,6 +140,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         var isOfficialDemandGroup = string.Equals(destinationChatRef, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase)
             || (destinationChatId.HasValue && string.Equals(destinationChatId.Value.ToString(), OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase));
 
+        using var conversionGate = new SemaphoreSlim(MaxConcurrentConversionsPerMessage, MaxConcurrentConversionsPerMessage);
         var tasks = new Task<AffiliateLinkResult>[items.Count];
         for (var i = 0; i < items.Count; i++)
         {
@@ -148,7 +148,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                 ? Task.FromResult(new AffiliateLinkResult(false, null, DetectStore(null, items[i].CleanedUrl), false, null, "Conversao ignorada para URL nao afiliada", false, null))
                 : items[i].IsBlocked
                 ? Task.FromResult(new AffiliateLinkResult(false, null, "Unknown", false, null, "Link bloqueado", false, null))
-                : _affiliateLinkService.ConvertAsync(items[i].CleanedUrl, cancellationToken, source, forceResolution: isOfficialDemandGroup);
+                : ConvertWithGateAsync(conversionGate, items[i].CleanedUrl, cancellationToken, source, forceResolution: isOfficialDemandGroup);
         }
 
         await Task.WhenAll(tasks);
@@ -225,7 +225,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         }, cancellationToken);
                     }
 
-                    await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                    await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = source,
                         Store = "Mercado Livre",
@@ -276,7 +276,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     }, cancellationToken);
                 }
 
-                await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                 {
                     Source = source,
                     Store = "Mercado Livre",
@@ -302,7 +302,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         var linkIntegrityBlockReason = EvaluateLinkIntegrityGate(settings.LinkIntegrity, source, items, tasks);
         if (!string.IsNullOrWhiteSpace(linkIntegrityBlockReason))
         {
-            await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+            await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
             {
                 Source = source,
                 Store = "Link Integrity",
@@ -325,20 +325,21 @@ public sealed partial class MessageProcessor : IMessageProcessor
         var lastIndex = 0;
         var converted = 0;
         var convertedStores = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var auditTasks = new List<Task>();
 
         for (var i = 0; i < items.Count; i++)
         {
             var item = items[i];
-            sb.Append(input, lastIndex, item.Match.Index - lastIndex);
+            sb.Append(input, lastIndex, item.Index - lastIndex);
 
             if (item.IsBlocked)
             {
-                sb.Append(item.Match.Value);
+                sb.Append(item.Raw);
             }
             else if (!item.ShouldConvert)
             {
                 // Preserve institutional and non-affiliate URLs exactly as configured.
-                sb.Append(item.Match.Value);
+                sb.Append(item.Raw);
             }
             else
             {
@@ -350,7 +351,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     sb.Append(item.Suffix);
                     converted++;
                     convertedStores.Add(string.IsNullOrWhiteSpace(result.Store) ? DetectStore(result.ConvertedUrl, item.CleanedUrl) : result.Store);
-                    _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                    auditTasks.Add(_conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = source,
                         Store = string.IsNullOrWhiteSpace(result.Store) ? DetectStore(result.ConvertedUrl, item.CleanedUrl) : result.Store,
@@ -366,12 +367,12 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         OriginChatRef = originChatRef,
                         DestinationChatRef = destinationChatRef,
                         ElapsedMs = sw.ElapsedMilliseconds
-                    }, cancellationToken);
+                    }, cancellationToken));
                 }
                 else
                 {
-                    sb.Append(item.Match.Value);
-                    _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                    sb.Append(item.Raw);
+                    auditTasks.Add(_conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = source,
                         Store = string.IsNullOrWhiteSpace(result.Store) ? DetectStore(null, item.CleanedUrl) : result.Store,
@@ -387,11 +388,11 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         OriginChatRef = originChatRef,
                         DestinationChatRef = destinationChatRef,
                         ElapsedMs = sw.ElapsedMilliseconds
-                    }, cancellationToken);
+                    }, cancellationToken));
                 }
             }
 
-            lastIndex = item.Match.Index + item.Match.Length;
+            lastIndex = item.Index + item.Length;
         }
 
         sb.Append(input, lastIndex, input.Length - lastIndex);
@@ -419,71 +420,58 @@ public sealed partial class MessageProcessor : IMessageProcessor
             }
         }
 
+        if (auditTasks.Count > 0)
+        {
+            await Task.WhenAll(auditTasks);
+        }
+
         _logger.LogInformation("Processamento concluído. Source={Source} ConvertedLinks={ConvertedLinks}", source, converted);
         return new ConversionResult(converted > 0, converted > 0 ? sb.ToString() : null, converted, source);
+    }
+
+    private async Task<AffiliateLinkResult> ConvertWithGateAsync(
+        SemaphoreSlim gate,
+        string cleanedUrl,
+        CancellationToken cancellationToken,
+        string source,
+        bool forceResolution)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await _affiliateLinkService.ConvertAsync(cleanedUrl, cancellationToken, source, forceResolution);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Falha isolada ao converter URL. Source={Source} Store={Store} Host={Host}",
+                source,
+                DetectStore(null, cleanedUrl),
+                TryGetSafeHost(cleanedUrl));
+            return new AffiliateLinkResult(false, null, DetectStore(null, cleanedUrl), false, null, ex.Message, false, null);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlRegex();
 
     private static string CleanUrl(string raw, out string prefix, out string suffix)
-    {
-        prefix = string.Empty;
-        suffix = string.Empty;
-
-        var start = 0;
-        var end = raw.Length - 1;
-
-        while (start <= end && IsTrimChar(raw[start]))
-        {
-            prefix += raw[start];
-            start++;
-        }
-
-        while (end >= start && IsTrimChar(raw[end]))
-        {
-            suffix = raw[end] + suffix;
-            end--;
-        }
-
-        if (start > end)
-        {
-            return raw;
-        }
-
-        return raw[start..(end + 1)];
-    }
-
-    private static bool IsTrimChar(char c)
-        => c is '"' or '\'' or '`' or '.' or ',' or ';' or ':' or ')' or ']' or '}' or '!' or '?';
-
-    private static readonly string[] BlockedHosts =
-    {
-        "tidd.ly",
-        "natura.com",
-        "magazineluiza.com.br",
-        "magazineluiza.com",
-        "magalu.com"
-    };
+        => OfferUrlExtractor.CleanUrl(raw, out prefix, out suffix);
 
     private static bool IsBlockedUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
+        => OfferUrlExtractor.IsBlockedUrl(url);
 
-        var host = uri.Host.ToLowerInvariant();
-        foreach (var blocked in BlockedHosts)
-        {
-            if (host == blocked || host.EndsWith("." + blocked, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static string TryGetSafeHost(string url)
+        => OfferUrlExtractor.TryGetSafeHost(url);
 
     private static bool IsMercadoLivreUrl(string url)
     {
@@ -965,7 +953,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
             : null;
     }
 
-    private sealed record UrlWorkItem(Match Match, string CleanedUrl, string Prefix, string Suffix, bool IsBlocked, bool ShouldConvert);
+    private sealed record UrlWorkItem(string Raw, string CleanedUrl, string Prefix, string Suffix, int Index, int Length, bool IsBlocked, bool ShouldConvert);
     private sealed record SkillComparisonEntry(string Store, string Title, string Price, string Url, string? Coupon, decimal? PriceValue);
 
     private static string DetectStore(string? convertedUrl, string originalUrl)
@@ -986,64 +974,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
     }
 
     private static bool ShouldAttemptAffiliateConversion(string url)
-    {
-        if (InstitutionalUrlGuard.ShouldPreserve(url))
-        {
-            return false;
-        }
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
-
-        var host = uri.Host.ToLowerInvariant();
-        var path = uri.AbsolutePath;
-
-        if (host.Contains("reidasofertas.ia.br", StringComparison.Ordinal))
-        {
-            if (path.StartsWith("/bio", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/catalogo", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/dashboard", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            if (path.StartsWith("/r/", StringComparison.OrdinalIgnoreCase))
-            {
-                // Already tracked by our redirector.
-                return false;
-            }
-        }
-
-        if (host.Contains("amazon.", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("amzn.to", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("a.co", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("amzlink.to", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("amzn.divulgador.link", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("meli.co", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("meli.la", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("shopee", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("shp.ee", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("shein", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        // Some campaigns arrive through generic shorteners and should still be evaluated.
-        if (host.Equals("tinyurl.com", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("bit.ly", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("cutt.ly", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("compre.link", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return false;
-    }
+        => OfferUrlExtractor.ShouldAttemptAffiliateConversion(url);
 
     private static string NormalizeUrl(string url)
     {

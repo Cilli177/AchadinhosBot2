@@ -14,10 +14,28 @@ public sealed class WhatsAppNicheGroupServiceTests
             null,
             "R$ 39,90",
             null,
+            null,
             null));
 
         Assert.False(decision.RequiresReview);
         Assert.Equal(WhatsAppNicheDefinitions.Ate50, decision.Slug);
+    }
+
+    [Fact]
+    public void Classify_ExplicitNicheStillWinsOverCheapPrice()
+    {
+        var decision = WhatsAppNicheClassifier.Classify(new WhatsAppNicheRouteOfferInput(
+            "Kit organizador multiuso",
+            "https://example.com/oferta",
+            "Shopee",
+            WhatsAppNicheDefinitions.Casa,
+            "R$ 39,90",
+            null,
+            null,
+            null));
+
+        Assert.False(decision.RequiresReview);
+        Assert.Equal(WhatsAppNicheDefinitions.Casa, decision.Slug);
     }
 
     [Fact]
@@ -30,10 +48,29 @@ public sealed class WhatsAppNicheGroupServiceTests
             null,
             "R$ 129,90",
             null,
+            null,
             null));
 
         Assert.False(decision.RequiresReview);
         Assert.Equal(WhatsAppNicheDefinitions.Tech, decision.Slug);
+    }
+
+    [Theory]
+    [InlineData("Smart TV 55 polegadas QLED 4K")]
+    [InlineData("Projetor HY300 para sala e quarto")]
+    public void ResolveHybridTargetSlugs_RoutesTvAndProjector_ToTechAndCasa(string title)
+    {
+        var slugs = WhatsAppNicheClassifier.ResolveHybridTargetSlugs(new WhatsAppNicheRouteOfferInput(
+            title,
+            "https://example.com/tv",
+            "Amazon",
+            null,
+            "R$ 1.799,90",
+            null,
+            null,
+            null));
+
+        Assert.Equal(new[] { WhatsAppNicheDefinitions.Tech, WhatsAppNicheDefinitions.Casa }, slugs);
     }
 
     [Theory]
@@ -47,6 +84,7 @@ public sealed class WhatsAppNicheGroupServiceTests
             "Mercado Livre",
             null,
             "R$ 1.999,90",
+            null,
             null,
             null));
 
@@ -66,10 +104,47 @@ public sealed class WhatsAppNicheGroupServiceTests
             null,
             "R$ 129,90",
             null,
+            null,
             null));
 
         Assert.False(decision.RequiresReview);
         Assert.Equal(WhatsAppNicheDefinitions.Casa, decision.Slug);
+    }
+
+    [Theory]
+    [InlineData("Kit shampoo e condicionador com vitamina para cabelo")]
+    [InlineData("Mascara capilar hidratante e leave-in")]
+    public void Classify_RoutesHairCareTerms_ToBeleza(string title)
+    {
+        var decision = WhatsAppNicheClassifier.Classify(new WhatsAppNicheRouteOfferInput(
+            title,
+            "https://example.com/beleza",
+            "Loja",
+            null,
+            "R$ 79,90",
+            null,
+            null,
+            null));
+
+        Assert.False(decision.RequiresReview);
+        Assert.Equal(WhatsAppNicheDefinitions.Beleza, decision.Slug);
+    }
+
+    [Fact]
+    public void Classify_HairCareTermsOverrideMistakenFitnessCategory_ToBeleza()
+    {
+        var decision = WhatsAppNicheClassifier.Classify(new WhatsAppNicheRouteOfferInput(
+            "Shampoo e condicionador com vitamina",
+            "https://example.com/beleza",
+            "Loja",
+            WhatsAppNicheDefinitions.FitnessHealth,
+            "R$ 79,90",
+            null,
+            null,
+            null));
+
+        Assert.False(decision.RequiresReview);
+        Assert.Equal(WhatsAppNicheDefinitions.Beleza, decision.Slug);
     }
 
     [Fact]
@@ -79,6 +154,7 @@ public sealed class WhatsAppNicheGroupServiceTests
             "Oferta especial do dia",
             "https://example.com/oferta",
             "Loja",
+            null,
             null,
             null,
             null,

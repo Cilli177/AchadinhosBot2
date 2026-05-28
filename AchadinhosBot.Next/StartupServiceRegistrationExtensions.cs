@@ -91,6 +91,8 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<IAffiliateCouponProvider, MercadoLivreOfficialCouponProvider>();
         builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
         builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
+        builder.Services.AddSingleton<IConversionAuditLogger, ConversionAuditLogger>();
+        builder.Services.AddSingleton<IOfferUrlExtractor, OfferUrlExtractor>();
         builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
         builder.Services.AddSingleton<ILinkTrackingStore, LinkTrackingStore>();
         builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
@@ -105,6 +107,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<ICatalogOfferEnrichmentService, CatalogOfferEnrichmentService>();
         builder.Services.AddSingleton<InstagramImageDownloadService>();
         builder.Services.AddSingleton<IMetaGraphClient, MetaGraphClient>();
+        builder.Services.AddSingleton<IInstagramMediaPreparationService, InstagramMediaPreparationService>();
         builder.Services.AddSingleton<IInstagramPublishService, InstagramPublishService>();
         builder.Services.AddSingleton<IVideoProcessingService, FfmpegVideoProcessingService>();
         builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
@@ -115,6 +118,8 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<OfferNormalizationRoutingService>();
         builder.Services.AddSingleton<IChannelOfferDeepAnalysisService, ChannelOfferDeepAnalysisService>();
         builder.Services.AddSingleton<IWhatsAppOfferReasoner, WhatsAppOfferReasoner>();
+        builder.Services.AddSingleton<WhatsAppNicheAiClassifier>();
+        builder.Services.AddSingleton<WhatsAppNicheAiReviewService>();
         builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
         builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
         builder.Services.AddSingleton<WhatsAppAiAgentService>();
@@ -124,6 +129,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<VilaNvidiaGenerator>();
         builder.Services.AddSingleton<IInstagramPostComposer, InstagramPostComposer>();
         builder.Services.AddSingleton<IInstagramAutoPilotService, InstagramAutoPilotService>();
+        builder.Services.AddSingleton<TelegramViralReelsAutoPilotService>();
         builder.Services.AddSingleton<StoryAutoPublishService>();
         builder.Services.AddSingleton<ReelAutoPublishService>();
         builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
@@ -172,6 +178,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<IBotConversorOutboxStore, FileBotConversorOutboxStore>();
         builder.Services.AddSingleton<IMessageOrchestrator, BotConversorMessageOrchestrator>();
         builder.Services.AddSingleton<IWhatsAppOutboundPublisher, RabbitMqWhatsAppOutboundPublisher>();
+        builder.Services.AddSingleton<IOutboundRateLimitPolicy, DefaultOutboundRateLimitPolicy>();
         builder.Services.AddSingleton<WhatsAppAutomationQueueService>();
         builder.Services.AddSingleton<IWhatsAppOutboundOutboxStore, FileWhatsAppOutboundOutboxStore>();
         builder.Services.AddSingleton<ITelegramOutboundPublisher, RabbitMqTelegramOutboundPublisher>();
@@ -207,6 +214,8 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
         builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
         builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
+        builder.Services.AddHostedService<InstagramAutoPilotWorker>();
+        builder.Services.AddHostedService<TelegramViralReelsAutoPilotWorker>();
         builder.Services.AddHostedService<CatalogPriceRefreshWorker>();
         builder.Services.AddHostedService<PriceWatchWorker>();
         builder.Services.AddHostedService<UptimeHeartbeatService>();

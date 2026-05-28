@@ -38,4 +38,30 @@ public sealed class WhatsAppAutomationQueueServiceTests
         Assert.False(queue.HasDueQueuedWork());
         Assert.Contains(queue.GetState().Items, x => x.Kind == "future" && x.Status == "queued" && x.ScheduledForUtc.HasValue);
     }
+
+    [Fact]
+    public async Task ProcessNextAsync_RequeuesTransientRateLimitFailureWithBackoff()
+    {
+        var queue = new WhatsAppAutomationQueueService(new DefaultOutboundRateLimitPolicy());
+        var attempts = 0;
+
+        await queue.EnqueueAsync(
+            "whatsapp",
+            "120363405661434395@g.us",
+            _ =>
+            {
+                attempts++;
+                return Task.FromResult((false, "429 rate limit"));
+            },
+            CancellationToken.None);
+
+        await queue.ProcessNextAsync(CancellationToken.None);
+
+        var item = Assert.Single(queue.GetState().Items);
+        Assert.Equal(1, attempts);
+        Assert.Equal("queued", item.Status);
+        Assert.Equal(1, item.Attempts);
+        Assert.Equal("429 rate limit", item.LastError);
+        Assert.True(item.ScheduledForUtc > DateTimeOffset.UtcNow);
+    }
 }

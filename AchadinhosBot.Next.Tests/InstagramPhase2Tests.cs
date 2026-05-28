@@ -312,6 +312,56 @@ public sealed class InstagramPhase2Tests
         Assert.Equal("https://example.com/oferta-original", savedDraft.OriginalOfferUrl);
     }
 
+    [Fact]
+    public async Task InstagramPublishService_ExecutePublishAsync_MissingMediaFailsPermanentlyWithoutMetaGraphCall()
+    {
+        var metaGraphClient = new RecordingMetaGraphClient();
+        var publishStore = new StubPublishStore(new InstagramPublishDraft
+        {
+            Id = "draft-missing-media",
+            ProductName = "Produto real",
+            PostType = "feed",
+            Caption = "Legenda pronta",
+            ImageUrls = new List<string>()
+        });
+
+        var service = new InstagramPublishService(
+            new StubSettingsStore(new AutomationSettings
+            {
+                InstagramPublish = new InstagramPublishSettings
+                {
+                    Enabled = true,
+                    AccessToken = "token-123",
+                    InstagramUserId = "ig-user"
+                }
+            }),
+            publishStore,
+            new StubPublishLogStore(),
+            new FakeHttpClientFactory(new RecordingHandler()),
+            new InMemoryMediaStore(),
+            metaGraphClient,
+            CreateUninitialized<InstagramLinkMetaService>(),
+            new StubVideoProcessingService(),
+            new RecordingInstagramPublisher(),
+            new InMemoryInstagramOutboxStore(),
+            new StubCatalogOfferStore(),
+            new StubIdempotencyStore(),
+            Options.Create(new WebhookOptions { PublicBaseUrl = "https://bot.example.com" }),
+            NullLogger<InstagramPublishService>.Instance);
+
+        var result = await service.ExecutePublishAsync("draft-missing-media", CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(result.ShouldRetry);
+        Assert.Equal(400, result.StatusCode);
+        Assert.Contains("Sem midia", result.Error);
+        Assert.Equal(0, metaGraphClient.PublishCallCount);
+
+        var savedDraft = await publishStore.GetAsync("draft-missing-media", CancellationToken.None);
+        Assert.NotNull(savedDraft);
+        Assert.Equal("failed", savedDraft!.Status);
+    }
+
     private static HttpResponseMessage Json(string body)
     {
         return new HttpResponseMessage(HttpStatusCode.OK)
@@ -472,6 +522,7 @@ public sealed class InstagramPhase2Tests
         public string? LastPostType { get; private set; }
         public string? LastCaption { get; private set; }
         public IReadOnlyList<string> LastMediaUrls { get; private set; } = Array.Empty<string>();
+        public int PublishCallCount { get; private set; }
 
         public Task<MetaGraphOperationResult> ValidateConfigurationAsync(InstagramPublishSettings settings, CancellationToken cancellationToken)
             => Task.FromResult(new MetaGraphOperationResult(true));
@@ -481,6 +532,7 @@ public sealed class InstagramPhase2Tests
 
         public Task<MetaGraphPublishResult> PublishAsync(InstagramPublishSettings settings, string postType, IReadOnlyList<string> mediaUrls, string caption, CancellationToken cancellationToken)
         {
+            PublishCallCount++;
             LastPostType = postType;
             LastCaption = caption;
             LastMediaUrls = mediaUrls.ToList();

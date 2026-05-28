@@ -268,7 +268,7 @@ public sealed partial class WhatsAppNicheGroupService
             return blocked;
         }
 
-        if (request.SendNow && image is null)
+        if (request.SendNow && image is null && !IsCouponCampaignOffer(offer, request.OriginalText))
         {
             _idempotencyStore.RemoveByPrefix(repeatDedupeKey);
             await SaveGuardReviewAsync(offer, request, group.Slug, "missing_image_for_niche_send", decision.Confidence, ct);
@@ -313,11 +313,25 @@ public sealed partial class WhatsAppNicheGroupService
         var overrideItem = ResolveOverrideItem(settings, offer);
         if (overrideItem is null || overrideItem.TargetSlugs.Count <= 1)
         {
+            var hybridSlugs = ResolveHybridTargetSlugs(offer);
+            if (hybridSlugs.Count > 1)
+            {
+                return await RouteOfferToSlugsAsync(request, hybridSlugs, ct);
+            }
+
             return [await RouteOfferAsync(request, ct)];
         }
 
+        return await RouteOfferToSlugsAsync(request, overrideItem.TargetSlugs, ct);
+    }
+
+    private async Task<IReadOnlyList<WhatsAppNicheRouteResult>> RouteOfferToSlugsAsync(
+        WhatsAppNicheRouteOfferRequest request,
+        IReadOnlyList<string> slugs,
+        CancellationToken ct)
+    {
         var results = new List<WhatsAppNicheRouteResult>();
-        foreach (var slug in overrideItem.TargetSlugs)
+        foreach (var slug in slugs)
         {
             var forced = request with
             {
@@ -329,6 +343,9 @@ public sealed partial class WhatsAppNicheGroupService
 
         return results;
     }
+
+    private static IReadOnlyList<string> ResolveHybridTargetSlugs(WhatsAppNicheRouteOfferInput offer)
+        => WhatsAppNicheClassifier.ResolveHybridTargetSlugs(offer);
 
     public Task<IReadOnlyList<WhatsAppNicheRouteEvent>> ListRouteEventsAsync(int limit, CancellationToken ct)
         => _operationsStore.ListRouteEventsAsync(limit, ct);
@@ -355,7 +372,8 @@ public sealed partial class WhatsAppNicheGroupService
         var results = new List<WhatsAppNicheRouteResult>();
         foreach (var slug in normalizedSlugs)
         {
-            results.Add(await RouteOfferAsync(new(review.ProductName, review.ProductUrl, review.StoreName, slug, review.PriceText, null, null, null, null, review.ImageUrl, review.OriginalText, $"niche_live_{slug}", true), ct));
+            var productUrl = ExtractBestOfferUrl(review.OriginalText) ?? review.ProductUrl;
+            results.Add(await RouteOfferAsync(new(review.ProductName, productUrl, review.StoreName, slug, review.PriceText, null, null, null, null, review.ImageUrl, review.OriginalText, $"niche_live_{slug}", true), ct));
         }
 
         return results;
@@ -510,7 +528,8 @@ public sealed partial class WhatsAppNicheGroupService
     private async Task<string> CreateTrackedUrlAsync(string targetUrl, string? store, string originSurface, string campaign, string? offerId, string? draftId, CancellationToken ct)
     {
         var baseUrl = NormalizePublicBaseUrl(_webhookOptions.PublicBaseUrl);
-        var resolvedOfferId = TrackingIdDecorator.Resolve(offerId ?? string.Empty).LookupId;
+        var targetTrackingId = ExtractTrackingIdFromRedirectUrl(targetUrl);
+        var resolvedOfferId = TrackingIdDecorator.Resolve(FirstNonEmpty(offerId, targetTrackingId) ?? string.Empty).LookupId;
         if (IsCanonicalOfferTrackingId(resolvedOfferId) && await _linkTrackingStore.GetLinkAsync(resolvedOfferId, ct) is not null)
         {
             return $"{baseUrl}/r/{Uri.EscapeDataString(TrackingIdDecorator.Decorate(resolvedOfferId, campaign))}";
@@ -570,12 +589,7 @@ public sealed partial class WhatsAppNicheGroupService
             return true;
         }
 
-        var titleToken = NormalizeIdentityToken(offer.ProductName);
-        var recent = await _whatsAppOutboundLogStore.ListRecentAsync(1000, ct);
-        return recent.Any(entry =>
-            entry.CreatedAtUtc >= cutoff &&
-            string.Equals(entry.To, group.GroupId, StringComparison.OrdinalIgnoreCase) &&
-            NormalizeIdentityToken(entry.Text).Contains(titleToken, StringComparison.Ordinal));
+        return false;
     }
 
     private static string BuildNormalizedProductIdentity(string? store, string? title)
@@ -625,6 +639,7 @@ public sealed partial class WhatsAppNicheGroupService
 
     private static string RemoveDiacritics(string value)
     {
+        value = new string(value.Where(ch => !char.IsSurrogate(ch)).ToArray());
         var normalized = value.Normalize(NormalizationForm.FormD);
         return new string(normalized
             .Where(ch => CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
@@ -701,9 +716,10 @@ public sealed partial class WhatsAppNicheGroupService
     {
         try
         {
+            var resolvedOfferUrl = await ResolveTrackingTargetUrlAsync(offerUrl, ct);
             var result = await _offerImageResolver.ResolveAsync(
                 new OfferImageResolutionRequest(
-                    offerUrl,
+                    resolvedOfferUrl,
                     trackedUrl,
                     BuildImageContextText(offer, trackedUrl),
                     offer.StoreName,
@@ -716,6 +732,19 @@ public sealed partial class WhatsAppNicheGroupService
         {
             return null;
         }
+    }
+
+    private async Task<string> ResolveTrackingTargetUrlAsync(string offerUrl, CancellationToken ct)
+    {
+        var trackingId = ExtractTrackingIdFromRedirectUrl(offerUrl);
+        if (string.IsNullOrWhiteSpace(trackingId))
+        {
+            return offerUrl;
+        }
+
+        var resolved = TrackingIdDecorator.Resolve(trackingId).LookupId;
+        var tracking = await _linkTrackingStore.GetLinkAsync(resolved, ct);
+        return string.IsNullOrWhiteSpace(tracking?.TargetUrl) ? offerUrl : tracking.TargetUrl;
     }
 
     private async Task SaveGuardReviewAsync(
@@ -844,7 +873,7 @@ public sealed partial class WhatsAppNicheGroupService
         string? originalText,
         string? originalUrl)
     {
-        var reused = TryBuildFromOriginalText(originalText, trackedUrl, originalUrl);
+        var reused = TryBuildFromOriginalText(originalText, trackedUrl, originalUrl, slug);
         if (!string.IsNullOrWhiteSpace(reused))
         {
             return reused;
@@ -853,7 +882,7 @@ public sealed partial class WhatsAppNicheGroupService
         return BuildGeneratedOfferMessage(offer, trackedUrl, slug);
     }
 
-    private static string? TryBuildFromOriginalText(string? originalText, string trackedUrl, string? originalUrl)
+    private static string? TryBuildFromOriginalText(string? originalText, string trackedUrl, string? originalUrl, string slug)
     {
         if (string.IsNullOrWhiteSpace(originalText))
         {
@@ -879,7 +908,7 @@ public sealed partial class WhatsAppNicheGroupService
         {
             var preferred = UrlRegex().Matches(replaced)
                 .Select(match => match.Value.Trim())
-                .Where(url => (LooksLikeOfferTrackingUrl(url) || LooksLikeStoreUrl(url)) && !LooksLikeBioOrHubUrl(url))
+                .Where(url => (IsAllowedOfferTrackingUrl(url) || LooksLikeStoreUrl(url)) && !LooksLikeBioOrHubUrl(url))
                 .ToArray();
 
             if (preferred.Length > 0)
@@ -893,7 +922,66 @@ public sealed partial class WhatsAppNicheGroupService
             replaced = AddEmotionalFooter(replaced, trackedUrl);
         }
 
+        replaced = DecorateRemainingOfferTrackingUrls(replaced, slug, trackedUrl);
         return NormalizeNicheCaption(replaced);
+    }
+
+    private static string DecorateRemainingOfferTrackingUrls(string text, string slug, string primaryTrackedUrl)
+    {
+        var campaign = $"niche_live_{slug}";
+        var result = text;
+        var urls = UrlRegex().Matches(text)
+            .Cast<Match>()
+            .Select(match => NormalizeCapturedUrl(match.Value))
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var url in urls)
+        {
+            if (url.Equals(primaryTrackedUrl, StringComparison.OrdinalIgnoreCase) || LooksLikeBioOrHubUrl(url))
+            {
+                continue;
+            }
+
+            var trackingId = ExtractTrackingIdFromRedirectUrl(url);
+            if (string.IsNullOrWhiteSpace(trackingId)
+                || !TrackingIdDecorator.IsAllowedOfferTrackingId(trackingId)
+                || TrackingIdDecorator.IsBlockedOfferTrackingId(trackingId))
+            {
+                continue;
+            }
+
+            var lookupId = TrackingIdDecorator.Resolve(trackingId).LookupId;
+            var decoratedId = TrackingIdDecorator.Decorate(lookupId, campaign);
+            if (string.Equals(trackingId, decoratedId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            result = result.Replace(url, ReplaceTrackingIdInUrl(url, decoratedId), StringComparison.OrdinalIgnoreCase);
+        }
+
+        return result;
+    }
+
+    private static string ReplaceTrackingIdInUrl(string url, string trackingId)
+    {
+        var marker = "/r/";
+        var index = url.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return url;
+        }
+
+        var start = index + marker.Length;
+        var end = url.IndexOfAny(['?', '#', '&'], start);
+        if (end < 0)
+        {
+            end = url.Length;
+        }
+
+        return string.Concat(url.AsSpan(0, start), Uri.EscapeDataString(trackingId), url.AsSpan(end));
     }
 
     private static string AddEmotionalFooter(string text, string trackedUrl)
@@ -901,11 +989,29 @@ public sealed partial class WhatsAppNicheGroupService
 
     private static string ReplaceOfferCtaUrl(string text, string trackedUrl)
     {
+        if (LooksLikeCouponCampaignText(text))
+        {
+            var couponUrl = UrlRegex().Matches(text)
+                .Cast<Match>()
+                .Select(match => NormalizeCapturedUrl(match.Value))
+                .FirstOrDefault(IsAllowedOfferTrackingUrl);
+            if (!string.IsNullOrWhiteSpace(couponUrl))
+            {
+                return ReplaceLast(text, couponUrl, trackedUrl);
+            }
+        }
+
+        var multiline = ExtractUrlAfterCtaLine(text);
+        if (!string.IsNullOrWhiteSpace(multiline))
+        {
+            return ReplaceLast(text, multiline, trackedUrl);
+        }
+
         var matches = OfferCtaUrlRegex().Matches(text);
         foreach (Match match in matches)
         {
             var url = match.Groups["url"].Value.Trim();
-            if (LooksLikeBioOrHubUrl(url))
+            if (LooksLikeBioOrHubUrl(url) || LooksLikeCouponUrl(url, text))
             {
                 continue;
             }
@@ -914,6 +1020,152 @@ public sealed partial class WhatsAppNicheGroupService
         }
 
         return text;
+    }
+
+    private static string? ExtractBestOfferUrl(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var multiline = ExtractUrlAfterCtaLine(text);
+        if (!string.IsNullOrWhiteSpace(multiline))
+        {
+            return multiline;
+        }
+
+        var cta = OfferCtaUrlRegex().Matches(text)
+            .Cast<Match>()
+            .Select(match => NormalizeCapturedUrl(match.Groups["url"].Value))
+            .FirstOrDefault(url => !LooksLikeBioOrHubUrl(url) && !LooksLikeCouponUrl(url, text));
+        if (!string.IsNullOrWhiteSpace(cta))
+        {
+            return cta;
+        }
+
+        var matches = UrlRegex().Matches(text);
+        var urls = matches
+            .Cast<Match>()
+            .Select(match => NormalizeCapturedUrl(match.Value))
+            .Where(url => !LooksLikeBioOrHubUrl(url))
+            .ToArray();
+
+        if (LooksLikeCouponCampaignText(text))
+        {
+            var storeTracking = urls.FirstOrDefault(IsAllowedOfferTrackingUrl);
+            if (!string.IsNullOrWhiteSpace(storeTracking))
+            {
+                return storeTracking;
+            }
+        }
+
+        return matches
+            .Cast<Match>()
+            .Select(match => NormalizeCapturedUrl(match.Value))
+            .FirstOrDefault(url => !LooksLikeBioOrHubUrl(url) && !LooksLikeCouponUrl(url, text))
+            ?? matches
+                .Cast<Match>()
+                .Select(match => NormalizeCapturedUrl(match.Value))
+                .LastOrDefault(url => !LooksLikeBioOrHubUrl(url));
+    }
+
+    private static string? ExtractUrlAfterCtaLine(string text)
+    {
+        var lines = text.Split('\n').Select(x => x.Trim()).ToArray();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!LooksLikeOfferCtaLine(lines[i]))
+            {
+                continue;
+            }
+
+            var sameLine = UrlRegex().Match(lines[i]);
+            if (sameLine.Success)
+            {
+                var url = NormalizeCapturedUrl(sameLine.Value);
+                if (!LooksLikeBioOrHubUrl(url) && !LooksLikeCouponCtaLine(lines[i]))
+                {
+                    return url;
+                }
+            }
+
+            for (var j = i + 1; j < Math.Min(lines.Length, i + 4); j++)
+            {
+                if (LooksLikeCouponCtaLine(lines[j]))
+                {
+                    break;
+                }
+
+                var match = UrlRegex().Match(lines[j]);
+                if (match.Success)
+                {
+                    var url = NormalizeCapturedUrl(match.Value);
+                    if (!LooksLikeBioOrHubUrl(url))
+                    {
+                        return url;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string NormalizeCapturedUrl(string url)
+        => url.Trim().TrimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}');
+
+    private static bool LooksLikeCouponUrl(string url, string text)
+    {
+        var index = text.IndexOf(url, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        var start = Math.Max(0, index - 80);
+        var context = NormalizeTextForUrlContext(text[start..Math.Min(text.Length, index + url.Length + 20)]);
+        return ContainsAnyText(context, "cupom", "cupons", "resgate");
+    }
+
+    private static bool LooksLikeCouponCampaignText(string text)
+    {
+        var normalized = NormalizeTextForUrlContext(text);
+        return ContainsAnyText(normalized, "cupom", "cupons", "resgate")
+               && !ContainsAnyText(normalized, "compre aqui", "comprar aqui", "pegar oferta", "ver oferta", "link do produto", "link produto");
+    }
+
+    private static bool IsCouponCampaignOffer(WhatsAppNicheRouteOfferInput offer, string? originalText)
+        => LooksLikeCouponCampaignText($"{offer.ProductName}\n{offer.StoreName}\n{originalText}");
+
+    private static bool IsAllowedOfferTrackingUrl(string url)
+    {
+        var id = ExtractTrackingIdFromRedirectUrl(url);
+        return !string.IsNullOrWhiteSpace(id)
+               && TrackingIdDecorator.IsAllowedOfferTrackingId(id)
+               && !TrackingIdDecorator.IsBlockedOfferTrackingId(id);
+    }
+
+    private static bool LooksLikeOfferCtaLine(string line)
+    {
+        var normalized = NormalizeTextForUrlContext(line);
+        return ContainsAnyText(normalized, "compre aqui", "comprar aqui", "pegar oferta", "ver oferta", "link do produto", "link produto")
+               && !LooksLikeCouponCtaLine(line);
+    }
+
+    private static bool LooksLikeCouponCtaLine(string line)
+    {
+        var normalized = NormalizeTextForUrlContext(line);
+        return ContainsAnyText(normalized, "cupom", "cupons", "resgate");
+    }
+
+    private static bool ContainsAnyText(string text, params string[] terms)
+        => terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private static string NormalizeTextForUrlContext(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD).ToLowerInvariant();
+        return new string(normalized.Where(ch => CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark).ToArray());
     }
 
     private static string ReplaceLast(string text, string oldValue, string newValue)
@@ -1046,7 +1298,7 @@ public sealed partial class WhatsAppNicheGroupService
     [GeneratedRegex(@"(?im)(?<prefix>(?:pegar oferta|compre aqui|comprar aqui|ver oferta|link do produto|link produto|produto|oferta)[^\r\n]*?)(?<url>https?://[^\s]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex OfferCtaUrlRegex();
 
-    [GeneratedRegex(@"(?:item_id[:=]|[/_-])(MLB\d{5,})|/p/(MLB\d{5,})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?:item_id[:=]|[/_-])(MLB-?\d{5,})|/p/(MLB\d{5,})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MercadoLivreProductRegex();
 
     [GeneratedRegex(@"(?:/dp/|/gp/product/)([A-Z0-9]{10})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -1145,7 +1397,8 @@ public sealed partial class WhatsAppNicheGroupService
             var sentWithoutImage = events.Count(x => x.Timestamp >= now.AddHours(-24)
                 && x.Slug == row.Slug
                 && x.Status == "sent"
-                && !x.HadImage);
+                && !x.HadImage
+                && !LooksLikeCouponCampaignText($"{x.ProductName} {x.Reason}"));
             if (sentWithoutImage > 0)
                 alerts.Add($"{row.Slug}: {sentWithoutImage} envio(s) sem imagem nas ultimas 24h.");
         }
@@ -1199,12 +1452,21 @@ public static partial class WhatsAppNicheClassifier
     public static WhatsAppNicheDecision Classify(WhatsAppNicheRouteOfferInput offer)
     {
         var explicitNiche = WhatsAppNicheDefinitions.NormalizeSlug(offer.Category);
+        var text = Normalize($"{offer.ProductName} {offer.StoreName} {offer.Category} {offer.ProductUrl} {offer.CommissionRaw}");
+        if ((string.IsNullOrWhiteSpace(offer.Category)
+             || !WhatsAppNicheDefinitions.IsKnown(explicitNiche)
+             || explicitNiche == WhatsAppNicheDefinitions.Geral
+             || explicitNiche == WhatsAppNicheDefinitions.FitnessHealth)
+            && ContainsBeautyCareTerms(text))
+        {
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Beleza, false, "termos_beleza_prioritarios", 96);
+        }
+
         if (WhatsAppNicheDefinitions.IsKnown(explicitNiche) && explicitNiche != WhatsAppNicheDefinitions.Geral)
         {
             return new WhatsAppNicheDecision(explicitNiche, false, "nicho_explicito", 100);
         }
 
-        var text = Normalize($"{offer.ProductName} {offer.StoreName} {offer.Category} {offer.ProductUrl} {offer.CommissionRaw}");
         var price = TryParsePrice(offer.PriceText);
         var isMercadoLivre = ContainsAny(text, "mercado livre", "mercadolivre", "mercadolivre.com", "produto.mercadolivre");
         var hasCommissionSignal = ContainsAny(text, "comissao", "commission", "%") || !string.IsNullOrWhiteSpace(offer.CommissionRaw);
@@ -1215,7 +1477,7 @@ public static partial class WhatsAppNicheClassifier
 
         if (price is > 0 and <= 50)
         {
-            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Ate50, false, "preco_ate_50", 80);
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Ate50, false, "preco_ate_50", 96);
         }
 
         if (ContainsAny(text, "creatina", "whey", "pre treino", "pre-treino", "vitamina", "suplemento", "protein", "colageno", "omega 3", "omega3", "termogenico"))
@@ -1223,23 +1485,54 @@ public static partial class WhatsAppNicheClassifier
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.FitnessHealth, false, "termos_fitness_health", 90);
         }
 
-        if (ContainsAny(text, "celular", "smartphone", "iphone", "fone", "headset", "notebook", "laptop", "smart home", "alexa", "periferico", "teclado", "mouse", "game", "gamer", "console", "ssd", "monitor", "camera", "dji", "osmo", "gopro"))
+        if (ContainsAny(text, "smart tv", "televisao", "televisão", " tv ", " tvs ", "qled", "oled", "roku tv", "google tv", "projetor", "projector", "hy300", "hy320", "magcubic"))
+        {
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Tech, false, "video_tech_e_casa", 94);
+        }
+
+        if (ContainsAny(text, "relogio masculino", "relogio feminino", "relogio unissex", "relogio analogico", "relogio digital", "relogios masculino", "relogios feminino", "g-shock", "casio vintage", "poedagar"))
+        {
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Moda, false, "relogio_moda", 95);
+        }
+
+        if (ContainsAny(text, "celular", "smartphone", "iphone", "fone", "headset", "notebook", "laptop", "smart home", "alexa", "periferico", "teclado", "mouse", "game", "gamer", "console", "ssd", "monitor", "camera", "dji", "osmo", "gopro", "placa de video", "placa mae", "placa-mae", "processador", "ryzen", "rtx", "tablet", "ipad", "joystick", "controle", "caixa de som", "soundbar", "smart band"))
         {
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Tech, false, "termos_tech", 90);
         }
 
-        if (ContainsAny(text, "creme", "perfume", "skincare", "skin care", "maquiagem", "higiene", "cabelo", "shampoo", "condicionador", "protetor solar", "gloss", "batom", "secador", "prancha"))
+        if (ContainsAny(text, "bicicleta eletrica", "bike eletrica", "bici eletrica"))
+        {
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Tech, false, "mobilidade_eletrica_tech", 95);
+        }
+
+        if (ContainsAny(text, "album figurinha", "album de figurinha", "album copa", "figurinhas copa", "panini copa", "copa do mundo 2026", "cupom de desconto", "cupom amazon", "cupom mercado livre", "cupons mercado livre", "cupom shopee", "cupons shopee", "cupom generico", "cupom app"))
+        {
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Casa, false, "campanha_ampla_copa_ou_cupom", 95);
+        }
+
+        if (ContainsAny(text, "prateleira", "estante", "multiuso", "decoracao", "decorativo", "espelho", "quarto", "guarda roupa", "guarda-roupa", "organizador", "organizadora"))
+        {
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Casa, false, "termos_casa_organizacao", 92);
+        }
+
+        if (ContainsBeautyCareTerms(text))
         {
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Beleza, false, "termos_beleza", 90);
         }
 
-        if (ContainsAny(text, "cozinha", "organizador", "organizacao", "casa", "decoracao", "cama", "mesa", "banho", "utensilio", "panela", "air fryer", "limpeza", "purificador", "filtro", "tinta", "ferramenta", "bolsa ferramenta", "bolsa de ferramenta"))
+        if (ContainsAny(text, "cozinha", "organizador", "organizacao", "decoracao", "decorativo", "espelho", "cama", "mesa", "banho", "utensilio", "panela", "air fryer", "cooktop", "sanduicheira", "misteira", "grill", "micro ondas", "micro-ondas", "limpeza", "purificador", "filtro", "tinta", "ferramenta", "bolsa ferramenta", "bolsa de ferramenta", "travesseiro", "liquidificador", "lavadora", "lavadora de alta pressao", "lavadora alta pressao", "alta pressao", "lava e seca", "lava loucas", "luminaria", "luminaria de lava", "lava lamp", "sapateira", "persiana", "ar condicionado", "faqueiro", "xicara", "petisqueira", "quadro", "quadros", "aromatizador", "sofa", "estante", "escrivaninha", "guarda roupa", "guarda-roupa", "toalha", "tapete", "colcha", "geladeira", "refrigerador", "prateleira", "quarto"))
         {
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Casa, false, "termos_casa", 90);
         }
 
+        if (ContainsAny(text, "cafe", "achocolatado", "alimento", "supermercado", "graos", "grao", "vinho", "cerveja", "amaciante", "detergente", "sabao")
+            || ContainsWholeWordAny(text, "gin", "vodka"))
+        {
+            return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Casa, false, "mercado_bebidas_em_casa_temporario", 90);
+        }
+
         if (!ContainsAny(text, "bolsa ferramenta", "bolsa de ferramenta", "tinta")
-            && ContainsAny(text, "vestido", "camiseta", "blusa", "calca", "tenis", "sandalia", "bolsa", "relogio", "oculos", "moda", "calcado", "acessorio", "terno", "paleto", "blazer"))
+            && ContainsAny(text, "vestido", "camiseta", "blusa", "calca", "short", "bermuda", "tenis", "sandalia", "scarpin", "bota", "sapato", "bolsa", "mochila", "relogio", "relogios", "watch", "oculos", "moda", "calcado", "acessorio", "acessorios", "terno", "paleto", "blazer", "moletom", "poncho", "tricot", "regata", "colar"))
         {
             return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Moda, false, "termos_moda", 90);
         }
@@ -1250,6 +1543,17 @@ public static partial class WhatsAppNicheClassifier
         }
 
         return new WhatsAppNicheDecision(WhatsAppNicheDefinitions.Geral, true, "nicho_ambiguo_requer_revisao", 20);
+    }
+
+    public static IReadOnlyList<string> ResolveHybridTargetSlugs(WhatsAppNicheRouteOfferInput offer)
+    {
+        var text = $" {Normalize($"{offer.ProductName} {offer.StoreName} {offer.Category} {offer.ProductUrl}")} ";
+        if (ContainsAny(text, "smart tv", "televisao", " tv ", " tvs ", "qled", "oled", "roku tv", "google tv", "projetor", "projector", "hy300", "hy320", "magcubic"))
+        {
+            return [WhatsAppNicheDefinitions.Tech, WhatsAppNicheDefinitions.Casa];
+        }
+
+        return [];
     }
 
     private static decimal? TryParsePrice(string? value)
@@ -1272,6 +1576,41 @@ public static partial class WhatsAppNicheClassifier
 
     private static bool ContainsAny(string text, params string[] terms)
         => terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private static bool ContainsBeautyCareTerms(string text)
+        => ContainsAny(
+            text,
+            "creme",
+            "perfume",
+            "skincare",
+            "skin care",
+            "maquiagem",
+            "higiene",
+            "cabelo",
+            "shampoo",
+            "condicionador",
+            "mascara capilar",
+            "mascara de cabelo",
+            "leave in",
+            "leave-in",
+            "protetor solar",
+            "fps",
+            "gloss",
+            "batom",
+            "secador",
+            "prancha",
+            "hidratante",
+            "serum",
+            "deo colonia",
+            "body splash",
+            "aparador",
+            "barba");
+
+    private static bool ContainsWholeWordAny(string text, params string[] terms)
+    {
+        var tokens = text.Split(new[] { ' ', '\r', '\n', '\t', '.', ',', ';', ':', '/', '\\', '-', '_', '|', '(', ')', '[', ']', '{', '}', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+        return terms.Any(term => tokens.Contains(term, StringComparer.OrdinalIgnoreCase));
+    }
 
     private static string Normalize(string value)
     {

@@ -164,10 +164,10 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
 
     private async Task<AffiliateLinkResult> ConvertInternalAsync(Uri uri, string host, CancellationToken cancellationToken, string? source)
     {
-        if (IsAmazonHost(host))
+        if (AffiliateStoreRouter.IsAmazon(uri, host))
         {
             var resolved = uri;
-            if (IsAmazonShortHost(host))
+            if (AffiliateStoreRouter.IsAmazonShort(uri, host))
             {
                 var expanded = await ExpandAmazonShortAsync(uri, cancellationToken)
                                ?? await ExpandUrlAsync(uri, cancellationToken);
@@ -292,7 +292,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             };
         }
 
-        if (host.Contains("shein.com"))
+        if (AffiliateStoreRouter.IsShein(uri, host))
         {
             var cleaned = RemoveQueryKeys(uri, SheinRemoveKeys);
             var originalQuery = ParseQuery(cleaned.Query);
@@ -322,9 +322,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
             };
         }
 
-        if (IsMercadoLivreHost(host)
-            || uri.AbsoluteUri.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase)
-            || uri.AbsoluteUri.Contains("mercadolibre", StringComparison.OrdinalIgnoreCase))
+        if (AffiliateStoreRouter.IsMercadoLivre(uri, host))
         {
             var ml = await ConvertMercadoLivreAsync(uri, cancellationToken);
             if (!string.IsNullOrWhiteSpace(ml))
@@ -362,7 +360,7 @@ public sealed class AffiliateLinkService : IAffiliateLinkService
                 null);
         }
 
-        if (IsShopeeHost(host) || uri.AbsoluteUri.Contains("shopee", StringComparison.OrdinalIgnoreCase))
+        if (AffiliateStoreRouter.IsShopee(uri, host))
         {
             var shopee = await ConvertShopeeAsync(uri, source, cancellationToken);
             if (!string.IsNullOrWhiteSpace(shopee))

@@ -216,6 +216,8 @@ builder.Services.AddSingleton<IAffiliateCouponProvider, SheinOfficialCouponProvi
 builder.Services.AddSingleton<IAffiliateCouponProvider, MercadoLivreOfficialCouponProvider>();
 builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
 builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
+builder.Services.AddSingleton<IConversionAuditLogger, ConversionAuditLogger>();
+builder.Services.AddSingleton<IOfferUrlExtractor, OfferUrlExtractor>();
 builder.Services.AddSingleton<ICouponSelector, CouponSelector>();
 builder.Services.AddSingleton<ILinkTrackingStore>(sp => new LinkTrackingStore(
     sp.GetRequiredService<ILogger<LinkTrackingStore>>(),
@@ -233,6 +235,7 @@ builder.Services.AddSingleton<ShopeeStoreImageScraper>();
 builder.Services.AddSingleton<ICatalogOfferEnrichmentService, CatalogOfferEnrichmentService>();
 builder.Services.AddSingleton<InstagramImageDownloadService>();
 builder.Services.AddSingleton<IMetaGraphClient, MetaGraphClient>();
+builder.Services.AddSingleton<IInstagramMediaPreparationService, InstagramMediaPreparationService>();
 builder.Services.AddSingleton<IInstagramPublishService, InstagramPublishService>();
 builder.Services.AddSingleton<IVideoProcessingService, FfmpegVideoProcessingService>();
 builder.Services.AddSingleton<IMessageProcessor, MessageProcessor>();
@@ -243,6 +246,8 @@ builder.Services.AddSingleton<OfferNormalizationService>();
 builder.Services.AddSingleton<OfferNormalizationRoutingService>();
 builder.Services.AddSingleton<IChannelOfferDeepAnalysisService, ChannelOfferDeepAnalysisService>();
 builder.Services.AddSingleton<IWhatsAppOfferReasoner, WhatsAppOfferReasoner>();
+builder.Services.AddSingleton<WhatsAppNicheAiClassifier>();
+builder.Services.AddSingleton<WhatsAppNicheAiReviewService>();
 builder.Services.AddSingleton<OpenAiInstagramPostGenerator>();
 builder.Services.AddSingleton<GeminiInstagramPostGenerator>();
 builder.Services.AddSingleton<DeepSeekInstagramPostGenerator>();
@@ -300,6 +305,7 @@ builder.Services.AddSingleton<IBotConversorQueuePublisher, RabbitMqBotConversorQ
 builder.Services.AddSingleton<IBotConversorOutboxStore, FileBotConversorOutboxStore>();
 builder.Services.AddSingleton<IMessageOrchestrator, BotConversorMessageOrchestrator>();
 builder.Services.AddSingleton<IWhatsAppOutboundPublisher, RabbitMqWhatsAppOutboundPublisher>();
+builder.Services.AddSingleton<IOutboundRateLimitPolicy, DefaultOutboundRateLimitPolicy>();
 builder.Services.AddSingleton<WhatsAppAutomationQueueService>();
 builder.Services.AddSingleton<IWhatsAppOutboundOutboxStore, FileWhatsAppOutboundOutboxStore>();
 builder.Services.AddSingleton<ITelegramOutboundPublisher, RabbitMqTelegramOutboundPublisher>();
@@ -332,6 +338,7 @@ if (isWorkerRole)
     builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
     builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
     builder.Services.AddHostedService<InstagramScheduledPublishWorker>();
+    builder.Services.AddHostedService<InstagramAutoPilotWorker>();
     builder.Services.AddHostedService<TelegramViralReelsAutoPilotWorker>();
     builder.Services.AddHostedService<CatalogPriceRefreshWorker>();
     builder.Services.AddHostedService<PriceWatchWorker>();
@@ -3303,11 +3310,14 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                     continue;
                 }
 
-                var outboundDedupeKey = BuildWhatsAppOutboundDedupeKey(
+                var outboundDedupeKey = await WhatsAppOutboundDedupeKeyBuilder.BuildAsync(
                     instanceToUse,
                     destination,
                     outboundText,
-                    outboundMediaMessage.HasMedia);
+                    outboundMediaMessage.HasMedia,
+                    isOfficialDestination,
+                    linkTrackingStore,
+                    ct);
                 var dedupeWindow = WhatsAppOutboundDeduplicationPolicy.ResolveWindow(isOfficialDestination, messagingOptions.Value);
                 if (!idempotency.TryBegin(outboundDedupeKey, dedupeWindow))
                 {
@@ -3629,6 +3639,7 @@ api.MapGet("/settings", async (
     CancellationToken ct) =>
 {
     var settings = await store.GetAsync(ct);
+    AutomationSettingsSanitizer.MaskSecretsInPlace(settings);
     if (!string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
     {
         settings.OpenAI.ApiKey = "********";
@@ -6203,7 +6214,7 @@ app.MapGet("/media/{id}.{ext}", (string id, string ext, IMediaStore store, HttpC
     return Results.File(item.Bytes, item.MimeType);
 });
 
-app.MapGet("/r/{id}", async (
+app.MapMethods("/r/{id}", new[] { "GET", "HEAD" }, async (
     string id,
     HttpContext context,
     ILinkTrackingStore trackingStore,
@@ -6213,7 +6224,7 @@ app.MapGet("/r/{id}", async (
     CancellationToken ct) =>
 {
     var trackingLookup = ResolveDecoratedTrackingId(id);
-    var entry = await trackingStore.RegisterClickAsync(trackingLookup.LookupId, ct);
+    var entry = await trackingStore.GetLinkAsync(trackingLookup.LookupId, ct);
     if (entry is null)
     {
         return Results.NotFound();
@@ -6241,23 +6252,29 @@ app.MapGet("/r/{id}", async (
     var userAgent = TruncateForLog(context.Request.Headers.UserAgent.ToString(), 320);
     var ip = context.Connection.RemoteIpAddress?.ToString();
 
-    await clickLogStore.AppendAsync(new ClickLogEntry
+    if (!HttpMethods.IsHead(context.Request.Method))
     {
-        TrackingId = trackingLookup.Decorated ? id : entry.Id,
-        TargetUrl = redirectTarget,
-        Source = source,
-        Campaign = campaign,
-        OriginChannel = originChannel,
-        OriginSurface = originSurface,
-        Referrer = string.IsNullOrWhiteSpace(referrer) ? null : referrer,
-        UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
-        IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
-    }, null, ct);
+        RecordTrackingClickBestEffort(
+            clickLogStore,
+            loggerFactory.CreateLogger("TrackingClick"),
+            new ClickLogEntry
+        {
+            TrackingId = trackingLookup.Decorated ? id : entry.Id,
+            TargetUrl = redirectTarget,
+            Source = source,
+            Campaign = campaign,
+            OriginChannel = originChannel,
+            OriginSurface = originSurface,
+            Referrer = string.IsNullOrWhiteSpace(referrer) ? null : referrer,
+            UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent,
+            IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
+        });
+    }
 
-    return Results.Redirect(redirectTarget);
+    return RedirectForRequest(context, redirectTarget);
 });
 
-app.MapGet("/{id}", async (
+app.MapMethods("/{id}", new[] { "GET", "HEAD" }, async (
     string id,
     HttpContext context,
     ILinkTrackingStore trackingStore,
@@ -6302,23 +6319,59 @@ app.MapGet("/{id}", async (
     var userAgent = context.Request.Headers.UserAgent.ToString();
     var ip = context.Connection.RemoteIpAddress?.ToString();
 
-    await clickLogStore.AppendAsync(new ClickLogEntry
+    if (!HttpMethods.IsHead(context.Request.Method))
     {
-        TrackingId = trackingLookup.Decorated ? id : entry.Id,
-        TargetUrl = redirectTarget,
-        Source = source,
-        Campaign = campaign,
-        OriginChannel = originChannel,
-        OriginSurface = originSurface,
-        Referrer = string.IsNullOrWhiteSpace(referrer) ? null : (referrer.Length > 600 ? referrer[..600] : referrer),
-        UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : (userAgent.Length > 320 ? userAgent[..320] : userAgent),
-        IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
-    }, null, ct);
+        RecordTrackingClickBestEffort(
+            clickLogStore,
+            loggerFactory.CreateLogger("TrackingClick"),
+            new ClickLogEntry
+        {
+            TrackingId = trackingLookup.Decorated ? id : entry.Id,
+            TargetUrl = redirectTarget,
+            Source = source,
+            Campaign = campaign,
+            OriginChannel = originChannel,
+            OriginSurface = originSurface,
+            Referrer = string.IsNullOrWhiteSpace(referrer) ? null : (referrer.Length > 600 ? referrer[..600] : referrer),
+            UserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : (userAgent.Length > 320 ? userAgent[..320] : userAgent),
+            IpHash = string.IsNullOrWhiteSpace(ip) ? null : ComputeStableHash(ip)
+        });
+    }
 
-    return Results.Redirect(redirectTarget);
+    return RedirectForRequest(context, redirectTarget);
 });
 
 app.Run();
+
+static IResult RedirectForRequest(HttpContext context, string redirectTarget)
+{
+    if (HttpMethods.IsHead(context.Request.Method))
+    {
+        context.Response.Headers.Location = redirectTarget;
+        context.Response.ContentLength = 0;
+        return Results.StatusCode(StatusCodes.Status302Found);
+    }
+
+    return Results.Redirect(redirectTarget);
+}
+
+static void RecordTrackingClickBestEffort(
+    IClickLogStore clickLogStore,
+    ILogger logger,
+    ClickLogEntry entry)
+{
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await clickLogStore.AppendAsync(entry, null, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Falha ao registrar clique de tracking. TrackingId={TrackingId}", entry.TrackingId);
+        }
+    });
+}
 
 static string NormalizeRedirectLocation(string? url)
 {
@@ -7491,7 +7544,7 @@ static async Task<(bool Success, string? Message)> SendApprovedViralReelOfferToW
         return (false, $"blocked:{officialGuard.Reason}");
     }
 
-    var dedupeKey = BuildWhatsAppOutboundDedupeKey(instanceName, targetGroupId, prepared.Content, prepared.HasImageCandidate);
+    var dedupeKey = BuildTextBasedWhatsAppOutboundDedupeKey(instanceName, targetGroupId, prepared.Content, prepared.HasImageCandidate);
     var dedupeWindow = WhatsAppOutboundDeduplicationPolicy.ResolveWindow(isOfficialDestination, messagingOptions);
     if (!idempotencyStore.TryBegin(dedupeKey, dedupeWindow))
     {
@@ -10765,6 +10818,67 @@ static bool LooksLikeCatalogMojibake(string value)
 static int CountCatalogMojibakeMarkers(string value)
     => value.Count(ch => ch is 'Ã' or 'Â' or '\uFFFD');
 
+static string FormatBioNicheShortLabel(BioNicheLink niche)
+{
+    var slug = NormalizeBioNicheSlug(niche.Slug);
+    return slug switch
+    {
+        "tech" => "TECH",
+        "casa" => "CASA",
+        "moda" => "MODA",
+        "beleza" => "BELEZA",
+        "fitness_health" => "FITNESS",
+        _ => BuildBioNicheFallbackLabel(niche.DisplayName, slug)
+    };
+}
+
+static string FormatBioNicheSubtitle(BioNicheLink niche)
+{
+    var slug = NormalizeBioNicheSlug(niche.Slug);
+    return slug switch
+    {
+        "tech" => "Eletronicos, gadgets e achados inteligentes.",
+        "casa" => "Decoracao, cozinha e utilidades para o lar.",
+        "moda" => "Roupas, tenis, acessorios e relogios.",
+        "beleza" => "Cuidados, perfumes, skincare e make.",
+        "fitness_health" => "Suplementos, treino, saude e performance.",
+        _ => "Ofertas selecionadas para este nicho."
+    };
+}
+
+static string FormatBioNicheToneClass(BioNicheLink niche)
+{
+    var slug = NormalizeBioNicheSlug(niche.Slug);
+    return slug switch
+    {
+        "tech" => "niche-tech",
+        "casa" => "niche-casa",
+        "moda" => "niche-moda",
+        "beleza" => "niche-beleza",
+        "fitness_health" => "niche-fitness",
+        _ => "niche-default"
+    };
+}
+
+static string NormalizeBioNicheSlug(string? slug)
+    => Regex.Replace((slug ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9_-]", string.Empty);
+
+static string BuildBioNicheFallbackLabel(string? displayName, string slug)
+{
+    var text = NormalizeCatalogDisplayText(displayName);
+    text = Regex.Replace(text, @"(?i)\brei\s+das\s+ofertas\b", string.Empty, RegexOptions.CultureInvariant);
+    text = Regex.Replace(text, @"(?i)\bniche[_\s-]*", string.Empty, RegexOptions.CultureInvariant);
+    text = text.Replace("-", " ", StringComparison.Ordinal).Trim();
+
+    if (string.IsNullOrWhiteSpace(text))
+    {
+        text = Regex.Replace(slug, @"^niche[_-]*", string.Empty, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        text = text.Replace("-", " ", StringComparison.Ordinal).Replace("_", " ", StringComparison.Ordinal).Trim();
+    }
+
+    return string.IsNullOrWhiteSpace(text) ? "GRUPO" : text.ToUpperInvariant();
+}
+
 static bool LooksLikeMojibake(string value)
     => value.Contains("ÃƒÆ’Ã†â€™", StringComparison.Ordinal) || value.Contains("ÃƒÆ’Ã‚Â¢", StringComparison.Ordinal) || value.Contains("ÃƒÂ¯Ã‚Â¿Ã‚Â½", StringComparison.Ordinal) || value.Contains("ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œ", StringComparison.Ordinal);
 
@@ -10961,12 +11075,10 @@ static string BuildBioLinksPageHtml(
     var sb = new StringBuilder();
     const string instagramUrl = "https://www.instagram.com/reidasofertasvip/";
     const string telegramUrl = "https://t.me/ReiDasOfertasVIP";
-    const string whatsappUrl = "https://chat.whatsapp.com/GosnHVUa2lE0nYGhO6an4x";
     var brandName = string.IsNullOrWhiteSpace(settings.BrandName) ? "Rei das Ofertas" : settings.BrandName.Trim();
     var headline = string.IsNullOrWhiteSpace(settings.Headline) ? "Achadinhos em destaque" : settings.Headline.Trim();
     var subheadline = string.IsNullOrWhiteSpace(settings.Subheadline) ? "Toque no botao para abrir a oferta." : settings.Subheadline.Trim();
     var buttonLabel = string.IsNullOrWhiteSpace(settings.ButtonLabel) ? "Abrir oferta" : settings.ButtonLabel.Trim();
-    var whatsAppSymbol = GetBioChannelBadgeHtml("whatsapp");
     var telegramSymbol = GetBioChannelBadgeHtml("telegram");
     var instagramSymbol = GetBioChannelBadgeHtml("instagram");
     var catalogSymbol = GetBioChannelBadgeHtml("catalogo");
@@ -11013,6 +11125,22 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine("    h1 { margin: 0 0 8px; font-size: 1.6rem; color: var(--gold); letter-spacing: 1px; text-transform: uppercase; font-weight: 800; }");
     sb.AppendLine("    p { margin: 0; color: var(--muted); font-size: 0.95rem; }");
     sb.AppendLine("    .hero-sub { margin-top: 10px; max-width: 440px; margin-left: auto; margin-right: auto; line-height: 1.5; }");
+    sb.AppendLine("    .niche-groups { margin: -14px 0 30px; }");
+    sb.AppendLine("    .niche-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }");
+    sb.AppendLine("    .niche-heading h2 { margin: 0; color: var(--gold); font-size: 1rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }");
+    sb.AppendLine("    .niche-heading span { color: var(--muted); font-size: .78rem; text-align: right; }");
+    sb.AppendLine("    .niche-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }");
+    sb.AppendLine("    .niche-tile { min-height: 122px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 18px; padding: 16px; text-decoration: none; color: var(--text); background: linear-gradient(145deg, rgba(15,23,42,.95), rgba(30,41,59,.72)); box-shadow: 0 18px 34px rgba(0,0,0,.2); transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; overflow: hidden; }");
+    sb.AppendLine("    .niche-tile:hover { transform: translateY(-2px); border-color: rgba(196,164,104,.6); box-shadow: 0 22px 40px rgba(0,0,0,.28); }");
+    sb.AppendLine("    .niche-tile strong { display: block; color: var(--text); font-size: 1.05rem; line-height: 1.05; letter-spacing: 0; font-weight: 900; overflow-wrap: anywhere; }");
+    sb.AppendLine("    .niche-tile span { display: block; color: rgba(248,250,252,.74); font-size: .8rem; line-height: 1.28; margin-top: 7px; }");
+    sb.AppendLine("    .niche-tile em { align-self: flex-start; color: rgba(2,6,23,.92); background: rgba(248,250,252,.86); border-radius: 999px; padding: 5px 9px; font-style: normal; font-size: .68rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }");
+    sb.AppendLine("    .niche-tech { background: linear-gradient(145deg, rgba(14,165,233,.28), rgba(15,23,42,.95)); border-color: rgba(56,189,248,.32); }");
+    sb.AppendLine("    .niche-casa { background: linear-gradient(145deg, rgba(34,197,94,.24), rgba(15,23,42,.95)); border-color: rgba(74,222,128,.30); }");
+    sb.AppendLine("    .niche-moda { background: linear-gradient(145deg, rgba(236,72,153,.24), rgba(15,23,42,.95)); border-color: rgba(244,114,182,.30); }");
+    sb.AppendLine("    .niche-beleza { background: linear-gradient(145deg, rgba(249,115,22,.20), rgba(15,23,42,.95)); border-color: rgba(251,146,60,.30); }");
+    sb.AppendLine("    .niche-fitness { background: linear-gradient(145deg, rgba(16,185,129,.24), rgba(15,23,42,.95)); border-color: rgba(45,212,191,.32); }");
+    sb.AppendLine("    .niche-default { background: linear-gradient(145deg, rgba(196,164,104,.24), rgba(15,23,42,.95)); border-color: rgba(196,164,104,.32); }");
     sb.AppendLine("    .quick-links { display: grid; gap: 12px; margin: 24px 0 32px; }");
     sb.AppendLine("    .quick-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.75)); padding: 16px 18px; text-decoration: none; color: inherit; transition: all .3s ease; }");
     sb.AppendLine("    .quick-link:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: 0 14px 28px rgba(0,0,0,.28); }");
@@ -11111,20 +11239,28 @@ static string BuildBioLinksPageHtml(
     sb.AppendLine($"    <p class=\"hero-sub\">{System.Net.WebUtility.HtmlEncode(subheadline)}</p>");
     sb.AppendLine($"    <p style=\"margin-top:12px; font-size:0.8rem; opacity:0.7;\">Origem: {System.Net.WebUtility.HtmlEncode(source)}</p>");
     sb.AppendLine("  </section>");
+    if (nicheLinks.Count > 0)
+    {
+        sb.AppendLine("  <section class=\"niche-groups\" aria-labelledby=\"niche-groups-title\">");
+        sb.AppendLine("    <div class=\"niche-heading\"><h2 id=\"niche-groups-title\">Grupos oficiais</h2><span>Escolha seu nicho e receba ofertas direto no WhatsApp.</span></div>");
+        sb.AppendLine("    <div class=\"niche-grid\">");
+        foreach (var niche in nicheLinks)
+        {
+            var nicheLabel = System.Net.WebUtility.HtmlEncode(FormatBioNicheShortLabel(niche));
+            var nicheSubtitle = System.Net.WebUtility.HtmlEncode(FormatBioNicheSubtitle(niche));
+            var nicheUrl = System.Net.WebUtility.HtmlEncode(niche.InviteUrl);
+            var nicheSlug = System.Net.WebUtility.HtmlEncode(niche.Slug);
+            var nicheClass = System.Net.WebUtility.HtmlEncode(FormatBioNicheToneClass(niche));
+            sb.AppendLine($"      <a class=\"niche-tile {nicheClass}\" href=\"{nicheUrl}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_whatsapp_niche_{nicheSlug}\" data-analytics-event=\"niche_join_intent\" data-analytics-target=\"{nicheUrl}\"><div><strong>{nicheLabel}</strong><span>{nicheSubtitle}</span></div><em>Grupo oficial</em></a>");
+        }
+        sb.AppendLine("    </div>");
+        sb.AppendLine("  </section>");
+    }
     sb.AppendLine("  <section class=\"quick-links\">");
-    sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(whatsappUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_whatsapp\"><div><strong>{whatsAppSymbol} Entrar no WhatsApp</strong><span>Receba ofertas, alertas e os links primeiro por la.</span></div><em>WhatsApp</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(telegramUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_telegram\"><div><strong>{telegramSymbol} Entrar no Telegram</strong><span>Entre no canal para acompanhar alertas e ofertas em tempo real.</span></div><em>Telegram</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(instagramUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_instagram\"><div><strong>{instagramSymbol} Seguir no Instagram</strong><span>Acompanhe reels, stories e posts com os melhores achadinhos.</span></div><em>Instagram</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(catalogUrl)}\" data-analytics-source=\"bio_catalog\"><div><strong>{catalogSymbol} Abrir Catalogo VIP</strong><span>Veja todas as ofertas publicadas e acesse os links atualizados.</span></div><em>Catalogo</em></a>");
     sb.AppendLine($"    <a class=\"quick-link\" href=\"{System.Net.WebUtility.HtmlEncode(converterUrl)}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_converter\"><div><strong>{converterSymbol} Abrir Conversor de Links</strong><span>Converta links rapidamente e encontre ofertas prontas para comprar.</span></div><em>Conversor</em></a>");
-    foreach (var niche in nicheLinks)
-    {
-        var nicheLabel = System.Net.WebUtility.HtmlEncode(NormalizeCatalogDisplayText(niche.DisplayName));
-        var nicheUrl = System.Net.WebUtility.HtmlEncode(niche.InviteUrl);
-        var nicheSlug = System.Net.WebUtility.HtmlEncode(niche.Slug);
-        var nicheCampaign = System.Net.WebUtility.HtmlEncode(niche.Campaign);
-        sb.AppendLine($"    <a class=\"quick-link\" href=\"{nicheUrl}\" target=\"_blank\" rel=\"noopener noreferrer\" data-analytics-source=\"bio_whatsapp_niche_{nicheSlug}\" data-analytics-event=\"niche_join_intent\" data-analytics-target=\"{nicheUrl}\"><div><strong>{whatsAppSymbol} {nicheLabel}</strong><span>Entre direto no grupo segmentado e receba ofertas mais relevantes.</span></div><em>{nicheCampaign}</em></a>");
-    }
     sb.AppendLine("  </section>");
 
     if (featuredItems.Count == 0)
@@ -11826,63 +11962,7 @@ static string ResolvePublicBaseUrl(string? primaryPublicBaseUrl, string? seconda
 
 static void MaskProviderKeys(AutomationSettings settings)
 {
-    static List<string> MaskList(IEnumerable<string>? values)
-    {
-        return (values ?? Array.Empty<string>())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(_ => "********")
-            .ToList();
-    }
-
-    if (settings.OpenAI is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.OpenAI.ApiKey)) settings.OpenAI.ApiKey = "********";
-        settings.OpenAI.ApiKeys = MaskList(settings.OpenAI.ApiKeys);
-    }
-
-    if (settings.Gemini is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.Gemini.ApiKey)) settings.Gemini.ApiKey = "********";
-        settings.Gemini.ApiKeys = MaskList(settings.Gemini.ApiKeys);
-    }
-
-    if (settings.DeepSeek is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.DeepSeek.ApiKey)) settings.DeepSeek.ApiKey = "********";
-        settings.DeepSeek.ApiKeys = MaskList(settings.DeepSeek.ApiKeys);
-    }
-
-    if (settings.Nemotron is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.Nemotron.ApiKey)) settings.Nemotron.ApiKey = "********";
-        settings.Nemotron.ApiKeys = MaskList(settings.Nemotron.ApiKeys);
-    }
-
-    if (settings.Qwen is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.Qwen.ApiKey)) settings.Qwen.ApiKey = "********";
-        settings.Qwen.ApiKeys = MaskList(settings.Qwen.ApiKeys);
-    }
-
-    if (settings.VilaNvidia is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.VilaNvidia.ApiKey)) settings.VilaNvidia.ApiKey = "********";
-        settings.VilaNvidia.ApiKeys = MaskList(settings.VilaNvidia.ApiKeys);
-    }
-
-    if (settings.InstagramPublish is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.InstagramPublish.AccessToken)) settings.InstagramPublish.AccessToken = "********";
-        if (!string.IsNullOrWhiteSpace(settings.InstagramPublish.ManyChatApiKey)) settings.InstagramPublish.ManyChatApiKey = "********";
-    }
-
-    if (settings.MercadoLivreAffiliateScout is not null)
-    {
-        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.LoginUser)) settings.MercadoLivreAffiliateScout.LoginUser = "********";
-        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.LoginPassword)) settings.MercadoLivreAffiliateScout.LoginPassword = "********";
-        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.TwoFactorCode)) settings.MercadoLivreAffiliateScout.TwoFactorCode = "********";
-        if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout.StorageStateJson)) settings.MercadoLivreAffiliateScout.StorageStateJson = "********";
-    }
+    AutomationSettingsSanitizer.MaskSecretsInPlace(settings);
 }
 
 static bool TryNormalizePublicBaseUrl(string? value, out string normalized)
@@ -16710,7 +16790,7 @@ static string NormalizeWebConversorSource(string? source)
     return "conversor_web";
 }
 
-static string BuildWhatsAppOutboundDedupeKey(string? instanceName, string destination, string text, bool hasMedia)
+static string BuildTextBasedWhatsAppOutboundDedupeKey(string? instanceName, string destination, string text, bool hasMedia)
 {
     var normalizedInstance = string.IsNullOrWhiteSpace(instanceName) ? "default" : instanceName.Trim();
     var normalizedDestination = string.IsNullOrWhiteSpace(destination) ? "unknown" : destination.Trim();

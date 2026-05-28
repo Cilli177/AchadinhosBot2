@@ -1,10 +1,14 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using AchadinhosBot.Next.Application.Abstractions;
 
 namespace AchadinhosBot.Next.Application.Services;
 
 public sealed class WhatsAppAutomationQueueService
 {
+    private const int DefaultCapacity = 1000;
+    private const int MaxAttempts = 3;
+
     private readonly Channel<string> _channel = Channel.CreateUnbounded<string>(
         new UnboundedChannelOptions
         {
@@ -12,9 +16,19 @@ public sealed class WhatsAppAutomationQueueService
             SingleWriter = false
         });
 
+    private readonly IOutboundRateLimitPolicy? _rateLimitPolicy;
     private readonly ConcurrentDictionary<string, WhatsAppAutomationQueueItem> _items = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, QueuedWhatsAppAutomationJob> _jobs = new(StringComparer.OrdinalIgnoreCase);
     private string? _currentJobId;
+
+    public WhatsAppAutomationQueueService()
+    {
+    }
+
+    public WhatsAppAutomationQueueService(IOutboundRateLimitPolicy rateLimitPolicy)
+    {
+        _rateLimitPolicy = rateLimitPolicy;
+    }
 
     public async Task<WhatsAppAutomationQueueItem> EnqueueAsync(
         string kind,
@@ -23,6 +37,11 @@ public sealed class WhatsAppAutomationQueueService
         CancellationToken ct,
         DateTimeOffset? scheduledForUtc = null)
     {
+        if (_items.Values.Count(x => string.Equals(x.Status, "queued", StringComparison.OrdinalIgnoreCase)) >= DefaultCapacity)
+        {
+            throw new InvalidOperationException($"Fila de automacao WhatsApp cheia (capacidade {DefaultCapacity}).");
+        }
+
         var item = new WhatsAppAutomationQueueItem
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -30,7 +49,9 @@ public sealed class WhatsAppAutomationQueueService
             Label = label,
             Status = "queued",
             EnqueuedAt = DateTimeOffset.UtcNow,
-            ScheduledForUtc = scheduledForUtc?.ToUniversalTime()
+            ScheduledForUtc = scheduledForUtc?.ToUniversalTime(),
+            Attempts = 0,
+            MaxAttempts = MaxAttempts
         };
 
         _items[item.Id] = item;
@@ -95,6 +116,7 @@ public sealed class WhatsAppAutomationQueueService
         }
 
         item.Status = "running";
+        item.Attempts++;
         item.StartedAt = DateTimeOffset.UtcNow;
         item.Detail = null;
         _currentJobId = item.Id;
@@ -104,7 +126,24 @@ public sealed class WhatsAppAutomationQueueService
             var result = await job.Handler(ct);
             item.Success = result.Success;
             item.Detail = result.Message;
-            item.Status = result.Success ? "done" : "failed";
+            if (result.Success)
+            {
+                item.Status = "done";
+                _rateLimitPolicy?.RecordSuccess(item.Kind, item.Label);
+            }
+            else if (ShouldRetry(item, result.Message, out var retryDelay))
+            {
+                item.Status = "queued";
+                item.ScheduledForUtc = DateTimeOffset.UtcNow.Add(retryDelay);
+                item.LastError = result.Message;
+                _jobs[item.Id] = job;
+                await _channel.Writer.WriteAsync(item.Id, ct);
+            }
+            else
+            {
+                item.Status = "failed";
+                item.LastError = result.Message;
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -113,16 +152,71 @@ public sealed class WhatsAppAutomationQueueService
         }
         catch (Exception ex)
         {
-            item.Status = "failed";
             item.Detail = ex.Message;
+            if (ShouldRetry(item, ex.Message, out var retryDelay))
+            {
+                item.Status = "queued";
+                item.ScheduledForUtc = DateTimeOffset.UtcNow.Add(retryDelay);
+                item.LastError = ex.Message;
+                _jobs[item.Id] = job;
+                await _channel.Writer.WriteAsync(item.Id, ct);
+            }
+            else
+            {
+                item.Status = "failed";
+                item.LastError = ex.Message;
+            }
         }
         finally
         {
             item.CompletedAt = DateTimeOffset.UtcNow;
             _currentJobId = null;
-            _jobs.TryRemove(item.Id, out _);
+            if (!string.Equals(item.Status, "queued", StringComparison.OrdinalIgnoreCase))
+            {
+                _jobs.TryRemove(item.Id, out _);
+            }
         }
     }
+
+    private bool ShouldRetry(WhatsAppAutomationQueueItem item, string? message, out TimeSpan delay)
+    {
+        var isRateLimit = LooksLikeRateLimit(message);
+        _rateLimitPolicy?.RecordFailure(item.Kind, item.Label, isRateLimit);
+        if (item.Attempts >= item.MaxAttempts || !IsTransientFailure(message))
+        {
+            delay = TimeSpan.Zero;
+            return false;
+        }
+
+        if (_rateLimitPolicy?.TryGetDelay(item.Kind, item.Label, out delay) == true && delay > TimeSpan.Zero)
+        {
+            return true;
+        }
+
+        delay = TimeSpan.FromSeconds(Math.Min(120, Math.Pow(2, item.Attempts) * 5));
+        return true;
+    }
+
+    private static bool IsTransientFailure(string? message)
+        => LooksLikeRateLimit(message)
+           || Contains(message, "tempor")
+           || Contains(message, "timeout")
+           || Contains(message, "unavailable")
+           || Contains(message, "indispon")
+           || Contains(message, "closed")
+           || Contains(message, "close")
+           || Contains(message, "503")
+           || Contains(message, "502");
+
+    private static bool LooksLikeRateLimit(string? message)
+        => Contains(message, "rate")
+           || Contains(message, "limit")
+           || Contains(message, "429")
+           || Contains(message, "overlimit")
+           || Contains(message, "too many");
+
+    private static bool Contains(string? value, string needle)
+        => value?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
 
     public IReadOnlyList<WhatsAppAutomationQueueItem> GetSnapshot(int maxItems = 20)
     {
@@ -159,7 +253,10 @@ public sealed class WhatsAppAutomationQueueItem
     public DateTimeOffset? ScheduledForUtc { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public int Attempts { get; set; }
+    public int MaxAttempts { get; set; } = 3;
     public string? Detail { get; set; }
+    public string? LastError { get; set; }
 
     public WhatsAppAutomationQueueItem Clone() => new()
     {
@@ -172,7 +269,10 @@ public sealed class WhatsAppAutomationQueueItem
         ScheduledForUtc = ScheduledForUtc,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
-        Detail = Detail
+        Attempts = Attempts,
+        MaxAttempts = MaxAttempts,
+        Detail = Detail,
+        LastError = LastError
     };
 }
 

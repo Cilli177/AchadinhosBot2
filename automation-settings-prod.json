@@ -207,9 +207,9 @@
   "InstagramPublish": {
     "Enabled": true,
     "GraphBaseUrl": "https://graph.facebook.com/v19.0",
-    "AccessToken": "EAAYME7Cl5x4BQ4oqB5mvoMZBqM7raGeuW6cpjNyemuwMWYkr8q993XoR7PWrgOANYOFzRrHVXe03vFH9qNFpvZCNh9m6r2WY4UJwFw012MqIHbMkM6fNkPn3BdGR6TL5VC9egZChZBEaJtblURPOwYithztL9aXO1NVnOdo3ZBZB5UtKa9ZCVOygrgkWBYuXHnlc5BD6gbPRyWK5jkLQ5VMlsyZAAwjnr1RZAsm8rru8ZD",
+    "AccessToken": "********",
     "InstagramUserId": "17841479982697707",
-    "VerifyToken": "ig_verify_reidasofertasvip_20260309",
+    "VerifyToken": "********",
     "AutoReplyEnabled": true,
     "AutoReplyOnlyOnKeywordMatch": true,
     "ReplyTemplate": "Aqui esta o link: {link}",

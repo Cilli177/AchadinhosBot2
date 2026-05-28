@@ -18,11 +18,8 @@ public sealed class InstagramPublishService : IInstagramPublishService
     private readonly ISettingsStore _settingsStore;
     private readonly IInstagramPublishStore _publishStore;
     private readonly IInstagramPublishLogStore _publishLogStore;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IMediaStore _mediaStore;
     private readonly IMetaGraphClient _metaGraphClient;
-    private readonly InstagramLinkMetaService _linkMetaService;
-    private readonly IVideoProcessingService _videoProcessingService;
+    private readonly IInstagramMediaPreparationService _mediaPreparationService;
     private readonly IInstagramOutboundPublisher _publisher;
     private readonly IInstagramOutboundOutboxStore _outboxStore;
     private readonly ICatalogOfferStore _catalogOfferStore;
@@ -44,16 +41,19 @@ public sealed class InstagramPublishService : IInstagramPublishService
         ICatalogOfferStore catalogOfferStore,
         IIdempotencyStore idempotencyStore,
         IOptions<WebhookOptions> webhookOptions,
-        ILogger<InstagramPublishService> logger)
+        ILogger<InstagramPublishService> logger,
+        IInstagramMediaPreparationService? mediaPreparationService = null)
     {
         _settingsStore = settingsStore;
         _publishStore = publishStore;
         _publishLogStore = publishLogStore;
-        _httpClientFactory = httpClientFactory;
-        _mediaStore = mediaStore;
         _metaGraphClient = metaGraphClient;
-        _linkMetaService = linkMetaService;
-        _videoProcessingService = videoProcessingService;
+        _mediaPreparationService = mediaPreparationService ?? new InstagramMediaPreparationService(
+            httpClientFactory,
+            mediaStore,
+            linkMetaService,
+            videoProcessingService,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<InstagramMediaPreparationService>.Instance);
         _publisher = publisher;
         _outboxStore = outboxStore;
         _catalogOfferStore = catalogOfferStore;
@@ -173,6 +173,11 @@ public sealed class InstagramPublishService : IInstagramPublishService
             draft.SendToCatalog = true;
         }
         var effectiveCaption = ResolveEffectiveCaption(draft);
+        if (string.Equals(InstagramWorkflowSupport.NormalizePostType(draft.PostType), "story", StringComparison.OrdinalIgnoreCase))
+        {
+            effectiveCaption = EnsureStoryCatalogBioCaption(effectiveCaption);
+        }
+
         if (CatalogTargets.IsEnabled(effectiveCatalogTarget))
         {
             effectiveCaption = InstagramWorkflowSupport.PrepareCatalogCaption(effectiveCaption);
@@ -180,59 +185,21 @@ public sealed class InstagramPublishService : IInstagramPublishService
         draft.PostType = InstagramWorkflowSupport.NormalizePostType(draft.PostType);
         draft.SelectedImageIndexes = InstagramWorkflowSupport.SanitizeSelectedIndexes(draft.SelectedImageIndexes, draft.ImageUrls.Count);
 
-        var selectedImageUrls = InstagramWorkflowSupport.ResolveSelectedImageUrls(draft);
-        var publishImageUrls = selectedImageUrls;
-        var normalized = await InstagramWorkflowSupport.NormalizeInstagramImagesAsync(
-            _httpClientFactory,
-            _mediaStore,
-            _publicBaseUrl,
-            draft.PostType,
-            selectedImageUrls,
-            cancellationToken);
-        if (normalized.Count > 0)
+        var mediaPreparation = await _mediaPreparationService.PrepareAsync(draft, _publicBaseUrl, cancellationToken);
+        if (!mediaPreparation.Success)
         {
-            publishImageUrls = normalized;
+            var error = mediaPreparation.Error ?? "Falha ao preparar midia para publicacao.";
+            draft.Status = "failed";
+            draft.MediaId = null;
+            draft.Error = error;
+            await _publishStore.UpdateAsync(draft, cancellationToken);
+            await AppendLogAsync("publish", false, draft.Id, null, error, "quality=media-preparation", draft.ProcessName, cancellationToken);
+            return new InstagramPublishExecutionOutcome(false, StatusCodes.Status400BadRequest, null, error, draft.Id, mediaPreparation.IsTransient);
         }
 
-        var publishMediaUrls = publishImageUrls;
-        if (draft.PostType is "story" or "feed" &&
-            publishMediaUrls.Count > 0 &&
-            publishMediaUrls.All(IsMissingLocalMediaUrl))
-        {
-            var repaired = await TryRepairExpiredImageMediaAsync(draft, cancellationToken);
-            if (repaired.Count > 0)
-            {
-                publishImageUrls = repaired;
-                publishMediaUrls = repaired;
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(draft.VideoUrl))
-        {
-            var videoResult = await _videoProcessingService.PrepareForInstagramPublicationAsync(draft, _publicBaseUrl, cancellationToken);
-            if (!videoResult.Success || string.IsNullOrWhiteSpace(videoResult.VideoUrl))
-            {
-                var error = videoResult.Error ?? "Falha ao preparar video para publicacao.";
-                draft.Status = "failed";
-                draft.MediaId = null;
-                draft.Error = error;
-                await _publishStore.UpdateAsync(draft, cancellationToken);
-                await AppendLogAsync("publish", false, draft.Id, null, error, "quality=video-processing", draft.ProcessName, cancellationToken);
-                return new InstagramPublishExecutionOutcome(false, StatusCodes.Status400BadRequest, null, error, draft.Id);
-            }
-
-            draft.VideoUrl = videoResult.VideoUrl;
-            if (!string.IsNullOrWhiteSpace(videoResult.CoverUrl))
-            {
-                draft.VideoCoverUrl = videoResult.CoverUrl;
-            }
-
-            if (draft.PostType is "reel" or "story" || publishImageUrls.Count == 0)
-            {
-                publishMediaUrls = new List<string> { videoResult.VideoUrl };
-            }
-        }
-
+        var selectedImageUrls = mediaPreparation.OriginalSelectedImageUrls ?? Array.Empty<string>();
+        var normalized = mediaPreparation.NormalizedImageUrls ?? Array.Empty<string>();
+        var publishMediaUrls = mediaPreparation.MediaUrls;
         var validationError = ValidateDraft(draft, effectiveCaption, publishMediaUrls);
         if (validationError is not null)
         {
@@ -350,6 +317,33 @@ public sealed class InstagramPublishService : IInstagramPublishService
         return draft.CaptionOptions[idx - 1];
     }
 
+    private static string EnsureStoryCatalogBioCaption(string caption)
+    {
+        const string cta = "Acesse o link na bio para verificar o catalogo.";
+        var normalized = caption?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return cta;
+        }
+
+        var comparable = RemoveDiacritics(normalized).ToLowerInvariant();
+        if (comparable.Contains("link na bio", StringComparison.OrdinalIgnoreCase) &&
+            comparable.Contains("catalogo", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        return $"{normalized}\n\n{cta}";
+    }
+
+    private static string RemoveDiacritics(string value)
+    {
+        var normalized = value.Normalize(System.Text.NormalizationForm.FormD);
+        return new string(normalized
+            .Where(ch => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark)
+            .ToArray());
+    }
+
     private static string? ValidateSettings(InstagramPublishSettings settings)
     {
         if (!settings.Enabled)
@@ -389,64 +383,6 @@ public sealed class InstagramPublishService : IInstagramPublishService
 
         return null;
     }
-
-    private async Task<List<string>> TryRepairExpiredImageMediaAsync(InstagramPublishDraft draft, CancellationToken cancellationToken)
-    {
-        var offerUrl = FirstNonEmpty(draft.OriginalOfferUrl, draft.OfferUrl, draft.AutoReplyLink, draft.Ctas?.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Link))?.Link);
-        if (string.IsNullOrWhiteSpace(offerUrl))
-        {
-            return new List<string>();
-        }
-
-        try
-        {
-            var meta = await _linkMetaService.GetMetaAsync(offerUrl, cancellationToken);
-            var candidates = (meta.Images ?? new List<string>())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(3)
-                .ToList();
-            if (candidates.Count == 0)
-            {
-                return new List<string>();
-            }
-
-            draft.ImageUrls = candidates;
-            draft.SelectedImageIndexes = new List<int>();
-            var normalized = await InstagramWorkflowSupport.NormalizeInstagramImagesAsync(
-                _httpClientFactory,
-                _mediaStore,
-                _publicBaseUrl,
-                draft.PostType,
-                candidates,
-                cancellationToken);
-            return normalized.Count > 0 ? normalized : candidates;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Falha ao reparar midia expirada do draft {DraftId}.", draft.Id);
-            return new List<string>();
-        }
-    }
-
-    private bool IsMissingLocalMediaUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
-
-        if (!uri.AbsolutePath.StartsWith("/media/", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var id = Path.GetFileNameWithoutExtension(uri.AbsolutePath);
-        return string.IsNullOrWhiteSpace(id) || !_mediaStore.TryGet(id, out _);
-    }
-
-    private static string? FirstNonEmpty(params string?[] values)
-        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
 
     private async Task TrySyncCatalogAsync(InstagramPublishDraft draft, CancellationToken cancellationToken)
     {

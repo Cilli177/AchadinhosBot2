@@ -575,7 +575,7 @@ public sealed partial class TrackingLinkShortenerService
             && !string.IsNullOrWhiteSpace(compactSource)
             && ShouldAppendSourceParameter(compactSource))
         {
-            parameters.Add($"s={Uri.EscapeDataString(compactSource)}");
+            parameters.Add($"src={Uri.EscapeDataString(compactSource)}");
         }
 
         if (publicBaseUrl.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) ||
@@ -659,7 +659,7 @@ public sealed partial class TrackingLinkShortenerService
     private static int ResolveTrackingValidityDays(AutomationSettings settings)
     {
         var configured = settings.LinkAutomation?.TrackingLinkValidityDays ?? 4;
-        return configured <= 0 ? 4 : Math.Min(configured, 30);
+        return configured <= 0 ? 365 : Math.Clamp(configured, 1, 365);
     }
 
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

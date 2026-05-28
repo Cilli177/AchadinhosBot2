@@ -131,7 +131,8 @@ public sealed class WhatsAppPublishContentServiceTests
         var result = await service.PrepareAsync("https://www.amazon.com.br/dp/B0CYJ7DBQC", "120363405661434395@g.us", CancellationToken.None);
 
         Assert.Contains("Oferta pronta\n\nComparativo\nhttps://reidasofertas.ia.br/r/AM-", result);
-        Assert.Contains("?src=whatsapp_grupo_oficial", result);
+        Assert.Contains("https://reidasofertas.ia.br/r/AM-W", result);
+        Assert.DoesNotContain("?src=whatsapp_grupo_oficial", result);
         Assert.Equal("whatsapp_grupo_oficial", trackingStore.LastOriginSurface);
     }
 
@@ -159,7 +160,8 @@ public sealed class WhatsAppPublishContentServiceTests
         var result = await service.PrepareAsync("https://www.amazon.com.br/dp/B0CYJ7DBQC", "120363405661434395@g.us", CancellationToken.None);
 
         Assert.Contains("https://reidasofertas.ia.br/r/AM-", result);
-        Assert.Contains("?src=whatsapp_grupo_oficial", result);
+        Assert.Contains("https://reidasofertas.ia.br/r/AM-W", result);
+        Assert.DoesNotContain("?src=whatsapp_grupo_oficial", result);
         Assert.Contains("Rodape oficial do WhatsApp", result);
         Assert.Equal("whatsapp_grupo_oficial", trackingStore.LastOriginSurface);
     }

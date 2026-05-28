@@ -74,6 +74,7 @@ public static partial class TrackingIdDecorator
         var value = $"{campaign} {source}";
         return value.Contains("casa", StringComparison.OrdinalIgnoreCase) ? "C"
             : value.Contains("beleza", StringComparison.OrdinalIgnoreCase) ? "B"
+            : value.Contains("fitness_health", StringComparison.OrdinalIgnoreCase) || value.Contains("fitness", StringComparison.OrdinalIgnoreCase) ? "F"
             : value.Contains("moda", StringComparison.OrdinalIgnoreCase) ? "M"
             : value.Contains("tech", StringComparison.OrdinalIgnoreCase) ? "T"
             : value.Contains("ate_50", StringComparison.OrdinalIgnoreCase) ? "A"
@@ -90,6 +91,7 @@ public static partial class TrackingIdDecorator
         {
             "C" => "niche_live_casa",
             "B" => "niche_live_beleza",
+            "F" => "niche_live_fitness_health",
             "M" => "niche_live_moda",
             "T" => "niche_live_tech",
             "A" => "niche_live_ate_50",

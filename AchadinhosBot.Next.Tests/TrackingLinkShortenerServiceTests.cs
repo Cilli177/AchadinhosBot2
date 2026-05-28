@@ -24,7 +24,7 @@ public sealed class TrackingLinkShortenerServiceTests
             CancellationToken.None,
             "Amazon");
 
-        Assert.Equal("https://reidasofertas.ia.br/r/AM-000001", result);
+        Assert.Equal("https://reidasofertas.ia.br/r/AM-W000001", result);
     }
 
     [Fact]
@@ -107,10 +107,10 @@ public sealed class TrackingLinkShortenerServiceTests
             CancellationToken.None,
             "Amazon");
 
-        Assert.StartsWith("https://reidasofertas.ia.br/r/AM-", first);
-        Assert.StartsWith("https://reidasofertas.ia.br/r/AM-", second);
-        Assert.Contains("?src=whatsapp_grupo_oficial", first);
-        Assert.Contains("?src=whatsapp_grupo_oficial", second);
+        Assert.StartsWith("https://reidasofertas.ia.br/r/AM-W", first);
+        Assert.StartsWith("https://reidasofertas.ia.br/r/AM-W", second);
+        Assert.DoesNotContain("?src=", first);
+        Assert.DoesNotContain("?src=", second);
         Assert.NotEqual(first, second);
         Assert.Equal(2, trackingStore.CreateCalls);
     }
@@ -145,7 +145,7 @@ public sealed class TrackingLinkShortenerServiceTests
             CancellationToken.None,
             "Mercado Livre");
 
-        Assert.Equal("https://reidasofertas.ia.br/r/ML-000001", result);
+        Assert.Equal("https://reidasofertas.ia.br/r/ML-W000001", result);
         Assert.Equal(1, trackingStore.CreateCalls);
         Assert.Equal(scoutUrl, trackingStore.LastTargetUrl);
         Assert.Equal("Mercado Livre", trackingStore.LastStore);
