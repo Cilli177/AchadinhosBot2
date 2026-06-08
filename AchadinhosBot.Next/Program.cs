@@ -7259,25 +7259,36 @@ static async Task<bool> TryHandleWhatsAppInviteConversationAsync(
     }
 
     var state = await inviteConversationStore.GetAsync(msg.InstanceName, participantId, ct);
-    if (state is null || !state.AwaitingChoice)
-    {
-        return false;
-    }
-
-    if (DateTimeOffset.UtcNow - state.LastUpdatedAt > TimeSpan.FromDays(7))
+    if (state is not null && DateTimeOffset.UtcNow - state.LastUpdatedAt > TimeSpan.FromDays(7))
     {
         await inviteConversationStore.ClearAsync(msg.InstanceName, participantId, ct);
-        return false;
+        state = null;
     }
 
     if (IsInviteConversationOptOut(normalizedText))
     {
+        if (state is null)
+        {
+            return false;
+        }
+
         await inviteConversationStore.ClearAsync(msg.InstanceName, participantId, ct);
         await sendReplyAsync(msg.InstanceName, msg.ChatId, "Combinado. Nao vou te mandar outros links por aqui. Se quiser algum grupo depois, e so responder com o nicho: Tech, Casa, Beleza, Moda ou Fitness.");
         return true;
     }
 
     var slug = ResolveInviteNicheSlug(normalizedText);
+    if (state is null || !state.AwaitingChoice)
+    {
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            return false;
+        }
+
+        await inviteConversationStore.StartAsync(msg.InstanceName, participantId, "direct-choice", ct);
+        state = await inviteConversationStore.GetAsync(msg.InstanceName, participantId, ct);
+    }
+
     if (string.IsNullOrWhiteSpace(slug))
     {
         await sendReplyAsync(msg.InstanceName, msg.ChatId, BuildInviteChoiceMenuForReply());
@@ -7293,7 +7304,7 @@ static async Task<bool> TryHandleWhatsAppInviteConversationAsync(
         return true;
     }
 
-    if (state.SentSlugs.Any(x => string.Equals(x, slug, StringComparison.OrdinalIgnoreCase)))
+    if (state?.SentSlugs.Any(x => string.Equals(x, slug, StringComparison.OrdinalIgnoreCase)) == true)
     {
         await sendReplyAsync(msg.InstanceName, msg.ChatId, $"Ja te mandei o link de {niche.DisplayName}. Quer outro tambem? Pode responder Tech, Casa, Beleza, Moda ou Fitness. Se nao quiser, responda \"nao\".");
         return true;
