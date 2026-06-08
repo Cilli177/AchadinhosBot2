@@ -7,6 +7,11 @@ services:
       dockerfile: AchadinhosBot.Next/Dockerfile
     container_name: achadinhos-next-dev
     restart: unless-stopped
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mercadolivre-affiliate-scraper:
+        condition: service_healthy
     ports:
       - "8081:8081"
     env_file:
@@ -37,6 +42,23 @@ services:
     volumes:
       - achadinhos_dev_data:/app/data
       - achadinhos_dev_media:/app/wwwroot/media/admin
+
+  mercadolivre-affiliate-scraper:
+    build:
+      context: .
+      dockerfile: mercadolivre-affiliate-scraper/Dockerfile
+    container_name: achadinhos-mercadolivre-affiliate-scraper-dev
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    volumes:
+      - achadinhos_dev_data:/app/data
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fsS http://127.0.0.1:3002/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
 volumes:
   achadinhos_dev_data:

@@ -26,6 +26,16 @@ public sealed class Phase7AnalyticsAndCommandsTests
     }
 
     [Fact]
+    public void InstagramCommandParser_AcceptsReelsPlural_ForTypeNormalization()
+    {
+        var parsed = InstagramCommandParser.ParseInstagramTypeCommandInput("ultimo reels");
+
+        Assert.Equal("ultimo", parsed.DraftRef);
+        Assert.Equal("reel", parsed.PostType);
+        Assert.Null(parsed.Error);
+    }
+
+    [Fact]
     public void InstagramAutoPilotCommandParser_ReturnsError_WhenLinkIsMissing()
     {
         var parsed = InstagramAutoPilotCommandParser.ParseManualCommand("post", Array.Empty<string>(), 12345);
@@ -43,8 +53,11 @@ public sealed class Phase7AnalyticsAndCommandsTests
                 new ConversionLogEntry { Timestamp = now.AddHours(-1), Source = "telegram", Store = "Amazon", Success = true, IsAffiliated = true, ElapsedMs = 1200 },
                 new ConversionLogEntry { Timestamp = now.AddHours(-2), Source = "whatsapp", Store = "Shopee", Success = false, IsAffiliated = false, ElapsedMs = 800 }),
             new StubClickLogStore(
-                new ClickLogEntry { Timestamp = now.AddMinutes(-30), Source = "instagram", TrackingId = "trk-1", Campaign = "vip" },
-                new ClickLogEntry { Timestamp = now.AddMinutes(-20), Source = "instagram", TrackingId = "trk-2", Campaign = "vip" }),
+                new ClickLogEntry { Timestamp = now.AddMinutes(-30), Source = "instagram_bio", TrackingId = "trk-1", Campaign = "vip", OriginSurface = "instagram_bio", ClickSurface = "instagram_bio", ClickChannel = "instagram" },
+                new ClickLogEntry { Timestamp = now.AddMinutes(-20), Source = "conversor_admin", TrackingId = "trk-2", Campaign = "vip", OriginSurface = "conversor_admin", ClickSurface = "conversor_admin", ClickChannel = "web" }),
+            new StubLinkTrackingStore(
+                new LinkTrackingEntry { Id = "trk-1", Slug = "AM-000001", TargetUrl = "https://example.com/a", Store = "Amazon", OriginSurface = "instagram_bio", OriginChannel = "instagram", Campaign = "vip", CreatedAt = now.AddMinutes(-40) },
+                new LinkTrackingEntry { Id = "trk-2", Slug = "SP-000001", TargetUrl = "https://example.com/b", Store = "Shopee", OriginSurface = "conversor_admin", OriginChannel = "web", Campaign = "vip", CreatedAt = now.AddMinutes(-25) }),
             new StubInstagramAiLogStore(
                 new InstagramAiLogEntry { Timestamp = now.AddMinutes(-10), Provider = "openai", Success = true, DurationMs = 900, QualityScore = 88 },
                 new InstagramAiLogEntry { Timestamp = now.AddMinutes(-5), Provider = "gemini", Success = false, DurationMs = 1500, QualityScore = 40 }),
@@ -70,6 +83,9 @@ public sealed class Phase7AnalyticsAndCommandsTests
         Assert.Equal(2, summary.InstagramAi.Providers.Count);
         Assert.Equal(1, summary.Catalog.ActiveItems);
         Assert.Equal(1, summary.Catalog.SyncEligibleDrafts);
+        Assert.Equal(2, summary.Tracking.TotalLinksCreated);
+        Assert.Equal(2, summary.Tracking.TotalLinksClicked);
+        Assert.NotEmpty(summary.Tracking.TopOriginSurfaces);
     }
 
     private sealed class StubConversionLogStore(params ConversionLogEntry[] entries) : IConversionLogStore
@@ -96,6 +112,18 @@ public sealed class Phase7AnalyticsAndCommandsTests
         public Task AppendAsync(InstagramAiLogEntry entry, CancellationToken ct) => Task.CompletedTask;
         public Task<IReadOnlyList<InstagramAiLogEntry>> ListAsync(int take, CancellationToken ct) => Task.FromResult(_entries);
         public Task ClearAsync(CancellationToken ct) => Task.CompletedTask;
+    }
+
+    private sealed class StubLinkTrackingStore(params LinkTrackingEntry[] entries) : ILinkTrackingStore
+    {
+        private readonly IReadOnlyList<LinkTrackingEntry> _entries = entries;
+        public Task<LinkTrackingEntry> CreateAsync(LinkTrackingCreateRequest request, CancellationToken cancellationToken) => Task.FromResult(_entries.First());
+        public Task<LinkTrackingEntry> CreateAsync(string targetUrl, CancellationToken cancellationToken) => Task.FromResult(_entries.First());
+        public Task<LinkTrackingEntry> GetOrCreateAsync(LinkTrackingCreateRequest request, CancellationToken cancellationToken) => Task.FromResult(_entries.First());
+        public Task<LinkTrackingEntry> GetOrCreateAsync(string targetUrl, CancellationToken cancellationToken) => Task.FromResult(_entries.First());
+        public Task<LinkTrackingEntry?> RegisterClickAsync(string trackingId, CancellationToken cancellationToken) => Task.FromResult(_entries.FirstOrDefault(x => x.Id == trackingId));
+        public Task<LinkTrackingEntry?> GetLinkAsync(string id, CancellationToken cancellationToken) => Task.FromResult(_entries.FirstOrDefault(x => x.Id == id));
+        public Task<IReadOnlyList<LinkTrackingEntry>> ListAsync(CancellationToken cancellationToken) => Task.FromResult(_entries);
     }
 
     private sealed class StubInstagramPublishLogStore(params InstagramPublishLogEntry[] entries) : IInstagramPublishLogStore

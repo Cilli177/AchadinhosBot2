@@ -10,7 +10,7 @@
         "useNewZLibDeCompress": true
       },
       "mapper": {
-        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/getUpdates",
+        "url": "https://api.telegram.org/bot{{secrets.telegram_bot_token}}/getUpdates",
         "serializeUrl": false,
         "method": "get",
         "headers": [],
@@ -84,7 +84,7 @@
         "qs": [],
         "bodyType": "raw",
         "contentType": "application/json",
-        "data": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+        "data": "{\"username\":\"{{secrets.admin_username}}\",\"password\":\"{{secrets.admin_password}}\"}",
         "parseResponse": true,
         "authUser": "",
         "authPass": "",
@@ -198,7 +198,7 @@
         "useNewZLibDeCompress": true
       },
       "mapper": {
-        "url": "https://api.telegram.org/bot8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg/sendMessage",
+        "url": "https://api.telegram.org/bot{{secrets.telegram_bot_token}}/sendMessage",
         "serializeUrl": false,
         "method": "post",
         "headers": [

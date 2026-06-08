@@ -21,6 +21,7 @@ $dotnetCmd = Get-Command dotnet -ErrorAction SilentlyContinue
 $exe = if ($dotnetCmd -and $dotnetCmd.Source) { $dotnetCmd.Source } else { "dotnet" }
 $dll = Join-Path $appDir "bin/Release/net8.0/AchadinhosBot.Next.dll"
 $appArgs = @($dll, "--urls", "http://0.0.0.0:5000")
+$env:Kestrel__Endpoints__Http__Url = "http://0.0.0.0:5000"
 
 if (-not (Test-Path $dll)) {
     throw "DLL nao encontrada: $dll"

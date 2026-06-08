@@ -11,7 +11,10 @@ namespace AchadinhosBot.Next.Application.Services;
 public sealed partial class MessageProcessor : IMessageProcessor
 {
     private readonly IAffiliateLinkService _affiliateLinkService;
-    private readonly IConversionLogStore _conversionLogStore;
+    private const string OfficialWhatsAppDemandGroupId = "120363405661434395@g.us";
+    private const int MaxConcurrentConversionsPerMessage = 4;
+    private readonly IConversionAuditLogger _conversionAuditLogger;
+    private readonly IOfferUrlExtractor _offerUrlExtractor;
     private readonly ICouponSelector _couponSelector;
     private readonly ISettingsStore _settingsStore;
     private readonly IMercadoLivreApprovalStore _mercadoLivreApprovalStore;
@@ -20,7 +23,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
 
     public MessageProcessor(
         IAffiliateLinkService affiliateLinkService,
-        IConversionLogStore conversionLogStore,
+        IConversionAuditLogger conversionAuditLogger,
+        IOfferUrlExtractor offerUrlExtractor,
         ICouponSelector couponSelector,
         ISettingsStore settingsStore,
         IMercadoLivreApprovalStore mercadoLivreApprovalStore,
@@ -28,7 +32,8 @@ public sealed partial class MessageProcessor : IMessageProcessor
         ILogger<MessageProcessor> logger)
     {
         _affiliateLinkService = affiliateLinkService;
-        _conversionLogStore = conversionLogStore;
+        _conversionAuditLogger = conversionAuditLogger;
+        _offerUrlExtractor = offerUrlExtractor;
         _couponSelector = couponSelector;
         _settingsStore = settingsStore;
         _mercadoLivreApprovalStore = mercadoLivreApprovalStore;
@@ -51,21 +56,17 @@ public sealed partial class MessageProcessor : IMessageProcessor
             return new ConversionResult(false, null, 0, source);
         }
 
-        var matches = UrlRegex().Matches(input);
-        if (matches.Count == 0)
+        var candidates = _offerUrlExtractor.Extract(input);
+        if (candidates.Count == 0)
         {
             return new ConversionResult(false, null, 0, source);
         }
 
         var sw = Stopwatch.StartNew();
         var settings = await _settingsStore.GetAsync(cancellationToken);
-        var items = new List<UrlWorkItem>(matches.Count);
-        foreach (Match match in matches)
-        {
-            var cleanedUrl = CleanUrl(match.Value, out var prefix, out var suffix);
-            var isBlocked = IsBlockedUrl(cleanedUrl);
-            items.Add(new UrlWorkItem(match, cleanedUrl, prefix, suffix, isBlocked));
-        }
+        var items = candidates
+            .Select(x => new UrlWorkItem(x.Raw, x.CleanedUrl, x.Prefix, x.Suffix, x.Index, x.Length, x.IsBlocked, x.ShouldConvert))
+            .ToList();
 
         var mercadoLivreUrls = items
             .Where(x => IsMercadoLivreUrl(x.CleanedUrl))
@@ -111,7 +112,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     }, cancellationToken);
                 }
 
-                await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                 {
                     Source = source,
                     Store = "Mercado Livre",
@@ -136,12 +137,18 @@ public sealed partial class MessageProcessor : IMessageProcessor
             }
         }
 
+        var isOfficialDemandGroup = string.Equals(destinationChatRef, OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase)
+            || (destinationChatId.HasValue && string.Equals(destinationChatId.Value.ToString(), OfficialWhatsAppDemandGroupId, StringComparison.OrdinalIgnoreCase));
+
+        using var conversionGate = new SemaphoreSlim(MaxConcurrentConversionsPerMessage, MaxConcurrentConversionsPerMessage);
         var tasks = new Task<AffiliateLinkResult>[items.Count];
         for (var i = 0; i < items.Count; i++)
         {
-            tasks[i] = items[i].IsBlocked
+            tasks[i] = !items[i].ShouldConvert
+                ? Task.FromResult(new AffiliateLinkResult(false, null, DetectStore(null, items[i].CleanedUrl), false, null, "Conversao ignorada para URL nao afiliada", false, null))
+                : items[i].IsBlocked
                 ? Task.FromResult(new AffiliateLinkResult(false, null, "Unknown", false, null, "Link bloqueado", false, null))
-                : _affiliateLinkService.ConvertAsync(items[i].CleanedUrl, cancellationToken, source);
+                : ConvertWithGateAsync(conversionGate, items[i].CleanedUrl, cancellationToken, source, forceResolution: isOfficialDemandGroup);
         }
 
         await Task.WhenAll(tasks);
@@ -151,7 +158,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         for (var i = 0; i < items.Count; i++)
         {
             var item = items[i];
-            if (item.IsBlocked)
+            if (item.IsBlocked || !item.ShouldConvert)
             {
                 continue;
             }
@@ -218,7 +225,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         }, cancellationToken);
                     }
 
-                    await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                    await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = source,
                         Store = "Mercado Livre",
@@ -269,7 +276,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     }, cancellationToken);
                 }
 
-                await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                 {
                     Source = source,
                     Store = "Mercado Livre",
@@ -295,7 +302,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
         var linkIntegrityBlockReason = EvaluateLinkIntegrityGate(settings.LinkIntegrity, source, items, tasks);
         if (!string.IsNullOrWhiteSpace(linkIntegrityBlockReason))
         {
-            await _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+            await _conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
             {
                 Source = source,
                 Store = "Link Integrity",
@@ -318,15 +325,21 @@ public sealed partial class MessageProcessor : IMessageProcessor
         var lastIndex = 0;
         var converted = 0;
         var convertedStores = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var auditTasks = new List<Task>();
 
         for (var i = 0; i < items.Count; i++)
         {
             var item = items[i];
-            sb.Append(input, lastIndex, item.Match.Index - lastIndex);
+            sb.Append(input, lastIndex, item.Index - lastIndex);
 
             if (item.IsBlocked)
             {
-                sb.Append(item.Match.Value);
+                sb.Append(item.Raw);
+            }
+            else if (!item.ShouldConvert)
+            {
+                // Preserve institutional and non-affiliate URLs exactly as configured.
+                sb.Append(item.Raw);
             }
             else
             {
@@ -338,7 +351,7 @@ public sealed partial class MessageProcessor : IMessageProcessor
                     sb.Append(item.Suffix);
                     converted++;
                     convertedStores.Add(string.IsNullOrWhiteSpace(result.Store) ? DetectStore(result.ConvertedUrl, item.CleanedUrl) : result.Store);
-                    _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                    auditTasks.Add(_conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = source,
                         Store = string.IsNullOrWhiteSpace(result.Store) ? DetectStore(result.ConvertedUrl, item.CleanedUrl) : result.Store,
@@ -354,12 +367,12 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         OriginChatRef = originChatRef,
                         DestinationChatRef = destinationChatRef,
                         ElapsedMs = sw.ElapsedMilliseconds
-                    }, cancellationToken);
+                    }, cancellationToken));
                 }
                 else
                 {
-                    sb.Append(item.Match.Value);
-                    _ = _conversionLogStore.AppendAsync(new Domain.Logs.ConversionLogEntry
+                    sb.Append(item.Raw);
+                    auditTasks.Add(_conversionAuditLogger.AppendAsync(new Domain.Logs.ConversionLogEntry
                     {
                         Source = source,
                         Store = string.IsNullOrWhiteSpace(result.Store) ? DetectStore(null, item.CleanedUrl) : result.Store,
@@ -375,14 +388,15 @@ public sealed partial class MessageProcessor : IMessageProcessor
                         OriginChatRef = originChatRef,
                         DestinationChatRef = destinationChatRef,
                         ElapsedMs = sw.ElapsedMilliseconds
-                    }, cancellationToken);
+                    }, cancellationToken));
                 }
             }
 
-            lastIndex = item.Match.Index + item.Match.Length;
+            lastIndex = item.Index + item.Length;
         }
 
         sb.Append(input, lastIndex, input.Length - lastIndex);
+        var convertedBodyText = sb.ToString();
 
         if (converted > 0 && settings.CouponHub.Enabled && settings.CouponHub.AppendToConvertedMessages)
         {
@@ -395,71 +409,69 @@ public sealed partial class MessageProcessor : IMessageProcessor
             }
         }
 
+        if (converted > 0)
+        {
+            var comparisonText = await BuildConverterSkillAppendixAsync(settings, source, input, convertedBodyText, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(comparisonText))
+            {
+                sb.AppendLine();
+                sb.AppendLine();
+                sb.Append(comparisonText);
+            }
+        }
+
+        if (auditTasks.Count > 0)
+        {
+            await Task.WhenAll(auditTasks);
+        }
+
         _logger.LogInformation("Processamento concluído. Source={Source} ConvertedLinks={ConvertedLinks}", source, converted);
         return new ConversionResult(converted > 0, converted > 0 ? sb.ToString() : null, converted, source);
+    }
+
+    private async Task<AffiliateLinkResult> ConvertWithGateAsync(
+        SemaphoreSlim gate,
+        string cleanedUrl,
+        CancellationToken cancellationToken,
+        string source,
+        bool forceResolution)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await _affiliateLinkService.ConvertAsync(cleanedUrl, cancellationToken, source, forceResolution);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Falha isolada ao converter URL. Source={Source} Store={Store} Host={Host}",
+                source,
+                DetectStore(null, cleanedUrl),
+                TryGetSafeHost(cleanedUrl));
+            return new AffiliateLinkResult(false, null, DetectStore(null, cleanedUrl), false, null, ex.Message, false, null);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlRegex();
 
     private static string CleanUrl(string raw, out string prefix, out string suffix)
-    {
-        prefix = string.Empty;
-        suffix = string.Empty;
-
-        var start = 0;
-        var end = raw.Length - 1;
-
-        while (start <= end && IsTrimChar(raw[start]))
-        {
-            prefix += raw[start];
-            start++;
-        }
-
-        while (end >= start && IsTrimChar(raw[end]))
-        {
-            suffix = raw[end] + suffix;
-            end--;
-        }
-
-        if (start > end)
-        {
-            return raw;
-        }
-
-        return raw[start..(end + 1)];
-    }
-
-    private static bool IsTrimChar(char c)
-        => c is '"' or '\'' or '`' or '.' or ',' or ';' or ':' or ')' or ']' or '}' or '!' or '?';
-
-    private static readonly string[] BlockedHosts =
-    {
-        "tidd.ly",
-        "natura.com",
-        "magazineluiza.com.br",
-        "magazineluiza.com",
-        "magalu.com"
-    };
+        => OfferUrlExtractor.CleanUrl(raw, out prefix, out suffix);
 
     private static bool IsBlockedUrl(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
+        => OfferUrlExtractor.IsBlockedUrl(url);
 
-        var host = uri.Host.ToLowerInvariant();
-        foreach (var blocked in BlockedHosts)
-        {
-            if (host == blocked || host.EndsWith("." + blocked, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static string TryGetSafeHost(string url)
+        => OfferUrlExtractor.TryGetSafeHost(url);
 
     private static bool IsMercadoLivreUrl(string url)
     {
@@ -678,6 +690,97 @@ public sealed partial class MessageProcessor : IMessageProcessor
         return $"Cupons ativos:\n{string.Join('\n', lines.Distinct(StringComparer.OrdinalIgnoreCase))}";
     }
 
+    private async Task<string?> BuildConverterSkillAppendixAsync(
+        AutomationSettings settings,
+        string source,
+        string originalText,
+        string convertedText,
+        CancellationToken cancellationToken)
+    {
+        var skill = settings.ConverterCouponAndPriceCompareSkill ?? new ConverterCouponAndPriceCompareSkillSettings();
+        if (!skill.Enabled || !skill.AppendToWhatsApp || !source.Contains("whatsapp", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var originalMatch = UrlRegex().Match(originalText);
+        var convertedMatch = UrlRegex().Match(convertedText);
+        if (!originalMatch.Success)
+        {
+            return null;
+        }
+
+        var originalUrl = originalMatch.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}');
+        var convertedUrl = convertedMatch.Success
+            ? convertedMatch.Value.TrimEnd('.', ',', '!', '?', ')', ']', '}')
+            : null;
+
+        var productData = await _productDataService.TryGetBestAsync(originalUrl, convertedUrl, cancellationToken);
+        if (productData is null)
+        {
+            _logger.LogInformation(
+                "Comparativo nao gerado para WhatsApp. originalUrl={OriginalUrl} convertedUrl={ConvertedUrl}",
+                originalUrl,
+                convertedUrl ?? "n/a");
+            return null;
+        }
+
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(productData.CouponCode))
+        {
+            var couponDetails = string.IsNullOrWhiteSpace(productData.CouponDescription)
+                ? string.Empty
+                : $" ({productData.CouponDescription.Trim()})";
+            lines.Add($"Cupom detectado: {productData.CouponCode.Trim()}{couponDetails}");
+        }
+
+        var filteredComparisons = FilterSkillComparisonResults(productData, skill);
+        var primaryUrlKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            NormalizeComparisonUrlKey(originalUrl),
+            NormalizeComparisonUrlKey(convertedUrl)
+        };
+
+        var comparisonEntries = filteredComparisons
+            .Where(x => !primaryUrlKeys.Contains(NormalizeComparisonUrlKey(x.Url)))
+            // One entry per store — cheapest wins (list is already sorted by price ascending)
+            .GroupBy(x => NormalizeComparisonStoreKey(x.Store), StringComparer.Ordinal)
+            .Select(g => g.First())
+            .OrderBy(x => x.PriceValue ?? decimal.MaxValue)
+            .ToList();
+        if (comparisonEntries.Count > 0)
+        {
+            var storeEmojis = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Shopee"] = "🛍️",
+                ["Amazon"] = "📦",
+                ["Mercado Livre"] = "🛒",
+                ["Shein"] = "👗",
+                ["Magalu"] = "🏪",
+                ["Magazine Luiza"] = "🏪",
+                ["Americanas"] = "🏬",
+                ["Casas Bahia"] = "🏠",
+            };
+
+            var comparisonLines = new List<string>();
+            foreach (var item in comparisonEntries)
+            {
+                var emoji = storeEmojis.TryGetValue(item.Store?.Trim() ?? string.Empty, out var e) ? e : "🔖";
+                var couponPart = string.IsNullOrWhiteSpace(item.Coupon)
+                    ? string.Empty
+                    : $" | 🎟️ Cupom: *{item.Coupon.Trim()}*";
+                comparisonLines.Add($"{emoji} *{item.Store?.Trim()}* — {item.Price}{couponPart}");
+                if (!string.IsNullOrWhiteSpace(item.Url))
+                    comparisonLines.Add($"🔗 {item.Url.Trim()}");
+            }
+
+            if (comparisonLines.Count > 0)
+                lines.Add($"🔍 *Comparativo de preços*\n\n{string.Join('\n', comparisonLines)}");
+        }
+
+        return lines.Count == 0 ? null : string.Join('\n', lines);
+    }
+
     private static string FormatCouponLine(string store, AffiliateCoupon coupon)
     {
         var details = string.IsNullOrWhiteSpace(coupon.Description) ? string.Empty : $" - {coupon.Description.Trim()}";
@@ -686,7 +789,172 @@ public sealed partial class MessageProcessor : IMessageProcessor
         return $"- [{store}] CUPOM {coupon.Code.Trim()}{details}{validity}{link}";
     }
 
-    private sealed record UrlWorkItem(Match Match, string CleanedUrl, string Prefix, string Suffix, bool IsBlocked);
+    private static List<SkillComparisonEntry> FilterSkillComparisonResults(
+        Infrastructure.ProductData.OfficialProductDataResult productData,
+        ConverterCouponAndPriceCompareSkillSettings skill)
+    {
+        var allowedStores = new HashSet<string>(
+            (skill.StoresToCompare ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+        var normalizedBaseTitle = NormalizeComparisonTitle(productData.Title);
+        var primaryStore = NormalizeComparisonStoreKey(productData.Store);
+        var primaryPriceValue = ParsePriceNumber(productData.CurrentPrice);
+
+        var ranked = (productData.SearchResults ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x.Store))
+            .Where(x => allowedStores.Count == 0 || allowedStores.Contains(x.Store))
+            .Where(x => !skill.RequireExactProductMatch || IsExactEnoughComparisonMatch(normalizedBaseTitle, NormalizeComparisonTitle(x.Title)))
+            .Select(x => new SkillComparisonEntry(x.Store, x.Title, x.Price, x.Url, x.Coupon, ParsePriceNumber(x.Price)))
+            .Where(x => !string.Equals(NormalizeComparisonStoreKey(x.Store), primaryStore, StringComparison.Ordinal))
+            .Where(x => !primaryPriceValue.HasValue || !x.PriceValue.HasValue || x.PriceValue.Value != primaryPriceValue.Value)
+            .OrderBy(x => x.PriceValue ?? decimal.MaxValue)
+            .ToList();
+
+        // Remove duplicated offers when store + price + link resolve to the same candidate.
+        var uniqueOffers = ranked
+            .GroupBy(
+                x => $"{NormalizeComparisonStoreKey(x.Store)}|{NormalizeComparisonPriceKey(x)}|{NormalizeComparisonUrlKey(x.Url)}",
+                StringComparer.Ordinal)
+            .Select(g => g.First())
+            .GroupBy(x => NormalizeComparisonUrlKey(x.Url), StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+
+        // One entry per store (cheapest wins — list is pre-sorted by price ascending).
+        return uniqueOffers
+            .GroupBy(x => NormalizeComparisonStoreKey(x.Store), StringComparer.Ordinal)
+            .Select(g => g.First())
+            .Take(Math.Clamp(skill.MaxComparisonResults, 1, 6))
+            .ToList();
+    }
+
+    private static string NormalizeComparisonStoreKey(string? store)
+    {
+        return string.IsNullOrWhiteSpace(store)
+            ? string.Empty
+            : store.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeComparisonPriceKey(SkillComparisonEntry entry)
+    {
+        if (entry.PriceValue.HasValue)
+        {
+            return entry.PriceValue.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return string.IsNullOrWhiteSpace(entry.Price)
+            ? string.Empty
+            : entry.Price.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeComparisonUrlKey(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return string.Empty;
+        }
+
+        if (Uri.TryCreate(url.Trim(), UriKind.Absolute, out var parsed))
+        {
+            var builder = new UriBuilder(parsed)
+            {
+                Fragment = string.Empty,
+                Query = string.Empty
+            };
+
+            if ((builder.Scheme == Uri.UriSchemeHttp && builder.Port == 80) ||
+                (builder.Scheme == Uri.UriSchemeHttps && builder.Port == 443))
+            {
+                builder.Port = -1;
+            }
+
+            return builder.Uri.ToString().TrimEnd('/').ToLowerInvariant();
+        }
+
+        return url.Trim().ToLowerInvariant();
+    }
+
+    private static bool IsExactEnoughComparisonMatch(string baseTitle, string candidateTitle)
+    {
+        if (string.IsNullOrWhiteSpace(baseTitle) || string.IsNullOrWhiteSpace(candidateTitle))
+        {
+            return false;
+        }
+
+        if (candidateTitle.Contains(baseTitle, StringComparison.OrdinalIgnoreCase) ||
+            baseTitle.Contains(candidateTitle, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var baseTokens = baseTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var candidateTokens = candidateTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (baseTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var overlap = baseTokens.Count(token => candidateTokens.Contains(token));
+        var threshold = Math.Max(2, (int)Math.Ceiling(baseTokens.Count * 0.6));
+        return overlap >= threshold;
+    }
+
+    private static string NormalizeComparisonTitle(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new StringBuilder(normalized.Length);
+        foreach (var ch in normalized)
+        {
+            var category = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (category == System.Globalization.UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            sb.Append(char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ');
+        }
+
+        return Regex.Replace(sb.ToString(), @"\s+", " ", RegexOptions.CultureInvariant).Trim();
+    }
+
+    private static decimal? ParsePriceNumber(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var clean = Regex.Replace(value, @"[^\d\.,]", "", RegexOptions.CultureInvariant).Trim();
+        if (string.IsNullOrWhiteSpace(clean))
+        {
+            return null;
+        }
+
+        if (clean.Contains(',') && clean.Contains('.'))
+        {
+            clean = clean.LastIndexOf(',') > clean.LastIndexOf('.')
+                ? clean.Replace(".", "").Replace(",", ".")
+                : clean.Replace(",", "");
+        }
+        else if (clean.Contains(','))
+        {
+            clean = clean.Replace(",", ".");
+        }
+
+        return decimal.TryParse(clean, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private sealed record UrlWorkItem(string Raw, string CleanedUrl, string Prefix, string Suffix, int Index, int Length, bool IsBlocked, bool ShouldConvert);
+    private sealed record SkillComparisonEntry(string Store, string Title, string Price, string Url, string? Coupon, decimal? PriceValue);
 
     private static string DetectStore(string? convertedUrl, string originalUrl)
     {
@@ -704,6 +972,9 @@ public sealed partial class MessageProcessor : IMessageProcessor
         if (lower.Contains("shein")) return "Shein";
         return "Unknown";
     }
+
+    private static bool ShouldAttemptAffiliateConversion(string url)
+        => OfferUrlExtractor.ShouldAttemptAffiliateConversion(url);
 
     private static string NormalizeUrl(string url)
     {
@@ -732,9 +1003,29 @@ public sealed partial class MessageProcessor : IMessageProcessor
         try
         {
             var lowerConverted = convertedText.ToLowerInvariant();
-            var isAmazon = lowerConverted.Contains("amazon.") || lowerConverted.Contains("amzn.to") || lowerConverted.Contains("a.co/") || lowerConverted.Contains("amzlink.to") || lowerConverted.Contains("amzn.divulgador.link");
-            var isShopee = lowerConverted.Contains("shopee") || lowerConverted.Contains("shp.ee") || lowerConverted.Contains("s.shopee");
-            var isML = lowerConverted.Contains("mercadolivre") || lowerConverted.Contains("mercadolibre") || lowerConverted.Contains("meli.");
+            var lowerOriginal = originalText.ToLowerInvariant();
+            var isAmazon = lowerConverted.Contains("amazon.")
+                || lowerConverted.Contains("amzn.to")
+                || lowerConverted.Contains("a.co/")
+                || lowerConverted.Contains("amzlink.to")
+                || lowerConverted.Contains("amzn.divulgador.link")
+                || lowerOriginal.Contains("amazon.")
+                || lowerOriginal.Contains("amzn.to")
+                || lowerOriginal.Contains("a.co/")
+                || lowerOriginal.Contains("amzlink.to")
+                || lowerOriginal.Contains("amzn.divulgador.link");
+            var isShopee = lowerConverted.Contains("shopee")
+                || lowerConverted.Contains("shp.ee")
+                || lowerConverted.Contains("s.shopee")
+                || lowerOriginal.Contains("shopee")
+                || lowerOriginal.Contains("shp.ee")
+                || lowerOriginal.Contains("s.shopee");
+            var isML = lowerConverted.Contains("mercadolivre")
+                || lowerConverted.Contains("mercadolibre")
+                || lowerConverted.Contains("meli.")
+                || lowerOriginal.Contains("mercadolivre")
+                || lowerOriginal.Contains("mercadolibre")
+                || lowerOriginal.Contains("meli.");
 
             if (!isAmazon && !isShopee && !isML)
             {

@@ -88,6 +88,117 @@ internal static class InstagramWorkflowSupport
         return finalCaption.Trim();
     }
 
+    public static string PrepareCatalogCaption(string caption)
+    {
+        var normalized = RemoveUrls(FormatCaptionForReadability(caption));
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return "Acesse a bio e entre no catalogo para ver este produto.";
+        }
+
+        if (Regex.IsMatch(normalized, @"\b(bio|catalogo|catálogo)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            return normalized.Trim();
+        }
+
+        return $"{normalized.Trim()}\n\nAcesse a bio e entre no catalogo para ver este produto.";
+    }
+
+    public static string BuildInstagramCaption(string? caption, string? productName, bool sendToCatalog)
+    {
+        var normalized = RemoveUrls(FormatCaptionForReadability(caption));
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            normalized = !string.IsNullOrWhiteSpace(productName)
+                ? $"ALERTA: {productName!.Trim()}\n\nUm achado que chama atencao de verdade."
+                : "ALERTA: Achado em destaque\n\nUm produto pronto para chamar atencao e gerar clique.";
+        }
+
+        normalized = MakeOpeningMoreVibrant(normalized, productName);
+
+        if (sendToCatalog)
+        {
+            normalized = MakeOpeningMorePremium(normalized, productName);
+            return PrepareCatalogCaption(normalized);
+        }
+
+        if (!Regex.IsMatch(normalized, @"\b(bio|catalogo)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            normalized = $"{normalized.Trim()}\n\nAcesse a bio e entre no catalogo para ver este produto.";
+        }
+
+        return normalized.Trim();
+    }
+
+    public static string BuildWhatsAppCaption(
+        string? caption,
+        string? productName,
+        string? offerUrl,
+        string? currentPrice = null,
+        string? previousPrice = null,
+        int? discountPercent = null)
+    {
+        var title = FormatCaptionForReadability(productName);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = "Oferta do dia";
+        }
+
+        var normalizedCaption = RemoveUrls(FormatCaptionForReadability(caption));
+        var hasCurrentPrice = !string.IsNullOrWhiteSpace(currentPrice);
+        var hasPreviousPrice = !string.IsNullOrWhiteSpace(previousPrice);
+        var pricesAreEqual = hasCurrentPrice &&
+            hasPreviousPrice &&
+            string.Equals(NormalizePriceForComparison(currentPrice), NormalizePriceForComparison(previousPrice), StringComparison.OrdinalIgnoreCase);
+        var builder = new StringBuilder();
+        builder.AppendLine("🔥 ACHADO FORTE DO REI DAS OFERTAS");
+        builder.AppendLine();
+        builder.AppendLine($"🛍️ {title.Trim()}");
+
+        if (hasCurrentPrice)
+        {
+            builder.AppendLine($"💰 Por: {currentPrice!.Trim()}");
+        }
+
+        if (hasPreviousPrice && !pricesAreEqual)
+        {
+            builder.AppendLine($"🏷️ De: {previousPrice!.Trim()}");
+        }
+
+        if (discountPercent is > 0 && !pricesAreEqual)
+        {
+            builder.AppendLine($"⚡ Desconto aproximado: {discountPercent.Value}%");
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedCaption))
+        {
+            builder.AppendLine();
+            builder.AppendLine(normalizedCaption.Length > 180 ? normalizedCaption[..180].TrimEnd() + "..." : normalizedCaption.Trim());
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("🚨 Oferta boa costuma mudar rápido. Vale conferir agora.");
+
+        if (!string.IsNullOrWhiteSpace(offerUrl))
+        {
+            builder.AppendLine();
+            builder.AppendLine("👉 Pegar oferta:");
+            builder.AppendLine(offerUrl.Trim());
+        }
+
+        return builder.ToString().Trim();
+    }
+
+    private static string NormalizePriceForComparison(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return Regex.Replace(value, @"[^\d,\.]", string.Empty, RegexOptions.CultureInvariant).Trim('0', '.', ',');
+    }
+
     public static string FormatCaptionForReadability(string? caption)
     {
         if (string.IsNullOrWhiteSpace(caption))
@@ -116,6 +227,62 @@ internal static class InstagramWorkflowSupport
             .ToList();
 
         return string.Join('\n', lines).Trim();
+    }
+
+    private static string MakeOpeningMoreVibrant(string caption, string? productName)
+    {
+        var normalized = caption.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return normalized;
+        }
+
+        if (!Regex.IsMatch(normalized, @"^(ALERTA:|OFERTA:|ACHADO:)", RegexOptions.CultureInvariant))
+        {
+            normalized = $"ALERTA: {normalized}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(productName) &&
+            !normalized.Contains(productName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = $"{normalized}\n\n{productName.Trim()}";
+        }
+
+        return normalized.Trim();
+    }
+
+    private static string MakeOpeningMorePremium(string caption, string? productName)
+    {
+        var normalized = caption.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return normalized;
+        }
+
+        normalized = Regex.Replace(
+            normalized,
+            @"^(ALERTA|OFERTA|ACHADO)\s*:\s*",
+            string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        normalized = Regex.Replace(
+            normalized,
+            @"^Todo dia a mesma história:\s*",
+            "Quando a rotina da cozinha pede mais leveza, vale olhar este achado: ",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        normalized = normalized
+            .Replace("😩", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("😤", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Trim();
+
+        if (!string.IsNullOrWhiteSpace(productName) &&
+            !normalized.Contains(productName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = $"{normalized}\n\n{productName.Trim()}";
+        }
+
+        return normalized.Trim();
     }
 
     public static bool IsMediaTypeError(string? error)
@@ -617,6 +784,19 @@ internal static class InstagramWorkflowSupport
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         return hasHook ? text : $"{text}\n\nSalve este post e compartilhe com quem ama promocoes.";
+    }
+
+    private static string RemoveUrls(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var withoutUrls = Regex.Replace(text, @"https?://\S+", string.Empty, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        withoutUrls = Regex.Replace(withoutUrls, @"\s{2,}", " ", RegexOptions.CultureInvariant);
+        withoutUrls = Regex.Replace(withoutUrls, @"\n{3,}", "\n\n", RegexOptions.CultureInvariant);
+        return withoutUrls.Trim();
     }
 
     private static string NormalizeHashtags(string hashtags, string caption)

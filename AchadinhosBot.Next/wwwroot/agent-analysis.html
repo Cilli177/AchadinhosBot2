@@ -1,299 +1,341 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Analise Profunda do Agente</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --bg: #f4efe7;
-      --panel: #fffaf2;
-      --line: #d7c7ad;
-      --text: #261d14;
-      --muted: #6f6255;
-      --accent: #a55d2a;
-      --accent-2: #1f5f5b;
-      --warn: #b45309;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: radial-gradient(circle at top, #fff8ee, var(--bg)); color: var(--text); font-family: Inter, sans-serif; }
-    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
-    h1, h2, h3 { font-family: Outfit, sans-serif; margin: 0; }
-    .hero, .panel { background: rgba(255,250,242,.92); border: 1px solid var(--line); border-radius: 24px; box-shadow: 0 16px 40px rgba(38,29,20,.08); }
-    .hero { padding: 28px; display: grid; gap: 18px; }
-    .grid { display: grid; gap: 18px; grid-template-columns: repeat(12, 1fr); margin-top: 18px; }
-    .panel { padding: 20px; }
-    .span-4 { grid-column: span 4; }
-    .span-6 { grid-column: span 6; }
-    .span-8 { grid-column: span 8; }
-    .span-12 { grid-column: span 12; }
-    .muted { color: var(--muted); }
-    .badges { display: flex; flex-wrap: wrap; gap: 8px; }
-    .badge { padding: 6px 10px; border-radius: 999px; background: #f3e5d0; color: var(--text); font-size: 12px; font-weight: 700; }
-    .badge.ok { background: #d9efe9; color: #16413d; }
-    .badge.warn { background: #f6e2c8; color: #7a4508; }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-    button, a.btn { appearance: none; border: 0; border-radius: 14px; padding: 12px 16px; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; text-decoration: none; }
-    button.secondary, a.btn.secondary { background: #efe3d0; color: var(--text); }
-    button.ghost, a.btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
-    .choice-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 12px; }
-    .choice-card { border: 1px solid var(--line); border-radius: 18px; background: #fff; padding: 14px; display: grid; gap: 10px; }
-    .choice-card.active { border-color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent-2); }
-    .choice-card pre { min-height: 110px; max-height: 240px; overflow: auto; }
-    .choice-card label { display: flex; gap: 8px; align-items: center; font-weight: 700; }
-    .choice-card .meta { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-    .choice-card .thumb { width: 100%; border-radius: 16px; border: 1px solid var(--line); background: #f1ece4; min-height: 140px; object-fit: cover; }
-    .pill { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; background: #f3e5d0; font-size: 12px; font-weight: 700; }
-    .confirm-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; }
-    .confirm-card { padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
-    .confirm-card strong { display: block; margin-bottom: 8px; }
-    .comment-box { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
-    .comment-box ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
-    .composer-shell { background: linear-gradient(180deg, #fff8ee 0%, #f4ede3 100%); color: var(--text); border: 1px solid var(--line); border-radius: 28px; padding: 22px; box-shadow: 0 18px 50px rgba(38,29,20,.12); }
-    .composer-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
-    .composer-header p { margin: 8px 0 0; }
-    .composer-grid { display: grid; gap: 18px; grid-template-columns: 1.1fr .9fr; margin-top: 16px; }
-    .composer-panel { background: rgba(255,255,255,.84); border: 1px solid rgba(38,29,20,.08); border-radius: 22px; padding: 18px; }
-    .composer-panel h3 { color: var(--text); }
-    .composer-preview { display: grid; gap: 14px; }
-    .preview-frame { background: linear-gradient(180deg, #fffdf8, #ead8c0); border-radius: 28px; padding: 16px; color: #261d14; min-height: 540px; display: grid; grid-template-rows: auto 1fr auto; }
-    .preview-media { background: rgba(255,255,255,.58); border-radius: 22px; border: 1px solid rgba(38,29,20,.08); min-height: 320px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-    .preview-media img, .preview-media video { width: 100%; height: 100%; object-fit: cover; }
-    .preview-caption { white-space: pre-wrap; line-height: 1.45; font-size: 14px; }
-    .composer-form { display: grid; gap: 14px; }
-    .composer-form label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; color: var(--text); }
-    .composer-form input, .composer-form textarea, .composer-form select { width: 100%; border-radius: 14px; border: 1px solid var(--line); background: #fffdf8; color: var(--text); padding: 12px 14px; font: inherit; }
-    .composer-form textarea { min-height: 160px; resize: vertical; }
-    .composer-metrics { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
-    .composer-metric { border-radius: 16px; background: #fff; border: 1px solid var(--line); padding: 12px; }
-    .composer-metric strong { display: block; font-size: 20px; color: var(--text); }
-    .composer-inline { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .composer-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
-    .composer-actions button { background: #c66d32; }
-    .composer-actions button.secondary { background: #efe3d0; color: var(--text); }
-    .composer-status { color: var(--muted); min-height: 20px; }
-    .composer-notes { padding: 14px; border-radius: 18px; border: 1px solid var(--line); background: #fff; display: grid; gap: 10px; }
-    .composer-notes ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
-    .composer-media-strip { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
-    .composer-media-chip { border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 8px; display: grid; gap: 6px; }
-    .composer-media-chip.active { border-color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent-2); }
-    .composer-media-chip.dragging { opacity: .55; transform: scale(.98); }
-    .composer-media-chip img, .composer-media-chip video { width: 100%; height: 88px; object-fit: cover; border-radius: 12px; background: #f1ece4; }
-    .composer-media-chip-actions { display: flex; gap: 6px; }
-    .composer-media-chip-actions button { padding: 6px 8px; border-radius: 10px; font-size: 12px; }
-    .drag-handle { cursor: grab; font-size: 12px; font-weight: 700; color: var(--muted); }
-    .preview-carousel-dots { display: flex; gap: 6px; margin-top: 10px; }
-    .preview-carousel-dots span { width: 8px; height: 8px; border-radius: 999px; background: rgba(38,29,20,.18); }
-    .preview-carousel-dots span.active { background: var(--accent); }
-    .composer-toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
-    .composer-toolbar button { background: #fff; color: var(--text); border: 1px solid var(--line); }
-    .composer-toolbar button.active { background: var(--accent); color: #fff; border-color: transparent; }
-    .style-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-    .style-toolbar button { background: #fff; color: var(--text); border: 1px solid var(--line); }
-    .style-toolbar button.active { background: var(--accent-2); color: #fff; border-color: transparent; }
-    .kv { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .kv div { padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
-    .list { margin: 0; padding-left: 18px; }
-    .media-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-    .media-grid img, .media-grid video { width: 100%; border-radius: 16px; border: 1px solid var(--line); background: #f1ece4; }
-    .checklist { display: grid; gap: 10px; }
-    .checklist-item { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
-    .checklist-item.ok { border-color: #8bb59f; background: #f4fbf7; }
-    .checklist-item.warn { border-color: #dfb17d; background: #fff8f1; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 0; }
-    @media (max-width: 900px) {
-      .span-4, .span-6, .span-8, .span-12 { grid-column: span 12; }
-      .kv, .confirm-grid, .composer-inline, .composer-grid, .composer-metrics { grid-template-columns: 1fr; }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IA Agent Analysis - Admin VIP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;800&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { primary: '#0f172a', accent: '#c4a468', accentHover: '#b39359', surface: '#1e293b' },
+                    fontFamily: { display: ['Montserrat', 'sans-serif'], body: ['Inter', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3 { font-family: 'Montserrat', sans-serif; }
+        .spinner { display: none; width: 20px; height: 20px; border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: white; animation: spin 1s ease-in-out infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .choice-card.active { border-color: #c4a468; box-shadow: 0 0 0 2px rgba(196, 164, 104, 0.2); }
+        .composer-media-chip.active { border-color: #c4a468; box-shadow: 0 0 0 2px rgba(196, 164, 104, 0.2); }
+        .preview-frame { background: #000; border-radius: 32px; border: 8px solid #1e293b; color: #fff; min-height: 540px; display: grid; grid-template-rows: auto 1fr auto; }
+        .preview-media { background: #111; border-radius: 0; min-height: 320px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .preview-media img, .preview-media video { width: 100%; height: 100%; object-fit: cover; }
+        .preview-caption { padding: 12px; font-size: 13px; line-height: 1.4; color: #cbd5e1; }
+        .badge { padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+        .badge.ok { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .badge.warn { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .btn-status-loading { cursor: wait; opacity: 0.7; }
+        pre { background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 12px; color: #e2e8f0; font-family: monospace; font-size: 12px; overflow-x: auto; white-space: pre-wrap; }
+
+        /* Instagram Simulation */
+        .ig-mockup { background: #000; color: #fff; max-width: 470px; margin: 0 auto; border: 1px solid #262626; border-radius: 8px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .ig-header { display: flex; align-items: center; padding: 10px 12px; }
+        .ig-avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%); padding: 2px; }
+        .ig-avatar-inner { width: 100%; height: 100%; border-radius: 50%; background: #000; border: 2px solid #000; }
+        .ig-username { font-size: 14px; font-weight: 600; margin-left: 10px; }
+        .ig-media { width: 100%; aspect-ratio: 1/1; background: #121212; display: flex; align-items: center; justify-content: center; }
+        .ig-media img, .ig-media video { width: 100%; height: 100%; object-fit: cover; }
+        .ig-actions { display: flex; gap: 16px; padding: 12px 12px 8px; }
+        .ig-icon { width: 24px; height: 24px; fill: #fff; transform: scale(1.1); font-weight: 600;}
+        .ig-likes { padding: 0 12px; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+        .ig-caption-row { padding: 0 12px 12px; font-size: 14px; line-height: 1.5; }
+        .ig-caption-user { font-weight: 600; margin-right: 6px; }
+        .ig-caption-text { color: #f5f5f5; white-space: pre-wrap; word-break: break-word; }
+        .ig-hashtags { color: #00376b; cursor: pointer; }
+        .ig-cta-sticker { position: absolute; bottom: 20px; right: 20px; background: rgba(255,255,255,0.9); color: #000; padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    </style>
 </head>
-<body>
-  <div class="wrap">
-    <section class="hero">
-      <div class="badges">
+<body class="bg-primary text-slate-100 min-h-screen p-4 md:p-8 relative overflow-x-hidden">
+    <!-- Orbs -->
+    <div class="absolute w-[400px] h-[400px] bg-red-500/10 rounded-full blur-[80px] -top-24 -left-24 -z-10"></div>
+    <div class="absolute w-[500px] h-[500px] bg-accent/10 rounded-full blur-[80px] -bottom-48 -right-24 -z-10"></div>
+
+    <div class="w-full max-w-6xl mx-auto space-y-8">
+    <section class="bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-8 shadow-2xl space-y-6 relative overflow-hidden">
+      <!-- Glow effect -->
+      <div class="absolute top-0 right-0 w-32 h-32 bg-accent/20 blur-[60px] -mr-16 -mt-16 rounded-full"></div>
+      
+      <div class="flex flex-wrap gap-2 relative z-10">
         <span id="badgeAction" class="badge ok">Analise</span>
-        <span id="badgeScore" class="badge">Score</span>
+        <span id="badgeScore" class="bg-white/5 text-slate-300 border border-white/10 px-3 py-1 rounded-full text-[11px] font-bold">Score</span>
         <span id="badgeSource" class="badge warn">Fonte</span>
+        <span id="priceBadge" class="hidden items-center gap-1.5 bg-green-500/10 text-green-400 border border-green-500/20 px-3 py-1 rounded-full text-[11px] font-bold">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+           melhor preco
+        </span>
+        <span id="couponBadge" class="hidden items-center gap-1.5 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 px-3 py-1 rounded-full text-[11px] font-bold">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path></svg>
+          cupom ativo
+        </span>
       </div>
-      <div>
-        <h1 id="title">Analise Profunda</h1>
-        <p id="subtitle" class="muted" style="margin-top:8px;">Carregando resultado do agente...</p>
+      
+      <div class="relative z-10">
+        <h1 id="title" class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-accent to-yellow-300">Analise Profunda</h1>
+        <p id="subtitle" class="text-slate-400 mt-2 text-lg">Carregando resultado do agente...</p>
       </div>
-      <div class="actions">
-        <a class="btn ghost" href="#composerWorkspace">Ir para composer</a>
-        <button id="createDraftBtn" class="secondary" type="button">Criar draft</button>
-        <a id="openAdminBtn" class="btn secondary" href="/conversor-admin">Admin legado</a>
-        <a id="openDraftBtn" class="btn secondary" href="#" style="display:none;">Abrir draft</a>
-        <button id="addCatalogBtn" class="secondary" type="button" style="display:none;">Adicionar ao catalogo</button>
-        <button id="highlightBioBtn" class="secondary" type="button" style="display:none;">Destacar na bio</button>
-        <button id="publishNowBtn" class="secondary" type="button" style="display:none;">Publicar agora</button>
-        <button id="copyOfferBtn" class="secondary" type="button">Copiar link principal</button>
+
+      <div class="flex flex-wrap gap-3 relative z-10">
+        <a class="bg-transparent border border-white/10 hover:bg-white/5 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm" href="#composerWorkspace">Ir para composer</a>
+        <button id="createDraftBtn" class="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm" type="button">Criar draft</button>
+        <a id="openAdminBtn" class="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm" href="/conversor-admin">Admin legado</a>
+        <a id="openDraftBtn" class="bg-accent hover:bg-accentHover text-primary font-bold px-5 py-3 rounded-xl transition-all text-sm hidden" href="#">Abrir draft</a>
+        <button id="addCatalogBtn" class="bg-accent hover:bg-accentHover text-primary font-bold px-5 py-3 rounded-xl transition-all text-sm hidden" type="button">Adicionar ao catalogo</button>
+        <button id="highlightBioBtn" class="bg-pink-600 hover:bg-pink-500 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm hidden" type="button">Destacar na bio</button>
+        <button id="publishNowBtn" class="bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm hidden" type="button">Publicar agora</button>
+        <button id="copyOfferBtn" class="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm" type="button">Copiar link principal</button>
       </div>
     </section>
 
-    <div class="grid">
-      <section class="panel span-4">
-        <h2>Resumo</h2>
-        <div id="summaryKv" class="kv" style="margin-top:14px;"></div>
+    <div class="grid grid-cols-12 gap-6 mt-8">
+      <section class="col-span-12 md:col-span-4 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">Resumo</h2>
+        <div id="summaryKv" class="grid grid-cols-2 gap-4"></div>
       </section>
-      <section class="panel span-8">
-        <h2>Confirmacao do agente</h2>
-        <p class="muted" style="margin-top:8px;">A IA prepara o material completo. Aqui voce so confirma a legenda, a midia e a acao final.</p>
-        <div id="confirmationGrid" class="confirm-grid"></div>
+      
+      <section class="col-span-12 md:col-span-8 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-2 text-accent">Confirmacao do agente</h2>
+        <p class="text-slate-400 text-sm mb-4">A IA prepara o material completo. Aqui voce so confirma a legenda, a midia e a acao final.</p>
+        <div id="confirmationGrid" class="grid grid-cols-1 sm:grid-cols-3 gap-4"></div>
       </section>
-      <section class="panel span-8">
-        <h2>Raciocinio</h2>
-        <pre id="reasoningBox" style="margin-top:14px;"></pre>
+      
+      <section class="col-span-12 md:col-span-8 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">Raciocinio</h2>
+        <pre id="reasoningBox"></pre>
       </section>
 
-      <section class="panel span-6">
-        <h2>URLs</h2>
-        <div id="urlReason" class="muted" style="margin-top:12px;"></div>
-        <pre id="primaryUrl" style="margin-top:12px;"></pre>
-        <h3 style="margin-top:14px;">Alternativas encontradas</h3>
-        <pre id="candidateUrls" style="margin-top:10px;"></pre>
+      <section class="col-span-12 md:col-span-6 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">URLs</h2>
+        <div id="urlReason" class="text-slate-400 text-sm mb-3"></div>
+        <pre id="primaryUrl" class="mb-4"></pre>
+        <h3 class="text-lg font-bold mb-2 text-slate-300">Alternativas encontradas</h3>
+        <pre id="candidateUrls"></pre>
       </section>
-      <section class="panel span-6">
-        <h2>Legendas</h2>
-        <pre id="captionMain" style="margin-top:12px;"></pre>
-        <div class="comment-box">
-          <strong>Comentarios do agente</strong>
-          <ul id="captionComments" style="margin-top:10px;"></ul>
+      
+      <section class="col-span-12 md:col-span-6 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">Legendas</h2>
+        <pre id="captionMain" class="mb-4"></pre>
+        <div class="bg-black/20 rounded-xl p-4 border border-white/5">
+          <strong class="text-sm uppercase tracking-wider text-slate-500 block mb-2">Comentarios do agente</strong>
+          <ul id="captionComments" class="space-y-2 text-sm list-disc pl-4 text-slate-400"></ul>
         </div>
-        <div class="actions" style="margin-top:12px;">
-          <button id="regenCaptionsBtn" class="secondary" type="button">Gerar Mais com IA</button>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button id="regenCaptionsBtn" class="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold p-2 text-xs rounded-lg transition-all" type="button">Gerar Mais com IA</button>
         </div>
-        <div id="captionStyleToolbar" class="style-toolbar"></div>
-        <div id="captionSelector" class="choice-grid"></div>
+        <div id="captionStyleToolbar" class="flex flex-wrap gap-2 mt-4"></div>
+        <div id="captionSelector" class="grid grid-cols-1 gap-4 mt-6"></div>
       </section>
 
-      <section class="panel span-6">
-        <h2>Motivos</h2>
-        <ul id="reasonsList" class="list" style="margin-top:12px;"></ul>
+      <section class="col-span-12 md:col-span-6 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">Motivos</h2>
+        <ul id="reasonsList" class="space-y-2 list-disc pl-5 text-slate-400"></ul>
       </section>
-      <section class="panel span-6">
-        <h2>Riscos</h2>
-        <ul id="risksList" class="list" style="margin-top:12px;"></ul>
+      
+      <section class="col-span-12 md:col-span-6 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">Riscos</h2>
+        <ul id="risksList" class="space-y-2 list-disc pl-5 text-slate-400"></ul>
       </section>
-      <section class="panel span-12" id="memoryPanel" style="display:none;">
-        <h2>Memoria do operador</h2>
-        <div id="memoryKv" class="kv" style="margin-top:14px;"></div>
-      </section>
-
-      <section class="panel span-12">
-        <h2>Midias candidatas</h2>
-        <p class="muted" style="margin-top:8px;">Selecione varias imagens para carrossel ou um video para reel/story.</p>
-        <div id="mediaSelector" class="choice-grid"></div>
-        <div id="mediaGrid" class="media-grid" style="margin-top:14px;"></div>
+      
+      <section id="memoryPanel" class="col-span-12 bg-pink-900/10 border border-pink-500/20 rounded-[24px] p-6 shadow-2xl hidden">
+        <h2 class="text-xl font-bold mb-4 text-pink-400">Memoria do operador</h2>
+        <div id="memoryKv" class="grid grid-cols-2 md:grid-cols-5 gap-4"></div>
       </section>
 
-      <section class="panel span-12">
-        <h2>Texto base analisado</h2>
-        <pre id="sourceText" style="margin-top:14px;"></pre>
+      <section class="col-span-12 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">Midias candidatas</h2>
+        <p class="text-slate-400 text-sm mb-6">Selecione varias imagens para carrossel ou um video para reel/story.</p>
+        <div id="mediaSelector" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-6"></div>
+        <div id="mediaGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8"></div>
       </section>
 
-      <section id="composerWorkspace" class="span-12 composer-shell">
-        <div class="composer-header">
+      <section class="col-span-12 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+        <h2 class="text-xl font-bold mb-4 text-accent">Texto base analisado</h2>
+        <pre id="sourceText"></pre>
+      </section>
+
+        <section id="aiUsagePanel" class="col-span-12 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[24px] p-6 shadow-2xl">
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-xl font-bold text-accent">Consumo de IA e Cotas</h2>
+            <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-full border border-white/10">Ultimas 24h</div>
+          </div>
+          <div id="aiUsageGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!--- [x] Fix "Send to Catalog" logic (immediate sync)
+- [x] Implement High-Fidelity Instagram Post Simulation
+- [/] Implement AI Usage Dashboard
+    - [ ] Add #aiUsagePanel to `agent-analysis.html`
+    - [ ] Implement `fetchUsageStatistics` to call `/api/analytics/summary`
+    - [ ] Create UI cards for each AI provider (Gemini, OpenAI, etc.)
+    - [ ] Display used/remaining quota and estimated costs
+cards injected here -->
+          </div>
+        </section>
+
+      <section id="composerWorkspace" class="col-span-12 bg-surface/40 backdrop-blur-xl border border-white/10 rounded-[28px] p-8 shadow-2xl relative overflow-hidden">
+        <div class="absolute top-0 left-0 w-32 h-32 bg-accent/10 blur-[60px] -ml-16 -mt-16 rounded-full"></div>
+        
+        <div class="flex flex-wrap justify-between items-start gap-6 mb-8 relative z-10">
           <div>
-            <h2>Composer do Agente</h2>
-            <p class="muted">A IA fecha a oferta aqui. Voce so valida a legenda, a midia, o destino e confirma a acao final.</p>
+            <h2 class="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-accent to-yellow-300">Composer do Agente</h2>
+            <p class="text-slate-400 mt-1">A IA fecha a oferta aqui. Voce so valida a legenda, a midia, o destino e confirma a acao final.</p>
           </div>
-          <div class="badges">
+          <div class="flex gap-2">
             <span class="badge ok">Fluxo principal</span>
-            <span class="badge">Mesmo contexto da analise</span>
+            <span class="bg-white/5 text-slate-400 border border-white/10 px-3 py-1 rounded-full text-[11px] font-bold">Mesmo contexto da analise</span>
           </div>
         </div>
-        <div class="composer-grid">
-          <div class="composer-panel composer-preview">
-            <h3>Preview operacional</h3>
-            <div class="preview-frame">
-              <div style="display:flex; justify-content:space-between; align-items:center; font-weight:700;">
-                <span>achadinhos.vip</span>
-                <span id="composerPreviewType">feed</span>
-              </div>
-              <div class="preview-media" id="composerPreviewMedia">
-                <span class="muted">Sem midia selecionada.</span>
-              </div>
-              <div>
-                <div class="preview-caption" id="composerPreviewCaption">Sem legenda.</div>
-                <div class="muted" id="composerPreviewMeta" style="margin-top:10px; color:#6f6255;">CTA e link aparecem aqui.</div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
+          <!-- Left Column: Preview -->
+          <div class="space-y-6">
+            <div class="bg-black/20 border border-white/5 rounded-2xl p-6">
+              <h3 class="text-lg font-bold mb-4 text-slate-300">Preview operacional</h3>
+              <div class="preview-frame mx-auto max-w-[320px]">
+                <div class="flex justify-between items-center px-4 py-3 border-b border-white/5 font-bold text-xs">
+                  <span>achadinhos.vip</span>
+                  <span id="composerPreviewType" class="uppercase text-accent">feed</span>
+                </div>
+                <div class="preview-media" id="composerPreviewMedia">
+                  <span class="text-slate-500 text-sm italic text-center px-4">Sem midia selecionada.</span>
+                </div>
+                <div class="bg-gradient-to-t from-black to-transparent">
+                  <div class="preview-caption line-clamp-4" id="composerPreviewCaption">Sem legenda.</div>
+                  <div class="px-3 pb-4 text-[10px] font-bold text-accent uppercase tracking-widest" id="composerPreviewMeta">CTA e link aparecem aqui.</div>
+                </div>
               </div>
             </div>
+
             <div>
-              <h3 style="margin-bottom:10px;">Midias selecionadas</h3>
-              <div id="composerSelectedMedia" class="composer-media-strip"></div>
+              <h3 class="text-lg font-bold mb-4 text-slate-300">Midias selecionadas</h3>
+              <div id="composerSelectedMedia" class="grid grid-cols-2 sm:grid-cols-3 gap-4"></div>
             </div>
-            <div class="composer-notes">
-              <strong>Comentarios do agente</strong>
-              <ul id="composerNotesList"></ul>
-            </div>
-            <div class="composer-notes">
-              <strong>Checklist final</strong>
-              <div id="composerChecklist" class="checklist"></div>
+
+            <div class="grid gap-4">
+              <div class="bg-black/20 border border-white/5 rounded-2xl p-6">
+                <strong class="text-sm font-bold uppercase text-slate-500 block mb-3">Comentarios do agente</strong>
+                <ul id="composerNotesList" class="space-y-2 text-sm list-disc pl-4 text-slate-400"></ul>
+              </div>
+              <div class="bg-black/20 border border-white/5 rounded-2xl p-6">
+                <strong class="text-sm font-bold uppercase text-slate-500 block mb-3">Checklist final</strong>
+                <div id="composerChecklist" class="grid gap-3"></div>
+              </div>
             </div>
           </div>
-          <div class="composer-panel">
-            <h3>Publicacao direta</h3>
-            <div class="composer-form">
-              <div class="composer-metrics">
-                <div class="composer-metric"><div class="muted">Legenda</div><strong id="composerCaptionCount">0</strong></div>
-                <div class="composer-metric"><div class="muted">Midias</div><strong id="composerMediaCount">0</strong></div>
-                <div class="composer-metric"><div class="muted">Draft</div><strong id="composerDraftState">novo</strong></div>
+
+          <!-- Right Column: Form -->
+          <div class="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-6">
+            <h3 class="text-lg font-bold text-accent">Publicacao direta</h3>
+            <div class="grid grid-cols-3 gap-3">
+              <div class="bg-black/40 border border-white/5 p-3 rounded-xl text-center">
+                <div class="text-slate-500 text-[10px] font-bold uppercase mb-1">Legenda</div>
+                <strong id="composerCaptionCount" class="text-xl">0</strong>
               </div>
-              <label>Legenda final
-                <textarea id="composerCaptionInput" placeholder="Legenda final pronta para publicar."></textarea>
-              </label>
-              <div class="composer-toolbar" id="composerCaptionToolbar"></div>
-              <div class="composer-inline">
-                <label>CTA
-                  <input id="composerCtaInput" placeholder='Comente "EU QUERO"' />
-                </label>
-                <label>Tipo de post
-                  <select id="composerPostType">
+              <div class="bg-black/40 border border-white/5 p-3 rounded-xl text-center">
+                <div class="text-slate-500 text-[10px] font-bold uppercase mb-1">Midias</div>
+                <strong id="composerMediaCount" class="text-xl">0</strong>
+              </div>
+              <div class="bg-black/40 border border-white/5 p-3 rounded-xl text-center">
+                <div class="text-slate-500 text-[10px] font-bold uppercase mb-1">Draft</div>
+                <strong id="composerDraftState" class="text-xl text-accent">novo</strong>
+              </div>
+            </div>
+
+            <div class="space-y-4">
+              <div class="space-y-2">
+                <label class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Legenda final</label>
+                <textarea id="composerCaptionInput" class="w-full bg-primary/60 border border-white/10 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-accent min-h-[160px]" placeholder="Legenda final pronta para publicar."></textarea>
+              </div>
+
+              <div id="composerCaptionToolbar" class="flex flex-wrap gap-2"></div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <label class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">CTA</label>
+                  <input id="composerCtaInput" class="w-full bg-primary/60 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-accent" placeholder='Comente "EU QUERO"' />
+                </div>
+                <div class="space-y-2">
+                  <label class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Tipo de post</label>
+                  <select id="composerPostType" class="w-full bg-primary/60 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-accent">
                     <option value="feed">Feed</option>
                     <option value="reels">Reels</option>
                     <option value="story">Story</option>
                   </select>
-                </label>
+                </div>
               </div>
-              <div class="composer-inline">
-                <label>Link final
-                  <input id="composerOfferUrlInput" placeholder="https://..." />
-                </label>
-                <label>Agendar para
-                  <input id="composerScheduledForInput" type="datetime-local" />
-                </label>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <label class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Link final</label>
+                  <input id="composerOfferUrlInput" class="w-full bg-primary/60 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-accent" placeholder="https://..." />
+                </div>
+                <div class="space-y-2">
+                  <label class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Agendar para</label>
+                  <input id="composerScheduledForInput" type="datetime-local" class="w-full bg-primary/60 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-accent" />
+                </div>
               </div>
-              <div class="composer-inline">
-                <label>Catalogo
-                  <select id="composerCatalogTarget">
+
+              <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <label class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Catalogo</label>
+                  <select id="composerCatalogTarget" class="w-full bg-primary/60 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-accent">
                     <option value="dev">DEV</option>
                     <option value="prod" selected>PROD</option>
-                    <option value="both">DEV + PROD</option>
+                    <option value="both">BOTH</option>
                   </select>
-                </label>
-                <label>Auto reply keyword
-                  <input id="composerAutoReplyKeyword" placeholder="eu quero, link" />
-                </label>
+                </div>
+                <div class="space-y-2">
+                  <label class="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Auto reply keyword</label>
+                  <input id="composerAutoReplyKeyword" class="w-full bg-primary/60 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-accent" placeholder="eu quero, link" />
+                </div>
               </div>
-              <div class="composer-actions">
-                <button id="composerSaveDraftBtn" type="button">Salvar draft</button>
-                <button id="composerPublishBtn" type="button">Publicar agora</button>
-                <button id="composerConfirmPublishBtn" type="button">Confirmar e publicar</button>
-                <button id="composerCatalogBtn" class="secondary" type="button">Enviar ao catalogo</button>
-                <button id="composerBioBtn" class="secondary" type="button">Destacar na bio</button>
-                <a id="composerLegacyAdminBtn" class="btn ghost" href="/conversor-admin">Abrir admin legado</a>
+
+              <div class="grid grid-cols-2 gap-3 pt-4">
+                <button id="composerSaveDraftBtn" class="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold py-3 rounded-xl transition-all shadow-lg text-sm">Salvar draft</button>
+                <button id="composerConfirmPublishBtn" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-red-600/20 text-sm">Confirmar e publicar</button>
               </div>
-              <div id="composerStatus" class="composer-status">Composer aguardando selecao do agente.</div>
+              <div class="flex gap-2 mt-2">
+                <button id="composerSimulateBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2 px-4 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all">
+                     <i class="fas fa-eye"></i>
+                     SIMULAR POST INSTAGRAM
+                </button>
+              </div>
+              <div class="space-y-2 mt-4">
+                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Destino do Catálogo</label>
+                <select id="composerCatalogTarget" class="w-full bg-slate-800 border border-white/10 text-white text-xs rounded-lg py-2 px-3 focus:outline-none focus:ring-1 focus:ring-accent transition-all">
+                  <option value="dev">Somente DEV (Teste)</option>
+                  <option value="prod">Somente PROD (Produção)</option>
+                  <option value="both" selected>AMBOS (DEV + PROD)</option>
+                </select>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3 mt-4">
+                <button id="composerCatalogBtn" class="bg-accent hover:bg-accentHover text-primary font-bold py-3 rounded-xl transition-all shadow-lg shadow-accent/20 text-sm">Enviar ao catalogo</button>
+                <button id="composerBioBtn" class="bg-pink-600 hover:bg-pink-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-pink-600/20 text-sm">Destacar na bio</button>
+                <a id="composerLegacyAdminBtn" class="col-span-2 text-center text-slate-500 hover:text-white text-xs py-2 transition-colors underline" href="/conversor-admin">Abrir admin legado</a>
+              </div>
+              <div id="composerStatus" class="text-center text-slate-500 text-xs italic min-h-[1.5rem]">Composer aguardando selecao do agente.</div>
             </div>
           </div>
         </div>
       </section>
     </div>
   </div>
+
+    <!-- Instagram Simulation Section -->
+    <div id="instagramSimulation" class="max-w-4xl mx-auto mt-12 mb-20 hidden">
+        <div class="text-center mb-8">
+            <h3 class="text-2xl font-bold text-white mb-2">Simulação de Publicação</h3>
+            <p class="text-slate-400 text-sm">Visualize como seu post aparecerá para os seguidores no Instagram</p>
+        </div>
+        
+        <div id="instagramMockupContainer">
+            <!-- Mockup injected here -->
+        </div>
+    </div>
 
   <script>
     function getResultFromStorage() {
@@ -371,8 +413,15 @@
         notes.push(`Aplique o desconto de ${result.discountPercent}% como prova de oportunidade, sem parecer spam.`);
       }
       if (result.couponCode) {
-        notes.push(`Use o cupom ${result.couponCode} apenas se ele estiver confirmado para o item principal.`);
+        notes.push(`Cupom ativo encontrado: ${result.couponCode}. Verifique se ja esta no Link Final.`);
       }
+      if (result.bestComparison) {
+        notes.push(`Agente encontrou melhor preco em ${result.bestComparison.store}: ${result.bestComparison.price}.`);
+        if (result.bestComparison.url) {
+            notes.push(`Link alternativo (melhor preco): ${result.bestComparison.url}`);
+        }
+      }
+
       if (payload.videoUrl) {
         notes.push('A selecao atual favorece reel. Mantenha abertura mais curta e CTA mais rapido.');
       } else {
@@ -480,6 +529,79 @@
         ['Quando', result.lastDecisionAt ? new Date(result.lastDecisionAt).toLocaleString('pt-BR') : '-'],
         ['Nota', result.lastOperatorNote || '-']
       ].map(([k, v]) => `<div><strong>${escapeHtml(k)}</strong><div class="muted" style="margin-top:6px;">${escapeHtml(v)}</div></div>`).join('');
+    }
+
+    function renderResult(result) {
+      if (!result) {
+        document.getElementById('subtitle').textContent = 'Nenhum resultado salvo. Execute a analise profunda a partir do dashboard.';
+        return;
+      }
+
+      document.getElementById('badgeAction').textContent = result.recommendedAction || 'Analise';
+      document.getElementById('badgeScore').textContent = `Score ${result.score || 0}`;
+      document.getElementById('badgeSource').textContent = `${result.sourceChannel || 'canal'} #${result.messageId || '-'}`;
+
+      if (result.couponCode) {
+          const cb = document.getElementById('couponBadge');
+          if (cb) { cb.style.display = 'inline-flex'; cb.innerHTML = `Cupom: ${result.couponCode}`; }
+      }
+      if (result.bestComparison) {
+          const pb = document.getElementById('priceBadge');
+          if (pb) { pb.style.display = 'inline-flex'; pb.innerHTML = `Melhor em ${result.bestComparison.store}: ${result.bestComparison.price}`; }
+      }
+
+      document.getElementById('title').textContent = result.productName || 'Oferta analisada';
+      document.getElementById('subtitle').textContent = `Post type sugerido: ${result.suggestedPostType || '-'} | CTA: ${result.suggestedKeyword || '-'} | Store: ${result.store || '-'}`;
+
+      document.getElementById('summaryKv').innerHTML = [
+        ['Preco', result.currentPrice || '-'],
+        ['Preco anterior', result.previousPrice || '-'],
+        ['Desconto', result.discountPercent ? `${result.discountPercent}%` : '-'],
+        ['Cupom', result.couponCode || '-'],
+        ['Confianca URL', result.urlSelectionConfidence ? `${result.urlSelectionConfidence}/100` : '-'],
+        ['Qualidade dados', result.dataQualityScore ? `${result.dataQualityScore}/100` : '-'],
+        ['URL original', result.originalSelectedOfferUrl || '-'],
+        ['Conversao', result.offerUrlWasConverted ? 'convertida' : (result.offerUrlConversionNote || 'nao aplicada')],
+        ['Fallback scraper', result.scraperFallbackApplied ? 'ativo' : 'nao usado'],
+        ['Draft', result.draftId || '-'],
+        ['Instagram', result.instagramScore || 0],
+        ['Catalogo', result.catalogScore || 0]
+      ].map(([k, v]) => `<div><strong>${escapeHtml(k)}</strong><div class="muted" style="margin-top:6px;">${escapeHtml(v)}</div></div>`).join('');
+
+      document.getElementById('reasoningBox').textContent = result.aiReasoning || 'Analise profunda concluida sem texto adicional.';
+      document.getElementById('urlReason').textContent = result.selectedOfferUrlReason || 'URL principal definida sem explicacao adicional.';
+      document.getElementById('primaryUrl').textContent = result.offerUrl || '-';
+      document.getElementById('candidateUrls').textContent = (result.candidateUrls || []).join('\n') || '-';
+      document.getElementById('captionMain').textContent = result.caption || '-';
+      document.getElementById('sourceText').textContent = result.sourceText || '-';
+
+      renderList('reasonsList', result.reasons);
+      renderList('risksList', result.risks);
+      renderCaptionSelector(result);
+      renderCaptionComments(result);
+      renderCaptionStyleToolbar(result);
+      renderMediaSelector(result);
+      renderMedia(result);
+      renderOperatorMemory(result);
+      hydrateComposer(result);
+      updateConfirmationPreview(result);
+
+      document.getElementById('addCatalogBtn').classList.toggle('hidden', !result.draftId);
+      document.getElementById('highlightBioBtn').classList.toggle('hidden', result.status !== 'published');
+      document.getElementById('publishNowBtn').classList.toggle('hidden', result.status === 'published');
+      
+      const bioBtn = document.getElementById('highlightBioBtn');
+      if (result.isBioHighlighted) {
+          bioBtn.textContent = 'Destaque ativado';
+          bioBtn.disabled = true;
+          bioBtn.className = "bg-green-600 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm opacity-50 cursor-not-allowed";
+      } else {
+          bioBtn.textContent = 'Destacar na bio';
+          bioBtn.disabled = false;
+          bioBtn.className = "bg-pink-600 hover:bg-pink-500 text-white font-bold px-5 py-3 rounded-xl transition-all text-sm";
+      }
+
+      wireActionButtons(result);
     }
 
     function renderComposerCaptionToolbar(result) {
@@ -632,7 +754,7 @@
         captionInput.value = payload.caption || '';
       }
       if (ctaInput && !ctaInput.dataset.userEdited) {
-        ctaInput.value = `Comente "${result.suggestedKeyword || 'EU QUERO'}" para receber o link.`;
+        ctaInput.value = `Comente "${result.suggestedKeyword || 'EU QUERO'}"`;
       }
       if (postTypeInput && !postTypeInput.dataset.userEdited) {
         postTypeInput.value = payload.videoUrl ? 'reels' : ((payload.imageUrlsSelected?.length || 0) > 1 ? 'feed' : ((payload.postType || 'feed').toLowerCase() === 'reel' ? 'reels' : (payload.postType || 'feed')));
@@ -641,7 +763,7 @@
         offerUrlInput.value = payload.offerUrl || '';
       }
       if (catalogTargetInput && !catalogTargetInput.dataset.userEdited) {
-        catalogTargetInput.value = 'dev';
+        catalogTargetInput.value = 'prod';
       }
       if (autoReplyKeywordInput && !autoReplyKeywordInput.dataset.userEdited) {
         autoReplyKeywordInput.value = result.suggestedKeyword || 'eu quero, link';
@@ -662,6 +784,25 @@
             });
           }
         });
+
+      document.getElementById('composerCaptionCount').textContent = (captionInput?.value || '').length;
+      document.getElementById('composerMediaCount').textContent = (payload.imageUrlsSelected?.length || (payload.imageUrl ? 1 : 0)) + (payload.videoUrl ? 1 : 0);
+      document.getElementById('composerDraftState').textContent = result.draftId ? 'salvo' : 'novo';
+      document.getElementById('composerDraftState').className = result.draftId ? 'text-xl text-green-400' : 'text-xl text-accent';
+
+      document.getElementById('composerCatalogBtn').classList.toggle('hidden', !result.draftId);
+      document.getElementById('composerBioBtn').classList.toggle('hidden', result.status !== 'published');
+      
+      const bioBtn = document.getElementById('composerBioBtn');
+      if (result.isBioHighlighted) {
+          bioBtn.textContent = 'Destaque ativado';
+          bioBtn.disabled = true;
+          bioBtn.className = "bg-green-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg text-sm opacity-50 cursor-not-allowed";
+      } else {
+          bioBtn.textContent = 'Destacar na bio';
+          bioBtn.disabled = false;
+          bioBtn.className = "bg-pink-600 hover:bg-pink-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-pink-600/20 text-sm";
+      }
 
       renderComposerCaptionToolbar(result);
       renderCaptionStyleToolbar(result);
@@ -878,6 +1019,11 @@
       return data;
     }
 
+    async function fetchResultFromApi(request) {
+      const data = await api('/api/agents/channel-offers/deep-analyze', 'POST', request);
+      return data.result;
+    }
+
     function buildDraftRequestFromSelection(result) {
       const state = getComposerState(result);
       const selected = state.payload;
@@ -992,47 +1138,194 @@
       renderResult(result);
     }
 
+    async function renderInstagramSimulation(result) {
+      const simSection = document.getElementById('instagramSimulation');
+      const container = document.getElementById('instagramMockupContainer');
+      const state = getComposerState(result);
+      const payload = state.payload;
+      
+      const isVideo = !!payload.videoUrl && state.postType === 'reels';
+      const mediaUrl = isVideo ? payload.videoUrl : (payload.imageUrlsSelected?.[0] || payload.imageUrl);
+      
+      simSection.classList.remove('hidden');
+      simSection.scrollIntoView({ behavior: 'smooth' });
+      
+      container.innerHTML = `
+        <div class="ig-mockup shadow-2xl animate-fade-in-up">
+          <div class="ig-header">
+            <div class="ig-avatar">
+              <div class="ig-avatar-inner"></div>
+            </div>
+            <div class="ig-username">achadinhos_do_rei</div>
+            <div class="ml-auto">
+              <svg aria-label="Mais opções" fill="#fff" height="24" role="img" viewBox="0 0 24 24" width="24"><circle cx="12" cy="12" r="1.5"></circle><circle cx="6" cy="12" r="1.5"></circle><circle cx="18" cy="12" r="1.5"></circle></svg>
+            </div>
+          </div>
+          
+          <div class="ig-media relative">
+            ${isVideo 
+              ? `<video src="${mediaUrl}" autoplay muted loop class="w-full h-full object-cover"></video>` 
+              : `<img src="${mediaUrl}" class="w-full h-full object-cover" />`
+            }
+            ${state.cta ? `<div class="ig-cta-sticker">${state.cta.toUpperCase()}</div>` : ''}
+          </div>
+          
+          <div class="ig-actions">
+            <svg class="ig-icon" aria-label="Curtir" height="24" role="img" viewBox="0 0 24 24" width="24"><path d="M16.792 3.904A4.989 4.989 0 0121.5 9.122c0 3.072-2.652 4.959-5.197 7.222-2.512 2.243-3.865 3.469-4.303 3.752-.477-.309-2.143-1.823-4.303-3.752C5.141 14.072 2.5 12.193 2.5 9.122a4.989 4.989 0 014.708-5.218 4.21 4.21 0 013.675 1.941c.325.487.568 1.011.746 1.551.157-.474.373-.924.643-1.334a4.158 4.158 0 013.52-1.938z"></path></svg>
+            <svg class="ig-icon" aria-label="Comentar" height="24" role="img" viewBox="0 0 24 24" width="24"><path d="M20.656 17.008a9.993 9.993 0 10-3.59 3.615L22 22z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="2"></path></svg>
+            <svg class="ig-icon" aria-label="Compartilhar publicação" height="24" role="img" viewBox="0 0 24 24" width="24"><line fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="2" x1="22" x2="9.218" y1="3" y2="10.083"></line><polygon fill="none" points="11.698 20.334 22 3.001 2 3.001 9.218 10.084 11.698 20.334" stroke="currentColor" stroke-linejoin="round" stroke-width="2"></polygon></svg>
+            <div class="ml-auto">
+                <svg class="ig-icon" aria-label="Salvar" height="24" role="img" viewBox="0 0 24 24" width="24"><polygon fill="none" points="20 21 12 13.44 4 21 4 3 20 3 20 21" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></polygon></svg>
+            </div>
+          </div>
+          
+          <div class="ig-likes">12.834 curtidas</div>
+          
+          <div class="ig-caption-row">
+            <span class="ig-caption-user">achadinhos_do_rei</span>
+            <span class="ig-caption-text">${state.caption ? state.caption.replace(/#/g, '<span class="ig-hashtags">#</span>') : ''}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    async function fetchUsageStatistics() {
+      try {
+        const data = await api('/api/analytics/summary?hours=24');
+        if (data.success) {
+          renderUsagePanel(data.aiUsageBudget);
+        }
+      } catch (err) {
+        console.error('Falha ao buscar estatisticas de IA:', err);
+      }
+    }
+
+    function renderUsagePanel(budget) {
+      const grid = document.getElementById('aiUsageGrid');
+      if (!budget || !budget.providers) {
+        grid.innerHTML = '<div class="col-span-full text-slate-500 text-sm italic">Dados de uso nao disponiveis.</div>';
+        return;
+      }
+
+      grid.innerHTML = budget.providers.map(p => {
+        const used = p.usedCalls || 0;
+        const limit = p.monthlyCallLimit || 0;
+        const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+        const colorClass = pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-500' : 'bg-accent';
+        
+        return `
+          <div class="bg-black/20 border border-white/5 p-4 rounded-xl flex flex-col justify-between hover:border-white/10 transition-colors">
+            <div class="flex justify-between items-start mb-3">
+              <div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">${escapeHtml(p.provider)}</div>
+                <div class="text-lg font-bold text-white">${used.toLocaleString()} <span class="text-slate-500 text-xs font-normal">calls</span></div>
+              </div>
+              <div class="text-right">
+                <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Custo</div>
+                <div class="text-xs font-bold text-green-400">$${(p.estimatedCostUsd || 0).toFixed(4)}</div>
+              </div>
+            </div>
+            
+            <div class="space-y-1.5">
+              <div class="flex justify-between text-[10px] font-bold">
+                <span class="text-slate-400">${pct}% USADO</span>
+                <span class="text-slate-500">${limit > 0 ? limit.toLocaleString() : 'SEM LIMITE'}</span>
+              </div>
+              <div class="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                <div class="${colorClass} h-full transition-all duration-1000" style="width: ${pct}%"></div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
     function wireActionButtons(result) {
       const createDraftBtn = document.getElementById('createDraftBtn');
       const addCatalogBtn = document.getElementById('addCatalogBtn');
       const highlightBioBtn = document.getElementById('highlightBioBtn');
       const publishNowBtn = document.getElementById('publishNowBtn');
-      const openDraftBtn = document.getElementById('openDraftBtn');
-      const composerStatus = document.getElementById('composerStatus');
+      const copyOfferBtn = document.getElementById('copyOfferBtn');
+
       const composerSaveDraftBtn = document.getElementById('composerSaveDraftBtn');
-      const composerPublishBtn = document.getElementById('composerPublishBtn');
       const composerConfirmPublishBtn = document.getElementById('composerConfirmPublishBtn');
       const composerCatalogBtn = document.getElementById('composerCatalogBtn');
       const composerBioBtn = document.getElementById('composerBioBtn');
-      const composerLegacyAdminBtn = document.getElementById('composerLegacyAdminBtn');
+      const composerStatus = document.getElementById('composerStatus');
 
-      createDraftBtn.onclick = async () => {
+      const setStatus = (msg, isError = false) => {
+        composerStatus.textContent = msg;
+        composerStatus.className = `text-center text-xs italic min-h-[1.5rem] ${isError ? 'text-red-400' : 'text-accent'}`;
+        if (isError) document.getElementById('subtitle').textContent = msg;
+      }
+
+      const handleCreateDraft = async (toCatalog = false) => {
         try {
-          const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
+          setStatus(toCatalog ? 'Enviando ao catalogo...' : 'Criando draft...');
+          const payload = buildDraftRequestFromSelection(result);
+          
+          // Step 1: Create the draft
+          const data = await api('/api/admin/create-draft', 'POST', payload);
           result.draftId = data.draftId;
           result.editorUrl = `/conversor-admin?draftId=${encodeURIComponent(data.draftId)}&messageId=${encodeURIComponent(result.messageId || '')}&sourceChannel=${encodeURIComponent(result.sourceChannel || 'telegram')}&postType=${encodeURIComponent(result.suggestedPostType || 'feed')}`;
-          await recordSelectionMemory(result, 'create_draft');
+          
+          // Step 2: If toCatalog, trigger immediate sync
+          if (toCatalog) {
+            const catalogTarget = document.getElementById('composerCatalogTarget')?.value || 'prod';
+            const syncResult = await api('/api/admin/add-to-catalog', 'POST', { 
+              draftId: data.draftId, 
+              catalogTarget: catalogTarget 
+            });
+            
+            if (syncResult.preview) {
+              setStatus(`Oferta enviada ao catalogo ${syncResult.target}! (${syncResult.itemsUpdated} item(ns))`);
+            } else if (syncResult.scheduled) {
+              setStatus(`Agendada para o catalogo ${syncResult.target} apos a postagem.`);
+            } else {
+              setStatus(`Oferta vinculada ao catalogo ${syncResult.target}.`);
+            }
+          } else {
+            setStatus(`Draft ${data.draftId} criado.`);
+          }
+
+          await recordSelectionMemory(result, toCatalog ? 'add_to_catalog' : 'create_draft');
           renderResult(result);
         } catch (error) {
-          document.getElementById('subtitle').textContent = error?.message || 'Falha ao criar draft.';
+          setStatus(error?.message || 'Erro na operacao.', true);
         }
       };
 
-      composerSaveDraftBtn.onclick = async () => {
+      createDraftBtn.onclick = () => handleCreateDraft(false);
+      composerSaveDraftBtn.onclick = () => handleCreateDraft(false);
+      addCatalogBtn.onclick = () => handleCreateDraft(true);
+      composerCatalogBtn.onclick = () => handleCreateDraft(true);
+
+      const handleBioHighlight = async () => {
         try {
-          const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
-          result.draftId = data.draftId;
-          result.editorUrl = `/conversor-admin?draftId=${encodeURIComponent(data.draftId)}&messageId=${encodeURIComponent(result.messageId || '')}&sourceChannel=${encodeURIComponent(result.sourceChannel || 'telegram')}&postType=${encodeURIComponent(result.suggestedPostType || 'feed')}`;
-          await recordSelectionMemory(result, 'save_draft');
-          composerStatus.textContent = `Draft ${data.draftId} salvo pelo composer.`;
+          if (!result.draftId || result.status !== 'published') {
+             // If not published, we need to finalize it first
+             setStatus('Finalizando para destacar na bio...');
+             const finalData = await api('/api/admin/finalize-draft-now', 'POST', { draftId: result.draftId });
+             result.status = 'published';
+          }
+          
+          setStatus('Destacando na bio...');
+          await api('/api/admin/highlight-on-bio', 'POST', { draftId: result.draftId });
+          setStatus('Destaque na bio ativado!');
+          await recordSelectionMemory(result, 'highlight_bio');
           renderResult(result);
         } catch (error) {
-          composerStatus.textContent = error?.message || 'Falha ao salvar draft pelo composer.';
+          setStatus(error?.message || 'Erro ao destacar na bio.', true);
         }
-      };
+      }
 
-      composerPublishBtn.onclick = async () => {
+      highlightBioBtn.onclick = handleBioHighlight;
+      composerBioBtn.onclick = handleBioHighlight;
+      document.getElementById('composerSimulateBtn').onclick = () => renderInstagramSimulation(result);
+
+      const handlePublishNow = async () => {
         try {
+          setStatus('Publicando no Instagram...');
           if (!result.draftId) {
             const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
             result.draftId = data.draftId;
@@ -1044,243 +1337,31 @@
             catalogTarget: state.catalogTarget
           });
           await recordSelectionMemory(result, 'publish_now');
-          composerStatus.textContent = 'Publicacao disparada pelo composer.';
+          setStatus('Publicado com sucesso!');
           renderResult(result);
+          renderInstagramSimulation(result); // Trigger simulation on success
         } catch (error) {
-          composerStatus.textContent = error?.message || 'Falha ao publicar pelo composer.';
+          setStatus(error?.message || 'Erro ao publicar.', true);
         }
       };
 
+      publishNowBtn.onclick = handlePublishNow;
       composerConfirmPublishBtn.onclick = async () => {
-        try {
           const checklistOk = renderComposerChecklist(result);
           if (!checklistOk) {
-            composerStatus.textContent = 'Revise o checklist final antes de confirmar a publicacao.';
+            setStatus('Revise o checklist final antes de postar.', true);
             return;
           }
-          if (!result.draftId) {
-            const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
-            result.draftId = data.draftId;
-          }
-          const state = getComposerState(result);
-          await api('/api/admin/publish-instagram-now', 'POST', {
-            draftId: result.draftId,
-            sendToCatalog: true,
-            catalogTarget: state.catalogTarget
-          });
-          await recordSelectionMemory(result, 'confirm_publish');
-          composerStatus.textContent = 'Checklist aprovado e publicacao confirmada.';
-          renderResult(result);
-        } catch (error) {
-          composerStatus.textContent = error?.message || 'Falha ao confirmar a publicacao.';
+          await handlePublishNow();
+      };
+
+      copyOfferBtn.onclick = () => {
+        const url = result.offerUrl || '';
+        if (url) {
+          navigator.clipboard.writeText(url);
+          setStatus('Link principal copiado!');
         }
       };
-
-      composerCatalogBtn.onclick = async () => {
-        try {
-          if (!result.draftId) {
-            const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
-            result.draftId = data.draftId;
-          }
-          const state = getComposerState(result);
-          await api('/api/admin/add-to-catalog', 'POST', { draftId: result.draftId, catalogTarget: state.catalogTarget });
-          await recordSelectionMemory(result, 'add_to_catalog');
-          composerStatus.textContent = `Draft enviado ao catalogo ${state.catalogTarget.toUpperCase()}.`;
-          renderResult(result);
-        } catch (error) {
-          composerStatus.textContent = error?.message || 'Falha ao enviar ao catalogo pelo composer.';
-        }
-      };
-
-      composerBioBtn.onclick = async () => {
-        try {
-          if (!result.draftId) {
-            const data = await api('/api/admin/create-draft', 'POST', buildDraftRequestFromSelection(result));
-            result.draftId = data.draftId;
-          }
-          await api('/api/admin/highlight-on-bio', 'POST', { draftId: result.draftId });
-          await recordSelectionMemory(result, 'highlight_on_bio');
-          composerStatus.textContent = 'Draft enviado para destaque na bio.';
-          renderResult(result);
-        } catch (error) {
-          composerStatus.textContent = error?.message || 'Falha ao destacar na bio pelo composer.';
-        }
-      };
-
-      if (composerLegacyAdminBtn) {
-        composerLegacyAdminBtn.onclick = (event) => {
-          event.preventDefault();
-          const persisted = persistSelection(result);
-          const href = new URL(`/conversor-admin`, window.location.origin);
-          if (result.draftId) href.searchParams.set('draftId', result.draftId);
-          if (result.messageId) href.searchParams.set('messageId', result.messageId);
-          if (result.sourceChannel) href.searchParams.set('sourceChannel', result.sourceChannel);
-          href.searchParams.set('selectionKey', persisted.selectionKey);
-          href.searchParams.set('deepAnalyze', '1');
-          window.open(`${href.pathname}${href.search}`, '_blank');
-        };
-      }
-
-      if (result.draftId) {
-        addCatalogBtn.style.display = 'inline-flex';
-        highlightBioBtn.style.display = 'inline-flex';
-        publishNowBtn.style.display = 'inline-flex';
-
-        addCatalogBtn.onclick = async () => {
-          try {
-            persistSelection(result);
-            await api('/api/admin/add-to-catalog', 'POST', { draftId: result.draftId, catalogTarget: 'dev' });
-          } catch (error) {
-            document.getElementById('subtitle').textContent = error?.message || 'Falha ao adicionar ao catalogo.';
-          }
-        };
-
-        highlightBioBtn.onclick = async () => {
-          try {
-            persistSelection(result);
-            await api('/api/admin/highlight-on-bio', 'POST', { draftId: result.draftId });
-          } catch (error) {
-            document.getElementById('subtitle').textContent = error?.message || 'Falha ao destacar na bio.';
-          }
-        };
-
-        publishNowBtn.onclick = async () => {
-          try {
-            persistSelection(result);
-            await api('/api/admin/publish-instagram-now', 'POST', { draftId: result.draftId, sendToCatalog: true, catalogTarget: 'dev' });
-          } catch (error) {
-            document.getElementById('subtitle').textContent = error?.message || 'Falha ao publicar agora.';
-          }
-        };
-
-        openDraftBtn.style.display = 'inline-flex';
-      } else {
-        addCatalogBtn.style.display = 'none';
-        highlightBioBtn.style.display = 'none';
-        publishNowBtn.style.display = 'none';
-      }
-    }
-
-    async function fetchResultFromApi(request) {
-      const res = await fetch('/api/agents/channel-offers/deep-analyze', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(request)
-      });
-      const data = await res.json();
-      if (!res.ok || !data?.success || !data?.result) {
-        throw new Error(data?.error || 'Falha ao executar analise profunda.');
-      }
-      try {
-        localStorage.setItem('achadinhos.agent.deepAnalysisResult', JSON.stringify(data.result));
-      } catch {
-      }
-      return data.result;
-    }
-
-    function renderResult(result) {
-      if (!result) {
-        document.getElementById('subtitle').textContent = 'Nenhum resultado salvo. Execute a analise profunda a partir do dashboard.';
-        return;
-      }
-
-      document.getElementById('badgeAction').textContent = result.recommendedAction || 'Analise';
-      document.getElementById('badgeScore').textContent = `Score ${result.score || 0}`;
-      document.getElementById('badgeSource').textContent = `${result.sourceChannel || 'canal'} #${result.messageId || '-'}`;
-      document.getElementById('title').textContent = result.productName || 'Oferta analisada';
-      document.getElementById('subtitle').textContent = `Post type sugerido: ${result.suggestedPostType || '-'} | CTA: ${result.suggestedKeyword || '-'} | Store: ${result.store || '-'}`;
-
-      document.getElementById('summaryKv').innerHTML = [
-        ['Preco', result.currentPrice || '-'],
-        ['Preco anterior', result.previousPrice || '-'],
-        ['Desconto', result.discountPercent ? `${result.discountPercent}%` : '-'],
-        ['Entrega', result.estimatedDelivery || '-'],
-        ['Cupom', result.couponCode || '-'],
-        ['Confianca URL', result.urlSelectionConfidence ? `${result.urlSelectionConfidence}/100` : '-'],
-        ['Qualidade dados', result.dataQualityScore ? `${result.dataQualityScore}/100` : '-'],
-        ['URL original', result.originalSelectedOfferUrl || '-'],
-        ['Conversao', result.offerUrlWasConverted ? 'convertida' : (result.offerUrlConversionNote || 'nao aplicada')],
-        ['Fallback scraper', result.scraperFallbackApplied ? 'ativo' : 'nao usado'],
-        ['Draft', result.draftId || '-'],
-        ['Instagram', result.instagramScore || 0],
-        ['Catalogo', result.catalogScore || 0]
-      ].map(([k, v]) => `<div><strong>${escapeHtml(k)}</strong><div class="muted" style="margin-top:6px;">${escapeHtml(v)}</div></div>`).join('');
-
-      document.getElementById('reasoningBox').textContent = result.aiReasoning || 'Analise profunda concluida sem texto adicional.';
-      document.getElementById('urlReason').textContent = result.selectedOfferUrlReason || 'URL principal definida sem explicacao adicional.';
-      document.getElementById('primaryUrl').textContent = result.offerUrl || '-';
-      document.getElementById('candidateUrls').textContent = (result.candidateUrls || []).join('\n') || '-';
-      document.getElementById('captionMain').textContent = result.caption || '-';
-      document.getElementById('sourceText').textContent = result.sourceText || '-';
-
-      renderList('reasonsList', result.reasons);
-      renderList('risksList', result.risks);
-      renderCaptionSelector(result);
-      renderCaptionComments(result);
-      renderCaptionStyleToolbar(result);
-      renderMediaSelector(result);
-      renderMedia(result);
-      renderOperatorMemory(result);
-      hydrateComposer(result);
-      updateConfirmationPreview(result);
-
-      const adminBtn = document.getElementById('openAdminBtn');
-      const params = new URLSearchParams();
-      if (result.draftId) params.set('draftId', result.draftId);
-      if (result.messageId) params.set('messageId', result.messageId);
-      if (result.sourceChannel) params.set('sourceChannel', result.sourceChannel);
-      if (result.suggestedPostType) params.set('postType', result.suggestedPostType);
-      params.set('deepAnalyze', '1');
-      adminBtn.href = `/conversor-admin?${params.toString()}`;
-      adminBtn.onclick = (event) => {
-        event.preventDefault();
-        const persisted = persistSelection(result);
-        const href = new URL(adminBtn.href, window.location.origin);
-        href.searchParams.set('selectionKey', persisted.selectionKey);
-        window.open(`${href.pathname}${href.search}`, '_blank');
-      };
-
-      const draftBtn = document.getElementById('openDraftBtn');
-      if (result.draftId) {
-        draftBtn.style.display = 'inline-flex';
-        const draftParams = new URLSearchParams();
-        draftParams.set('draftId', result.draftId);
-        if (result.messageId) draftParams.set('messageId', result.messageId);
-        if (result.sourceChannel) draftParams.set('sourceChannel', result.sourceChannel);
-        if (result.suggestedPostType) draftParams.set('postType', result.suggestedPostType);
-        draftParams.set('deepAnalyze', '1');
-        draftBtn.href = result.editorUrl || `/conversor-admin?${draftParams.toString()}`;
-        draftBtn.onclick = (event) => {
-          event.preventDefault();
-          const persisted = persistSelection(result);
-          const href = new URL(draftBtn.href, window.location.origin);
-          href.searchParams.set('selectionKey', persisted.selectionKey);
-          window.open(`${href.pathname}${href.search}`, '_blank');
-        };
-      } else {
-        draftBtn.style.display = 'none';
-        draftBtn.removeAttribute('href');
-        draftBtn.onclick = null;
-      }
-
-      document.getElementById('copyOfferBtn').onclick = async () => {
-        if (!result.offerUrl) return;
-        try {
-          await navigator.clipboard.writeText(result.offerUrl);
-        } catch {
-        }
-      };
-
-      document.getElementById('regenCaptionsBtn').onclick = async () => {
-        try {
-          await generateMoreCaptions(result);
-        } catch (error) {
-          document.getElementById('subtitle').textContent = error?.message || 'Falha ao gerar novas legendas.';
-        }
-      };
-
-      wireActionButtons(result);
     }
 
     async function render() {
@@ -1302,6 +1383,8 @@
     }
 
     render();
+    fetchUsageStatistics(); // Load AI stats
+
   </script>
 </body>
 </html>

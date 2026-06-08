@@ -38,7 +38,7 @@ services:
       WEBHOOK__API_KEY: ${WEBHOOK__API_KEY}
       WEBHOOK__PUBLICBASEURL: ${WEBHOOK__PUBLICBASEURL}
       EVOLUTION__BASEURL: ${EVOLUTION__BASEURL:-http://host.docker.internal:8082}
-      EVOLUTION__APIKEY: ${EVOLUTION__APIKEY}
+      EVOLUTION__APIKEY: ${EVOLUTION__APIKEY:-${EVOLUTION__API_KEY}}
       EVOLUTION__INSTANCENAME: ${EVOLUTION__INSTANCENAME:-ZapOfertas}
       EVOLUTION__WEBHOOKSECRET: ${EVOLUTION__WEBHOOKSECRET}
       TELEGRAM__BOTTOKEN: ${TELEGRAM__BOTTOKEN}
@@ -53,10 +53,12 @@ services:
       AFFILIATE__SHEINCODE: ${AFFILIATE__SHEINCODE}
       AFFILIATE__MERCADOLIVREMATTTOOL: ${AFFILIATE__MERCADOLIVREMATTTOOL}
       AFFILIATE__MERCADOLIVREMATTWORD: ${AFFILIATE__MERCADOLIVREMATTWORD}
+      MERCADOLIVRE_AFFILIATE_SCRAPER__BASEURL: http://host.docker.internal:3002
       DELIVERYSAFETY__BLOCKOFFICIALDESTINATIONSOUTSIDEPRODUCTION: "true"
       DELIVERYSAFETY__OFFICIALWHATSAPPGROUPIDS__0: ${OFFICIAL_WHATSAPP_GROUP_ID}
       DELIVERYSAFETY__OFFICIALTELEGRAMCHATIDS__0: ${OFFICIAL_TELEGRAM_CHAT_ID:-0}
       MERCADOLIVRE_APPROVAL_TELEGRAM_BRIDGE_CHAT_ID: ${MERCADOLIVRE_APPROVAL_TELEGRAM_BRIDGE_CHAT_ID:-5169049471}
+      LINKTRACKING__PATH: /app/data/link-tracking.json
       RABBITMQ__HOST: rabbitmq
       RABBITMQ__VIRTUALHOST: /
       RABBITMQ__USERNAME: ${RABBITMQ_DEFAULT_USER:-guest}
@@ -64,8 +66,15 @@ services:
     ports:
       - "${WEBHOOK__PORT:-5005}:${WEBHOOK__PORT:-5005}"
     volumes:
-      - achadinhos_data:/app/data
-      - achadinhos_logs:/app/logs
+      - type: bind
+        source: D:/Achadinhos/data
+        target: /app/data
+      - type: bind
+        source: D:/Achadinhos/logs
+        target: /app/logs
+      - type: bind
+        source: D:/Achadinhos/media/admin
+        target: /app/wwwroot/media/admin
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${WEBHOOK__PORT:-5005}/health || exit 1"]
       interval: 30s
@@ -74,12 +83,6 @@ services:
       start_period: 40s
 
 volumes:
-  achadinhos_data:
-    external: true
-    name: achadinhos-prod_achadinhos_data
-  achadinhos_logs:
-    external: true
-    name: achadinhos-prod_achadinhos_logs
   achadinhos_rabbitmq_data:
     external: true
     name: achadinhos-prod_achadinhos_rabbitmq_data

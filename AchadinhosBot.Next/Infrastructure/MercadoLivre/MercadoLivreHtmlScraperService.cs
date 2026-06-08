@@ -13,6 +13,8 @@ public sealed class MercadoLivreScrapedProduct
     public List<string> Images { get; init; } = new();
     public string? Delivery { get; init; }
     public bool IsLightningDeal { get; init; }
+    public string? CouponCode { get; init; }
+    public string? CouponDescription { get; init; }
 }
 
 public sealed class MercadoLivreHtmlScraperService
@@ -112,6 +114,7 @@ public sealed class MercadoLivreHtmlScraperService
         var (price, oldPrice, discount) = ExtractPrices(html);
         var delivery = ExtractDelivery(html);
         var isLightningDeal = ExtractLightningDeal(html);
+        var (couponCode, couponDesc) = ExtractCoupons(html);
 
         if (string.IsNullOrWhiteSpace(title) && images.Count == 0 && string.IsNullOrWhiteSpace(price))
         {
@@ -126,7 +129,9 @@ public sealed class MercadoLivreHtmlScraperService
             DiscountPercent = discount,
             Images = images,
             Delivery = delivery,
-            IsLightningDeal = isLightningDeal
+            IsLightningDeal = isLightningDeal,
+            CouponCode = couponCode,
+            CouponDescription = couponDesc
         };
     }
 
@@ -266,6 +271,31 @@ public sealed class MercadoLivreHtmlScraperService
     {
          var str = html.ToLowerInvariant();
          return str.Contains("oferta relâmpago") || str.Contains("oferta relampago");
+    }
+
+    private static (string? Code, string? Desc) ExtractCoupons(string html)
+    {
+        // 1. Specific Coupon Banner
+        var match = Regex.Match(html, @"ui-pdp-promotions-pill[^>]*>([\s\S]*?)<", RegexOptions.IgnoreCase);
+        if (match.Success)
+        {
+            var text = WebUtility.HtmlDecode(match.Groups[1].Value).Trim();
+            if (text.Contains("cupom", StringComparison.OrdinalIgnoreCase))
+            {
+                // Try to find code like XPTO20 or similar in parent container
+                var codeMatch = Regex.Match(html, @"([A-Z0-9]{5,15})", RegexOptions.IgnoreCase);
+                return (codeMatch.Success ? codeMatch.Groups[1].Value.ToUpperInvariant() : null, text);
+            }
+        }
+
+        // 2. Coupon text pattern
+        var textMatch = Regex.Match(html, @"cupom\s+de\s+(R\$\s?[\d.,]+|[\d]+%)", RegexOptions.IgnoreCase);
+        if (textMatch.Success)
+        {
+            return (null, textMatch.Groups[0].Value);
+        }
+
+        return (null, null);
     }
 
     private static decimal? ParsePrice(string? text)

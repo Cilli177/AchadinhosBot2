@@ -76,3 +76,22 @@
    - draft com catalogo `prod`
    - publicacao real controlada
    - agendamento com horario local do usuario
+
+## Guardrails Antes De Commit Para Dev
+
+1. Nunca usar `git add -A` com worktree misto; stage deve ser por arquivo ou por grupo de entrega.
+2. Bloquear bypass temporario de tracking antes de commit:
+   - procurar por `TEMPORARY BYPASS`;
+   - procurar por `bypassShortening`;
+   - confirmar que o padrao `/r/{trackingId}` continua ativo.
+3. Preservar IDs curtos decorados, por exemplo `AM-W000001`; nao trocar por query longa para origem/nicho.
+4. Nao versionar artefatos locais:
+   - `_build_check/`
+   - `.build-check/`
+   - `conversion_audit*.json`
+   - `conversion_audit*.csv`
+5. Revisar `docker-compose.prod.yml` antes de commit:
+   - nao adicionar default real de grupo oficial;
+   - nao adicionar token, cookie, session file ou credencial;
+   - destinos oficiais devem vir de variaveis seguras.
+6. Se uma alteracao local ficar fora do commit, registrar o motivo no documento de entrega ou handoff.

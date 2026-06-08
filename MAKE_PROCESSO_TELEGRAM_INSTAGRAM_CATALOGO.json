@@ -14,11 +14,11 @@
   },
   "secrets": {
     "base_url": "http://localhost:8081",
-    "admin_username": "admin",
-    "admin_password": "admin123",
+    "admin_username": "SET_THIS_IN_MAKE_SECRETS",
+    "admin_password": "SET_THIS_IN_MAKE_SECRETS",
     "converter_api_key": "SET_THIS",
     "telegram_bot_token": "SET_THIS",
-    "telegram_ops_chat_id": "-1001234567890",
+    "telegram_ops_chat_id": "SET_THIS_IN_MAKE_SECRETS",
     "card_provider_api_key": "SET_THIS"
   },
   "input_contract": {

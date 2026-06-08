@@ -1,0 +1,13 @@
+{
+  "name": "mercadolivre-affiliate-scraper",
+  "version": "1.0.0",
+  "description": "Mercado Livre Afiliados hub scout usando Playwright",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "playwright": "1.44.0"
+  }
+}

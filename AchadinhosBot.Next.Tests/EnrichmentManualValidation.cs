@@ -37,10 +37,10 @@ public sealed class EnrichmentManualValidation
         var mercadoLivreHtmlScraper = new MercadoLivreHtmlScraperService(clientFactory, memoryCache, NullLogger<MercadoLivreHtmlScraperService>.Instance);
         var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, amazonHtmlScraper, NullLogger<InstagramLinkMetaService>.Instance);
         var m_meliAuth = new FakeMeliAuth();
-        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, mercadoLivreHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
+        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, null!, mercadoLivreHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, memoryCache, NullLogger<OfficialProductDataService>.Instance);
         
         var processor = new MessageProcessor(
-            null!, null!, null!, null!, null!,
+            null!, null!, null!, null!, null!, null!,
             official, NullLogger<MessageProcessor>.Instance);
 
         var originalText = "Oferta incrivel! Apenas R$ 199,90 no link: https://www.amazon.com.br/dp/B08P2CD4BY";
@@ -69,10 +69,10 @@ public sealed class EnrichmentManualValidation
         var mercadoLivreHtmlScraper = new MercadoLivreHtmlScraperService(clientFactory, memoryCache, NullLogger<MercadoLivreHtmlScraperService>.Instance);
         var scraper = new InstagramLinkMetaService(clientFactory, amazonPa, amazonHtmlScraper, NullLogger<InstagramLinkMetaService>.Instance);
         var m_meliAuth = new FakeMeliAuth();
-        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, mercadoLivreHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, NullLogger<OfficialProductDataService>.Instance);
+        var official = new OfficialProductDataService(amazonPa, amazonCreator, amazonHtmlScraper, null!, mercadoLivreHtmlScraper, m_meliAuth, affiliateOptions, clientFactory, memoryCache, NullLogger<OfficialProductDataService>.Instance);
         
         var processor = new MessageProcessor(
-            null!, null!, null!, null!, null!,
+            null!, null!, null!, null!, null!, null!,
             official, NullLogger<MessageProcessor>.Instance);
 
         // A URL that might not have official API data easily (or we can just check if fallback is triggered)

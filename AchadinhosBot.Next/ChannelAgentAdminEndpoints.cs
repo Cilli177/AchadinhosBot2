@@ -22,7 +22,7 @@ public static class ChannelAgentAdminEndpoints
             IOptions<WebhookOptions> opts,
             CancellationToken ct) =>
         {
-            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+            if (!AdminAuthorizationHelper.IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
             if (string.IsNullOrWhiteSpace(req.MessageId))
@@ -54,7 +54,7 @@ public static class ChannelAgentAdminEndpoints
             IOptions<WebhookOptions> opts,
             CancellationToken ct) =>
         {
-            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+            if (!AdminAuthorizationHelper.IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
             if (string.IsNullOrWhiteSpace(messageId))
@@ -109,7 +109,7 @@ public static class ChannelAgentAdminEndpoints
             IOptions<WebhookOptions> opts,
             CancellationToken ct) =>
         {
-            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+            if (!AdminAuthorizationHelper.IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
             var draft = await draftStore.GetAsync(req.DraftId, ct);
@@ -147,7 +147,7 @@ public static class ChannelAgentAdminEndpoints
             IOptions<WebhookOptions> opts,
             CancellationToken ct) =>
         {
-            if (!IsAdminAuthorized(context, opts.Value.ApiKey))
+            if (!AdminAuthorizationHelper.IsAdminAuthorized(context, opts.Value.ApiKey))
                 return Results.Json(new { success = false, error = "Acesso negado." }, statusCode: 403);
 
             var action = (req.RecommendedAction ?? string.Empty).Trim().ToLowerInvariant();
@@ -385,23 +385,6 @@ public static class ChannelAgentAdminEndpoints
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
 
-    private static bool IsAdminAuthorized(HttpContext ctx, string apiKey)
-    {
-        if (ctx.User.Identity?.IsAuthenticated == true)
-        {
-            var role = ctx.User.FindFirst(ClaimTypes.Role)?.Value;
-            if (string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(role, "operator", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        if (ctx.Request.Headers.TryGetValue("X-Admin-Key", out var provided))
-            return !string.IsNullOrWhiteSpace(provided.ToString()) &&
-                   SecretComparer.EqualsConstantTime(apiKey, provided.ToString());
-        return false;
-    }
 
     private static void ApplyCatalogIntent(HttpContext context, InstagramPublishDraft draft, bool sendToCatalog, string? catalogTarget)
     {

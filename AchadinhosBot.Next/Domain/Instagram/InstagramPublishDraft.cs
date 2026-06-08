@@ -7,6 +7,7 @@ public sealed class InstagramPublishDraft
     public string PostType { get; set; } = "feed";
     public string ProductName { get; set; } = string.Empty;
     public string Caption { get; set; } = string.Empty;
+    public string? OriginalOfferUrl { get; set; }
     public string? OfferUrl { get; set; }
     public List<string> CaptionOptions { get; set; } = new();
     public int SelectedCaptionIndex { get; set; } = 1;
@@ -47,6 +48,7 @@ public sealed class InstagramPublishDraft
     public bool CatalogIntentLocked { get; set; }
     public bool IsBioHighlighted { get; set; }
     public DateTimeOffset? BioHighlightedAt { get; set; }
+    public string? ProcessName { get; set; }
     public string Status { get; set; } = "draft";
     public string? MediaId { get; set; }
     public string? Error { get; set; }

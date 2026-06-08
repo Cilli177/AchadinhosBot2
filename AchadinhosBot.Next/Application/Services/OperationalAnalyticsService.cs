@@ -2,6 +2,7 @@ using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Instagram;
 using AchadinhosBot.Next.Domain.Models;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace AchadinhosBot.Next.Application.Services;
 
@@ -9,42 +10,86 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
 {
     private readonly IConversionLogStore _conversionLogStore;
     private readonly IClickLogStore _clickLogStore;
+    private readonly ILinkTrackingStore _linkTrackingStore;
     private readonly IInstagramAiLogStore _instagramAiLogStore;
     private readonly IInstagramPublishLogStore _instagramPublishLogStore;
     private readonly IInstagramPublishStore _instagramPublishStore;
     private readonly ICatalogOfferStore _catalogOfferStore;
+    private readonly IMemoryCache _cache;
+    private static readonly TimeSpan SummaryCacheTtl = TimeSpan.FromSeconds(20);
 
     public OperationalAnalyticsService(
         IConversionLogStore conversionLogStore,
         IClickLogStore clickLogStore,
+        ILinkTrackingStore linkTrackingStore,
         IInstagramAiLogStore instagramAiLogStore,
         IInstagramPublishLogStore instagramPublishLogStore,
         IInstagramPublishStore instagramPublishStore,
         ICatalogOfferStore catalogOfferStore)
+        : this(
+            conversionLogStore,
+            clickLogStore,
+            linkTrackingStore,
+            instagramAiLogStore,
+            instagramPublishLogStore,
+            instagramPublishStore,
+            catalogOfferStore,
+            new MemoryCache(new MemoryCacheOptions()))
+    {
+    }
+
+    public OperationalAnalyticsService(
+        IConversionLogStore conversionLogStore,
+        IClickLogStore clickLogStore,
+        ILinkTrackingStore linkTrackingStore,
+        IInstagramAiLogStore instagramAiLogStore,
+        IInstagramPublishLogStore instagramPublishLogStore,
+        IInstagramPublishStore instagramPublishStore,
+        ICatalogOfferStore catalogOfferStore,
+        IMemoryCache cache)
     {
         _conversionLogStore = conversionLogStore;
         _clickLogStore = clickLogStore;
+        _linkTrackingStore = linkTrackingStore;
         _instagramAiLogStore = instagramAiLogStore;
         _instagramPublishLogStore = instagramPublishLogStore;
         _instagramPublishStore = instagramPublishStore;
         _catalogOfferStore = catalogOfferStore;
+        _cache = cache;
     }
 
     public async Task<OperationalAnalyticsSummary> GetSummaryAsync(int hours, CancellationToken cancellationToken)
     {
         var windowHours = Math.Clamp(hours, 1, 24 * 30);
+        var cacheKey = $"analytics:summary:{windowHours}";
+        if (_cache.TryGetValue(cacheKey, out OperationalAnalyticsSummary? cachedSummary) && cachedSummary is not null)
+        {
+            return cachedSummary;
+        }
+
         var end = DateTimeOffset.UtcNow;
         var start = end.AddHours(-windowHours);
 
-        var conversions = await _conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 2000 }, cancellationToken);
-        var clicks = await _clickLogStore.QueryAsync(null, null, 2000, cancellationToken);
-        var aiLogs = await _instagramAiLogStore.ListAsync(2000, cancellationToken);
-        var publishLogs = await _instagramPublishLogStore.ListAsync(2000, cancellationToken);
-        var drafts = await _instagramPublishStore.ListAsync(cancellationToken);
-        var activeCatalogItems = await _catalogOfferStore.ListAsync(null, 500, cancellationToken, CatalogTargets.Both);
+        var conversionsTask = _conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 2000 }, cancellationToken);
+        var clicksTask = _clickLogStore.QueryAsync(null, null, 2000, cancellationToken);
+        var trackingEntriesTask = _linkTrackingStore.ListAsync(cancellationToken);
+        var aiLogsTask = _instagramAiLogStore.ListAsync(2000, cancellationToken);
+        var publishLogsTask = _instagramPublishLogStore.ListAsync(2000, cancellationToken);
+        var draftsTask = _instagramPublishStore.ListAsync(cancellationToken);
+        var activeCatalogItemsTask = _catalogOfferStore.ListAsync(null, 500, cancellationToken, CatalogTargets.Both);
+        await Task.WhenAll(conversionsTask, clicksTask, trackingEntriesTask, aiLogsTask, publishLogsTask, draftsTask, activeCatalogItemsTask);
+
+        var conversions = await conversionsTask;
+        var clicks = await clicksTask;
+        var trackingEntries = await trackingEntriesTask;
+        var aiLogs = await aiLogsTask;
+        var publishLogs = await publishLogsTask;
+        var drafts = await draftsTask;
+        var activeCatalogItems = await activeCatalogItemsTask;
 
         var conversionWindow = conversions.Where(x => x.Timestamp >= start && x.Timestamp <= end).ToList();
         var clickWindow = clicks.Where(x => x.Timestamp >= start && x.Timestamp <= end).ToList();
+        var trackingWindow = trackingEntries.Where(x => x.CreatedAt >= start && x.CreatedAt <= end).ToList();
         var aiWindow = aiLogs.Where(x => x.Timestamp >= start && x.Timestamp <= end).ToList();
         var publishWindow = publishLogs.Where(x => x.Timestamp >= start && x.Timestamp <= end).ToList();
         var draftWindow = drafts.Where(x => x.CreatedAt >= start && x.CreatedAt <= end).ToList();
@@ -53,7 +98,7 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
         var conversionAffiliated = conversionWindow.Count(x => x.IsAffiliated);
         var aiSuccess = aiWindow.Count(x => x.Success);
 
-        return new OperationalAnalyticsSummary
+        var summary = new OperationalAnalyticsSummary
         {
             WindowHours = windowHours,
             WindowStart = start,
@@ -121,13 +166,24 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
                 ActiveItems = activeCatalogItems.Count,
                 TotalPublishedDrafts = draftWindow.Count(x => string.Equals(x.Status, "published", StringComparison.OrdinalIgnoreCase)),
                 SyncEligibleDrafts = draftWindow.Count(x => CatalogTargets.IsEnabled(x.CatalogTarget, x.SendToCatalog))
-            }
+            },
+            Tracking = BuildTrackingSummary(trackingEntries, trackingWindow, clickWindow)
         };
+
+        _cache.Set(cacheKey, summary, SummaryCacheTtl);
+        return summary;
     }
 
     public async Task<IReadOnlyList<HotDealItem>> GetHotDealsAsync(int hours, int limit, CancellationToken cancellationToken)
     {
         var windowHours = Math.Clamp(hours, 1, 168); // Max 1 week
+        var normalizedLimit = Math.Clamp(limit, 1, 24);
+        var cacheKey = $"analytics:hot-deals:{windowHours}:{normalizedLimit}";
+        if (_cache.TryGetValue(cacheKey, out List<HotDealItem>? cachedDeals) && cachedDeals is not null)
+        {
+            return cachedDeals;
+        }
+
         var start = DateTimeOffset.UtcNow.AddHours(-windowHours);
 
         var clicks = await _clickLogStore.QueryAsync(null, null, 5000, cancellationToken);
@@ -138,7 +194,7 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
             .Where(x => !string.IsNullOrWhiteSpace(x.TargetUrl))
             .GroupBy(x => x.TargetUrl, StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(g => g.Count())
-            .Take(limit * 3)
+            .Take(normalizedLimit * 3)
             .Select(g => new { Url = g.Key, Count = g.Count() })
             .ToList();
 
@@ -165,16 +221,16 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
                     Store = match.Store
                 });
 
-                if (deals.Count >= limit) break;
+                if (deals.Count >= normalizedLimit) break;
             }
         }
 
-        if (deals.Count < limit)
+        if (deals.Count < normalizedLimit)
         {
             var newest = activeItems
                 .Where(x => deals.All(d => d.ProductId != x.Id))
                 .OrderByDescending(x => x.PublishedAt)
-                .Take(limit - deals.Count);
+                .Take(normalizedLimit - deals.Count);
 
             foreach (var item in newest)
             {
@@ -191,12 +247,19 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
             }
         }
 
+        _cache.Set(cacheKey, deals, SummaryCacheTtl);
         return deals;
     }
 
     public async Task<List<ClickAnalyticsSummary>> GetCategorizedSummaryAsync(int hours, CancellationToken cancellationToken)
     {
         var windowHours = Math.Clamp(hours, 1, 168);
+        var cacheKey = $"analytics:categorized:{windowHours}";
+        if (_cache.TryGetValue(cacheKey, out List<ClickAnalyticsSummary>? cachedCategories) && cachedCategories is not null)
+        {
+            return cachedCategories;
+        }
+
         var start = DateTimeOffset.UtcNow.AddHours(-windowHours);
         var categories = new[] { "bio", "catalog", "converter", null };
         var result = new List<ClickAnalyticsSummary>();
@@ -222,11 +285,259 @@ public sealed class OperationalAnalyticsService : IOperationalAnalyticsService
             });
         }
 
+        _cache.Set(cacheKey, result, SummaryCacheTtl);
         return result;
     }
 
     private static double CalculateRate(int success, int total)
         => total <= 0 ? 0 : Math.Round(success * 100d / total, 2);
+
+    private static TrackingAnalyticsSummary BuildTrackingSummary(
+        IReadOnlyList<LinkTrackingEntry> allTrackingEntries,
+        List<LinkTrackingEntry> trackingWindow,
+        List<ClickLogEntry> clickWindow)
+    {
+        var allEntriesByKey = allTrackingEntries
+            .SelectMany(entry => ResolveTrackingKeys(entry).Select(key => new { Key = key, Entry = entry }))
+            .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Entry, StringComparer.OrdinalIgnoreCase);
+
+        var clickGroups = clickWindow
+            .Select(click =>
+            {
+                var key = ResolveTrackingKey(click);
+                allEntriesByKey.TryGetValue(key, out var entry);
+                var originSurface = TrackingAttributionHelper.NormalizeSurface(click.OriginSurface, entry?.OriginSurface ?? "unknown");
+                var clickSurface = TrackingAttributionHelper.InferClickAttribution(
+                    click.ClickSurface ?? click.Source,
+                    click.PageType,
+                    click.PageUrl,
+                    click.Referrer,
+                    click.TargetUrl,
+                    click.OriginSurface ?? entry?.OriginSurface).ClickSurface;
+
+                return new
+                {
+                    Key = key,
+                    Entry = entry,
+                    Click = click,
+                    OriginSurface = originSurface,
+                    ClickSurface = clickSurface,
+                    ClickChannel = TrackingAttributionHelper.ResolveChannelFromSurface(clickSurface),
+                    Store = entry?.Store ?? "unknown",
+                    Campaign = click.Campaign ?? entry?.Campaign
+                };
+            })
+            .ToList();
+
+        var clickCountsByKey = clickGroups
+            .Where(x => !string.IsNullOrWhiteSpace(x.Key))
+            .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        var linksWithClicks = trackingWindow
+            .Count(entry => ResolveTrackingKeys(entry).Any(key => clickCountsByKey.ContainsKey(key)));
+
+        var publishedOrEmitted = trackingWindow.Count(x =>
+        {
+            var surface = TrackingAttributionHelper.NormalizeSurface(x.OriginSurface);
+            return surface is not "conversor_web" and not "conversor_admin";
+        });
+
+        var topOffers = allTrackingEntries
+            .Select(entry => new TrackingLinkPerformanceItem
+            {
+                TrackingId = entry.Id,
+                TrackingSlug = string.IsNullOrWhiteSpace(entry.Slug) ? null : entry.Slug,
+                TargetUrl = entry.TargetUrl,
+                Store = string.IsNullOrWhiteSpace(entry.Store) ? "unknown" : entry.Store,
+                OriginSurface = TrackingAttributionHelper.NormalizeSurface(entry.OriginSurface),
+                Campaign = entry.Campaign,
+                Clicks = ResolveTrackingKeys(entry)
+                    .Where(key => clickCountsByKey.TryGetValue(key, out _))
+                    .Select(key => clickCountsByKey[key])
+                    .DefaultIfEmpty(entry.Clicks)
+                    .Max(),
+                CreatedAt = entry.CreatedAt
+            })
+            .Where(x => x.Clicks > 0)
+            .OrderByDescending(x => x.Clicks)
+            .ThenByDescending(x => x.CreatedAt)
+            .Take(5)
+            .ToList();
+
+        var lowEngagementLinks = trackingWindow
+            .Select(entry => new TrackingLinkPerformanceItem
+            {
+                TrackingId = entry.Id,
+                TrackingSlug = string.IsNullOrWhiteSpace(entry.Slug) ? null : entry.Slug,
+                TargetUrl = entry.TargetUrl,
+                Store = string.IsNullOrWhiteSpace(entry.Store) ? "unknown" : entry.Store,
+                OriginSurface = TrackingAttributionHelper.NormalizeSurface(entry.OriginSurface),
+                Campaign = entry.Campaign,
+                Clicks = ResolveTrackingKeys(entry)
+                    .Where(key => clickCountsByKey.TryGetValue(key, out _))
+                    .Select(key => clickCountsByKey[key])
+                    .DefaultIfEmpty(0)
+                    .Max(),
+                CreatedAt = entry.CreatedAt
+            })
+            .Where(x => x.Clicks <= 1)
+            .OrderBy(x => x.Clicks)
+            .ThenByDescending(x => x.CreatedAt)
+            .Take(5)
+            .ToList();
+
+        var surfacePerformance = trackingWindow
+            .GroupBy(x => TrackingAttributionHelper.NormalizeSurface(x.OriginSurface), StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var matchingClicks = clickGroups.Where(x => string.Equals(x.OriginSurface, g.Key, StringComparison.OrdinalIgnoreCase)).ToList();
+                var clickedLinks = g.Count(entry => ResolveTrackingKeys(entry).Any(key => clickCountsByKey.ContainsKey(key)));
+                return new TrackingSurfacePerformanceItem
+                {
+                    Surface = g.Key,
+                    LinksCreated = g.Count(),
+                    Clicks = matchingClicks.Count,
+                    ClickedLinks = clickedLinks,
+                    Ctr = g.Count() == 0 ? 0 : Math.Round(clickedLinks * 100d / g.Count(), 2)
+                };
+            })
+            .OrderByDescending(x => x.Ctr)
+            .ThenByDescending(x => x.Clicks)
+            .Take(8)
+            .ToList();
+
+        var storeChannelPerformance = clickGroups
+            .Where(x => !string.IsNullOrWhiteSpace(x.Store))
+            .GroupBy(x => new
+            {
+                Store = string.IsNullOrWhiteSpace(x.Store) ? "unknown" : x.Store,
+                Channel = x.ClickChannel
+            })
+            .OrderByDescending(g => g.Count())
+            .Take(8)
+            .Select(g => new TrackingStoreChannelItem
+            {
+                Store = g.Key.Store,
+                Channel = g.Key.Channel,
+                Clicks = g.Count()
+            })
+            .ToList();
+
+        var matrix = clickGroups
+            .GroupBy(x => new { x.OriginSurface, x.ClickSurface })
+            .OrderByDescending(g => g.Count())
+            .Take(16)
+            .Select(g => new TrackingSurfaceMatrixItem
+            {
+                OriginSurface = g.Key.OriginSurface,
+                ClickSurface = g.Key.ClickSurface,
+                Count = g.Count()
+            })
+            .ToList();
+
+        return new TrackingAnalyticsSummary
+        {
+            TotalLinksCreated = trackingWindow.Count,
+            TotalLinksClicked = clickWindow.Count,
+            LinksWithClicks = linksWithClicks,
+            AvgClicksPerLink = trackingWindow.Count == 0 ? 0 : Math.Round(clickWindow.Count / (double)trackingWindow.Count, 2),
+            Funnel = new TrackingFunnelSummary
+            {
+                Generated = trackingWindow.Count,
+                PublishedOrEmitted = publishedOrEmitted,
+                Clicked = linksWithClicks
+            },
+            TopOriginSurfaces = BuildBreakdown(trackingWindow, x => TrackingAttributionHelper.NormalizeSurface(x.OriginSurface), 6),
+            TopClickSurfaces = BuildBreakdown(clickGroups, x => x.ClickSurface, 6),
+            TopCampaigns = BuildBreakdown(clickGroups, x => x.Campaign, 6),
+            TopStores = BuildBreakdown(clickGroups, x => x.Store, 6),
+            SurfacePerformance = surfacePerformance,
+            StoreChannelPerformance = storeChannelPerformance,
+            SurfaceMatrix = matrix,
+            LowEngagementLinks = lowEngagementLinks,
+            TopOffers = topOffers,
+            StrategicInsights = BuildStrategicInsights(surfacePerformance, lowEngagementLinks, storeChannelPerformance)
+        };
+    }
+
+    private static List<TrackingInsightItem> BuildStrategicInsights(
+        List<TrackingSurfacePerformanceItem> surfacePerformance,
+        List<TrackingLinkPerformanceItem> lowEngagementLinks,
+        List<TrackingStoreChannelItem> storeChannelPerformance)
+    {
+        var insights = new List<TrackingInsightItem>();
+
+        var bestSurface = surfacePerformance.FirstOrDefault();
+        if (bestSurface is not null)
+        {
+            insights.Add(new TrackingInsightItem
+            {
+                Title = "Superfície com melhor tração",
+                Message = bestSurface.LinksCreated < 5
+                    ? $"{bestSurface.Surface} lidera por enquanto, mas ainda é sinal fraco com {bestSurface.LinksCreated} links."
+                    : $"{bestSurface.Surface} está puxando a melhor taxa de clique do período, com {bestSurface.Ctr}% de links acionados.",
+                Strength = bestSurface.LinksCreated < 5 ? "sinal_fraco" : "forte"
+            });
+        }
+
+        var weakLinks = lowEngagementLinks.Where(x => x.Clicks == 0).Take(2).ToList();
+        if (weakLinks.Count > 0)
+        {
+            insights.Add(new TrackingInsightItem
+            {
+                Title = "Links pedindo redistribuição",
+                Message = weakLinks.Count < 2
+                    ? $"{weakLinks[0].OriginSurface} gerou links sem clique relevante. Vale testar outra superfície ou CTA."
+                    : $"{string.Join(" e ", weakLinks.Select(x => x.OriginSurface).Distinct(StringComparer.OrdinalIgnoreCase).Take(2))} têm links recentes sem clique. Bom ponto para revisar CTA e distribuição.",
+                Strength = "sinal_medio"
+            });
+        }
+
+        var bestStoreChannel = storeChannelPerformance.FirstOrDefault();
+        if (bestStoreChannel is not null)
+        {
+            insights.Add(new TrackingInsightItem
+            {
+                Title = "Canal mais forte por loja",
+                Message = bestStoreChannel.Clicks < 5
+                    ? $"{bestStoreChannel.Channel} aparece melhor para {bestStoreChannel.Store}, mas ainda com amostra pequena."
+                    : $"{bestStoreChannel.Channel} está performando melhor para {bestStoreChannel.Store} nesta janela.",
+                Strength = bestStoreChannel.Clicks < 5 ? "sinal_fraco" : "forte"
+            });
+        }
+
+        return insights;
+    }
+
+    private static IEnumerable<string> ResolveTrackingKeys(LinkTrackingEntry entry)
+    {
+        if (!string.IsNullOrWhiteSpace(entry.Id))
+        {
+            yield return entry.Id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Slug))
+        {
+            yield return entry.Slug;
+        }
+    }
+
+    private static string ResolveTrackingKey(ClickLogEntry click)
+    {
+        if (!string.IsNullOrWhiteSpace(click.TrackingId))
+        {
+            return click.TrackingId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(click.TrackingSlug))
+        {
+            return click.TrackingSlug;
+        }
+
+        return string.Empty;
+    }
 
     private static List<OperationalBreakdownItem> BuildBreakdown<T>(IEnumerable<T> source, Func<T, string?> selector, int take)
     {

@@ -15,6 +15,8 @@ public sealed class UptimeHeartbeatService : BackgroundService
     private readonly ILogger<UptimeHeartbeatService> _logger;
     private int _consecutiveFailures;
     private bool _outageAlertSent;
+    private bool _recoveryAlertSent;
+    private int _consecutiveRecoverySuccesses;
 
     public UptimeHeartbeatService(
         IHttpClientFactory httpClientFactory,
@@ -49,6 +51,8 @@ public sealed class UptimeHeartbeatService : BackgroundService
 
                 _consecutiveFailures = 0;
                 _outageAlertSent = false;
+                _recoveryAlertSent = false;
+                _consecutiveRecoverySuccesses = 0;
 
                 await DelayAsync(interval, stoppingToken);
                 continue;
@@ -64,6 +68,8 @@ public sealed class UptimeHeartbeatService : BackgroundService
 
                 _consecutiveFailures = 0;
                 _outageAlertSent = false;
+                _recoveryAlertSent = false;
+                _consecutiveRecoverySuccesses = 0;
 
                 await DelayAsync(interval, stoppingToken);
                 continue;
@@ -131,14 +137,31 @@ public sealed class UptimeHeartbeatService : BackgroundService
     {
         if (heartbeatOk)
         {
-            if (_outageAlertSent && options.RecoveryAlertEnabled)
+            // Se estava fora de serviço, incrementa contador de sucessos
+            if (_outageAlertSent && _consecutiveRecoverySuccesses < 2)
             {
-                await SendAlertsAsync(options, BuildRecoveryMessage(), stoppingToken);
+                _consecutiveRecoverySuccesses++;
+                _logger.LogInformation("Heartbeat recuperando: {SuccessCount}/2 tentativas bem-sucedidas", _consecutiveRecoverySuccesses);
+            }
+
+            // Só confirma recuperação após 2 sucessos consecutivos (evita falsos positivos)
+            if (_outageAlertSent && !_recoveryAlertSent && _consecutiveRecoverySuccesses >= 2 && options.RecoveryAlertEnabled)
+            {
+                var message = BuildOnlineMessage();
+                await SendAlertsAsync(options, message, stoppingToken);
+                _recoveryAlertSent = true;
+                _logger.LogInformation("Sistema confirmado como ONLINE após recuperação bem-sucedida");
             }
 
             _consecutiveFailures = 0;
-            _outageAlertSent = false;
             return;
+        }
+
+        // Se estava em recuperação, reseta o contador
+        if (_consecutiveRecoverySuccesses > 0)
+        {
+            _logger.LogWarning("Heartbeat falhou durante recuperação. Resetando contador de sucessos");
+            _consecutiveRecoverySuccesses = 0;
         }
 
         _consecutiveFailures++;
@@ -157,6 +180,8 @@ public sealed class UptimeHeartbeatService : BackgroundService
         if (sent)
         {
             _outageAlertSent = true;
+            _consecutiveRecoverySuccesses = 0;
+            _recoveryAlertSent = false;
         }
     }
 
@@ -263,6 +288,12 @@ public sealed class UptimeHeartbeatService : BackgroundService
     {
         var ts = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
         return $"RECUPERADO: heartbeat voltou ao normal. Horario: {ts}";
+    }
+
+    private static string BuildOnlineMessage()
+    {
+        var ts = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
+        return $"✅ SISTEMA ONLINE: AchadinhosBot recuperou após queda. Sistema operacional e respondendo normalmente. Horario: {ts}";
     }
 
     private static async Task DelayAsync(TimeSpan delay, CancellationToken stoppingToken)

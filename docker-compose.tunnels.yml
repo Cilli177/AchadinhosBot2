@@ -1,0 +1,48 @@
+name: achadinhos-tunnels
+
+services:
+  cloudflared-dev:
+    image: cloudflare/cloudflared:2026.3.0
+    container_name: achadinhos-cloudflared-dev
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --config
+      - /etc/cloudflared/config/config.dev.yml
+      - --metrics
+      - 0.0.0.0:2012
+      - run
+    volumes:
+      - type: bind
+        source: ./cloudflared/generated/config.dev.yml
+        target: /etc/cloudflared/config/config.dev.yml
+        read_only: true
+      - type: bind
+        source: ${USERPROFILE}/.cloudflared
+        target: /etc/cloudflared/creds
+        read_only: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  cloudflared-prod:
+    image: cloudflare/cloudflared:2026.3.0
+    container_name: achadinhos-cloudflared-prod
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --config
+      - /etc/cloudflared/config/config.prod.yml
+      - --metrics
+      - 0.0.0.0:2012
+      - run
+    volumes:
+      - type: bind
+        source: ./cloudflared/generated/config.prod.yml
+        target: /etc/cloudflared/config/config.prod.yml
+        read_only: true
+      - type: bind
+        source: ${USERPROFILE}/.cloudflared
+        target: /etc/cloudflared/creds
+        read_only: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

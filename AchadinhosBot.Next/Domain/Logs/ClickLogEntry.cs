@@ -5,6 +5,7 @@ public sealed class ClickLogEntry
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
     public string TrackingId { get; set; } = string.Empty;
+    public string? TrackingSlug { get; set; }
     public string? VisitorId { get; set; }
     public string? SessionId { get; set; }
     public string? EventType { get; set; }
@@ -14,6 +15,10 @@ public sealed class ClickLogEntry
     public string Source { get; set; } = "LinkTracking";
     public string? Category { get; set; }
     public string? Campaign { get; set; }
+    public string? OriginChannel { get; set; }
+    public string? OriginSurface { get; set; }
+    public string? ClickChannel { get; set; }
+    public string? ClickSurface { get; set; }
     public string? SourceComponent { get; set; }
     public string? OfferId { get; set; }
     public string? DraftId { get; set; }

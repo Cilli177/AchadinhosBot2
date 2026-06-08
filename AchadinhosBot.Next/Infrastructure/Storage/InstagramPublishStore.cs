@@ -46,6 +46,7 @@ public sealed class InstagramPublishStore : IInstagramPublishStore
         await _mutex.WaitAsync(ct);
         try
         {
+            NormalizeDraftForPersist(draft);
             var items = await ReadAllAsync(ct);
             items.Add(draft);
             await WriteAllAsync(items, ct);
@@ -61,6 +62,7 @@ public sealed class InstagramPublishStore : IInstagramPublishStore
         await _mutex.WaitAsync(ct);
         try
         {
+            NormalizeDraftForPersist(draft);
             var items = await ReadAllAsync(ct);
             var idx = items.FindIndex(x => x.Id == draft.Id);
             if (idx >= 0)
@@ -105,5 +107,17 @@ public sealed class InstagramPublishStore : IInstagramPublishStore
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         var json = JsonSerializer.Serialize(items);
         await File.WriteAllTextAsync(_path, json, ct);
+    }
+
+    private static void NormalizeDraftForPersist(InstagramPublishDraft draft)
+    {
+        if (string.IsNullOrWhiteSpace(draft.ProcessName))
+        {
+            draft.ProcessName = InstagramProcessNames.ReelAssistido;
+        }
+        else
+        {
+            draft.ProcessName = draft.ProcessName.Trim();
+        }
     }
 }

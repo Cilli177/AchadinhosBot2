@@ -7,7 +7,7 @@
       "module": "Watch updates",
       "type": "trigger",
       "config": {
-        "connection_bot_token": "8574127810:AAHxTox1c1OMx2gEoSyYE3rCAZLVOWvA0zg",
+        "connection_bot_token": "{{secrets.telegram_bot_token}}",
         "update_types": [
           "message"
         ]
@@ -46,7 +46,7 @@
           "Content-Type": "application/json"
         },
         "body_type": "raw",
-        "body": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+        "body": "{\"username\":\"{{secrets.admin_username}}\",\"password\":\"{{secrets.admin_password}}\"}",
         "store_cookies": true
       }
     },

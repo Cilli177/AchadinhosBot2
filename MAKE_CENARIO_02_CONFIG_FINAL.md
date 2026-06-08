@@ -31,7 +31,7 @@ Na conexao para o modulo 2:
 - Headers: `Content-Type: application/json`
 - Body (Raw):
 ```json
-{"username":"admin","password":"admin123"}
+{"username":"{{secrets.admin_username}}","password":"{{secrets.admin_password}}"}
 ```
 - Cookie handling: habilitar para reutilizar no proximo request
 

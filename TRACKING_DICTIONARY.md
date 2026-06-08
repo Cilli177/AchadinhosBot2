@@ -6,6 +6,35 @@ Padronizar tags de rastreabilidade para todos os links gerados pelo bot, com foc
 - atribuicao por superficie (grupo, DM, story, site);
 - leitura consistente em relatorios.
 
+## IDs curtos decorados
+
+O padrao operacional dos links curtos deve permanecer compacto para leitura humana e atribuicao rapida de origem/nicho.
+
+Exemplo:
+
+- `AM-W000001`
+
+Formato:
+
+- `{LOJA}-{ORIGEM}{SEQUENCIAL}`
+
+Letras de origem/nicho:
+
+- `W`: WhatsApp VIP
+- `M`: Moda
+- `C`: Casa
+- `B`: Beleza
+- `F`: Fitness/Health
+- `T`: Tech
+- `A`: Ate R$50
+
+Regras:
+
+1. Nao substituir este padrao por query strings longas para identificar origem/nicho.
+2. O mesmo produto pode ter mais de um destino de nicho, mas cada link publicado deve manter origem compacta.
+3. Links oficiais devem continuar usando rota curta `/r/{trackingId}`.
+4. Bypasses temporarios que devolvem o link afiliado cru nao devem ser commitados em `dev`.
+
 ## Campos obrigatorios
 1. `ab_source`
 2. `ab_channel`

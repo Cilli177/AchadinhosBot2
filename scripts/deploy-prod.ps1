@@ -37,6 +37,12 @@ function Assert-VolumeExists {
     }
 }
 
+function Test-VolumeExists {
+    param([Parameter(Mandatory = $true)][string]$VolumeName)
+    $existing = docker volume ls --format "{{.Name}}" | Where-Object { $_ -eq $VolumeName }
+    return [bool]$existing
+}
+
 function Backup-Volume {
     param(
         [Parameter(Mandatory = $true)][string]$SourceVolume,
@@ -54,11 +60,9 @@ Assert-CommandExists -Name "docker"
 Assert-PathExists -PathValue $composeFile
 Assert-PathExists -PathValue $envFile
 
-Assert-VolumeExists -VolumeName $dataVolume
 Assert-VolumeExists -VolumeName $rabbitMqVolume
-if ($BackupLogs) {
-    Assert-VolumeExists -VolumeName $logsVolume
-}
+$dataVolumeExists = Test-VolumeExists -VolumeName $dataVolume
+$logsVolumeExists = Test-VolumeExists -VolumeName $logsVolume
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $dataBackup = "${dataVolume}_backup_${timestamp}"
@@ -66,14 +70,36 @@ $logsBackup = "${logsVolume}_backup_${timestamp}"
 $rabbitMqBackup = "${rabbitMqVolume}_backup_${timestamp}"
 
 if (-not $SkipBackup) {
-    Backup-Volume -SourceVolume $dataVolume -BackupName $dataBackup
+    if ($dataVolumeExists) {
+        Backup-Volume -SourceVolume $dataVolume -BackupName $dataBackup
+    }
+    else {
+        Write-Warning "Volume de dados nao encontrado. Backup do data sera ignorado neste host."
+    }
     Backup-Volume -SourceVolume $rabbitMqVolume -BackupName $rabbitMqBackup
     if ($BackupLogs) {
-        Backup-Volume -SourceVolume $logsVolume -BackupName $logsBackup
+        if ($logsVolumeExists) {
+            Backup-Volume -SourceVolume $logsVolume -BackupName $logsBackup
+        }
+        else {
+            Write-Warning "Volume de logs nao encontrado. Backup de logs sera ignorado neste host."
+        }
     }
 } else {
     Write-Warning "Backup ignorado por parametro -SkipBackup."
 }
+
+$composeArgs = @(
+    "compose",
+    "--env-file", $envFile,
+    "-p", $composeProject,
+    "-f", $composeFile,
+    "build",
+    "achadinhos-next"
+)
+
+Write-Host "Rebuilding imagem de producao..."
+docker @composeArgs
 
 $composeArgs = @(
     "compose",
@@ -94,9 +120,11 @@ docker @composeArgs
 Write-Host ""
 Write-Host "Deploy finalizado."
 if (-not $SkipBackup) {
-    Write-Host "Backup de dados: $dataBackup"
+    if ($dataVolumeExists) {
+        Write-Host "Backup de dados: $dataBackup"
+    }
     Write-Host "Backup de RabbitMQ: $rabbitMqBackup"
-    if ($BackupLogs) {
+    if ($BackupLogs -and $logsVolumeExists) {
         Write-Host "Backup de logs: $logsBackup"
     }
 }
