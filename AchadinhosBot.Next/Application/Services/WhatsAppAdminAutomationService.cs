@@ -3,16 +3,17 @@ using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Logs;
 using AchadinhosBot.Next.Domain.Models;
 using AchadinhosBot.Next.Domain.Settings;
+using AchadinhosBot.Next.Infrastructure.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace AchadinhosBot.Next.Application.Services;
 
 public sealed class WhatsAppAdminAutomationService
 {
-    private const int BlastMinUserIntervalMs = 90_000;
-    private const int BlastMaxUserIntervalMs = 300_000;
+    private const int BlastMinUserIntervalMs = 300_000;
+    private const int BlastMaxUserIntervalMs = 600_000;
     private const int BlastMaxBatchSize = 20;
-    private const int BlastMinBatchPauseSeconds = 60;
+    private const int BlastMinBatchPauseSeconds = 300;
     private const int BlastMaxBatchPauseSeconds = 900;
 
     private readonly ISettingsStore _settingsStore;
@@ -20,6 +21,7 @@ public sealed class WhatsAppAdminAutomationService
     private readonly TrackingLinkShortenerService _trackingLinkShortener;
     private readonly IWhatsAppParticipantBlastProgressStore _blastProgressStore;
     private readonly IWhatsAppGroupMembershipStore _membershipStore;
+    private readonly WhatsAppInviteConversationStore _inviteConversationStore;
     private readonly ILogger<WhatsAppAdminAutomationService> _logger;
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
@@ -29,6 +31,7 @@ public sealed class WhatsAppAdminAutomationService
         TrackingLinkShortenerService trackingLinkShortener,
         IWhatsAppParticipantBlastProgressStore blastProgressStore,
         IWhatsAppGroupMembershipStore membershipStore,
+        WhatsAppInviteConversationStore inviteConversationStore,
         ILogger<WhatsAppAdminAutomationService> logger)
     {
         _settingsStore = settingsStore;
@@ -36,6 +39,7 @@ public sealed class WhatsAppAdminAutomationService
         _trackingLinkShortener = trackingLinkShortener;
         _blastProgressStore = blastProgressStore;
         _membershipStore = membershipStore;
+        _inviteConversationStore = inviteConversationStore;
         _logger = logger;
     }
 
@@ -91,7 +95,7 @@ public sealed class WhatsAppAdminAutomationService
                     continue;
                 }
 
-                changed |= await ProcessParticipantBlastScheduleAsync(schedule, now, ct);
+                changed |= await ProcessParticipantBlastScheduleAsync(schedule, settings, now, ct);
                 processedCount++;
             }
 
@@ -194,7 +198,7 @@ public sealed class WhatsAppAdminAutomationService
             }
 
             schedule.QueuedAt = now;
-            var ok = await ProcessParticipantBlastScheduleAsync(schedule, now, ct);
+            var ok = await ProcessParticipantBlastScheduleAsync(schedule, settings, now, ct);
             await _settingsStore.SaveAsync(settings, ct);
             return (ok, schedule.LastResultMessage ?? "Disparo executado.");
         }
@@ -382,6 +386,7 @@ public sealed class WhatsAppAdminAutomationService
 
     private async Task<bool> ProcessParticipantBlastScheduleAsync(
         WhatsAppParticipantBlastSchedule schedule,
+        AutomationSettings settings,
         DateTimeOffset now,
         CancellationToken ct)
     {
@@ -422,6 +427,7 @@ public sealed class WhatsAppAdminAutomationService
             schedule.CompletedAt = now;
             schedule.LastResultMessage = "Disparo concluído sem participantes pendentes.";
             await AppendBlastProgressAsync(schedule, "schedule-completed", "info", null, schedule.LastResultMessage, ct);
+            await _settingsStore.SaveAsync(settings, ct);
             return true;
         }
 
@@ -441,7 +447,8 @@ public sealed class WhatsAppAdminAutomationService
             foreach (var participantId in batch)
             {
                 ct.ThrowIfCancellationRequested();
-                var outboundText = BuildBlastOutboundText(schedule);
+                var outbound = BuildBlastOutboundText(schedule);
+                var outboundText = outbound.Text;
 
                 try
                 {
@@ -453,11 +460,21 @@ public sealed class WhatsAppAdminAutomationService
                     {
                         consecutiveFailures = 0;
                         schedule.SuccessParticipants++;
-                        schedule.LinksSent++;
+                        if (outbound.IncludesLink)
+                        {
+                            schedule.LinksSent++;
+                        }
+
                         schedule.SentParticipantIds.Add(participantId);
                         schedule.PendingParticipantIds.RemoveAll(x => string.Equals(x, participantId, StringComparison.OrdinalIgnoreCase));
                         schedule.LastResultMessage = result.Message ?? "Mensagem enviada.";
+                        if (schedule.UseAiDialogue && !outbound.IncludesLink)
+                        {
+                            await _inviteConversationStore.StartAsync(schedule.InstanceName, participantId, schedule.Id, ct);
+                        }
+
                         await AppendBlastProgressAsync(schedule, "participant-message-sent", "info", participantId, schedule.LastResultMessage, ct);
+                        await _settingsStore.SaveAsync(settings, ct);
                     }
                     else
                     {
@@ -466,6 +483,7 @@ public sealed class WhatsAppAdminAutomationService
                         schedule.PendingParticipantIds.RemoveAll(x => string.Equals(x, participantId, StringComparison.OrdinalIgnoreCase));
                         schedule.LastResultMessage = result.Message ?? "Falha ao enviar mensagem.";
                         await AppendBlastProgressAsync(schedule, "participant-message-failed", "warn", participantId, schedule.LastResultMessage, ct);
+                        await _settingsStore.SaveAsync(settings, ct);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -476,6 +494,7 @@ public sealed class WhatsAppAdminAutomationService
                     schedule.PendingParticipantIds.RemoveAll(x => string.Equals(x, participantId, StringComparison.OrdinalIgnoreCase));
                     schedule.LastResultMessage = AutomationSettingsSanitizer.NormalizeNullable(ex.Message) ?? "Falha inesperada ao enviar mensagem.";
                     await AppendBlastProgressAsync(schedule, "participant-message-failed", "error", participantId, schedule.LastResultMessage, ct);
+                    await _settingsStore.SaveAsync(settings, ct);
                     _logger.LogWarning(ex, "Falha ao disparar convite WhatsApp para participante {ParticipantId} no schedule {ScheduleId}", participantId, schedule.Id);
                 }
 
@@ -485,6 +504,7 @@ public sealed class WhatsAppAdminAutomationService
                     schedule.Status = "paused";
                     schedule.LastResultMessage = "Disparo pausado automaticamente após 5 falhas consecutivas.";
                     await AppendBlastProgressAsync(schedule, "schedule-paused", "error", null, schedule.LastResultMessage, ct);
+                    await _settingsStore.SaveAsync(settings, ct);
                     break;
                 }
 
@@ -500,6 +520,7 @@ public sealed class WhatsAppAdminAutomationService
             schedule.LastProgressAt = DateTimeOffset.UtcNow;
             schedule.LastResultMessage = $"Lote concluído. Restam {schedule.PendingParticipantIds.Count} participante(s). Pausa de {schedule.BatchPauseSeconds}s.";
             await AppendBlastProgressAsync(schedule, "batch-paused", "info", null, schedule.LastResultMessage, ct);
+            await _settingsStore.SaveAsync(settings, ct);
             await Task.Delay(TimeSpan.FromSeconds(schedule.BatchPauseSeconds), ct);
         }
 
@@ -510,6 +531,7 @@ public sealed class WhatsAppAdminAutomationService
             schedule.CompletedAt = DateTimeOffset.UtcNow;
             schedule.LastResultMessage = $"Disparo concluído. {schedule.SuccessParticipants} envio(s) com sucesso e {schedule.FailedParticipants} falha(s).";
             await AppendBlastProgressAsync(schedule, "schedule-completed", "info", null, schedule.LastResultMessage, ct);
+            await _settingsStore.SaveAsync(settings, ct);
         }
 
         return true;
@@ -607,9 +629,9 @@ public sealed class WhatsAppAdminAutomationService
         => Math.Clamp(value <= 0 ? 12 : value, 1, BlastMaxBatchSize);
 
     private static int NormalizeBlastBatchPauseSeconds(int value)
-        => Math.Clamp(value <= 0 ? 120 : value, BlastMinBatchPauseSeconds, BlastMaxBatchPauseSeconds);
+        => Math.Clamp(value <= 0 ? 300 : value, BlastMinBatchPauseSeconds, BlastMaxBatchPauseSeconds);
 
-    private static string BuildBlastOutboundText(WhatsAppParticipantBlastSchedule schedule)
+    private static BlastOutboundMessage BuildBlastOutboundText(WhatsAppParticipantBlastSchedule schedule)
     {
         var baseText = !string.IsNullOrWhiteSpace(schedule.SecurityPitch)
             ? schedule.SecurityPitch!.Trim()
@@ -621,14 +643,33 @@ public sealed class WhatsAppAdminAutomationService
             lines.Add(baseText);
         }
 
+        if (schedule.UseAiDialogue && !schedule.SendLinkOnTimeout)
+        {
+            lines.Add(BuildNicheChoiceMenu());
+            return new BlastOutboundMessage(string.Join("\n\n", lines.Where(x => !string.IsNullOrWhiteSpace(x))), false);
+        }
+
         if (!string.IsNullOrWhiteSpace(normalizedLink))
         {
             lines.Add("Link oficial do grupo:");
             lines.Add(normalizedLink);
         }
 
-        return string.Join("\n\n", lines.Where(x => !string.IsNullOrWhiteSpace(x)));
+        return new BlastOutboundMessage(string.Join("\n\n", lines.Where(x => !string.IsNullOrWhiteSpace(x))), !string.IsNullOrWhiteSpace(normalizedLink));
     }
+
+    private static string BuildNicheChoiceMenu()
+        => string.Join("\n", new[]
+        {
+            "Temos grupos separados por nicho:",
+            "1 - Tech e eletronicos",
+            "2 - Casa, cozinha e organizacao",
+            "3 - Beleza e cuidados",
+            "4 - Moda, calcados e acessorios",
+            "5 - Fitness e saude",
+            "",
+            "Responda com o numero ou nome do nicho que eu te mando apenas o link escolhido."
+        });
 
     private static string NormalizeScheduledMessageLinks(string? text)
     {
@@ -647,6 +688,8 @@ public sealed class WhatsAppAdminAutomationService
         return normalized;
     }
 }
+
+internal sealed record BlastOutboundMessage(string Text, bool IncludesLink);
 
 public sealed class WhatsAppParticipantBlastConversionSnapshot
 {

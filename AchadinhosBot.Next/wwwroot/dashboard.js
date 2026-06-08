@@ -8918,11 +8918,12 @@ function prefillOutreachMessageTemplate() {
   setSafeVal('waOutreachPreLinkMessages', '3');
   setSafeVal('waOutreachWaitMode', 'response-or-timeout');
   setSafeVal('waOutreachPitchPreset', 'amigavel');
-  setSafeVal('waOutreachMinIntervalMs', '1200');
-  setSafeVal('waOutreachMaxIntervalMs', '2600');
-  setSafeVal('waOutreachBatchSize', '25');
-  setSafeVal('waOutreachBatchPauseSeconds', '90');
-  setSafeChecked('waOutreachSendLinkOnTimeout', true);
+  setSafeVal('waOutreachIntervalMs', '300000');
+  setSafeVal('waOutreachMinIntervalMs', '300000');
+  setSafeVal('waOutreachMaxIntervalMs', '600000');
+  setSafeVal('waOutreachBatchSize', '10');
+  setSafeVal('waOutreachBatchPauseSeconds', '300');
+  setSafeChecked('waOutreachSendLinkOnTimeout', false);
   const status = document.getElementById('waOutreachStatus');
   if (status) {
     status.textContent = 'Template aplicado. Ajuste pitch e link antes de disparar.';
@@ -9022,15 +9023,15 @@ async function sendOutreachMessages() {
   const useAllParticipants = document.getElementById('waOutreachUseAllParticipants')?.checked === true;
   const message = (document.getElementById('waOutreachMessage')?.value || '').trim();
   const linkUrl = (document.getElementById('waOutreachLinkUrl')?.value || '').trim();
-  const intervalMs = parseInt(document.getElementById('waOutreachIntervalMs')?.value || '1500', 10) || 1500;
-  const minUserIntervalMs = parseInt(document.getElementById('waOutreachMinIntervalMs')?.value || '1200', 10) || 1200;
-  const maxUserIntervalMs = parseInt(document.getElementById('waOutreachMaxIntervalMs')?.value || '2600', 10) || 2600;
-  const batchSize = parseInt(document.getElementById('waOutreachBatchSize')?.value || '25', 10) || 25;
-  const batchPauseSeconds = parseInt(document.getElementById('waOutreachBatchPauseSeconds')?.value || '90', 10) || 90;
+  const intervalMs = parseInt(document.getElementById('waOutreachIntervalMs')?.value || '300000', 10) || 300000;
+  const minUserIntervalMs = parseInt(document.getElementById('waOutreachMinIntervalMs')?.value || '300000', 10) || 300000;
+  const maxUserIntervalMs = parseInt(document.getElementById('waOutreachMaxIntervalMs')?.value || '600000', 10) || 600000;
+  const batchSize = parseInt(document.getElementById('waOutreachBatchSize')?.value || '10', 10) || 10;
+  const batchPauseSeconds = parseInt(document.getElementById('waOutreachBatchPauseSeconds')?.value || '300', 10) || 300;
   const preLinkMessages = parseInt(document.getElementById('waOutreachPreLinkMessages')?.value || '3', 10) || 3;
   const waitMode = (document.getElementById('waOutreachWaitMode')?.value || 'response-or-timeout').trim();
   const waitTimeoutSeconds = parseInt(document.getElementById('waOutreachWaitTimeoutSeconds')?.value || '120', 10) || 120;
-  const sendLinkOnTimeout = document.getElementById('waOutreachSendLinkOnTimeout')?.checked !== false;
+  const sendLinkOnTimeout = document.getElementById('waOutreachSendLinkOnTimeout')?.checked === true;
   const status = document.getElementById('waOutreachStatus');
   const btn = document.getElementById('btnOutreachSend');
 

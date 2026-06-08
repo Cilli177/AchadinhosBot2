@@ -2897,27 +2897,27 @@
                 </div>
                 <div>
                   <label>Intervalo entre mensagens (ms)</label>
-                  <input id="waOutreachIntervalMs" type="number" min="250" max="15000" value="1500" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  <input id="waOutreachIntervalMs" type="number" min="300000" max="600000" value="300000" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
                 </div>
                 <div>
                   <label>Limite recomendado por disparo</label>
-                  <input id="waOutreachRecommendedLimit" type="number" value="80" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" oninput="applyOutreachParticipantLimit(this.value)" />
+                  <input id="waOutreachRecommendedLimit" type="number" value="20" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" oninput="applyOutreachParticipantLimit(this.value)" />
                 </div>
                 <div>
                   <label>Intervalo mínimo entre usuários (ms)</label>
-                  <input id="waOutreachMinIntervalMs" type="number" min="250" max="30000" value="1200" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  <input id="waOutreachMinIntervalMs" type="number" min="300000" max="600000" value="300000" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
                 </div>
                 <div>
                   <label>Intervalo máximo entre usuários (ms)</label>
-                  <input id="waOutreachMaxIntervalMs" type="number" min="250" max="30000" value="2600" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  <input id="waOutreachMaxIntervalMs" type="number" min="300000" max="600000" value="600000" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
                 </div>
                 <div>
                   <label>Tamanho do lote</label>
-                  <input id="waOutreachBatchSize" type="number" min="1" max="200" value="25" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  <input id="waOutreachBatchSize" type="number" min="1" max="20" value="10" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
                 </div>
                 <div>
                   <label>Pausa entre lotes (segundos)</label>
-                  <input id="waOutreachBatchPauseSeconds" type="number" min="0" max="1800" value="90" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
+                  <input id="waOutreachBatchPauseSeconds" type="number" min="300" max="1800" value="300" class="form-control" style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px;" />
                 </div>
                 <div>
                   <label>Mensagens antes do link</label>
@@ -2940,7 +2940,7 @@
                 <div>
                   <label>Fallback de envio</label>
                   <label style="display:flex; align-items:center; gap:8px; padding-top:8px;">
-                    <input type="checkbox" id="waOutreachSendLinkOnTimeout" checked />
+                    <input type="checkbox" id="waOutreachSendLinkOnTimeout" />
                     <span>Enviar link mesmo sem resposta após timeout</span>
                   </label>
                 </div>

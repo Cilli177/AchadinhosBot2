@@ -354,6 +354,7 @@ builder.Services.AddSingleton<DeliverySafetyPolicy>();
 builder.Services.AddSingleton<LoginAttemptStore>();
 builder.Services.AddSingleton<IWhatsAppGroupMembershipStore, WhatsAppGroupMembershipStore>();
 builder.Services.AddSingleton<WhatsAppWelcomeJourneyStore>();
+builder.Services.AddSingleton<WhatsAppInviteConversationStore>();
 
 builder.Services.AddMassTransit(x =>
 {
@@ -2501,6 +2502,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     InstagramConversationStore instagramStore,
     InstagramCommandMenuStore instagramMenuStore,
     WhatsAppHelpMenuStore helpMenuStore,
+    WhatsAppInviteConversationStore inviteConversationStore,
     InstagramLinkMetaService instagramMeta,
     InstagramImageDownloadService instagramImages,
     IIdempotencyStore idempotency,
@@ -2597,6 +2599,19 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
         var instaSettings = settings.InstagramPosts;
         var normalizedText = msg.Text?.Trim() ?? string.Empty;
+        if (!msg.FromMe &&
+            await TryHandleWhatsAppInviteConversationAsync(
+                msg,
+                normalizedText,
+                settings,
+                inviteConversationStore,
+                SendReplyAsync,
+                ct))
+        {
+            processed++;
+            continue;
+        }
+
         if (!msg.FromMe &&
             await priceWatchConversation.TryHandleAsync(msg.InstanceName, msg.ChatId, msg.SenderId, normalizedText, ct))
         {
@@ -6896,6 +6911,12 @@ static string RemoveDiacritics(string value)
     return builder.ToString().Normalize(NormalizationForm.FormC);
 }
 
+static string NormalizeKeywordText(string? value)
+{
+    var normalized = RemoveDiacritics(value ?? string.Empty).ToLowerInvariant();
+    return Regex.Replace(normalized, @"\s+", " ").Trim();
+}
+
 static int CountUrlsInText(string? text)
 {
     if (string.IsNullOrWhiteSpace(text))
@@ -7213,6 +7234,124 @@ static string? FirstNonEmpty(params string?[] values)
         {
             return value.Trim();
         }
+    }
+
+    return null;
+}
+
+static async Task<bool> TryHandleWhatsAppInviteConversationAsync(
+    WhatsAppIncomingMessage msg,
+    string normalizedText,
+    AutomationSettings settings,
+    WhatsAppInviteConversationStore inviteConversationStore,
+    Func<string?, string, string, Task> sendReplyAsync,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(normalizedText) || IsWhatsAppGroupChat(msg.ChatId))
+    {
+        return false;
+    }
+
+    var participantId = FirstNonEmpty(msg.SenderId, msg.ChatId);
+    if (string.IsNullOrWhiteSpace(participantId))
+    {
+        return false;
+    }
+
+    var state = await inviteConversationStore.GetAsync(msg.InstanceName, participantId, ct);
+    if (state is null || !state.AwaitingChoice)
+    {
+        return false;
+    }
+
+    if (DateTimeOffset.UtcNow - state.LastUpdatedAt > TimeSpan.FromDays(7))
+    {
+        await inviteConversationStore.ClearAsync(msg.InstanceName, participantId, ct);
+        return false;
+    }
+
+    if (IsInviteConversationOptOut(normalizedText))
+    {
+        await inviteConversationStore.ClearAsync(msg.InstanceName, participantId, ct);
+        await sendReplyAsync(msg.InstanceName, msg.ChatId, "Combinado. Nao vou te mandar outros links por aqui. Se quiser algum grupo depois, e so responder com o nicho: Tech, Casa, Beleza, Moda ou Fitness.");
+        return true;
+    }
+
+    var slug = ResolveInviteNicheSlug(normalizedText);
+    if (string.IsNullOrWhiteSpace(slug))
+    {
+        await sendReplyAsync(msg.InstanceName, msg.ChatId, BuildInviteChoiceMenuForReply());
+        return true;
+    }
+
+    var niche = settings.WhatsAppNicheGroups
+        .Where(x => x.Enabled)
+        .FirstOrDefault(x => string.Equals(x.Slug, slug, StringComparison.OrdinalIgnoreCase));
+    if (niche is null || string.IsNullOrWhiteSpace(niche.InviteUrl))
+    {
+        await sendReplyAsync(msg.InstanceName, msg.ChatId, "Esse grupo ainda nao esta com link ativo por aqui. Me responda outro nicho: Tech, Casa, Beleza, Moda ou Fitness.");
+        return true;
+    }
+
+    if (state.SentSlugs.Any(x => string.Equals(x, slug, StringComparison.OrdinalIgnoreCase)))
+    {
+        await sendReplyAsync(msg.InstanceName, msg.ChatId, $"Ja te mandei o link de {niche.DisplayName}. Quer outro tambem? Pode responder Tech, Casa, Beleza, Moda ou Fitness. Se nao quiser, responda \"nao\".");
+        return true;
+    }
+
+    await sendReplyAsync(msg.InstanceName, msg.ChatId, BuildInviteLinkReply(niche));
+    await inviteConversationStore.MarkLinkSentAsync(msg.InstanceName, participantId, slug, ct);
+    return true;
+}
+
+static string BuildInviteChoiceMenuForReply()
+    => string.Join("\n", new[]
+    {
+        "Temos grupos separados por nicho, pra voce receber so o que combina mais:",
+        "1 - Tech e eletronicos",
+        "2 - Casa, cozinha e organizacao",
+        "3 - Beleza e cuidados",
+        "4 - Moda, calcados e acessorios",
+        "5 - Fitness e saude",
+        "",
+        "Me responda com o numero ou nome do nicho que eu te mando apenas o link escolhido."
+    });
+
+static string BuildInviteLinkReply(WhatsAppNicheGroupSettings niche)
+    => $"Perfeito. Esse e o link oficial do grupo {niche.DisplayName}:\n{niche.InviteUrl}\n\nQuer entrar em outro tambem? Responda outro nicho: Tech, Casa, Beleza, Moda ou Fitness. Se nao quiser, responda \"nao\".";
+
+static bool IsInviteConversationOptOut(string text)
+{
+    var normalized = NormalizeKeywordText(text);
+    return normalized is "nao" or "n" or "parar" or "sair" or "cancelar" or "sem interesse" or "obrigado" or "obrigada";
+}
+
+static string? ResolveInviteNicheSlug(string text)
+{
+    var normalized = NormalizeKeywordText(text);
+    if (Regex.IsMatch(normalized, @"\b(1|tech|tecnologia|eletronico|eletronicos|informatica)\b", RegexOptions.IgnoreCase))
+    {
+        return "tech";
+    }
+
+    if (Regex.IsMatch(normalized, @"\b(2|casa|cozinha|organizacao|utilidades)\b", RegexOptions.IgnoreCase))
+    {
+        return "casa";
+    }
+
+    if (Regex.IsMatch(normalized, @"\b(3|beleza|cosmetico|cosmeticos|cuidados|make|maquiagem)\b", RegexOptions.IgnoreCase))
+    {
+        return "beleza";
+    }
+
+    if (Regex.IsMatch(normalized, @"\b(4|moda|roupa|roupas|calcado|calcados|acessorios)\b", RegexOptions.IgnoreCase))
+    {
+        return "moda";
+    }
+
+    if (Regex.IsMatch(normalized, @"\b(5|fitness|saude|academia|suplemento|suplementos)\b", RegexOptions.IgnoreCase))
+    {
+        return "fitness_health";
     }
 
     return null;

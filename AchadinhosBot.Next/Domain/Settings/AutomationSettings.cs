@@ -297,11 +297,11 @@ public sealed class WhatsAppParticipantBlastSchedule
     public string? Message { get; set; }
     public string? LinkUrl { get; set; }
     public bool UseAiDialogue { get; set; } = true;
-    public int IntervalMs { get; set; } = 3500;
-    public int MinUserIntervalMs { get; set; } = 3500;
-    public int MaxUserIntervalMs { get; set; } = 9000;
-    public int BatchSize { get; set; } = 12;
-    public int BatchPauseSeconds { get; set; } = 180;
+    public int IntervalMs { get; set; } = 300_000;
+    public int MinUserIntervalMs { get; set; } = 300_000;
+    public int MaxUserIntervalMs { get; set; } = 600_000;
+    public int BatchSize { get; set; } = 10;
+    public int BatchPauseSeconds { get; set; } = 300;
     public int PreLinkMessages { get; set; } = 3;
     public string WaitMode { get; set; } = "response-or-timeout";
     public int WaitTimeoutSeconds { get; set; } = 120;
