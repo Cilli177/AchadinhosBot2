@@ -1402,7 +1402,8 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         return Results.Ok(new { success = true, ignored = true });
     }
 
-    var membershipEvents = EvolutionMembershipEventParser.Extract(body);
+    var webhookPayload = BotConversorWebhookPayloadExtractor.Extract(body);
+    var membershipEvents = webhookPayload.MembershipEvents;
     if (membershipEvents.Count > 0)
     {
         var memStore = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.IWhatsAppGroupMembershipStore>();
@@ -1417,7 +1418,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         return Results.Ok(new { success = true, ignored = false, membershipEvents = registeredCount });
     }
 
-    var messages = EvolutionIncomingMessageExtractor.Extract(body);
+    var messages = webhookPayload.Messages;
     if (messages.Count == 0)
     {
         return Results.Ok(new { success = true, ignored = true });
@@ -7023,61 +7024,6 @@ static bool TryUnwrapMessageEnvelope(JsonElement messageNode, out JsonElement in
 
     innerMessage = default;
     return false;
-}
-
-static List<WhatsAppIncomingMessage> ExtractEvolutionMessages(string body)
-{
-    var items = new List<WhatsAppIncomingMessage>();
-    try
-    {
-        using var doc = JsonDocument.Parse(body);
-        var root = doc.RootElement;
-        var instanceName = root.TryGetProperty("instance", out var instNode) && instNode.ValueKind == JsonValueKind.String
-            ? instNode.GetString()
-            : null;
-        var data = root.TryGetProperty("data", out var dataNode) ? dataNode : root;
-
-        if (data.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in data.EnumerateArray())
-            {
-                if (TryExtractEvolutionMessage(item, instanceName, out var msg))
-                {
-                    items.Add(msg);
-                }
-            }
-            return items;
-        }
-
-        if (data.TryGetProperty("messages", out var messagesNode) && messagesNode.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in messagesNode.EnumerateArray())
-            {
-                if (TryExtractEvolutionMessage(item, instanceName, out var msg))
-                {
-                    items.Add(msg);
-                }
-            }
-            return items;
-        }
-
-        if (TryExtractEvolutionMessage(data, instanceName, out var single))
-        {
-            items.Add(single);
-            return items;
-        }
-
-        if (TryExtractEvolutionMessage(root, instanceName, out var fallback))
-        {
-            items.Add(fallback);
-        }
-    }
-    catch
-    {
-        // ignore malformed payload
-    }
-
-    return items;
 }
 
 static bool TryExtractEvolutionMessage(JsonElement node, string? instanceName, out WhatsAppIncomingMessage msg)
