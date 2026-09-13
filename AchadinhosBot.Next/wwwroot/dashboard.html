@@ -1736,6 +1736,7 @@
                     <div class="section-actions">
                       <button onclick="loadConversionLogs()">Carregar</button>
                       <button class="secondary" onclick="clearConversionLogs()">Limpar logs</button>
+                      <button class="secondary" onclick="loadConversionSnapshots()">Recuperação</button>
                     </div>
                   </div>
                   <div class="filter-grid">
@@ -1784,6 +1785,7 @@
                       <tbody id="logTableBody"></tbody>
                     </table>
                   </div>
+                  <div id="conversionSnapshots" class="muted"></div>
                 </section>
               </div>
             </div>
@@ -3322,6 +3324,7 @@
       </div>
     </main>
   </div>
+  <script src="/csrf-fetch.js"></script>
   <script src="/flow-endpoints-map.js?v=20260422-flow-map"></script>
   <script src="/dashboard.js?v=20260516-wa-niches-review-panel"></script>
   <div id="toastContainer"></div>

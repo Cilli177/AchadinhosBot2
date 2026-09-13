@@ -4,18 +4,24 @@ using AchadinhosBot.Next.Domain.Logs;
 
 namespace AchadinhosBot.Next.Infrastructure.Storage;
 
-public sealed class ConversionLogStore : IConversionLogStore
+public sealed class ConversionLogStore : IConversionLogStore, ILogMaintenanceScope
 {
     private readonly string _path;
     private readonly SemaphoreSlim _mutex = new(1, 1);
+    private readonly ILogMaintenanceLockCoordinator _maintenanceLock;
 
-    public ConversionLogStore()
+    public ConversionLogStore(ILogMaintenanceLockCoordinator maintenanceLock)
     {
+        _maintenanceLock = maintenanceLock;
         _path = Path.Combine(AppContext.BaseDirectory, "data", "conversion-logs.jsonl");
     }
 
+    public string ScopeId => "conversion-logs";
+    public IReadOnlyList<string> RelativePaths => ["conversion-logs.jsonl"];
+
     public async Task AppendAsync(ConversionLogEntry entry, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("conversion-logs", cancellationToken);
         await _mutex.WaitAsync(cancellationToken);
         try
         {
@@ -35,6 +41,7 @@ public sealed class ConversionLogStore : IConversionLogStore
 
     public async Task<IReadOnlyList<ConversionLogEntry>> QueryAsync(ConversionLogQuery query, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("conversion-logs", cancellationToken);
         var entries = new List<ConversionLogEntry>();
         if (!File.Exists(_path))
         {
@@ -96,6 +103,7 @@ public sealed class ConversionLogStore : IConversionLogStore
 
     public async Task ClearAsync(CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("conversion-logs", cancellationToken);
         await _mutex.WaitAsync(cancellationToken);
         try
         {

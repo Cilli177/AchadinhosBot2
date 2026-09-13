@@ -11,11 +11,17 @@
 *.sln.docstates
 .azure
 
-# Local secrets and runtime sessions
-AchadinhosBot.Next/.env
-.env
-.env.prod
-AchadinhosBot.Next/WTelegram.session
+# Local secrets, runtime state, and sessions
+# Keep examples such as .env.example and .env.prod.example versioned.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+**/*.session
+**/*.session.*
+**/*-qr.png
+**/*-qr.jpg
+**/WTelegram.session
 AchadinhosBot.Next/bin/**/WTelegram.session
 .dotnet
 
@@ -24,6 +30,18 @@ _build_check/
 .build-check/
 conversion_audit*.json
 conversion_audit*.csv
+_probe_*.bin
+build_errors*.txt
+logs*.txt
+test_error*.txt
+test_failure*.txt
+test_results*.txt
+tmp-*
+tmp_*
+diff.txt
+out.json
+AchadinhosBot.Next/build_errors*.txt
+AchadinhosBot.Next/out*.json
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -547,3 +565,26 @@ AchadinhosBot.Next.Tests/tmp/
 /AchadinhosBot.Next/wwwroot/img/
 /docs/relatorios/RELATORIO_FINAL_MERCADO_LIVRE_INSTAGRAM_OPTIMIZATION.md
 /templates/*.jpg
+
+# Runtime data, recovery material, and diagnostic outputs must remain outside Git.
+**/.runtime/
+/backups/
+/restore-stage-data-current/
+/hotfix-build/
+/.last-data-backup-path.txt
+/docker-compose.*.recovery.yml
+/AchadinhosBot.Next/build_errors*.txt
+/AchadinhosBot.Next/out_final*.json
+/AchadinhosBot.Next/out_ml.json
+/AchadinhosBot.Next/out_v*.json
+/build_errors*.txt
+/logs*.txt
+/test_error.txt
+/test_failure.txt
+/test_results*.txt
+/out.json
+/tmp-body.json
+/tmp-body.txt
+/tmp_csharp.txt
+/_probe_*.bin
+/diff.txt

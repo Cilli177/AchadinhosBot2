@@ -4,18 +4,24 @@ using AchadinhosBot.Next.Domain.Logs;
 
 namespace AchadinhosBot.Next.Infrastructure.Storage;
 
-public sealed class MediaFailureLogStore : IMediaFailureLogStore
+public sealed class MediaFailureLogStore : IMediaFailureLogStore, ILogMaintenanceScope
 {
+    private readonly ILogMaintenanceLockCoordinator _maintenanceLock;
     private readonly string _path;
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
-    public MediaFailureLogStore()
+    public MediaFailureLogStore(ILogMaintenanceLockCoordinator maintenanceLock)
     {
+        _maintenanceLock = maintenanceLock;
         _path = Path.Combine(AppContext.BaseDirectory, "data", "media-failures.jsonl");
     }
 
+    public string ScopeId => "media-failure-logs";
+    public IReadOnlyList<string> RelativePaths => ["media-failures.jsonl"];
+
     public async Task AppendAsync(MediaFailureEntry entry, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("media-failure-logs", cancellationToken);
         await _mutex.WaitAsync(cancellationToken);
         try
         {
@@ -35,6 +41,7 @@ public sealed class MediaFailureLogStore : IMediaFailureLogStore
 
     public async Task<IReadOnlyList<MediaFailureEntry>> ListAsync(int limit, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("media-failure-logs", cancellationToken);
         var entries = new List<MediaFailureEntry>();
         if (!File.Exists(_path))
         {
@@ -77,6 +84,7 @@ public sealed class MediaFailureLogStore : IMediaFailureLogStore
 
     public async Task ClearAsync(CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("media-failure-logs", cancellationToken);
         await _mutex.WaitAsync(cancellationToken);
         try
         {

@@ -42,7 +42,7 @@ public sealed partial class OfferImageResolver : IOfferImageResolver
     public async Task<OfferImageResolutionResult> ResolveAsync(OfferImageResolutionRequest request, CancellationToken cancellationToken)
     {
         var cacheKey = BuildCacheKey(request);
-        if (_memoryCache.TryGetValue<OfferImageResolutionResult>(cacheKey, out var cached))
+        if (_memoryCache.TryGetValue<OfferImageResolutionResult>(cacheKey, out var cached) && cached is not null)
         {
             return cached;
         }

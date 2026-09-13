@@ -2584,7 +2584,7 @@ async function loadInstaAiLogs() {
 
 async function clearInstaAiLogs() {
   if (currentRole !== 'admin') return;
-  await api('/api/logs/instagram-ai/clear', 'POST', {});
+  if (!await clearLogsWithConfirmation('/api/logs/instagram-ai/clear')) return;
   await loadInstaAiLogs();
 }
 
@@ -3255,7 +3255,7 @@ async function loadResponderClicks() {
 }
 
 async function clearResponderClicks() {
-  await api('/api/logs/clicks/clear', 'POST', {});
+  if (!await clearLogsWithConfirmation('/api/logs/clicks/clear')) return;
   await loadResponderClicks();
 }
 
@@ -4681,7 +4681,7 @@ async function loadInstagramPublishLogs() {
 
 async function clearInstagramPublishLogs() {
   if (currentRole !== 'admin') return;
-  await api('/api/logs/instagram-publish/clear', 'POST', {});
+  if (!await clearLogsWithConfirmation('/api/logs/instagram-publish/clear')) return;
   await loadInstagramPublishLogs();
 }
 
@@ -6431,13 +6431,37 @@ async function loadMediaFailures() {
 }
 
 async function clearConversionLogs() {
-  await api('/api/logs/conversions/clear', 'POST', {});
+  if (!await clearLogsWithConfirmation('/api/logs/conversions/clear')) return;
   await loadConversionLogs();
 }
 
+async function loadConversionSnapshots() {
+  const target = document.getElementById('conversionSnapshots');
+  if (!target) return;
+  target.textContent = 'Carregando snapshots...';
+  try {
+    const payload = await api('/api/logs/conversions/snapshots');
+    const items = payload.items || [];
+    if (!items.length) { target.textContent = 'Nenhum snapshot de conversões disponível.'; return; }
+    target.innerHTML = items.map(item => `<div class="log-msg"><strong>${escapeHtml(item.snapshotId)}</strong> — ${escapeHtml(formatRelativeTime(item.createdAtUtc))} · ${escapeHtml(String(item.files))} arquivo(s) · ${escapeHtml(String(item.bytes))} bytes · ${escapeHtml(item.state)} <button class="secondary" onclick="restoreConversionSnapshot('${escapeHtml(item.snapshotId)}')">Restaurar</button></div>`).join('');
+  } catch (error) { target.textContent = error?.data?.error || error?.message || 'Não foi possível carregar snapshots.'; }
+}
+
+async function restoreConversionSnapshot(snapshotId) {
+  if (!window.confirm('Restaurar este snapshot? O estado atual será salvo antes da restauração.')) return;
+  await api(`/api/logs/conversions/restore/${encodeURIComponent(snapshotId)}`, 'POST', { confirmation: 'RESTORE_SNAPSHOT' });
+  await Promise.all([loadConversionLogs(), loadConversionSnapshots()]);
+}
+
 async function clearMediaFailures() {
-  await api('/api/logs/media/clear', 'POST', {});
+  if (!await clearLogsWithConfirmation('/api/logs/media/clear')) return;
   await loadMediaFailures();
+}
+
+async function clearLogsWithConfirmation(path) {
+  if (!window.confirm('Limpar estes logs? Um snapshot de recuperação será criado antes da limpeza.')) return false;
+  await api(path, 'POST', { confirmation: 'CLEAR_LOGS' });
+  return true;
 }
 
 async function loadAnalyticsSummary() {

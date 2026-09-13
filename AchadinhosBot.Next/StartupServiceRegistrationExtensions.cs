@@ -90,6 +90,10 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<IAffiliateCouponProvider, SheinOfficialCouponProvider>();
         builder.Services.AddSingleton<IAffiliateCouponProvider, MercadoLivreOfficialCouponProvider>();
         builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
+        builder.Services.AddSingleton<ILogMaintenanceLockCoordinator, LogMaintenanceLockCoordinator>();
+        builder.Services.Configure<LogSnapshotRetentionOptions>(builder.Configuration.GetSection(LogSnapshotRetentionOptions.SectionName));
+        builder.Services.AddSingleton(sp => new LogSnapshotRetentionService(sp.GetRequiredService<IOptions<LogSnapshotRetentionOptions>>(), sp.GetRequiredService<ILogger<LogSnapshotRetentionService>>()));
+        builder.Services.AddSingleton(sp => new LogSnapshotService(sp.GetRequiredService<ILogMaintenanceLockCoordinator>(), sp.GetRequiredService<LogSnapshotRetentionService>()));
         builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
         builder.Services.AddSingleton<IConversionAuditLogger, ConversionAuditLogger>();
         builder.Services.AddSingleton<IOfferUrlExtractor, OfferUrlExtractor>();
@@ -98,6 +102,7 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
         builder.Services.AddSingleton<IPriceWatchStore, PriceWatchStore>();
         builder.Services.AddSingleton<IContentCalendarStore, CsvContentCalendarStore>();
+        builder.Services.AddSingleton<IContentCalendarCommandOutboxStore, FileContentCalendarCommandOutboxStore>();
         builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
         builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
         builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
@@ -135,6 +140,8 @@ public static class StartupServiceRegistrationExtensions
         builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
         builder.Services.AddSingleton<MercadoLivreReelDraftService>();
         builder.Services.AddSingleton<ContentCalendarAutomationService>();
+        builder.Services.AddSingleton<ContentCalendarDispatchService>();
+        builder.Services.AddSingleton<IContentCalendarDispatchService>(provider => provider.GetRequiredService<ContentCalendarDispatchService>());
         builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
         builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
         builder.Services.AddSingleton<IWhatsAppOutboundLogStore, WhatsAppOutboundLogStore>();
@@ -210,6 +217,7 @@ public static class StartupServiceRegistrationExtensions
         }
 
         builder.Services.AddHostedService<InstagramOutboundReplayService>();
+        builder.Services.AddHostedService<ContentCalendarCommandOutboxReplayWorker>();
         builder.Services.AddHostedService<BotConversorOutboxReplayWorker>();
         builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
         builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
@@ -232,6 +240,7 @@ public static class StartupServiceRegistrationExtensions
             x.AddConsumer<InstagramPublishConsumer>();
             x.AddConsumer<InstagramCommentReplyConsumer>();
             x.AddConsumer<InstagramDirectMessageConsumer>();
+            x.AddConsumer<ContentCalendarProcessDueConsumer>();
             x.UsingRabbitMq((context, cfg) =>
             {
                 var rabbitHost = builder.Configuration["RabbitMq:Host"] ?? "localhost";

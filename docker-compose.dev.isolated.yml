@@ -1,0 +1,196 @@
+name: achadinhos-dev-e
+
+# Standalone DEV environment. It deliberately has no env_file, tunnel, Evolution,
+# production runtime bind mount, or production Docker resource dependency.
+services:
+  postgres-calendar:
+    image: postgres:16-alpine
+    container_name: achadinhos-postgres-calendar-dev-e
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: achadinhos_calendar_dev
+      POSTGRES_USER: achadinhos_calendar_dev
+      POSTGRES_PASSWORD: dev-isolated-calendar-only
+    volumes:
+      - postgres_calendar_data:/var/lib/postgresql/data
+      - ./AchadinhosBot.Next/Infrastructure/Storage/Migrations/001_content_calendar_postgres.sql:/docker-entrypoint-initdb.d/001_content_calendar_postgres.sql:ro
+    networks:
+      - dev_e_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U achadinhos_calendar_dev -d achadinhos_calendar_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: achadinhos-rabbitmq-dev-e
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5674:5672"
+      - "127.0.0.1:15674:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: achadinhos_dev
+      RABBITMQ_DEFAULT_PASS: dev-isolated-local-only
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - dev_e_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  mercadolivre-affiliate-scraper:
+    build:
+      context: .
+      dockerfile: mercadolivre-affiliate-scraper/Dockerfile
+    container_name: achadinhos-mercadolivre-affiliate-scraper-dev-e
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:13002:3002"
+    volumes:
+      - app_data:/app/data
+    networks:
+      - dev_e_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3002/health > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  achadinhos-next:
+    build:
+      context: .
+      dockerfile: AchadinhosBot.Next/Dockerfile
+    container_name: achadinhos-next-dev-e
+    restart: unless-stopped
+    depends_on:
+      postgres-calendar:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mercadolivre-affiliate-scraper:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18081:8081"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      APP__ROLE: web
+      WEBHOOK__PORT: "8081"
+      KESTREL__ENDPOINTS__HTTP__URL: http://0.0.0.0:8081
+      WEBHOOK__APIKEY: dev-isolated-local-only
+      AUTH__ADMINAPIKEY: dev-isolated-admin-key-for-local-development-only
+      RABBITMQ__HOST: rabbitmq
+      RABBITMQ__VIRTUALHOST: /
+      RABBITMQ__USERNAME: achadinhos_dev
+      RABBITMQ__PASSWORD: dev-isolated-local-only
+      CONTENTCALENDARSTORAGE__PROVIDER: postgres
+      CONTENTCALENDARSTORAGE__CONNECTIONSTRING: Host=postgres-calendar;Database=achadinhos_calendar_dev;Username=achadinhos_calendar_dev;Password=dev-isolated-calendar-only
+      CONTENTCALENDARSTORAGE__MIGRATECSVONSTARTUP: ${CONTENTCALENDARSTORAGE__MIGRATECSVONSTARTUP:-false}
+      MERCADOLIVRE_AFFILIATE_SCRAPER__BASEURL: http://mercadolivre-affiliate-scraper:3002
+      OPERATIONALREADINESS__REQUIREEVOLUTIONREADY: "false"
+      EVOLUTION__BASEURL: ""
+      EVOLUTION__APIKEY: ""
+      EVOLUTION__INSTANCENAME: dev-isolated-disabled
+      TELEGRAM__BOTTOKEN: ""
+      TELEGRAM__APIID: "0"
+      TELEGRAM__APIHASH: ""
+      TELEGRAM__USERBOTPHONE: ""
+      DELIVERYSAFETY__BLOCKOFFICIALWHATSAPPALWAYS: "true"
+      DELIVERYSAFETY__BLOCKOFFICIALDESTINATIONSOUTSIDEPRODUCTION: "true"
+      DATAPROTECTION__KEYSPATH: /app/data-protection-keys
+      AFFILIATE__AMAZONTAG: ""
+      AFFILIATE__SHEINID: ""
+      AFFILIATE__SHEINCODE: ""
+      AFFILIATE__SHOPEEAPPID: ""
+      AFFILIATE__SHOPEESECRET: ""
+    volumes:
+      - app_data:/app/data
+      - app_media:/app/wwwroot/media/admin
+      - app_data_protection:/app/data-protection-keys
+    networks:
+      - dev_e_network
+      - dev_e_access
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/health/ready > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # Dedicated DEV worker: separate state volume, no host port and no egress network.
+  # It can consume test commands from the isolated RabbitMQ but cannot reach external delivery APIs.
+  achadinhos-calendar-worker:
+    build:
+      context: .
+      dockerfile: AchadinhosBot.Next/Dockerfile
+    container_name: achadinhos-calendar-worker-dev-e
+    restart: unless-stopped
+    depends_on:
+      postgres-calendar:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      APP__ROLE: calendar-worker
+      WEBHOOK__PORT: "8081"
+      KESTREL__ENDPOINTS__HTTP__URL: http://0.0.0.0:8081
+      WEBHOOK__APIKEY: dev-isolated-local-only
+      AUTH__ADMINAPIKEY: dev-isolated-admin-key-for-local-development-only
+      RABBITMQ__HOST: rabbitmq
+      RABBITMQ__VIRTUALHOST: /
+      RABBITMQ__USERNAME: achadinhos_dev
+      RABBITMQ__PASSWORD: dev-isolated-local-only
+      CONTENTCALENDARSTORAGE__PROVIDER: postgres
+      CONTENTCALENDARSTORAGE__CONNECTIONSTRING: Host=postgres-calendar;Database=achadinhos_calendar_dev;Username=achadinhos_calendar_dev;Password=dev-isolated-calendar-only
+      CONTENTCALENDARSTORAGE__MIGRATECSVONSTARTUP: ${CONTENTCALENDARSTORAGE__MIGRATECSVONSTARTUP:-false}
+      OPERATIONALREADINESS__REQUIREEVOLUTIONREADY: "false"
+      EVOLUTION__BASEURL: ""
+      EVOLUTION__APIKEY: ""
+      EVOLUTION__INSTANCENAME: dev-isolated-disabled
+      TELEGRAM__BOTTOKEN: ""
+      TELEGRAM__APIID: "0"
+      TELEGRAM__APIHASH: ""
+      TELEGRAM__USERBOTPHONE: ""
+      DELIVERYSAFETY__BLOCKOFFICIALWHATSAPPALWAYS: "true"
+      DELIVERYSAFETY__BLOCKOFFICIALDESTINATIONSOUTSIDEPRODUCTION: "true"
+      DATAPROTECTION__KEYSPATH: /app/data-protection-keys
+    volumes:
+      # Shared only with the local DEV API; calendar CSV operations use an interprocess lock.
+      - app_data:/app/data
+      - app_media:/app/wwwroot/media/admin
+      - app_data_protection:/app/data-protection-keys
+    networks:
+      - dev_e_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/health/live > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+networks:
+  dev_e_network:
+    name: achadinhos-dev-e_network
+    internal: true
+  # Local host access only. Other DEV services remain on the internal network.
+  dev_e_access:
+    name: achadinhos-dev-e_access
+
+volumes:
+  app_data:
+    name: achadinhos-dev-e_app_data
+  app_media:
+    name: achadinhos-dev-e_app_media
+  app_data_protection:
+    name: achadinhos-dev-e_data_protection
+  rabbitmq_data:
+    name: achadinhos-dev-e_rabbitmq_data
+  postgres_calendar_data:
+    name: achadinhos-dev-e_postgres_calendar_data

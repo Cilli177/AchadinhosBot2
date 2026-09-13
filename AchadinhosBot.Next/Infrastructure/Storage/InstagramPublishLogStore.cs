@@ -5,13 +5,18 @@ using AchadinhosBot.Next.Domain.Logs;
 
 namespace AchadinhosBot.Next.Infrastructure.Storage;
 
-public sealed class InstagramPublishLogStore : IInstagramPublishLogStore
+public sealed class InstagramPublishLogStore : IInstagramPublishLogStore, ILogMaintenanceScope
 {
+    private readonly ILogMaintenanceLockCoordinator _maintenanceLock;
     private readonly string _path = Path.Combine(AppContext.BaseDirectory, "data", "instagram-publish-log.jsonl");
+    public InstagramPublishLogStore(ILogMaintenanceLockCoordinator maintenanceLock) => _maintenanceLock = maintenanceLock;
+    public string ScopeId => "instagram-publish-logs";
+    public IReadOnlyList<string> RelativePaths => ["instagram-publish-log.jsonl"];
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
     public async Task AppendAsync(InstagramPublishLogEntry entry, CancellationToken ct)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("instagram-publish-logs", ct);
         await _mutex.WaitAsync(ct);
         try
         {
@@ -35,6 +40,7 @@ public sealed class InstagramPublishLogStore : IInstagramPublishLogStore
 
     public async Task<IReadOnlyList<InstagramPublishLogEntry>> ListAsync(int take, CancellationToken ct)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("instagram-publish-logs", ct);
         await _mutex.WaitAsync(ct);
         try
         {
@@ -61,6 +67,7 @@ public sealed class InstagramPublishLogStore : IInstagramPublishLogStore
 
     public async Task ClearAsync(CancellationToken ct)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("instagram-publish-logs", ct);
         await _mutex.WaitAsync(ct);
         try
         {

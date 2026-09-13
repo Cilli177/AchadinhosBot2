@@ -22,6 +22,8 @@ public sealed class ContentCalendarItem
     public string? Error { get; set; }
     public int Attempts { get; set; }
     public DateTimeOffset? LastAttemptAt { get; set; }
+    public string? ProcessingExecutionId { get; set; }
+    public DateTimeOffset? ProcessingClaimedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

@@ -27,7 +27,7 @@ public sealed class RealLinkValidationTests : IDisposable
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0");
     }
 
-    [Fact]
+    [Fact(Skip = "Manual integration test that calls live affiliate links and must not run in the deterministic suite.")]
     public async Task ValidateRealUserLinks_WithFallbackLogic()
     {
         var urls = new[]

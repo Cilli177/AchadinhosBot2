@@ -4,15 +4,25 @@ using AchadinhosBot.Next.Domain.Logs;
 
 namespace AchadinhosBot.Next.Infrastructure.Storage;
 
-public sealed class ClickLogStore : IClickLogStore
+public sealed class ClickLogStore : IClickLogStore, ILogMaintenanceScope
 {
     private readonly string _basePath;
+    private readonly ILogMaintenanceLockCoordinator _maintenanceLock;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _mutexes = new();
 
-    public ClickLogStore()
+    public ClickLogStore(ILogMaintenanceLockCoordinator maintenanceLock)
     {
+        _maintenanceLock = maintenanceLock;
         _basePath = Path.Combine(AppContext.BaseDirectory, "data");
     }
+
+    public string ScopeId => "click-logs";
+    public IReadOnlyList<string> RelativePaths => GetPaths(null)
+        .Select(Path.GetFileName)
+        .Where(static name => !string.IsNullOrWhiteSpace(name))
+        .Cast<string>()
+        .DefaultIfEmpty("click-logs.jsonl")
+        .ToArray();
 
     private string GetPath(string? category)
     {
@@ -105,6 +115,7 @@ public sealed class ClickLogStore : IClickLogStore
 
     public async Task AppendAsync(ClickLogEntry entry, string? category, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("click-logs", cancellationToken);
         var normalizedCategory = string.IsNullOrWhiteSpace(category) ? null : category.Trim().ToLowerInvariant();
         entry.Category = string.IsNullOrWhiteSpace(entry.Category) ? normalizedCategory : entry.Category.Trim().ToLowerInvariant();
         var path = GetPath(normalizedCategory);
@@ -129,6 +140,7 @@ public sealed class ClickLogStore : IClickLogStore
 
     public async Task<IReadOnlyList<ClickLogEntry>> QueryAsync(string? category, string? search, int limit, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("click-logs", cancellationToken);
         var entries = new List<ClickLogEntry>();
         var normalizedCategory = string.IsNullOrWhiteSpace(category) ? null : category.Trim().ToLowerInvariant();
         var paths = GetPaths(null).ToArray();
@@ -197,6 +209,7 @@ public sealed class ClickLogStore : IClickLogStore
 
     public async Task ClearAsync(string? category, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("click-logs", cancellationToken);
         var paths = GetPaths(category).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (paths.Length == 0 && !string.IsNullOrWhiteSpace(category))
         {

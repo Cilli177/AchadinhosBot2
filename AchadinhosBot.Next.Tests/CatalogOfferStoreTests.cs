@@ -103,7 +103,8 @@ public sealed class CatalogOfferStoreTests
                 SendToCatalog = true,
                 CatalogTarget = CatalogTargets.Prod,
                 ProductName = "Produto ML",
-                OfferUrl = "https://meli.la/outro-afiliado"
+                OfferUrl = "https://meli.la/outro-afiliado",
+                ImageUrls = ["https://example.test/produto.jpg"]
             }
         }, CancellationToken.None);
 

@@ -44,6 +44,7 @@ using Serilog;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
 
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
@@ -59,6 +60,7 @@ LoadDotEnvIfPresent();
 var builder = WebApplication.CreateBuilder(args);
 var appRole = (builder.Configuration["APP__ROLE"] ?? builder.Configuration["App:Role"] ?? "all").Trim().ToLowerInvariant();
 var isWorkerRole = appRole is "all" or "worker";
+var isCalendarWorkerRole = appRole == "calendar-worker";
 var isWebRole = appRole is "all" or "web";
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -78,11 +80,38 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 // Evita falha de permissao no EventLog em ambientes sem privilegio administrativo.
 builder.Logging.ClearProviders();
 
-// Persistir chaves de DataProtection em pasta local acessÃƒÆ’Ã‚Â­vel ao sandbox
-var dpKeysPath = Path.Combine(AppContext.BaseDirectory, ".runtime", "localappdata", "DataProtection-Keys");
-Directory.CreateDirectory(dpKeysPath);
+var defaultDataProtectionKeysPath = Path.Combine(builder.Environment.ContentRootPath, ".runtime", "localappdata", "DataProtection-Keys");
+var dataProtectionOptions = new DataProtectionStorageOptions
+{
+    KeysPath = builder.Environment.IsProduction() ? string.Empty : defaultDataProtectionKeysPath,
+    ApplicationName = "AchadinhosBot.Next"
+};
+builder.Configuration.GetSection("DataProtection").Bind(dataProtectionOptions);
+
+var dataProtectionValidator = new DataProtectionStorageOptionsValidator(builder.Environment);
+var dataProtectionValidation = dataProtectionValidator.Validate(null, dataProtectionOptions);
+if (dataProtectionValidation.Failed)
+{
+    throw new OptionsValidationException(nameof(DataProtectionStorageOptions), typeof(DataProtectionStorageOptions), dataProtectionValidation.Failures);
+}
+
+var dataProtectionKeysPath = Path.GetFullPath(dataProtectionOptions.KeysPath);
+Directory.CreateDirectory(dataProtectionKeysPath);
+builder.Services.AddOptions<DataProtectionStorageOptions>()
+    .Configure(options =>
+    {
+        if (!builder.Environment.IsProduction())
+        {
+            options.KeysPath = defaultDataProtectionKeysPath;
+        }
+        options.ApplicationName = "AchadinhosBot.Next";
+    })
+    .Bind(builder.Configuration.GetSection("DataProtection"))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<DataProtectionStorageOptions>, DataProtectionStorageOptionsValidator>();
 builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo(dpKeysPath));
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath))
+    .SetApplicationName(dataProtectionOptions.ApplicationName);
 
 // Mantem a API de pe mesmo que algum worker opcional (ex: Telegram) falhe.
 builder.Services.Configure<HostOptions>(options =>
@@ -98,6 +127,11 @@ builder.Services.Configure<WebhookOptions>(options =>
 builder.Services.Configure<AffiliateOptions>(builder.Configuration.GetSection("Affiliate"));
 builder.Services.Configure<TelegramOptions>(builder.Configuration.GetSection("Telegram"));
 builder.Services.Configure<MessagingOptions>(builder.Configuration.GetSection("Messaging"));
+builder.Services.AddOptions<ContentCalendarStorageOptions>()
+    .Bind(builder.Configuration.GetSection(ContentCalendarStorageOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<ContentCalendarStorageOptions>, ContentCalendarStorageOptionsValidator>();
+builder.Services.Configure<LogSnapshotRetentionOptions>(builder.Configuration.GetSection(LogSnapshotRetentionOptions.SectionName));
 
 var telegramStartupOptions = builder.Configuration.GetSection("Telegram").Get<TelegramOptions>() ?? new TelegramOptions();
 var persistedTelegramBotTokenPath =
@@ -116,7 +150,10 @@ catch
 var startTelegramBotWorker = isWorkerRole && (!string.IsNullOrWhiteSpace(telegramStartupOptions.BotToken) || hasPersistedTelegramBotToken);
 var startTelegramUserbotWorker = isWorkerRole && telegramStartupOptions.ApiId > 0 && !string.IsNullOrWhiteSpace(telegramStartupOptions.ApiHash);
 
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
+builder.Services.AddOptions<AuthOptions>()
+    .Bind(builder.Configuration.GetSection("Auth"))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<AuthOptions>, AuthOptionsValidator>();
 builder.Services.Configure<EvolutionOptions>(options =>
 {
     builder.Configuration.GetSection("Evolution").Bind(options);
@@ -139,7 +176,28 @@ builder.Services
     .AddOptions<DeliverySafetyOptions>()
     .Bind(builder.Configuration.GetSection("DeliverySafety"));
 
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-CSRF-TOKEN";
+    options.Cookie.Name = "achadinhos.next.csrf";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = builder.Environment.IsProduction()
+        ? CookieSecurePolicy.Always
+        : CookieSecurePolicy.SameAsRequest;
+});
+
+builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = AdminAuthenticationSchemes.Selector;
+        options.DefaultChallengeScheme = AdminAuthenticationSchemes.Selector;
+    })
+    .AddPolicyScheme(AdminAuthenticationSchemes.Selector, "Cookie ou chave administrativa", options =>
+    {
+        options.ForwardDefaultSelector = context => context.Request.Headers.ContainsKey(AdminAuthenticationSchemes.HeaderName)
+            ? AdminAuthenticationSchemes.AdminApiKey
+            : AdminAuthenticationSchemes.Cookie;
+    })
     .AddCookie(options =>
     {
         options.Cookie.Name = "achadinhos.next.auth";
@@ -154,7 +212,10 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return Task.CompletedTask;
         };
-    });
+    })
+    .AddScheme<AuthenticationSchemeOptions, AdminApiKeyAuthenticationHandler>(
+        AdminAuthenticationSchemes.AdminApiKey,
+        _ => { });
 
 builder.Services.AddAuthorization(options =>
 {
@@ -215,6 +276,10 @@ builder.Services.AddSingleton<IAffiliateCouponProvider, ShopeeOfficialCouponProv
 builder.Services.AddSingleton<IAffiliateCouponProvider, SheinOfficialCouponProvider>();
 builder.Services.AddSingleton<IAffiliateCouponProvider, MercadoLivreOfficialCouponProvider>();
 builder.Services.AddSingleton<IMercadoLivreOAuthService, MercadoLivreOAuthService>();
+builder.Services.AddSingleton<ILogMaintenanceLockCoordinator, LogMaintenanceLockCoordinator>();
+builder.Services.AddSingleton(sp => new LogSnapshotRetentionService(sp.GetRequiredService<IOptions<LogSnapshotRetentionOptions>>(), sp.GetRequiredService<ILogger<LogSnapshotRetentionService>>()));
+builder.Services.AddSingleton(sp => new LogSnapshotService(sp.GetRequiredService<ILogMaintenanceLockCoordinator>(), sp.GetRequiredService<LogSnapshotRetentionService>()));
+builder.Services.AddHostedService(sp => new LogSnapshotRetentionHostedService(sp.GetRequiredService<LogSnapshotRetentionService>(), sp.GetRequiredService<ILogger<LogSnapshotRetentionHostedService>>()));
 builder.Services.AddSingleton<IConversionLogStore, ConversionLogStore>();
 builder.Services.AddSingleton<IConversionAuditLogger, ConversionAuditLogger>();
 builder.Services.AddSingleton<IOfferUrlExtractor, OfferUrlExtractor>();
@@ -225,7 +290,16 @@ builder.Services.AddSingleton<ILinkTrackingStore>(sp => new LinkTrackingStore(
     sp.GetRequiredService<IWebHostEnvironment>()));
 builder.Services.AddSingleton<ICatalogOfferStore, CatalogOfferStore>();
 builder.Services.AddSingleton<IPriceWatchStore, PriceWatchStore>();
-builder.Services.AddSingleton<IContentCalendarStore, CsvContentCalendarStore>();
+builder.Services.AddSingleton<CsvContentCalendarStore>();
+builder.Services.AddSingleton<IContentCalendarStore>(sp =>
+{
+    var storage = sp.GetRequiredService<IOptions<ContentCalendarStorageOptions>>().Value;
+    return string.Equals(storage.Provider, "postgres", StringComparison.OrdinalIgnoreCase)
+        ? new PostgresContentCalendarStore(storage.ConnectionString!)
+        : sp.GetRequiredService<CsvContentCalendarStore>();
+});
+builder.Services.AddHostedService<ContentCalendarPostgresMigrationHostedService>();
+builder.Services.AddSingleton<IContentCalendarCommandOutboxStore, FileContentCalendarCommandOutboxStore>();
 builder.Services.AddSingleton<IClickLogStore, ClickLogStore>();
 builder.Services.AddSingleton<IInstagramAiLogStore, InstagramAiLogStore>();
 builder.Services.AddSingleton<IInstagramPublishLogStore, InstagramPublishLogStore>();
@@ -262,6 +336,8 @@ builder.Services.AddSingleton<ReelAutoPublishService>();
 builder.Services.AddSingleton<MercadoLivreStoryDraftService>();
 builder.Services.AddSingleton<MercadoLivreReelDraftService>();
 builder.Services.AddSingleton<ContentCalendarAutomationService>();
+builder.Services.AddSingleton<ContentCalendarDispatchService>();
+builder.Services.AddSingleton<IContentCalendarDispatchService>(provider => provider.GetRequiredService<ContentCalendarDispatchService>());
 builder.Services.AddSingleton<IInstagramPublishStore, InstagramPublishStore>();
 builder.Services.AddSingleton<IInstagramCommentStore, InstagramCommentStore>();
 builder.Services.AddSingleton<IWhatsAppOutboundLogStore, WhatsAppOutboundLogStore>();
@@ -334,6 +410,7 @@ builder.Services.AddSingleton<WhatsAppAdminAutomationService>();
 if (isWorkerRole)
 {
     builder.Services.AddHostedService<InstagramOutboundReplayService>();
+    builder.Services.AddHostedService<ContentCalendarCommandOutboxReplayWorker>();
     builder.Services.AddHostedService<BotConversorOutboxReplayWorker>();
     builder.Services.AddHostedService<WhatsAppOutboundReplayWorker>();
     builder.Services.AddHostedService<TelegramOutboundReplayWorker>();
@@ -347,6 +424,13 @@ if (isWorkerRole)
     builder.Services.AddHostedService<WhatsAppAdminAutomationWorker>();
     builder.Services.AddHostedService<MercadoLivreAffiliateScoutWorker>();
     builder.Services.AddHostedService<WhatsAppNicheAutoRouteWorker>();
+}
+
+if (isCalendarWorkerRole)
+{
+    // This narrow role is intentionally limited to calendar commands. It must never host outbound channel consumers.
+    builder.Services.AddHostedService<ContentCalendarCommandOutboxReplayWorker>();
+    builder.Services.AddHostedService<ContentCalendarWorker>();
 }
 
 builder.Services.AddSingleton<IAuditTrail, FileAuditTrail>();
@@ -367,6 +451,11 @@ builder.Services.AddMassTransit(x =>
         x.AddConsumer<InstagramPublishConsumer>();
         x.AddConsumer<InstagramCommentReplyConsumer>();
         x.AddConsumer<InstagramDirectMessageConsumer>();
+        x.AddConsumer<ContentCalendarProcessDueConsumer>();
+    }
+    else if (isCalendarWorkerRole)
+    {
+        x.AddConsumer<ContentCalendarProcessDueConsumer>();
     }
     x.UsingRabbitMq((context, cfg) =>
     {
@@ -379,7 +468,7 @@ builder.Services.AddMassTransit(x =>
             h.Username(rabbitUser);
             h.Password(rabbitPass);
         });
-        if (isWorkerRole)
+        if (isWorkerRole || isCalendarWorkerRole)
         {
             cfg.ConfigureEndpoints(context);
         }
@@ -442,1071 +531,42 @@ app.MapGet("/studio-ofertas/{*path}", (HttpContext context) =>
 });
 
 app.UseSerilogRequestLogging();
-if (!isWorkerRole)
-{
-    app.Use(async (context, next) =>
-    {
-        if (context.Request.Path.Equals("/internal/webhook/bot-conversor", StringComparison.OrdinalIgnoreCase))
-        {
-            var forwardedFor = context.Request.Headers["X-Forwarded-For"].ToString();
-            var realIp = context.Request.Headers["CF-Connecting-IP"].ToString();
-            var userAgent = context.Request.Headers.UserAgent.ToString();
-            var host = context.Request.Host.HasValue ? context.Request.Host.Value : "unknown";
-            var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-            app.Logger.LogWarning(
-                "Tentativa indevida de acessar endpoint interno no runtime web. Host={Host} RemoteIp={RemoteIp} RealIp={RealIp} XForwardedFor={XForwardedFor} UserAgent={UserAgent}",
-                host,
-                remoteIp,
-                string.IsNullOrWhiteSpace(realIp) ? "n/a" : realIp,
-                string.IsNullOrWhiteSpace(forwardedFor) ? "n/a" : forwardedFor,
-                string.IsNullOrWhiteSpace(userAgent) ? "n/a" : userAgent);
-
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
-            return;
-        }
-
-        await next();
-    });
-}
+app.UseInternalWebhookExposureGuard(isWorkerRole);
 app.UseRateLimiter();
 app.UseAuthentication();
-app.Use(async (context, next) =>
-{
-    if (context.User?.Identity?.IsAuthenticated != true &&
-        context.Request.Headers.TryGetValue("X-Admin-Key", out var provided) &&
-        !string.IsNullOrWhiteSpace(provided.ToString()) &&
-        SecretComparer.EqualsConstantTime(webhookOptions.ApiKey, provided.ToString()))
-    {
-        var claims = new[]
-        {
-            new Claim(ClaimTypes.Name, "api_key"),
-            new Claim(ClaimTypes.Role, "admin")
-        };
-        context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme));
-    }
-
-    await next();
-});
+app.UseCookieRequestForgeryProtection();
 app.UseAuthorization();
 
-app.MapPost("/auth/login", async (
-    LoginRequest request,
-    IOptions<AuthOptions> authOptions,
-    LoginAttemptStore attempts,
-    IAuditTrail audit,
-    HttpContext httpContext,
-    CancellationToken ct) =>
-{
-    var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    var key = $"{request.Username}:{ip}";
-
-    if (attempts.IsLocked(key, DateTimeOffset.UtcNow))
-    {
-        await audit.WriteAsync("auth.login.locked", request.Username, new { ip }, ct);
-        return Results.Json(new { success = false, error = "Conta temporariamente bloqueada" }, statusCode: StatusCodes.Status423Locked);
-    }
-
-    var user = authOptions.Value.Users.FirstOrDefault(x => x.Enabled && x.Username.Equals(request.Username, StringComparison.OrdinalIgnoreCase));
-    Console.WriteLine($"[AUTH-DEBUG] Login attempt for user '{request.Username}'. Password length: {request.Password?.Length}. RememberMe: {request.RememberMe}");
-    Console.WriteLine($"[AUTH-DEBUG] Loaded {authOptions.Value.Users?.Count ?? 0} users from configuration.");
-    if (authOptions.Value.Users != null) {
-        foreach (var u in authOptions.Value.Users) {
-            Console.WriteLine($"[AUTH-DEBUG] Registered user: {u.Username}, Enabled: {u.Enabled}");
-        }
-    }
-    Console.WriteLine($"[AUTH-DEBUG] Found matching user config: {user != null}");
-    var valid = user is not null
-        && !string.IsNullOrEmpty(request.Password)
-        && PasswordHasher.Verify(request.Password, user.PasswordHash);
-    Console.WriteLine($"[AUTH-DEBUG] Password valid: {valid}");
-
-    if (!valid)
-    {
-        attempts.RegisterFailure(key, DateTimeOffset.UtcNow, 5, TimeSpan.FromMinutes(15));
-        await audit.WriteAsync("auth.login.failed", request.Username, new { ip }, ct);
-        return Results.Unauthorized();
-    }
-
-    attempts.RegisterSuccess(key);
-
-    var claims = new[]
-    {
-        new Claim(ClaimTypes.Name, user!.Username),
-        new Claim(ClaimTypes.Role, user.Role)
-    };
-
-    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-    var authProps = new AuthenticationProperties();
-    if (request.RememberMe) {
-        authProps.IsPersistent = true;
-        authProps.ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30);
-    }
-    await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity), authProps);
-    await audit.WriteAsync("auth.login.success", user.Username, new { ip, role = user.Role }, ct);
-    return Results.Ok(new { success = true, username = user.Username, role = user.Role });
-}).RequireRateLimiting("login");
-
-app.MapPost("/auth/logout", async (HttpContext context, IAuditTrail audit, CancellationToken ct) =>
-{
-    var actor = context.User.Identity?.Name ?? "anonymous";
-    await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    await audit.WriteAsync("auth.logout", actor, new { }, ct);
-    return Results.Ok(new { success = true });
-});
-
-app.MapGet("/auth/me", (HttpContext context) =>
-{
-    if (context.User.Identity?.IsAuthenticated != true)
-    {
-        return Results.Unauthorized();
-    }
-
-    return Results.Ok(new
-    {
-        authenticated = true,
-        username = context.User.Identity.Name,
-        role = context.User.FindFirst(ClaimTypes.Role)?.Value
-    });
-});
+app.MapAuthEndpoints();
 
 app.MapConverterEndpoint();
 app.MapAdminEndpoints();
 app.MapChannelAgentAdminEndpoints();
 app.MapOperationalHealthEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
 app.MapOperationalAdminEndpoints(startTelegramBotWorker, startTelegramUserbotWorker);
+app.MapWhatsAppMembershipEndpoints();
+app.MapWhatsAppAdminReadEndpoints();
+app.MapWhatsAppAdminGroupReadEndpoints();
+app.MapWhatsAppAdminSafetyEndpoints();
 
-app.MapGet("/api/admin/whatsapp/membership-events", async (
-    IWhatsAppGroupMembershipStore store,
-    CancellationToken ct) =>
-{
-    var events = await store.ListAsync(ct);
-    return Results.Ok(events.OrderByDescending(x => x.Timestamp).Take(1000));
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/whatsapp/membership-events/sync", async (
-    WhatsAppMembershipSyncService syncService,
-    CancellationToken ct) =>
-{
-    await syncService.SynchronizeAllGroupsNowAsync(ct);
-    return Results.Ok(new { success = true });
-}).RequireAuthorization("AdminOnly");
-
-app.MapGet("/api/admin/whatsapp/groups", async (
-    HttpContext context,
-    string? instanceName,
-    IWhatsAppGateway gateway,
-    IOptions<WebhookOptions> webhookOptions,
-    CancellationToken ct) =>
-{
-    if (!AdminAuthorizationHelper.IsAdminAuthorized(context, webhookOptions.Value.ApiKey))
-        return Results.Unauthorized();
-
-    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(instanceName);
-    var groups = await gateway.GetGroupsAsync(effectiveInstanceName, ct);
-    return Results.Ok(groups);
-});
-
-app.MapGet("/api/admin/debug-key", (IOptions<WebhookOptions> opts, IConfiguration config) => 
-{
-    return Results.Ok(new { 
-        configuredKey = opts.Value.ApiKey,
-        envKey = config["WEBHOOK__API_KEY"],
-        sectionKey = config.GetSection("Webhook")["ApiKey"]
-    });
-});
-
-app.MapGet("/api/admin/whatsapp/groups/participants", async (
-    string groupId,
-    string? instanceName,
-    AchadinhosBot.Next.Application.Abstractions.IWhatsAppGateway gateway,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(groupId))
-        return Results.BadRequest(new { error = "GroupId ÃƒÆ’Ã‚Â© obrigatÃƒÆ’Ã‚Â³rio." });
-
-    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(instanceName);
-    var participants = await gateway.GetGroupParticipantsAsync(effectiveInstanceName, groupId, ct);
-    return Results.Ok(participants);
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/whatsapp/groups/copy-participants", async (
-    CopyParticipantsRequest request,
-    AchadinhosBot.Next.Application.Abstractions.IWhatsAppGateway gateway,
-    AchadinhosBot.Next.Application.Abstractions.IWhatsAppTransport transport,
-    WhatsAppAutomationQueueService queueService,
-    ISettingsStore settingsStore,
-    ILogger<Program> logger,
-    CancellationToken ct) =>
-{
-    const int maxManualCopyParticipants = 50;
-    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
-
-    if (string.IsNullOrWhiteSpace(request.SourceGroupId) || string.IsNullOrWhiteSpace(request.TargetGroupId))
-        return Results.BadRequest(new { error = "SourceGroupId e TargetGroupId sÃƒÆ’Ã‚Â£o obrigatÃƒÆ’Ã‚Â³rios." });
-
-    if (request.SourceGroupId == request.TargetGroupId)
-        return Results.BadRequest(new { error = "Grupo de origem e destino nÃƒÆ’Ã‚Â£o podem ser o mesmo." });
-
-    var participantsToCopy = request.ParticipantIds?
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Select(x => x.Trim())
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    if (participantsToCopy is null || participantsToCopy.Count == 0)
-        return Results.BadRequest(new { error = "Selecione explicitamente os participantes antes de copiar." });
-
-    if (participantsToCopy.Count > maxManualCopyParticipants)
-        return Results.BadRequest(new { error = $"A cÃƒÆ’Ã‚Â³pia manual permite no mÃƒÆ’Ã‚Â¡ximo {maxManualCopyParticipants} participantes por vez." });
-
-    var targetParticipants = await transport.GetGroupParticipantsAsync(effectiveInstanceName, request.TargetGroupId, ct); var targetSet = new HashSet<string>(targetParticipants, StringComparer.OrdinalIgnoreCase);
-    var filteredParticipants = participantsToCopy
-        .Where(x => !string.IsNullOrWhiteSpace(x) && !targetSet.Contains(x))
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-    var skippedParticipants = participantsToCopy.Count - filteredParticipants.Count;
-
-    if (filteredParticipants.Count == 0)
-        return Results.Ok(new { success = true, message = "Todos os participantes selecionados jÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ estÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o no grupo de destino.", count = 0, skipped = skippedParticipants });
-
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    if (!automation.ParticipantCopyAutomationEnabled)
+app.MapGet("/api/admin/debug-key", (IOptions<WebhookOptions> opts, IConfiguration config) =>
+    Results.Ok(new
     {
-        return Results.BadRequest(new { error = "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento." });
-    }
+        webhookKeyConfigured = !string.IsNullOrWhiteSpace(opts.Value.ApiKey),
+        webhookKeyProvidedByEnvironment = !string.IsNullOrWhiteSpace(config["WEBHOOK__API_KEY"]),
+        webhookKeyProvidedByConfiguration = !string.IsNullOrWhiteSpace(config.GetSection("Webhook")["ApiKey"])
+    }))
+    .RequireAuthorization("AdminOnly");
 
-    var now = DateTimeOffset.UtcNow;
-    WhatsAppParticipantAddSafety.Normalize(automation, now);
+app.MapWhatsAppExecutionEndpoints();
 
-    if (WhatsAppParticipantAddSafety.TryGetCooldownBlock(automation, effectiveInstanceName, now, out var nextAllowedAt, out var cooldownMessage))
-    {
-        logger.LogWarning(
-            "Copia manual bloqueada por cooldown. GrupoDestino={TargetGroupId}, ProximaLiberacao={NextAllowedAt}",
-            request.TargetGroupId,
-            nextAllowedAt);
-        return Results.BadRequest(new { error = cooldownMessage, nextAllowedAt });
-    }
+app.MapWhatsAppParticipantCopyScheduleEndpoints();
 
-    var remainingQuota = WhatsAppParticipantAddSafety.GetRemainingQuota(automation, effectiveInstanceName);
-    if (remainingQuota <= 0)
-    {
-        var nextQuotaResetAt = WhatsAppParticipantAddSafety.GetNextQuotaResetAt(now);
-        return Results.BadRequest(new
-        {
-            error = "Limite diÃƒÂ¡rio de adiÃƒÂ§ÃƒÂµes atingido para esta conta.",
-            nextAllowedAt = nextQuotaResetAt
-        });
-    }
+app.MapWhatsAppScheduledMessageEndpoints();
 
-    if (filteredParticipants.Count > remainingQuota)
-    {
-        return Results.BadRequest(new
-        {
-            error = $"Restam apenas {remainingQuota} adiÃƒÂ§ÃƒÂµes disponÃƒÂ­veis hoje para esta conta. Reduza a seleÃƒÂ§ÃƒÂ£o.",
-            remainingQuota
-        });
-    }
+app.MapWhatsAppParticipantBlastEndpoints();
 
-    async Task<(bool Success, string Message)> ExecuteCopyAsync(CancellationToken jobCt)
-    {
-        var latestSettings = await settingsStore.GetAsync(jobCt);
-        var latestAutomation = latestSettings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-        if (!latestAutomation.ParticipantCopyAutomationEnabled)
-        {
-            return (false, "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento.");
-        }
-
-        var jobNow = DateTimeOffset.UtcNow;
-        WhatsAppParticipantAddSafety.Normalize(latestAutomation, jobNow);
-
-        if (WhatsAppParticipantAddSafety.TryGetCooldownBlock(latestAutomation, effectiveInstanceName, jobNow, out _, out var jobCooldownMessage))
-        {
-            return (false, jobCooldownMessage);
-        }
-
-        var jobRemainingQuota = WhatsAppParticipantAddSafety.GetRemainingQuota(latestAutomation, effectiveInstanceName);
-        if (jobRemainingQuota <= 0)
-        {
-            return (false, "Limite diÃƒÂ¡rio de adiÃƒÂ§ÃƒÂµes atingido para esta conta.");
-        }
-
-        if (filteredParticipants.Count > jobRemainingQuota)
-        {
-            return (false, $"Restam apenas {jobRemainingQuota} adiÃƒÂ§ÃƒÂµes disponÃƒÂ­veis hoje para esta conta.");
-        }
-
-        var result = await transport.AddParticipantsAsync(effectiveInstanceName, request.TargetGroupId, filteredParticipants, jobCt);
-        if (result.Success)
-        {
-            WhatsAppParticipantAddSafety.RegisterSuccessfulAdd(latestAutomation, effectiveInstanceName, filteredParticipants.Count, jobNow);
-            await settingsStore.SaveAsync(latestSettings, jobCt);
-        }
-
-        return (result.Success, result.Message ?? "OperaÃƒÂ§ÃƒÂ£o concluÃƒÂ­da");
-    }
-
-    var queued = await queueService.EnqueueAsync(
-        "manual-copy",
-        $"CÃƒÂ³pia manual {request.SourceGroupId} -> {request.TargetGroupId}",
-        ExecuteCopyAsync,
-        ct);
-
-    return Results.Json(new
-    {
-        success = true,
-        queued = true,
-        queueId = queued.Id,
-        message = $"CÃƒÂ³pia enfileirada com {filteredParticipants.Count} participante(s).",
-        count = filteredParticipants.Count,
-        skipped = skippedParticipants
-    }, statusCode: StatusCodes.Status202Accepted);
-}).RequireAuthorization("AdminOnly");
-
-app.MapGet("/api/admin/whatsapp/automation", async (
-    ISettingsStore settingsStore,
-    CancellationToken ct) =>
-{
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    var changed = WhatsAppParticipantAddSafety.Normalize(automation, DateTimeOffset.UtcNow);
-    if (changed)
-    {
-        await settingsStore.SaveAsync(settings, ct);
-    }
-
-    return Results.Ok(automation);
-}).RequireAuthorization("AdminOnly");
-
-app.MapGet("/api/admin/whatsapp/automation/queue", (
-    WhatsAppAutomationQueueService queueService) =>
-{
-    var state = queueService.GetState();
-    return Results.Ok(new
-    {
-        currentJobId = state.CurrentJobId,
-        pendingCount = state.PendingCount,
-        items = state.Items
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapPut("/api/admin/whatsapp/automation/safety", async (
-    UpdateWhatsAppParticipantSafetyRequest request,
-    ISettingsStore settingsStore,
-    CancellationToken ct) =>
-{
-    if (request.MaxParticipantsAddedPerDay <= 0)
-    {
-        return Results.BadRequest(new { error = "O limite diÃƒÂ¡rio deve ser maior que zero." });
-    }
-
-    if (request.MinMinutesBetweenParticipantAdds <= 0)
-    {
-        return Results.BadRequest(new { error = "O cooldown mÃƒÂ­nimo deve ser maior que zero." });
-    }
-
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    automation.MaxParticipantsAddedPerDay = request.MaxParticipantsAddedPerDay;
-    automation.MinMinutesBetweenParticipantAdds = request.MinMinutesBetweenParticipantAdds;
-    automation.ParticipantCopyAutomationEnabled = request.ParticipantCopyAutomationEnabled;
-
-    var now = DateTimeOffset.UtcNow;
-    WhatsAppParticipantAddSafety.Normalize(automation, now);
-    if (!string.IsNullOrWhiteSpace(request.InstanceName))
-    {
-        WhatsAppParticipantAddSafety.UpdateConfiguredLimits(
-            automation,
-            request.InstanceName,
-            request.MaxParticipantsAddedPerDay,
-            request.MinMinutesBetweenParticipantAdds,
-            now);
-    }
-    await settingsStore.SaveAsync(settings, ct);
-
-    var remainingQuota = WhatsAppParticipantAddSafety.GetRemainingQuota(automation, request.InstanceName);
-    var cooldownActive = WhatsAppParticipantAddSafety.TryGetCooldownBlock(
-        automation,
-        request.InstanceName,
-        now,
-        out var nextAllowedAt,
-        out var cooldownMessage);
-
-    return Results.Ok(new
-    {
-        success = true,
-        maxParticipantsAddedPerDay = automation.MaxParticipantsAddedPerDay,
-        minMinutesBetweenParticipantAdds = automation.MinMinutesBetweenParticipantAdds,
-        participantCopyAutomationEnabled = automation.ParticipantCopyAutomationEnabled,
-        participantsAddedToday = automation.ParticipantsAddedToday,
-        remainingQuota,
-        nextAllowedAt = cooldownActive ? nextAllowedAt : (DateTimeOffset?)null,
-        message = cooldownActive
-            ? cooldownMessage
-            : "Travas de seguranÃƒÂ§a atualizadas com sucesso."
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/whatsapp/copy-schedules", async (
-    CreateParticipantCopyScheduleRequest request,
-    ISettingsStore settingsStore,
-    IWhatsAppGateway gateway,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(request.SourceGroupId) || string.IsNullOrWhiteSpace(request.TargetGroupId))
-        return Results.BadRequest(new { error = "SourceGroupId e TargetGroupId sÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rios." });
-
-    if (request.SourceGroupId == request.TargetGroupId)
-        return Results.BadRequest(new { error = "Grupo de origem e destino nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o podem ser o mesmo." });
-
-    var batchSize = Math.Max(1, request.BatchSize);
-    var participantIds = request.ParticipantIds?
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Select(x => x.Trim())
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    if (participantIds is null || participantIds.Count == 0)
-    {
-        participantIds = (await gateway.GetGroupParticipantsAsync(null, request.SourceGroupId, ct))
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    if (participantIds.Count == 0)
-        return Results.BadRequest(new { error = "Nenhum participante disponÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â­vel para agendar." });
-
-    var targetParticipants = await gateway.GetGroupParticipantsAsync(null, request.TargetGroupId, ct); var targetSet = new HashSet<string>(targetParticipants, StringComparer.OrdinalIgnoreCase); var eligibleParticipants = participantIds.Where(x => !targetSet.Contains(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(); var skippedParticipants = participantIds.Count - eligibleParticipants.Count;
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    if (!automation.ParticipantCopyAutomationEnabled)
-    {
-        return Results.BadRequest(new { error = "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento." });
-    }
-
-    var now = DateTimeOffset.UtcNow;
-    WhatsAppParticipantAddSafety.Normalize(automation, now);
-    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
-    var minIntervalMinutes = automation.ParticipantAddSafetyEnabled
-        ? WhatsAppParticipantAddSafety.GetMinimumIntervalMinutes(automation, effectiveInstanceName)
-        : 1;
-    var intervalMinutes = Math.Max(Math.Max(1, request.IntervalMinutes), minIntervalMinutes);
-    var schedule = new WhatsAppParticipantCopySchedule
-    {
-        Id = Guid.NewGuid().ToString("N"),
-        Name = string.IsNullOrWhiteSpace(request.Name)
-            ? $"CÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³pia {request.SourceGroupId} -> {request.TargetGroupId}"
-            : request.Name.Trim(),
-        Enabled = true,
-        InstanceName = effectiveInstanceName,
-        SourceGroupId = request.SourceGroupId.Trim(),
-        TargetGroupId = request.TargetGroupId.Trim(),
-        PendingParticipantIds = eligibleParticipants,
-        TotalParticipants = eligibleParticipants.Count,
-        ProcessedParticipants = 0,
-        SkippedParticipants = skippedParticipants,
-        BatchSize = batchSize,
-        IntervalMinutes = intervalMinutes,
-        CreatedAt = now,
-        NextRunAt = request.StartAt ?? now,
-        LastResultMessage = $"Agendamento criado com {eligibleParticipants.Count} participante(s). Repetidos ignorados: {skippedParticipants}."
-    };
-
-    automation.ParticipantCopySchedules.Insert(0, schedule);
-    await settingsStore.SaveAsync(settings, ct);
-
-    return Results.Ok(new
-    {
-        success = true,
-        scheduleId = schedule.Id,
-        totalParticipants = schedule.TotalParticipants,
-        skippedParticipants,
-        nextRunAt = schedule.NextRunAt,
-        message = schedule.LastResultMessage
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapPut("/api/admin/whatsapp/copy-schedules/{id}", async (
-    string id,
-    UpdateParticipantCopyScheduleRequest request,
-    ISettingsStore settingsStore,
-    IWhatsAppGateway gateway,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(id))
-        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
-
-    if (string.IsNullOrWhiteSpace(request.SourceGroupId) || string.IsNullOrWhiteSpace(request.TargetGroupId))
-        return Results.BadRequest(new { error = "SourceGroupId e TargetGroupId sÃƒÂ£o obrigatÃƒÂ³rios." });
-
-    if (request.SourceGroupId == request.TargetGroupId)
-        return Results.BadRequest(new { error = "Grupo de origem e destino nÃƒÂ£o podem ser o mesmo." });
-
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    if (!automation.ParticipantCopyAutomationEnabled)
-    {
-        return Results.BadRequest(new { error = "CÃƒÂ³pia de participantes estÃƒÂ¡ pausada globalmente no momento." });
-    }
-
-    var schedule = automation.ParticipantCopySchedules.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-    if (schedule is null)
-        return Results.NotFound(new { error = "Agendamento nÃƒÂ£o encontrado." });
-
-    var now = DateTimeOffset.UtcNow;
-    WhatsAppParticipantAddSafety.Normalize(automation, now);
-
-    var batchSize = Math.Max(1, request.BatchSize);
-    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
-    var minIntervalMinutes = automation.ParticipantAddSafetyEnabled
-        ? WhatsAppParticipantAddSafety.GetMinimumIntervalMinutes(automation, effectiveInstanceName)
-        : 1;
-    var intervalMinutes = Math.Max(Math.Max(1, request.IntervalMinutes), minIntervalMinutes);
-    var shouldRefreshQueue = request.RefreshQueue
-        || !string.Equals(schedule.SourceGroupId, request.SourceGroupId.Trim(), StringComparison.OrdinalIgnoreCase)
-        || !string.Equals(schedule.TargetGroupId, request.TargetGroupId.Trim(), StringComparison.OrdinalIgnoreCase);
-
-    if (shouldRefreshQueue)
-    {
-        var participantIds = request.ParticipantIds?
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (participantIds is null || participantIds.Count == 0)
-        {
-            participantIds = (await gateway.GetGroupParticipantsAsync(null, request.SourceGroupId, ct))
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        var targetParticipants = await gateway.GetGroupParticipantsAsync(null, request.TargetGroupId, ct);
-        var targetSet = new HashSet<string>(targetParticipants, StringComparer.OrdinalIgnoreCase);
-        var eligibleParticipants = participantIds
-            .Where(x => !targetSet.Contains(x))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var skippedParticipants = participantIds.Count - eligibleParticipants.Count;
-
-        schedule.PendingParticipantIds = eligibleParticipants;
-        schedule.TotalParticipants = eligibleParticipants.Count;
-        schedule.ProcessedParticipants = 0;
-        schedule.SkippedParticipants = skippedParticipants;
-        schedule.CompletedAt = null;
-        schedule.LastRunAt = null;
-        schedule.NextRunAt = request.StartAt ?? now;
-        schedule.LastResultMessage = eligibleParticipants.Count == 0
-            ? "Fila recarregada, mas nenhum participante ficou elegÃƒÂ­vel."
-            : $"Fila recarregada com {eligibleParticipants.Count} participante(s). Repetidos ignorados: {skippedParticipants}.";
-    }
-    else
-    {
-        schedule.NextRunAt = request.StartAt ?? schedule.NextRunAt;
-    }
-
-    schedule.Name = string.IsNullOrWhiteSpace(request.Name)
-        ? schedule.Name
-        : request.Name.Trim();
-    schedule.Enabled = request.Enabled;
-    schedule.InstanceName = effectiveInstanceName;
-    schedule.SourceGroupId = request.SourceGroupId.Trim();
-    schedule.TargetGroupId = request.TargetGroupId.Trim();
-    schedule.BatchSize = batchSize;
-    schedule.IntervalMinutes = intervalMinutes;
-
-    if (request.Enabled && schedule.NextRunAt < now)
-    {
-        schedule.NextRunAt = now;
-    }
-
-    await settingsStore.SaveAsync(settings, ct);
-    return Results.Ok(new
-    {
-        success = true,
-        scheduleId = schedule.Id,
-        enabled = schedule.Enabled,
-        nextRunAt = schedule.NextRunAt,
-        message = schedule.LastResultMessage
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapDelete("/api/admin/whatsapp/copy-schedules/{id}", async (
-    string id,
-    ISettingsStore settingsStore,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(id))
-        return Results.BadRequest(new { error = "Id ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
-
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    var removed = automation.ParticipantCopySchedules.RemoveAll(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-    if (removed == 0)
-        return Results.NotFound(new { error = "Agendamento nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o encontrado." });
-
-    await settingsStore.SaveAsync(settings, ct);
-    return Results.Ok(new { success = true });
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/whatsapp/copy-schedules/{id}/run-now", async (
-    string id,
-    WhatsAppAutomationQueueService queueService,
-    WhatsAppAdminAutomationService automationService,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(id))
-        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
-
-    var job = await queueService.EnqueueAsync(
-        "copy-schedule-now",
-        $"CÃƒÂ³pia agendada {id}",
-        token => automationService.RunCopyScheduleNowAsync(id, token),
-        ct);
-
-    return Results.Json(new
-    {
-        success = true,
-        queued = true,
-        queueId = job.Id,
-        message = "CÃƒÂ³pia enfileirada para execuÃƒÂ§ÃƒÂ£o."
-    }, statusCode: StatusCodes.Status202Accepted);
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/whatsapp/message-schedules", async (
-    CreateScheduledGroupMessageRequest request,
-    ISettingsStore settingsStore,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(request.TargetGroupId))
-        return Results.BadRequest(new { error = "TargetGroupId ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
-
-    if (string.IsNullOrWhiteSpace(request.Text))
-        return Results.BadRequest(new { error = "Texto da mensagem ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
-
-    if (!string.IsNullOrWhiteSpace(request.ImageUrl) &&
-        (!Uri.TryCreate(request.ImageUrl, UriKind.Absolute, out var parsedImageUrl) ||
-         parsedImageUrl.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.Equals("host.docker.internal", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)))
-    {
-        return Results.BadRequest(new { error = "ImageUrl deve ser uma URL publica absoluta valida." });
-    }
-
-    var intervalMinutes = Math.Max(1, request.IntervalMinutes);
-    var now = DateTimeOffset.UtcNow;
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    var schedule = new WhatsAppScheduledGroupMessage
-    {
-        Id = Guid.NewGuid().ToString("N"),
-        Name = string.IsNullOrWhiteSpace(request.Name)
-            ? $"Mensagem {request.TargetGroupId}"
-            : request.Name.Trim(),
-        Enabled = true,
-        InstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName),
-        TargetGroupId = request.TargetGroupId.Trim(),
-        Text = request.Text.Trim(),
-        ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim(),
-        IntervalMinutes = intervalMinutes,
-        CreatedAt = now,
-        NextRunAt = request.StartAt ?? now,
-        LastResultMessage = "Agendamento criado."
-    };
-
-    automation.ScheduledGroupMessages.Insert(0, schedule);
-    await settingsStore.SaveAsync(settings, ct);
-
-    return Results.Ok(new
-    {
-        success = true,
-        scheduleId = schedule.Id,
-        nextRunAt = schedule.NextRunAt
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/whatsapp/message-schedules/{id}/run-now", async (
-    string id,
-    WhatsAppAutomationQueueService queueService,
-    WhatsAppAdminAutomationService automationService,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(id))
-        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
-
-    var job = await queueService.EnqueueAsync(
-        "message-schedule-now",
-        $"Mensagem agendada {id}",
-        token => automationService.RunMessageScheduleNowAsync(id, token),
-        ct);
-
-    return Results.Json(new
-    {
-        success = true,
-        queued = true,
-        queueId = job.Id,
-        message = "Mensagem enfileirada para envio."
-    }, statusCode: StatusCodes.Status202Accepted);
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/whatsapp/groups/blast-participants/scheduled", async (
-    CreateParticipantBlastScheduleRequest request,
-    ISettingsStore settingsStore,
-    IWhatsAppGroupMembershipStore membershipStore,
-    WhatsAppAutomationQueueService queueService,
-    WhatsAppAdminAutomationService automationService,
-    CancellationToken ct) =>
-{
-    var sourceGroupIds = (request.SourceGroupIds ?? new List<string>())
-        .Append(request.SourceGroupId ?? string.Empty)
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Select(x => x.Trim())
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-    if (sourceGroupIds.Count == 0)
-    {
-        return Results.BadRequest(new { error = "Informe ao menos um grupo de origem." });
-    }
-
-    if (string.IsNullOrWhiteSpace(request.LinkUrl))
-    {
-        return Results.BadRequest(new { error = "Informe o link oficial do grupo." });
-    }
-
-    if (!Uri.TryCreate(request.LinkUrl.Trim(), UriKind.Absolute, out var inviteUri) ||
-        !inviteUri.Host.Equals("chat.whatsapp.com", StringComparison.OrdinalIgnoreCase))
-    {
-        return Results.BadRequest(new { error = "Use um link oficial do chat.whatsapp.com." });
-    }
-
-    var inviteCode = inviteUri.AbsolutePath.Trim('/').Trim();
-    var expectedConfirmation = string.IsNullOrWhiteSpace(inviteCode) ? request.LinkUrl.Trim() : inviteCode;
-    if (!string.Equals((request.LinkConfirmation ?? string.Empty).Trim(), expectedConfirmation, StringComparison.Ordinal))
-    {
-        return Results.BadRequest(new { error = "ConfirmaÃƒÂ§ÃƒÂ£o do link nÃƒÂ£o confere com o convite oficial." });
-    }
-
-    var pitch = string.IsNullOrWhiteSpace(request.SecurityPitch) ? request.Message : request.SecurityPitch;
-    if (string.IsNullOrWhiteSpace(pitch))
-    {
-        return Results.BadRequest(new { error = "Informe o pitch de seguranÃƒÂ§a do disparo." });
-    }
-
-    var effectiveInstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
-    var participantIds = (request.ParticipantIds ?? new List<string>())
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Select(x => x.Trim())
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    if (request.UseAllParticipantsFromSources)
-    {
-        var allParticipants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var sourceGroupId in sourceGroupIds)
-        {
-            var groupParticipants = await membershipStore.GetParticipantsAsync(sourceGroupId, effectiveInstanceName, ct);
-            foreach (var participantId in groupParticipants)
-            {
-                if (!string.IsNullOrWhiteSpace(participantId))
-                {
-                    allParticipants.Add(participantId.Trim());
-                }
-            }
-        }
-
-        participantIds = allParticipants.ToList();
-    }
-
-    if (participantIds.Count == 0)
-    {
-        return Results.BadRequest(new { error = "Nenhum participante elegÃƒÂ­vel encontrado para o disparo." });
-    }
-
-    var now = DateTimeOffset.UtcNow;
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    var schedule = new WhatsAppParticipantBlastSchedule
-    {
-        Id = Guid.NewGuid().ToString("N"),
-        Name = string.IsNullOrWhiteSpace(request.Name)
-            ? $"Disparo {now:yyyyMMdd-HHmmss}"
-            : request.Name.Trim(),
-        Enabled = true,
-        Status = "queued",
-        InstanceName = effectiveInstanceName,
-        SourceGroupIds = sourceGroupIds,
-        UseAllParticipantsFromSources = request.UseAllParticipantsFromSources,
-        PendingParticipantIds = participantIds,
-        SentParticipantIds = new List<string>(),
-        TotalParticipants = participantIds.Count,
-        ProcessedParticipants = 0,
-        SuccessParticipants = 0,
-        FailedParticipants = 0,
-        RepliedParticipants = 0,
-        LinksSent = 0,
-        Message = request.Message?.Trim(),
-        LinkUrl = request.LinkUrl.Trim(),
-        UseAiDialogue = request.UseAiDialogue,
-        IntervalMs = request.IntervalMs,
-        MinUserIntervalMs = request.MinUserIntervalMs,
-        MaxUserIntervalMs = request.MaxUserIntervalMs,
-        BatchSize = request.BatchSize,
-        BatchPauseSeconds = request.BatchPauseSeconds,
-        PreLinkMessages = request.PreLinkMessages,
-        WaitMode = string.IsNullOrWhiteSpace(request.WaitMode) ? "response-or-timeout" : request.WaitMode.Trim(),
-        WaitTimeoutSeconds = request.WaitTimeoutSeconds,
-        SendLinkOnTimeout = request.SendLinkOnTimeout,
-        SecurityPitch = pitch?.Trim(),
-        CreatedAt = now,
-        QueuedAt = now,
-        LastResultMessage = $"Disparo criado com {participantIds.Count} participante(s)."
-    };
-
-    automation.ParticipantBlastSchedules.Insert(0, schedule);
-    await settingsStore.SaveAsync(settings, ct);
-
-    var job = await queueService.EnqueueAsync(
-        "participant-blast-now",
-        $"Disparo agendado {schedule.Id}",
-        token => automationService.RunBlastScheduleNowAsync(schedule.Id, token),
-        ct);
-
-    return Results.Json(new
-    {
-        success = true,
-        queued = true,
-        queueId = job.Id,
-        operationId = schedule.Id,
-        scheduleId = schedule.Id,
-        count = participantIds.Count,
-        message = schedule.LastResultMessage
-    }, statusCode: StatusCodes.Status202Accepted);
-}).RequireAuthorization("AdminOnly");
-
-app.MapGet("/api/admin/whatsapp/groups/blast-participants/schedules", async (
-    ISettingsStore settingsStore,
-    CancellationToken ct) =>
-{
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    var schedules = automation.ParticipantBlastSchedules
-        .OrderByDescending(x => x.CreatedAt)
-        .Select(x => new
-        {
-            id = x.Id,
-            name = x.Name,
-            status = x.Status,
-            enabled = x.Enabled,
-            instanceName = x.InstanceName,
-            totalParticipants = x.TotalParticipants,
-            processedParticipants = x.ProcessedParticipants,
-            successParticipants = x.SuccessParticipants,
-            failedParticipants = x.FailedParticipants,
-            sentParticipants = x.SentParticipantIds.Count,
-            linksSent = x.LinksSent,
-            lastResultMessage = x.LastResultMessage,
-            createdAt = x.CreatedAt,
-            lastRunAt = x.LastRunAt,
-            lastProgressAt = x.LastProgressAt,
-            completedAt = x.CompletedAt
-        })
-        .ToArray();
-
-    return Results.Ok(new { schedules });
-}).RequireAuthorization("AdminOnly");
-
-app.MapGet("/api/admin/whatsapp/groups/blast-participants/logs", async (
-    [FromQuery] string? operationId,
-    [FromQuery] int? limit,
-    WhatsAppAdminAutomationService automationService,
-    CancellationToken ct) =>
-{
-    var effectiveLimit = Math.Clamp(limit ?? 200, 1, 2000);
-    var items = await automationService.GetBlastLogsAsync(operationId, effectiveLimit, ct);
-    return Results.Ok(new
-    {
-        operationId = string.IsNullOrWhiteSpace(operationId) ? items.FirstOrDefault()?.OperationId : operationId.Trim(),
-        items
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapGet("/api/admin/whatsapp/groups/blast-participants/conversion", async (
-    [FromQuery] string? scheduleId,
-    [FromQuery] string? groupId,
-    WhatsAppAdminAutomationService automationService,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(scheduleId))
-    {
-        return Results.BadRequest(new { error = "scheduleId ÃƒÂ© obrigatÃƒÂ³rio." });
-    }
-
-    var snapshot = await automationService.GetBlastConversionAsync(scheduleId.Trim(), groupId, ct);
-    if (snapshot is null)
-    {
-        return Results.NotFound(new { error = "Disparo nÃƒÂ£o encontrado." });
-    }
-
-    return Results.Ok(new
-    {
-        scheduleId = snapshot.ScheduleId,
-        scheduleName = snapshot.ScheduleName,
-        totalSent = snapshot.TotalSent,
-        converted = snapshot.Converted,
-        conversionRate = snapshot.ConversionRate,
-        totalJoinEvents = snapshot.TotalJoinEvents,
-        converters = snapshot.Converters
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapPost("/api/admin/media/upload", async (
-    HttpRequest request,
-    ISettingsStore settingsStore,
-    IOptions<WebhookOptions> webhookOptions,
-    IMediaStore mediaStore,
-    CancellationToken ct) =>
-{
-    if (!request.HasFormContentType)
-    {
-        return Results.BadRequest(new { error = "Envie a imagem como multipart/form-data." });
-    }
-
-    var form = await request.ReadFormAsync(ct);
-    var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
-    if (file is null || file.Length <= 0)
-    {
-        return Results.BadRequest(new { error = "Nenhum arquivo de imagem foi enviado." });
-    }
-
-    if (file.Length > 10_000_000)
-    {
-        return Results.BadRequest(new { error = "Imagem muito grande. Use uma imagem abaixo de 10 MB." });
-    }
-
-    var mimeType = string.IsNullOrWhiteSpace(file.ContentType)
-        ? "image/jpeg"
-        : file.ContentType.Trim();
-    if (!mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-    {
-        return Results.BadRequest(new { error = "O arquivo enviado precisa ser uma imagem." });
-    }
-
-    await using var ms = new MemoryStream();
-    await file.CopyToAsync(ms, ct);
-    var bytes = ms.ToArray();
-    if (bytes.Length == 0)
-    {
-        return Results.BadRequest(new { error = "Imagem vazia." });
-    }
-
-    var settings = await settingsStore.GetAsync(ct);
-    var resolvedPublicBaseUrl = ResolvePublicBaseUrl(
-        settings.BioHub?.PublicBaseUrl,
-        webhookOptions.Value.PublicBaseUrl,
-        request.Scheme,
-        request.Host.ToString());
-    if (string.IsNullOrWhiteSpace(resolvedPublicBaseUrl) ||
-        IsInternalLikeHost(new Uri(resolvedPublicBaseUrl).Host))
-    {
-        return Results.BadRequest(new { error = "Configure um dominio publico antes de carregar imagens." });
-    }
-
-    var mediaId = mediaStore.Add(bytes, mimeType, TimeSpan.FromDays(365));
-    var publicUrl = BuildPublicMediaUrl(resolvedPublicBaseUrl, mediaId);
-
-    return Results.Ok(new
-    {
-        success = true,
-        mediaId,
-        publicUrl,
-        mimeType
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapPut("/api/admin/whatsapp/message-schedules/{id}", async (
-    string id,
-    UpdateScheduledGroupMessageRequest request,
-    ISettingsStore settingsStore,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(id))
-        return Results.BadRequest(new { error = "Id ÃƒÂ© obrigatÃƒÂ³rio." });
-
-    if (string.IsNullOrWhiteSpace(request.TargetGroupId))
-        return Results.BadRequest(new { error = "TargetGroupId ÃƒÂ© obrigatÃƒÂ³rio." });
-
-    if (string.IsNullOrWhiteSpace(request.Text))
-        return Results.BadRequest(new { error = "Texto da mensagem ÃƒÂ© obrigatÃƒÂ³rio." });
-
-    if (!string.IsNullOrWhiteSpace(request.ImageUrl) &&
-        (!Uri.TryCreate(request.ImageUrl, UriKind.Absolute, out var parsedImageUrl) ||
-         parsedImageUrl.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.Equals("host.docker.internal", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
-         parsedImageUrl.Host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)))
-    {
-        return Results.BadRequest(new { error = "ImageUrl deve ser uma URL publica absoluta valida." });
-    }
-
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    var schedule = automation.ScheduledGroupMessages.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-    if (schedule is null)
-        return Results.NotFound(new { error = "Agendamento nÃƒÂ£o encontrado." });
-
-    var now = DateTimeOffset.UtcNow;
-    var intervalMinutes = Math.Max(1, request.IntervalMinutes);
-    schedule.Name = string.IsNullOrWhiteSpace(request.Name) ? schedule.Name : request.Name.Trim();
-    schedule.Enabled = request.Enabled;
-    schedule.InstanceName = WhatsAppInstanceRoutingPolicy.ResolveParticipantOpsInstance(request.InstanceName);
-    schedule.TargetGroupId = request.TargetGroupId.Trim();
-    schedule.Text = request.Text.Trim();
-    schedule.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim();
-    schedule.IntervalMinutes = intervalMinutes;
-    schedule.NextRunAt = request.StartAt ?? (request.Enabled ? (schedule.NextRunAt < now ? now : schedule.NextRunAt) : schedule.NextRunAt);
-    if (request.Enabled && schedule.NextRunAt < now)
-    {
-        schedule.NextRunAt = now;
-    }
-
-    schedule.LastResultMessage = "Agendamento atualizado.";
-    await settingsStore.SaveAsync(settings, ct);
-
-    return Results.Ok(new
-    {
-        success = true,
-        scheduleId = schedule.Id,
-        enabled = schedule.Enabled,
-        nextRunAt = schedule.NextRunAt,
-        message = schedule.LastResultMessage
-    });
-}).RequireAuthorization("AdminOnly");
-
-app.MapDelete("/api/admin/whatsapp/message-schedules/{id}", async (
-    string id,
-    ISettingsStore settingsStore,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(id))
-        return Results.BadRequest(new { error = "Id ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© obrigatÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³rio." });
-
-    var settings = await settingsStore.GetAsync(ct);
-    var automation = settings.WhatsAppAdminAutomation ??= new WhatsAppAdminAutomationSettings();
-    var removed = automation.ScheduledGroupMessages.RemoveAll(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-    if (removed == 0)
-        return Results.NotFound(new { error = "Agendamento nÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o encontrado." });
-
-    await settingsStore.SaveAsync(settings, ct);
-    return Results.Ok(new { success = true });
-}).RequireAuthorization("AdminOnly");
+app.MapMediaUploadEndpoints();
 
 app.MapGet("/", (HttpContext context, IWebHostEnvironment env) =>
 {
@@ -2283,200 +1343,9 @@ app.MapGet("/item/{query}", async (
     return Results.Content(html, "text/html; charset=utf-8");
 });
 
-app.MapGet("/media/remote", async (
-    string url,
-    IHttpClientFactory httpClientFactory,
-    HttpContext context,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(url) ||
-        !Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
-        (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-    {
-        return Results.BadRequest("URL invalida.");
-    }
+app.MapPublicMediaEndpoints();
 
-    using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-    request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; ReiDasOfertasBot/1.0)");
-    request.Headers.Referrer = new Uri($"{context.Request.Scheme}://{context.Request.Host}");
-
-    var client = httpClientFactory.CreateClient();
-    using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-    if (!response.IsSuccessStatusCode)
-    {
-        return Results.StatusCode((int)response.StatusCode);
-    }
-
-    var contentType = response.Content.Headers.ContentType?.MediaType;
-    if (string.IsNullOrWhiteSpace(contentType) || !contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-    {
-        return Results.BadRequest("Midia remota invalida.");
-    }
-
-    var bytes = await response.Content.ReadAsByteArrayAsync(ct);
-    context.Response.Headers.CacheControl = "public,max-age=1800";
-    return Results.File(bytes, contentType);
-});
-
-app.MapPost("/webhooks/evolution", async (
-    HttpRequest request,
-    IOptions<EvolutionOptions> evolution,
-    IOptions<WebhookOptions> webhookOpts,
-    IIdempotencyStore idempotency,
-    ISettingsStore settingsStore,
-    IWhatsAppGroupMembershipStore membershipStore,
-    IAuditTrail audit,
-    ILogger<Program> logger,
-    CancellationToken ct) =>
-{
-    var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
-
-    if (!IsBotConversorWebhookAuthorized(request, body, evolution.Value.WebhookSecret, webhookOpts.Value.ApiKey))
-    {
-        return Results.Unauthorized();
-    }
-
-    using var doc = JsonDocument.Parse(body);
-    var root = doc.RootElement;
-    var eventName = root.TryGetProperty("event", out var e) ? e.GetString() : "unknown";
-
-    // WhatsApp Group Membership Monitoring
-    if (string.Equals(eventName, "group-participants.update", StringComparison.OrdinalIgnoreCase))
-    {
-        try
-        {
-            var settingsNode = await settingsStore.GetAsync(ct);
-            var dataNode = root.GetProperty("data");
-            var groupId = dataNode.TryGetProperty("id", out var idNode) ? idNode.GetString() : null;
-
-            if (!string.IsNullOrEmpty(groupId) && settingsNode.MonitoredGroupIds.Contains(groupId, StringComparer.OrdinalIgnoreCase))
-            {
-                var action = dataNode.TryGetProperty("action", out var actionNode) ? actionNode.GetString() : null;
-                if (dataNode.TryGetProperty("participants", out var participantsNode) && participantsNode.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var participant in participantsNode.EnumerateArray())
-                    {
-                        var participantId = participant.ValueKind == JsonValueKind.String
-                            ? participant.GetString()
-                            : GetString(participant, "phoneNumber", "id", "jid", "participant", "user");
-                        if (!string.IsNullOrEmpty(participantId))
-                        {
-                            await membershipStore.AppendAsync(new WhatsAppGroupMembershipEvent
-                            {
-                                GroupId = groupId,
-                                ParticipantId = participantId,
-                                Action = action ?? "unknown",
-                                Timestamp = DateTimeOffset.UtcNow
-                            }, ct);
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Erro ao processar group-participants.update no webhook (Evolution).");
-        }
-    }
-    var eventId = root.TryGetProperty("eventId", out var id) ? id.GetString() : null;
-
-    var idempotencyKey = $"evolution:{eventName}:{eventId ?? body.GetHashCode().ToString()}";
-    if (!idempotency.TryBegin(idempotencyKey, TimeSpan.FromHours(6)))
-    {
-        return Results.Ok(new { success = true, duplicate = true });
-    }
-
-    var settings = await settingsStore.GetAsync(ct);
-    if (string.Equals(eventName, "connection.update", StringComparison.OrdinalIgnoreCase) && root.TryGetProperty("data", out var data))
-    {
-        var state = data.TryGetProperty("state", out var s) ? s.GetString() : null;
-        if (string.Equals(state, "open", StringComparison.OrdinalIgnoreCase))
-        {
-            settings.Integrations.WhatsApp.Connected = true;
-            settings.Integrations.WhatsApp.LastLoginAt = DateTimeOffset.UtcNow;
-            settings.Integrations.WhatsApp.Notes = "Conectado via webhook Evolution";
-        }
-        else if (string.Equals(state, "close", StringComparison.OrdinalIgnoreCase))
-        {
-            settings.Integrations.WhatsApp.Connected = false;
-            settings.Integrations.WhatsApp.Notes = "Desconectado via webhook Evolution";
-        }
-
-        await settingsStore.SaveAsync(settings, ct);
-    }
-
-    await audit.WriteAsync("evolution.webhook.received", "system", new { eventName, eventId }, ct);
-    return Results.Ok(new { success = true });
-});
-
-app.MapPost("/webhook/bot-conversor", async (
-    HttpRequest request,
-    IMessageOrchestrator orchestrator,
-    ILogger<Program> logger,
-    IOptions<EvolutionOptions> evolutionOptions,
-    IOptions<WebhookOptions> webhookOptions,
-    CancellationToken ct) =>
-{
-    request.EnableBuffering();
-    var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
-    request.Body.Position = 0;
-
-    if (!IsBotConversorWebhookAuthorized(request, body, evolutionOptions.Value.WebhookSecret, webhookOptions.Value.ApiKey))
-    {
-        return Results.Unauthorized();
-    }
-
-    if (string.IsNullOrWhiteSpace(body))
-    {
-        return Results.Ok(new { success = true, ignored = true });
-    }
-
-    var headers = request.Headers.ToDictionary(
-        header => header.Key,
-        header => header.Value.ToString(),
-        StringComparer.OrdinalIgnoreCase);
-
-    var result = await orchestrator.EnqueueBotConversorAsync(body, headers, ct);
-    
-    // Extrair eventos de membership se existirem
-    try
-    {
-        var membershipEvents = ExtractEvolutionMembershipEvents(body);
-        if (membershipEvents.Count > 0)
-        {
-            var memStore = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.IWhatsAppGroupMembershipStore>();
-            var settings = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.ISettingsStore>();
-            var monitoredGroupIds = new HashSet<string>((await settings.GetAsync(ct)).MonitoredGroupIds ?? [], StringComparer.OrdinalIgnoreCase);
-            foreach(var evt in membershipEvents.Where(x => monitoredGroupIds.Contains(x.GroupId)))
-            {
-                await memStore.AppendAsync(evt, ct);
-            }
-            logger.LogInformation("Registrados {Count} eventos de membership via webhook principal.", membershipEvents.Count(x => monitoredGroupIds.Contains(x.GroupId)));
-        }
-    }
-    catch(Exception ex)
-    {
-        logger.LogWarning(ex, "Falha ao processar membership events no webhook principal.");
-    }
-    if (!result.Accepted)
-    {
-        logger.LogWarning(
-            "Webhook bot-conversor falhou ao enfileirar. MessageId={MessageId} Mode={Mode} Error={Error}",
-            result.MessageId,
-            result.Mode,
-            result.Error);
-
-        return Results.StatusCode(StatusCodes.Status502BadGateway);
-    }
-
-    return Results.Ok(new
-    {
-        success = true,
-        messageId = result.MessageId,
-        mode = result.Mode,
-        persistedLocally = result.PersistedLocally
-    });
-});
+app.MapExternalWebhookEndpoints();
 
 if (isWorkerRole)
 {
@@ -2519,10 +1388,11 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     CancellationToken ct) =>
 {
     var body = await new StreamReader(request.Body).ReadToEndAsync(ct);
-    var remoteIp = request.HttpContext.Connection.RemoteIpAddress;
-    var isLoopbackCaller = remoteIp is not null && IPAddress.IsLoopback(remoteIp);
-    if (!isLoopbackCaller &&
-        !IsBotConversorWebhookAuthorized(request, body, evolutionOptions.Value.WebhookSecret, webhookOptions.Value.ApiKey))
+    if (!InternalWebhookBoundaryExtensions.IsInternalBotConversorRequestAuthorized(
+            request,
+            body,
+            evolutionOptions.Value.WebhookSecret,
+            webhookOptions.Value.ApiKey))
     {
         return Results.Unauthorized();
     }
@@ -2532,7 +1402,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         return Results.Ok(new { success = true, ignored = true });
     }
 
-    var membershipEvents = ExtractEvolutionMembershipEvents(body);
+    var membershipEvents = EvolutionMembershipEventParser.Extract(body);
     if (membershipEvents.Count > 0)
     {
         var memStore = request.HttpContext.RequestServices.GetRequiredService<AchadinhosBot.Next.Application.Abstractions.IWhatsAppGroupMembershipStore>();
@@ -2576,24 +1446,17 @@ app.MapPost("/internal/webhook/bot-conversor", async (
     foreach (var msg in messages)
     {
         var mercadoLivreQueuedToBridge = false;
-        if (!string.IsNullOrWhiteSpace(msg.MessageId))
+        if (!WhatsAppWebhookIdempotency.TryBegin(
+                idempotency,
+                msg.InstanceName,
+                msg.ChatId,
+                msg.SenderId,
+                msg.MessageId,
+                msg.FromMe,
+                msg.RawPayloadJson,
+                msg.Text))
         {
-            var waEventKey = $"wa-msg:{msg.InstanceName ?? "default"}:{msg.ChatId}:{msg.MessageId}";
-            if (!idempotency.TryBegin(waEventKey, TimeSpan.FromHours(6)))
-            {
-                continue;
-            }
-        }
-        else
-        {
-            // Fallback idempotency for payloads sem messageId (alguns provedores reenviam o mesmo evento).
-            var fallbackHash = ComputeStableHash(msg.RawPayloadJson ?? msg.Text);
-            var senderKey = string.IsNullOrWhiteSpace(msg.SenderId) ? "unknown" : msg.SenderId;
-            var waFallbackKey = $"wa-msg-fallback:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{fallbackHash}";
-            if (!idempotency.TryBegin(waFallbackKey, TimeSpan.FromSeconds(45)))
-            {
-                continue;
-            }
+            continue;
         }
 
         var responderInstance = string.IsNullOrWhiteSpace(waSettings.InstanceName) ? msg.InstanceName : waSettings.InstanceName;
@@ -3645,154 +2508,7 @@ app.MapPost("/webhook/instagram", async (
 }
 
 var api = app.MapGroup("/api").RequireAuthorization("ReadAccess");
-
-api.MapGet("/settings", async (
-    ISettingsStore store,
-    IOptions<WebhookOptions> webhookOptions,
-    IHostEnvironment hostEnvironment,
-    HttpContext context,
-    CancellationToken ct) =>
-{
-    var settings = await store.GetAsync(ct);
-    AutomationSettingsSanitizer.MaskSecretsInPlace(settings);
-    if (!string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
-    {
-        settings.OpenAI.ApiKey = "********";
-    }
-    if (settings.OpenAI?.ApiKeys?.Count > 0)
-    {
-        settings.OpenAI.ApiKeys = settings.OpenAI.ApiKeys
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Select(_ => "********")
-            .ToList();
-    }
-    if (!string.IsNullOrWhiteSpace(settings.Gemini?.ApiKey))
-    {
-        settings.Gemini.ApiKey = "********";
-    }
-    if (settings.Gemini?.ApiKeys?.Count > 0)
-    {
-        settings.Gemini.ApiKeys = settings.Gemini.ApiKeys
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Select(_ => "********")
-            .ToList();
-    }
-    if (!string.IsNullOrWhiteSpace(settings.DeepSeek?.ApiKey))
-    {
-        settings.DeepSeek.ApiKey = "********";
-    }
-    if (settings.DeepSeek?.ApiKeys?.Count > 0)
-    {
-        settings.DeepSeek.ApiKeys = settings.DeepSeek.ApiKeys
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Select(_ => "********")
-            .ToList();
-    }
-    if (!string.IsNullOrWhiteSpace(settings.Nemotron?.ApiKey))
-    {
-        settings.Nemotron.ApiKey = "********";
-    }
-    if (settings.Nemotron?.ApiKeys?.Count > 0)
-    {
-        settings.Nemotron.ApiKeys = settings.Nemotron.ApiKeys
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Select(_ => "********")
-            .ToList();
-    }
-    if (!string.IsNullOrWhiteSpace(settings.Qwen?.ApiKey))
-    {
-        settings.Qwen.ApiKey = "********";
-    }
-    if (settings.Qwen?.ApiKeys?.Count > 0)
-    {
-        settings.Qwen.ApiKeys = settings.Qwen.ApiKeys
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Select(_ => "********")
-            .ToList();
-    }
-    if (!string.IsNullOrWhiteSpace(settings.VilaNvidia?.ApiKey))
-    {
-        settings.VilaNvidia.ApiKey = "********";
-    }
-    if (settings.VilaNvidia?.ApiKeys?.Count > 0)
-    {
-        settings.VilaNvidia.ApiKeys = settings.VilaNvidia.ApiKeys
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Select(_ => "********")
-            .ToList();
-    }
-    if (!string.IsNullOrWhiteSpace(settings.InstagramPublish?.AccessToken))
-    {
-        settings.InstagramPublish.AccessToken = "********";
-    }
-    if (!string.IsNullOrWhiteSpace(settings.InstagramPublish?.ManyChatApiKey))
-    {
-        settings.InstagramPublish.ManyChatApiKey = "********";
-    }
-    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.LoginUser))
-    {
-        settings.MercadoLivreAffiliateScout.LoginUser = "********";
-    }
-    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.LoginPassword))
-    {
-        settings.MercadoLivreAffiliateScout.LoginPassword = "********";
-    }
-    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.TwoFactorCode))
-    {
-        settings.MercadoLivreAffiliateScout.TwoFactorCode = "********";
-    }
-    if (!string.IsNullOrWhiteSpace(settings.MercadoLivreAffiliateScout?.StorageStateJson))
-    {
-        settings.MercadoLivreAffiliateScout.StorageStateJson = "********";
-    }
-
-    var payload = JsonSerializer.SerializeToNode(
-        settings,
-        new JsonSerializerOptions(JsonSerializerDefaults.Web))?.AsObject() ?? new JsonObject();
-    payload["publicBaseUrl"] = ResolvePublicBaseUrl(
-        settings.BioHub?.PublicBaseUrl,
-        webhookOptions.Value.PublicBaseUrl,
-        context.Request.Scheme,
-        context.Request.Host.ToString());
-    payload["runtimeEnvironment"] = hostEnvironment.EnvironmentName;
-    payload["isProduction"] = hostEnvironment.IsProduction();
-
-    return Results.Json(payload);
-});
-
-api.MapGet("/settings/versions", async (
-    ISettingsVersionStore settingsVersionStore,
-    CancellationToken ct) =>
-{
-    var versions = await settingsVersionStore.ListVersionsAsync(ct);
-    return Results.Ok(new { success = true, versions });
-});
-
-api.MapPost("/settings/restore", async (
-    [FromBody] RestoreSettingsRequest payload,
-    ISettingsVersionStore settingsVersionStore,
-    CancellationToken ct) =>
-{
-    if (payload is null || string.IsNullOrWhiteSpace(payload.VersionFileName))
-    {
-        return Results.BadRequest(new { success = false, error = "versionFileName invalido" });
-    }
-
-    var restored = await settingsVersionStore.RestoreAsync(payload.VersionFileName, ct);
-    if (restored is null)
-    {
-        return Results.NotFound(new { success = false, error = "snapshot nao encontrado" });
-    }
-
-    var settings = restored;
-    MaskProviderKeys(settings);
-    return Results.Ok(new
-    {
-        success = true,
-        restored = payload.VersionFileName,
-        settings
-    });
-});
+api.MapSettingsEndpoints(ValidateSettings, ResolvePublicBaseUrl, MaskProviderKeys);
 
 api.MapPost("/admin/mercadolivre-affiliate-scout/test", async (
     MercadoLivreAffiliateScoutClient scoutClient,
@@ -4030,296 +2746,7 @@ api.MapPost("/agents/channel-monitor-ui-state", async (
     return Results.Ok(saved);
 });
 
-api.MapGet("/diagnostics/apis", async (
-    ISettingsStore store,
-    IOptions<AffiliateOptions> affiliateOptions,
-    IMercadoLivreOAuthService mercadoLivreOAuthService,
-    CancellationToken ct) =>
-{
-    var settings = await store.GetAsync(ct);
-    var affiliate = affiliateOptions.Value;
-
-    var gemini = settings.Gemini ?? new GeminiSettings();
-    var geminiKeys = new List<string>();
-    if (!string.IsNullOrWhiteSpace(gemini.ApiKey) && gemini.ApiKey != "********")
-    {
-        geminiKeys.Add(gemini.ApiKey.Trim());
-    }
-    if (gemini.ApiKeys is not null)
-    {
-        geminiKeys.AddRange(gemini.ApiKeys
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Where(x => x != "********"));
-    }
-
-    var openAiConfigured = !string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey) && settings.OpenAI.ApiKey != "********";
-    var openAiKeys = NormalizeSecretList(settings.OpenAI?.ApiKeys);
-    if (openAiConfigured && !string.IsNullOrWhiteSpace(settings.OpenAI?.ApiKey))
-    {
-        openAiKeys.Add(settings.OpenAI.ApiKey.Trim());
-    }
-    openAiKeys = openAiKeys.Distinct(StringComparer.Ordinal).ToList();
-    var deepSeekKeys = NormalizeSecretList(settings.DeepSeek?.ApiKeys);
-    if (!string.IsNullOrWhiteSpace(settings.DeepSeek?.ApiKey) && settings.DeepSeek.ApiKey != "********")
-    {
-        deepSeekKeys.Add(settings.DeepSeek.ApiKey.Trim());
-    }
-    deepSeekKeys = deepSeekKeys.Distinct(StringComparer.Ordinal).ToList();
-    var nemotronKeys = NormalizeSecretList(settings.Nemotron?.ApiKeys);
-    if (!string.IsNullOrWhiteSpace(settings.Nemotron?.ApiKey) && settings.Nemotron.ApiKey != "********")
-    {
-        nemotronKeys.Add(settings.Nemotron.ApiKey.Trim());
-    }
-    nemotronKeys = nemotronKeys.Distinct(StringComparer.Ordinal).ToList();
-    var qwenKeys = NormalizeSecretList(settings.Qwen?.ApiKeys);
-    if (!string.IsNullOrWhiteSpace(settings.Qwen?.ApiKey) && settings.Qwen.ApiKey != "********")
-    {
-        qwenKeys.Add(settings.Qwen.ApiKey.Trim());
-    }
-    qwenKeys = qwenKeys.Distinct(StringComparer.Ordinal).ToList();
-    var vilaKeys = NormalizeSecretList(settings.VilaNvidia?.ApiKeys);
-    if (!string.IsNullOrWhiteSpace(settings.VilaNvidia?.ApiKey) && settings.VilaNvidia.ApiKey != "********")
-    {
-        vilaKeys.Add(settings.VilaNvidia.ApiKey.Trim());
-    }
-    vilaKeys = vilaKeys.Distinct(StringComparer.Ordinal).ToList();
-    var amazonApi = affiliate.AmazonProductApi ?? new AmazonProductApiOptions();
-    var amazonCreatorApi = affiliate.AmazonCreatorApi ?? new AmazonCreatorApiOptions();
-    var amazonPaConfigured = !string.IsNullOrWhiteSpace(amazonApi.AccessKey)
-        && !string.IsNullOrWhiteSpace(amazonApi.SecretKey)
-        && !string.IsNullOrWhiteSpace(amazonApi.PartnerTag);
-    var amazonCreatorConfigured = !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientId)
-        && !string.IsNullOrWhiteSpace(amazonCreatorApi.ClientSecret)
-        && !string.IsNullOrWhiteSpace(amazonCreatorApi.TokenEndpoint)
-        && !string.IsNullOrWhiteSpace(amazonCreatorApi.CatalogEndpoint)
-        && !string.IsNullOrWhiteSpace(amazonCreatorApi.Version);
-    var shopeeApi = affiliate.ShopeeProductApi ?? new ShopeeProductApiOptions();
-    var shopeeConfigured = shopeeApi.PartnerId > 0
-        && shopeeApi.ShopId > 0
-        && !string.IsNullOrWhiteSpace(shopeeApi.PartnerKey);
-    var mercadoLivreOAuthConfigured =
-        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreClientId) &&
-        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreClientSecret) &&
-        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreRefreshToken) &&
-        !string.IsNullOrWhiteSpace(affiliate.MercadoLivreUserId);
-    var mercadoLivreOAuthStatus = mercadoLivreOAuthConfigured
-        ? await mercadoLivreOAuthService.GetStatusAsync(ct)
-        : null;
-
-    var publish = settings.InstagramPublish ?? new InstagramPublishSettings();
-    return Results.Ok(new
-    {
-        app = new
-        {
-            instagramPublishEnabled = publish.Enabled,
-            autoPilotEnabled = publish.AutoPilotEnabled,
-            storyAutoPilotEnabled = publish.StoryAutoPilotEnabled,
-            strictMode = new
-            {
-                requireOfficialProductData = publish.AutoPilotRequireOfficialProductData,
-                minimumImageMatchScore = publish.AutoPilotMinimumImageMatchScore,
-                requireAiCaption = publish.AutoPilotRequireAiCaption
-            }
-        },
-        ai = new
-        {
-            openAiConfigured = openAiKeys.Count > 0,
-            openAiKeysConfigured = openAiKeys.Count,
-            geminiKeysConfigured = geminiKeys.Distinct(StringComparer.Ordinal).Count(),
-            deepSeekKeysConfigured = deepSeekKeys.Count,
-            nemotronKeysConfigured = nemotronKeys.Count,
-            qwenKeysConfigured = qwenKeys.Count,
-            vilaKeysConfigured = vilaKeys.Count
-        },
-        officialProductApis = new
-        {
-            amazon = new
-            {
-                enabled = amazonApi.Enabled || amazonCreatorApi.Enabled,
-                configured = amazonPaConfigured || amazonCreatorConfigured,
-                provider = amazonCreatorApi.Enabled
-                    ? "creator-api"
-                    : (amazonApi.Enabled ? "pa-api" : "fallback"),
-                creatorApi = new
-                {
-                    enabled = amazonCreatorApi.Enabled,
-                    configured = amazonCreatorConfigured
-                },
-                paApi = new
-                {
-                    enabled = amazonApi.Enabled,
-                    configured = amazonPaConfigured
-                }
-            },
-            shopee = new
-            {
-                enabled = shopeeApi.Enabled,
-                configured = shopeeConfigured
-            },
-            mercadoLivre = new
-            {
-                oauthConfigured = mercadoLivreOAuthConfigured,
-                oauthValid = mercadoLivreOAuthStatus?.Success ?? false,
-                oauthMessage = mercadoLivreOAuthStatus?.Message
-            }
-        },
-        integrations = new
-        {
-            whatsappConnected = settings.Integrations?.WhatsApp?.Connected ?? false,
-            telegramConnected = settings.Integrations?.Telegram?.Connected ?? false,
-            mercadoLivreConnected = settings.Integrations?.MercadoLivre?.Connected ?? false
-        }
-    });
-});
-
-api.MapPut("/settings", async (
-    AutomationSettings payload,
-    ISettingsStore store,
-    IAuditTrail audit,
-    HttpContext context,
-    CancellationToken ct) =>
-{
-    var errors = ValidateSettings(payload).ToArray();
-    if (errors.Length > 0)
-    {
-        return Results.BadRequest(new { success = false, errors });
-    }
-
-    var current = await store.GetAsync(ct);
-    if (payload.OpenAI is null)
-    {
-        payload.OpenAI = current.OpenAI ?? new OpenAISettings();
-    }
-    else
-    {
-        var incomingOpenAiApiKey = payload.OpenAI.ApiKey;
-        payload.OpenAI.ApiKey = ResolveSecretWithMask(incomingOpenAiApiKey, current.OpenAI?.ApiKey);
-        payload.OpenAI.ApiKeys = MergeSecretListWithMask(
-            current.OpenAI?.ApiKeys,
-            payload.OpenAI.ApiKeys,
-            incomingOpenAiApiKey,
-            current.OpenAI?.ApiKey);
-    }
-
-    if (payload.Gemini is null)
-    {
-        payload.Gemini = current.Gemini ?? new GeminiSettings();
-    }
-    else
-    {
-        var incomingGeminiApiKey = payload.Gemini.ApiKey;
-        payload.Gemini.ApiKey = ResolveSecretWithMask(incomingGeminiApiKey, current.Gemini?.ApiKey);
-        payload.Gemini.ApiKeys = MergeSecretListWithMask(
-            current.Gemini?.ApiKeys,
-            payload.Gemini.ApiKeys,
-            incomingGeminiApiKey,
-            current.Gemini?.ApiKey);
-    }
-
-    if (payload.DeepSeek is null)
-    {
-        payload.DeepSeek = current.DeepSeek ?? new DeepSeekSettings();
-    }
-    else
-    {
-        var incomingDeepSeekApiKey = payload.DeepSeek.ApiKey;
-        payload.DeepSeek.ApiKey = ResolveSecretWithMask(incomingDeepSeekApiKey, current.DeepSeek?.ApiKey);
-        payload.DeepSeek.ApiKeys = MergeSecretListWithMask(
-            current.DeepSeek?.ApiKeys,
-            payload.DeepSeek.ApiKeys,
-            incomingDeepSeekApiKey,
-            current.DeepSeek?.ApiKey);
-    }
-
-    if (payload.Nemotron is null)
-    {
-        payload.Nemotron = current.Nemotron ?? new NemotronSettings();
-    }
-    else
-    {
-        var incomingNemotronApiKey = payload.Nemotron.ApiKey;
-        payload.Nemotron.ApiKey = ResolveSecretWithMask(incomingNemotronApiKey, current.Nemotron?.ApiKey);
-        payload.Nemotron.ApiKeys = MergeSecretListWithMask(
-            current.Nemotron?.ApiKeys,
-            payload.Nemotron.ApiKeys,
-            incomingNemotronApiKey,
-            current.Nemotron?.ApiKey);
-    }
-
-    if (payload.Qwen is null)
-    {
-        payload.Qwen = current.Qwen ?? new QwenSettings();
-    }
-    else
-    {
-        var incomingQwenApiKey = payload.Qwen.ApiKey;
-        payload.Qwen.ApiKey = ResolveSecretWithMask(incomingQwenApiKey, current.Qwen?.ApiKey);
-        payload.Qwen.ApiKeys = MergeSecretListWithMask(
-            current.Qwen?.ApiKeys,
-            payload.Qwen.ApiKeys,
-            incomingQwenApiKey,
-            current.Qwen?.ApiKey);
-    }
-
-    if (payload.VilaNvidia is null)
-    {
-        payload.VilaNvidia = current.VilaNvidia ?? new VilaNvidiaSettings();
-    }
-    else
-    {
-        var incomingVilaApiKey = payload.VilaNvidia.ApiKey;
-        payload.VilaNvidia.ApiKey = ResolveSecretWithMask(incomingVilaApiKey, current.VilaNvidia?.ApiKey);
-        payload.VilaNvidia.ApiKeys = MergeSecretListWithMask(
-            current.VilaNvidia?.ApiKeys,
-            payload.VilaNvidia.ApiKeys,
-            incomingVilaApiKey,
-            current.VilaNvidia?.ApiKey);
-    }
-
-    if (payload.InstagramPublish is null)
-    {
-        payload.InstagramPublish = current.InstagramPublish ?? new InstagramPublishSettings();
-    }
-    else
-    {
-        var key = payload.InstagramPublish.AccessToken;
-        if (string.IsNullOrWhiteSpace(key) || key == "********")
-        {
-            payload.InstagramPublish.AccessToken = current.InstagramPublish?.AccessToken;
-        }
-
-        var manyChatKey = payload.InstagramPublish.ManyChatApiKey;
-        if (string.IsNullOrWhiteSpace(manyChatKey) || manyChatKey == "********")
-        {
-            payload.InstagramPublish.ManyChatApiKey = current.InstagramPublish?.ManyChatApiKey;
-        }
-    }
-
-    if (payload.MercadoLivreAffiliateScout is null)
-    {
-        payload.MercadoLivreAffiliateScout = current.MercadoLivreAffiliateScout ?? new MercadoLivreAffiliateScoutSettings();
-    }
-    else
-    {
-        payload.MercadoLivreAffiliateScout.LoginUser = ResolveSecretWithMask(
-            payload.MercadoLivreAffiliateScout.LoginUser,
-            current.MercadoLivreAffiliateScout?.LoginUser);
-        payload.MercadoLivreAffiliateScout.LoginPassword = ResolveSecretWithMask(
-            payload.MercadoLivreAffiliateScout.LoginPassword,
-            current.MercadoLivreAffiliateScout?.LoginPassword);
-        payload.MercadoLivreAffiliateScout.TwoFactorCode = ResolveSecretWithMask(
-            payload.MercadoLivreAffiliateScout.TwoFactorCode,
-            current.MercadoLivreAffiliateScout?.TwoFactorCode);
-        payload.MercadoLivreAffiliateScout.StorageStateJson = ResolveSecretWithMask(
-            payload.MercadoLivreAffiliateScout.StorageStateJson,
-            current.MercadoLivreAffiliateScout?.StorageStateJson);
-    }
-
-    await store.SaveAsync(payload, ct);
-    await audit.WriteAsync("settings.updated", context.User.Identity?.Name ?? "unknown", new { autoReplies = payload.AutoReplies.Count }, ct);
-    return Results.Ok(new { success = true });
-}).RequireAuthorization("AdminOnly");
+api.MapDiagnosticsEndpoints();
 
 api.MapPost("/catalog/sync", async (
     IInstagramPublishStore publishStore,
@@ -4338,62 +2765,7 @@ api.MapPost("/catalog/sync", async (
     });
 }).RequireAuthorization("AdminOnly");
 
-api.MapGet("/catalog/items", async (
-    [FromQuery] string? q,
-    [FromQuery] int? limit,
-    [FromQuery] string? target,
-    HttpContext context,
-    ICatalogOfferStore catalogOfferStore,
-    CancellationToken ct) =>
-{
-    var catalogTarget = string.IsNullOrWhiteSpace(target)
-        ? ResolveCatalogTargetForRequest(context.Request)
-        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
-    var items = await catalogOfferStore.ListAsync(q, limit ?? 200, ct, catalogTarget);
-    return Results.Ok(new { items });
-});
-
-api.MapGet("/catalog/items/{query}", async (
-    string query,
-    [FromQuery] string? target,
-    HttpContext context,
-    ICatalogOfferStore catalogOfferStore,
-    CancellationToken ct) =>
-{
-    var catalogTarget = string.IsNullOrWhiteSpace(target)
-        ? ResolveCatalogTargetForRequest(context.Request)
-        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
-    var item = await catalogOfferStore.FindByCodeAsync(query, ct, catalogTarget);
-    return item is null ? Results.NotFound() : Results.Ok(item);
-});
-
-api.MapGet("/catalog/link-audit", async (
-    [FromQuery] string? target,
-    HttpContext context,
-    ICatalogOfferStore catalogOfferStore,
-    CancellationToken ct) =>
-{
-    var catalogTarget = string.IsNullOrWhiteSpace(target)
-        ? ResolveCatalogTargetForRequest(context.Request)
-        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
-    var result = await catalogOfferStore.AuditLinksAsync(ct, catalogTarget);
-    return Results.Ok(new { success = true, target = catalogTarget, result });
-}).RequireAuthorization("AdminOnly");
-
-api.MapPost("/catalog/revalidate-links", async (
-    [FromQuery] string? target,
-    IAuditTrail audit,
-    HttpContext context,
-    ICatalogOfferStore catalogOfferStore,
-    CancellationToken ct) =>
-{
-    var catalogTarget = string.IsNullOrWhiteSpace(target)
-        ? ResolveCatalogTargetForRequest(context.Request)
-        : CatalogTargets.Normalize(target, CatalogTargets.Prod);
-    var result = await catalogOfferStore.RevalidateLinksAsync(ct, catalogTarget);
-    await audit.WriteAsync("catalog.links.revalidated", context.User.Identity?.Name ?? "unknown", result, ct);
-    return Results.Ok(new { success = true, target = catalogTarget, result });
-}).RequireAuthorization("AdminOnly");
+api.MapCatalogEndpoints();
 
 api.MapPost("/integrations/whatsapp/connect", async (
     WhatsAppInstanceRequest payload,
@@ -4864,100 +3236,8 @@ api.MapPost("/ai-lab/compare", async (
     return Results.Ok(new { success = true, results });
 }).RequireAuthorization("AdminOnly");
 
-api.MapGet("/content-calendar/items", async (
-    [FromQuery] int? limit,
-    IContentCalendarStore store,
-    CancellationToken ct) =>
-{
-    var max = Math.Clamp(limit ?? 300, 1, 1000);
-    var items = (await store.ListAsync(ct))
-        .OrderBy(x => x.ScheduledAt)
-        .Take(max)
-        .ToList();
-    return Results.Ok(new { items });
-}).RequireAuthorization("ReadAccess");
-
-api.MapGet("/content-calendar/csv", async (
-    IContentCalendarStore store,
-    CancellationToken ct) =>
-{
-    var csv = await store.ExportCsvAsync(ct);
-    var bytes = Encoding.UTF8.GetBytes(csv);
-    return Results.File(bytes, "text/csv; charset=utf-8", "content-calendar.csv");
-}).RequireAuthorization("AdminOnly");
-
-api.MapPost("/content-calendar/items", async (
-    ContentCalendarCreateRequest payload,
-    ContentCalendarAutomationService automationService,
-    CancellationToken ct) =>
-{
-    var item = await automationService.CreateAsync(payload, ct);
-    return Results.Ok(new { success = true, item });
-}).RequireAuthorization("AdminOnly");
-
-api.MapPut("/content-calendar/items/{id}", async (
-    string id,
-    ContentCalendarCreateRequest payload,
-    IContentCalendarStore store,
-    CancellationToken ct) =>
-{
-    var existing = await store.GetAsync(id, ct);
-    if (existing is null)
-    {
-        return Results.NotFound(new { error = "Item do calendario nao encontrado." });
-    }
-
-    existing.ScheduledAt = payload.ScheduledAt ?? existing.ScheduledAt;
-    existing.PostType = string.IsNullOrWhiteSpace(payload.PostType) ? existing.PostType : payload.PostType.Trim();
-    existing.SourceInput = payload.SourceInput ?? existing.SourceInput;
-    existing.OfferContext = payload.OfferContext ?? existing.OfferContext;
-    existing.MediaUrl = payload.MediaUrl ?? existing.MediaUrl;
-    existing.OfferUrl = payload.OfferUrl ?? existing.OfferUrl;
-    existing.Keyword = payload.Keyword ?? existing.Keyword;
-    existing.Hashtags = payload.Hashtags ?? existing.Hashtags;
-    existing.GeneratedCaption = payload.GeneratedCaption ?? existing.GeneratedCaption;
-    existing.AutoPublish = payload.AutoPublish ?? existing.AutoPublish;
-    existing.ReferenceUrl = payload.ReferenceUrl ?? existing.ReferenceUrl;
-    existing.ReferenceCaption = payload.ReferenceCaption ?? existing.ReferenceCaption;
-    existing.ReferenceMediaUrl = payload.ReferenceMediaUrl ?? existing.ReferenceMediaUrl;
-    existing.UpdatedAt = DateTimeOffset.UtcNow;
-    await store.SaveAsync(existing, ct);
-
-    return Results.Ok(new { success = true, item = existing });
-}).RequireAuthorization("AdminOnly");
-
-api.MapDelete("/content-calendar/items/{id}", async (
-    string id,
-    IContentCalendarStore store,
-    CancellationToken ct) =>
-{
-    await store.DeleteAsync(id, ct);
-    return Results.Ok(new { success = true });
-}).RequireAuthorization("AdminOnly");
-
-api.MapPost("/content-calendar/import-reference", async (
-    ContentReferenceImportRequest payload,
-    ContentCalendarAutomationService automationService,
-    CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(payload.ReferenceUrl) &&
-        string.IsNullOrWhiteSpace(payload.ReferenceCaption) &&
-        string.IsNullOrWhiteSpace(payload.OfferUrl))
-    {
-        return Results.BadRequest(new { error = "Informe ao menos referencia (url/legenda) ou link da oferta." });
-    }
-
-    var item = await automationService.ImportReferenceAsync(payload, ct);
-    return Results.Ok(new { success = true, item });
-}).RequireAuthorization("AdminOnly");
-
-api.MapPost("/content-calendar/process-due", async (
-    ContentCalendarAutomationService automationService,
-    CancellationToken ct) =>
-{
-    var result = await automationService.ProcessDueAsync(ct);
-    return Results.Ok(new { success = true, result });
-}).RequireAuthorization("AdminOnly");
+api.MapContentCalendarEndpoints();
+api.MapContentCalendarOperationalEndpoints();
 
 api.MapGet("/instagram/publish/drafts", async (
     IInstagramPublishStore publishStore,
@@ -5572,267 +3852,9 @@ api.MapPost("/mercadolivre/pending/{id}/reject", async (
     return Results.Ok(new { success = true });
 }).RequireAuthorization("AdminOnly");
 
-api.MapGet("/logs/conversions", async (
-    [FromQuery] string? store,
-    [FromQuery] string? q,
-    [FromQuery] int? limit,
-    IConversionLogStore logStore,
-    CancellationToken ct) =>
-{
-    var query = new ConversionLogQuery
-    {
-        Store = store,
-        Search = q,
-        Limit = limit ?? 200
-    };
-    var items = await logStore.QueryAsync(query, ct);
-    return Results.Ok(new { items });
-});
+api.MapLogsReadEndpoints();
 
-api.MapGet("/logs/clicks", async (
-    [FromQuery] string? q,
-    [FromQuery] int? limit,
-    IClickLogStore clickLogStore,
-    CancellationToken ct) =>
-{
-    var items = await clickLogStore.QueryAsync(null, q, limit ?? 200, ct);
-    return Results.Ok(new { items });
-});
-
-api.MapGet("/logs/funnel", async (
-    [FromQuery] int? hours,
-    IConversionLogStore conversionLogStore,
-    IClickLogStore clickLogStore,
-    CancellationToken ct) =>
-{
-    var windowHours = Math.Clamp(hours ?? 168, 1, 720);
-    var since = DateTimeOffset.UtcNow.AddHours(-windowHours);
-    var conversions = await conversionLogStore.QueryAsync(new ConversionLogQuery { Limit = 2000 }, ct);
-    var clicks = await clickLogStore.QueryAsync(null, null, 2000, ct);
-
-    var conversionsWindow = conversions
-        .Where(x => x.Timestamp >= since)
-        .ToList();
-    var clicksWindow = clicks
-        .Where(x => x.Timestamp >= since)
-        .ToList();
-
-    var bySource = clicksWindow
-        .GroupBy(x => string.IsNullOrWhiteSpace(x.Source) ? "unknown" : x.Source.Trim().ToLowerInvariant())
-        .Select(g => new
-        {
-            source = g.Key,
-            clicks = g.Count(),
-            uniqueLinks = g
-                .Select(x => x.TargetUrl)
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count()
-        })
-        .OrderByDescending(x => x.clicks)
-        .Take(20)
-        .ToArray();
-
-    var byCampaign = clicksWindow
-        .GroupBy(x => string.IsNullOrWhiteSpace(x.Campaign) ? "(none)" : x.Campaign!.Trim().ToLowerInvariant())
-        .Select(g => new
-        {
-            campaign = g.Key,
-            clicks = g.Count(),
-            uniqueLinks = g
-                .Select(x => x.TargetUrl)
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count()
-        })
-        .OrderByDescending(x => x.clicks)
-        .Take(20)
-        .ToArray();
-
-    var topLinks = clicksWindow
-        .GroupBy(x => x.TargetUrl, StringComparer.OrdinalIgnoreCase)
-        .Select(g => new
-        {
-            targetUrl = g.Key,
-            clicks = g.Count(),
-            lastClickAt = g.Max(x => x.Timestamp),
-            source = g
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Source) ? "unknown" : x.Source.Trim().ToLowerInvariant())
-                .OrderByDescending(x => x.Count())
-                .Select(x => x.Key)
-                .FirstOrDefault() ?? "unknown",
-            campaign = g
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Campaign) ? "(none)" : x.Campaign!.Trim().ToLowerInvariant())
-                .OrderByDescending(x => x.Count())
-                .Select(x => x.Key)
-                .FirstOrDefault() ?? "(none)"
-        })
-        .OrderByDescending(x => x.clicks)
-        .ThenByDescending(x => x.lastClickAt)
-        .Take(30)
-        .ToArray();
-
-    return Results.Ok(new
-    {
-        windowHours,
-        since,
-        totals = new
-        {
-            clicks = clicksWindow.Count,
-            conversions = conversionsWindow.Count,
-            successfulConversions = conversionsWindow.Count(x => x.Success),
-            affiliatedConversions = conversionsWindow.Count(x => x.IsAffiliated),
-            trackedConversionLinks = conversionsWindow
-                .SelectMany(x => x.TrackingIds ?? new List<string>())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count()
-        },
-        bySource,
-        byCampaign,
-        topLinks
-    });
-});
-
-api.MapPost("/logs/clicks/clear", async (IClickLogStore clickLogStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
-{
-    await clickLogStore.ClearAsync(null, ct);
-    await audit.WriteAsync("logs.clicks.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
-    return Results.Ok(new { success = true });
-});
-
-api.MapGet("/logs/instagram-ai", async (
-    [FromQuery] string? q,
-    [FromQuery] int? limit,
-    IInstagramAiLogStore logStore,
-    CancellationToken ct) =>
-{
-    var items = await logStore.ListAsync(Math.Clamp(limit ?? 200, 1, 200), ct);
-    if (!string.IsNullOrWhiteSpace(q))
-    {
-        var term = q.Trim();
-        items = items.Where(i =>
-            i.Provider.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-            i.Model.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-            (i.Error?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            i.InputSnippet.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
-    }
-    return Results.Ok(new { items });
-});
-
-api.MapPost("/logs/instagram-ai/clear", async (IInstagramAiLogStore logStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
-{
-    await logStore.ClearAsync(ct);
-    await audit.WriteAsync("logs.instagram_ai.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
-    return Results.Ok(new { success = true });
-});
-
-api.MapGet("/logs/instagram-publish", async (
-    [FromQuery] string? q,
-    [FromQuery] string? processName,
-    [FromQuery] int? limit,
-    IInstagramPublishLogStore logStore,
-    CancellationToken ct) =>
-{
-    var items = await logStore.ListAsync(Math.Clamp(limit ?? 200, 1, 200), ct);
-    if (!string.IsNullOrWhiteSpace(processName))
-    {
-        var process = processName.Trim();
-        if (string.Equals(process, InstagramProcessNames.Legacy, StringComparison.OrdinalIgnoreCase))
-        {
-            items = items.Where(i => string.IsNullOrWhiteSpace(i.ProcessName)).ToList();
-        }
-        else
-        {
-            items = items.Where(i =>
-                string.Equals(i.ProcessName?.Trim(), process, StringComparison.OrdinalIgnoreCase)
-            ).ToList();
-        }
-    }
-    if (!string.IsNullOrWhiteSpace(q))
-    {
-        var term = q.Trim();
-        items = items.Where(i =>
-            i.Action.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-            (i.Error?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            (i.Details?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            (i.MediaId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            (i.DraftId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-            (i.ProcessName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
-        ).ToList();
-    }
-    return Results.Ok(new { items });
-});
-
-api.MapPost("/logs/instagram-publish/clear", async (IInstagramPublishLogStore logStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
-{
-    await logStore.ClearAsync(ct);
-    await audit.WriteAsync("logs.instagram_publish.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
-    return Results.Ok(new { success = true });
-}).RequireAuthorization("AdminOnly");
-
-api.MapPost("/logs/conversions/clear", async (IConversionLogStore logStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
-{
-    await logStore.ClearAsync(ct);
-    await audit.WriteAsync("logs.conversions.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
-    return Results.Ok(new { success = true });
-});
-
-api.MapGet("/logs/media", async (
-    [FromQuery] int? limit,
-    IMediaFailureLogStore logStore,
-    CancellationToken ct) =>
-{
-    var items = await logStore.ListAsync(limit ?? 50, ct);
-    return Results.Ok(new { items });
-});
-
-api.MapGet("/logs/whatsapp-official-blocked", async (
-    [FromQuery] int? limit,
-    [FromQuery] string? reason,
-    IOfficialWhatsAppBlockedOfferStore logStore,
-    CancellationToken ct) =>
-{
-    var items = await logStore.ListAsync(limit ?? 100, ct);
-    if (!string.IsNullOrWhiteSpace(reason))
-    {
-        items = items
-            .Where(x => (x.Reason?.Contains(reason.Trim(), StringComparison.OrdinalIgnoreCase) ?? false))
-            .ToArray();
-    }
-
-    return Results.Ok(new
-    {
-        items,
-        summary = new
-        {
-            total = items.Count,
-            byReason = items
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Reason) ? "unknown" : x.Reason.Trim(), StringComparer.OrdinalIgnoreCase)
-                .Select(g => new { reason = g.Key, count = g.Count() })
-                .OrderByDescending(x => x.count)
-                .ToArray()
-        }
-    });
-});
-
-api.MapPost("/logs/media/clear", async (IMediaFailureLogStore logStore, IAuditTrail audit, HttpContext ctx, CancellationToken ct) =>
-{
-    await logStore.ClearAsync(ct);
-    await audit.WriteAsync("logs.media.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
-    return Results.Ok(new { success = true });
-});
-
-api.MapPost("/logs/whatsapp-official-blocked/clear", async (
-    IOfficialWhatsAppBlockedOfferStore logStore,
-    IAuditTrail audit,
-    HttpContext ctx,
-    CancellationToken ct) =>
-{
-    await logStore.ClearAsync(ct);
-    await audit.WriteAsync("logs.whatsapp_official_blocked.clear", ctx.User.Identity?.Name ?? "unknown", new { }, ct);
-    return Results.Ok(new { success = true });
-}).RequireAuthorization("AdminOnly");
+api.MapLogsMaintenanceEndpoints();
 
 api.MapGet("/telegram/userbot/chats", async (ITelegramUserbotService userbot, CancellationToken ct) =>
 {
@@ -6722,99 +4744,6 @@ static IEnumerable<string> ValidateSettings(AutomationSettings settings)
     {
         yield return "MercadoLivreAffiliateScout.HomeUrl invalida. Use URL absoluta.";
     }
-}
-
-static string? ResolveSecretWithMask(string? incoming, string? current)
-{
-    if (string.IsNullOrWhiteSpace(incoming))
-    {
-        return current;
-    }
-
-    var trimmed = incoming.Trim();
-    return trimmed == "********" ? current : trimmed;
-}
-
-static List<string> MergeSecretListWithMask(
-    IEnumerable<string>? currentValues,
-    IEnumerable<string>? incomingValues,
-    string? incomingSingle,
-    string? currentSingle)
-{
-    var current = NormalizeSecretList(currentValues);
-    var singleCurrent = NormalizeSecret(currentSingle);
-    if (!string.IsNullOrWhiteSpace(singleCurrent))
-    {
-        current.Add(singleCurrent);
-    }
-
-    var incoming = NormalizeSecretList(incomingValues);
-    var hasMaskedValue = incomingValues?.Any(x => string.Equals(x?.Trim(), "********", StringComparison.Ordinal)) ?? false;
-    var singleIncoming = NormalizeSecret(incomingSingle);
-
-    if (incoming.Count == 0 && string.IsNullOrWhiteSpace(singleIncoming))
-    {
-        return current;
-    }
-
-    var merged = hasMaskedValue ? new List<string>(current) : new List<string>();
-    merged.AddRange(incoming);
-    if (!string.IsNullOrWhiteSpace(singleIncoming))
-    {
-        merged.Add(singleIncoming);
-    }
-
-    return merged
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Distinct(StringComparer.Ordinal)
-        .ToList();
-}
-
-static List<string> NormalizeSecretList(IEnumerable<string>? values)
-    => (values ?? Array.Empty<string>())
-        .Select(NormalizeSecret)
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Cast<string>()
-        .Distinct(StringComparer.Ordinal)
-        .ToList();
-
-static string? NormalizeSecret(string? value)
-{
-    if (string.IsNullOrWhiteSpace(value))
-    {
-        return null;
-    }
-
-    var trimmed = value.Trim();
-    return trimmed == "********" ? null : trimmed;
-}
-
-static bool IsBotConversorWebhookAuthorized(HttpRequest request, string body, string? webhookSecret, string? fallbackApiKey)
-{
-    if (WebhookSignatureVerifier.TryValidate(request, body, webhookSecret))
-    {
-        return true;
-    }
-
-    string[] tryHeaders = { "x-api-key", "apikey", "Authorization" };
-    foreach (var h in tryHeaders)
-    {
-        if (request.Headers.TryGetValue(h, out var providedAuth))
-        {
-            var val = providedAuth.ToString().Trim();
-            if (val.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            {
-                val = val["Bearer ".Length..].Trim();
-            }
-
-            if (SecretComparer.EqualsConstantTime(fallbackApiKey, val))
-            {
-                return true;
-            }
-        }
-    }
-
-    return false;
 }
 
 static string ComputeStableHash(string? input)
@@ -9047,70 +6976,6 @@ static bool TryExtractIncomingMedia(
     }
 
     return hasMedia || !string.IsNullOrWhiteSpace(mediaUrl) || !string.IsNullOrWhiteSpace(mediaBase64);
-}
-
-static List<AchadinhosBot.Next.Domain.Models.WhatsAppGroupMembershipEvent> ExtractEvolutionMembershipEvents(string body)
-{
-    var events = new List<AchadinhosBot.Next.Domain.Models.WhatsAppGroupMembershipEvent>();
-    try
-    {
-        using var doc = JsonDocument.Parse(body);
-        var root = doc.RootElement;
-
-        if (!root.TryGetProperty("event", out var eventNode) || eventNode.ValueKind != JsonValueKind.String)
-        {
-            var dataProp = root.TryGetProperty("data", out var d) ? d : root;
-            if (dataProp.TryGetProperty("action", out var actionNode) && dataProp.TryGetProperty("participants", out _))
-            {
-                // Accept as group event if it has action and participants
-            }
-            else
-            {
-                return events;
-            }
-        }
-        else
-        {
-            var eventName = eventNode.GetString();
-            if (!string.Equals(eventName, "group.participants.update", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(eventName, "group_participants_update", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(eventName, "group-participants.update", StringComparison.OrdinalIgnoreCase))
-                return events;
-        }
-
-        var data = root.TryGetProperty("data", out var dataNode2) ? dataNode2 : root;
-        var groupId = GetString(data, "id", "groupId", "groupJid", "jid");
-        if (string.IsNullOrWhiteSpace(groupId)) return events;
-
-        var action = GetString(data, "action", "updateType");
-        if (string.IsNullOrWhiteSpace(action)) return events;
-
-        if (data.TryGetProperty("participants", out var parts) && parts.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var p in parts.EnumerateArray())
-            {
-                var participantId = p.ValueKind == JsonValueKind.String
-                    ? p.GetString()
-                    : GetString(p, "phoneNumber", "id", "jid", "participant", "user");
-                if (!string.IsNullOrWhiteSpace(participantId))
-                {
-                    events.Add(new AchadinhosBot.Next.Domain.Models.WhatsAppGroupMembershipEvent
-                    {
-                        GroupId = groupId,
-                        GroupName = "Evolution Webhook",
-                        ParticipantId = participantId ?? string.Empty,
-                        Action = action,
-                        Timestamp = DateTimeOffset.UtcNow,
-                        IsSyncDetection = false
-                    });
-                }
-            }
-        }
-    }
-    catch
-    {
-    }
-    return events;
 }
 
 static bool TryGetIncomingMediaNode(JsonElement node, out JsonElement mediaNode)
@@ -11838,31 +9703,6 @@ string? ResolveDraftMarketplace(InstagramPublishDraft draft)
     return null;
 }
 
-string ResolveEffectiveCatalogOfferUrl(
-    CatalogOfferItem? catalogItem,
-    InstagramPublishDraft? draft,
-    IReadOnlyList<ConversionLogEntry> recentConversions)
-{
-    var stored = catalogItem?.OfferUrl?.Trim();
-    if (!IsInternalCatalogUrl(stored))
-    {
-        return stored ?? string.Empty;
-    }
-
-    if (draft is not null)
-    {
-        var fallback = ResolveCatalogOfferUrlForFallback(draft, recentConversions);
-        if (!string.IsNullOrWhiteSpace(fallback) && !IsInternalCatalogUrl(fallback))
-        {
-            return fallback.Trim();
-        }
-    }
-
-    return ResolveCatalogItemSearchFallbackUrl(catalogItem)
-        ?? stored
-        ?? string.Empty;
-}
-
 static string ResolvePublicCatalogOfferUrl(CatalogOfferItem? catalogItem)
 {
     if (catalogItem is null)
@@ -11921,52 +9761,6 @@ static string? ResolveCatalogSearchFallbackUrl(string? store, string? productNam
     }
 
     return null;
-}
-
-static string? ResolveCatalogItemSearchFallbackUrl(CatalogOfferItem? catalogItem)
-{
-    if (catalogItem is null)
-    {
-        return null;
-    }
-
-    return ResolveCatalogSearchFallbackUrl(
-        ResolveCatalogStoreHint(catalogItem.Store, catalogItem.ImageUrl, catalogItem.OfferUrl),
-        catalogItem.ProductName);
-}
-
-static string ResolveCatalogStoreHint(params string?[] values)
-{
-    foreach (var raw in values)
-    {
-        var value = raw?.Trim();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            continue;
-        }
-
-        if (value.Contains("shopee", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("cf.shopee", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Shopee";
-        }
-
-        if (value.Contains("mercadolivre", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("mercado livre", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("meli.", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("mlstatic", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Mercado Livre";
-        }
-
-        if (value.Contains("amazon", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("amzn.", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Amazon";
-        }
-    }
-
-    return values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? "Loja";
 }
 
 InstagramPublishDraft? FindRelatedDraftForCatalogItem(
@@ -12085,30 +9879,7 @@ static string BuildBioCurrentUrl(string publicBaseUrl, string source, string? ca
 }
 
 static string ResolvePublicBaseUrl(string? primaryPublicBaseUrl, string? secondaryPublicBaseUrl, string requestScheme, string requestHost)
-{
-    if (TryNormalizePublicBaseUrl(primaryPublicBaseUrl, out var primary))
-    {
-        return primary;
-    }
-
-    if (TryNormalizePublicBaseUrl(secondaryPublicBaseUrl, out var secondary))
-    {
-        return secondary;
-    }
-
-    if (TryReadBundledPublicBaseUrl(out var bundled))
-    {
-        return bundled;
-    }
-
-    if (string.IsNullOrWhiteSpace(requestHost))
-    {
-        return string.Empty;
-    }
-
-    var scheme = string.IsNullOrWhiteSpace(requestScheme) ? "https" : requestScheme.Trim();
-    return $"{scheme}://{requestHost}".TrimEnd('/');
-}
+    => PublicUrlResolver.Resolve(primaryPublicBaseUrl, secondaryPublicBaseUrl, requestScheme, requestHost);
 
 static void MaskProviderKeys(AutomationSettings settings)
 {
@@ -12116,81 +9887,7 @@ static void MaskProviderKeys(AutomationSettings settings)
 }
 
 static bool TryNormalizePublicBaseUrl(string? value, out string normalized)
-{
-    normalized = string.Empty;
-    if (string.IsNullOrWhiteSpace(value))
-    {
-        return false;
-    }
-
-    var trimmed = value.Trim().TrimEnd('/');
-    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
-    {
-        return false;
-    }
-
-    if (!string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase) &&
-        !string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
-    {
-        return false;
-    }
-
-    if (uri.Host.Equals("reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase) ||
-        uri.Host.EndsWith(".reidasofertas.ia.br", StringComparison.OrdinalIgnoreCase))
-    {
-        normalized = $"{uri.Scheme}://reidasofertas.ia.br";
-        return true;
-    }
-
-    normalized = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
-    return !string.IsNullOrWhiteSpace(normalized);
-}
-
-static bool IsInternalLikeHost(string host)
-{
-    var normalized = (host ?? string.Empty).Trim().ToLowerInvariant();
-    return normalized is "localhost"
-        or "127.0.0.1"
-        or "0.0.0.0"
-        or "host.docker.internal"
-        or "host.internal"
-        or "docker.internal"
-        || normalized.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
-        || normalized.EndsWith(".internal", StringComparison.OrdinalIgnoreCase);
-}
-
-static bool TryReadBundledPublicBaseUrl(out string publicBaseUrl)
-{
-    publicBaseUrl = string.Empty;
-    var file = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
-    if (!File.Exists(file))
-    {
-        return false;
-    }
-
-    try
-    {
-        using var stream = File.OpenRead(file);
-        using var doc = JsonDocument.Parse(stream);
-        if (doc.RootElement.TryGetProperty("Webhook", out var webhook) &&
-            webhook.ValueKind == JsonValueKind.Object &&
-            webhook.TryGetProperty("PublicBaseUrl", out var baseUrlProp))
-        {
-            var raw = baseUrlProp.GetString();
-            if (TryNormalizePublicBaseUrl(raw, out var normalized))
-            {
-                publicBaseUrl = normalized;
-                return true;
-            }
-        }
-    }
-    catch
-    {
-        // keep default fallback path
-    }
-
-    return false;
-}
+    => PublicUrlResolver.TryNormalize(value, out normalized);
 
 static string BuildTrackedRedirectUrl(string publicBaseUrl, string trackingId, string source, string? campaign)
 {
@@ -12379,12 +10076,7 @@ static string TruncateForLog(string? value, int maxLength)
 }
 
 static string ResolveCatalogTargetForRequest(HttpRequest request)
-{
-    var host = request.Host.Host ?? string.Empty;
-    return host.Contains("-dev.", StringComparison.OrdinalIgnoreCase) || host.StartsWith("achadinhos-dev", StringComparison.OrdinalIgnoreCase)
-        ? CatalogTargets.Dev
-        : CatalogTargets.Prod;
-}
+    => CatalogTargetResolver.Resolve(request);
 
 static string BuildCatalogPageHtml(IReadOnlyList<CatalogOfferItem> items, string? query, string currentUrl)
 {
@@ -14236,15 +11928,7 @@ static byte[]? NormalizeImageBytes(byte[] input)
     => ImageNormalizationSupport.NormalizeForInstagramPublication(input, "feed");
 
 static string BuildPublicMediaUrl(string publicBaseUrl, string id)
-{
-    var baseUrl = publicBaseUrl.TrimEnd('/');
-    var url = baseUrl + $"/media/{id}.jpg";
-    if (url.Contains("ngrok-free", StringComparison.OrdinalIgnoreCase) || url.Contains("ngrok.app", StringComparison.OrdinalIgnoreCase))
-    {
-        url += "?ngrok-skip-browser-warning=1";
-    }
-    return url;
-}
+    => PublicUrlResolver.BuildMediaUrl(publicBaseUrl, id);
 
 static bool IsInstagramSectionHeader(string line)
 {
@@ -16976,84 +14660,7 @@ internal sealed record CouponExtractRequest(
     int? Priority,
     string? Source);
 internal sealed record CouponOfficialSyncRequest(string? Store);
-internal sealed record CopyParticipantsRequest(string SourceGroupId, string TargetGroupId, List<string>? ParticipantIds = null, string? InstanceName = null);
-internal sealed record CreateParticipantCopyScheduleRequest(
-    string SourceGroupId,
-    string TargetGroupId,
-    int BatchSize,
-    int IntervalMinutes,
-    string? Name = null,
-    List<string>? ParticipantIds = null,
-    DateTimeOffset? StartAt = null,
-    string? InstanceName = null);
-internal sealed record UpdateParticipantCopyScheduleRequest(
-    string SourceGroupId,
-    string TargetGroupId,
-    int BatchSize,
-    int IntervalMinutes,
-    bool Enabled,
-    string? Name = null,
-    List<string>? ParticipantIds = null,
-    DateTimeOffset? StartAt = null,
-    bool RefreshQueue = false,
-    string? InstanceName = null);
-internal sealed record CreateScheduledGroupMessageRequest(
-    string TargetGroupId,
-    string Text,
-    int IntervalMinutes,
-    string? Name = null,
-    string? ImageUrl = null,
-    DateTimeOffset? StartAt = null,
-    string? InstanceName = null);
-internal sealed record UpdateScheduledGroupMessageRequest(
-    string TargetGroupId,
-    string Text,
-    int IntervalMinutes,
-    bool Enabled,
-    string? Name = null,
-    string? ImageUrl = null,
-    DateTimeOffset? StartAt = null,
-    string? InstanceName = null);
-internal sealed record CreateParticipantBlastScheduleRequest(
-    string? SourceGroupId,
-    List<string>? SourceGroupIds,
-    List<string>? ParticipantIds,
-    bool UseAllParticipantsFromSources,
-    string? Message,
-    string LinkUrl,
-    int IntervalMs = 1500,
-    int MinUserIntervalMs = 1200,
-    int MaxUserIntervalMs = 2600,
-    int BatchSize = 25,
-    int BatchPauseSeconds = 90,
-    bool UseAiDialogue = true,
-    int PreLinkMessages = 3,
-    string WaitMode = "response-or-timeout",
-    int WaitTimeoutSeconds = 120,
-    bool SendLinkOnTimeout = true,
-    string? SecurityPitch = null,
-    string? LinkConfirmation = null,
-    string? InstanceName = null,
-    string? Name = null);
-internal sealed record UpdateWhatsAppParticipantSafetyRequest(
-    int MaxParticipantsAddedPerDay,
-    int MinMinutesBetweenParticipantAdds,
-    bool ParticipantCopyAutomationEnabled,
-    string? InstanceName = null);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
-internal sealed record WhatsAppIncomingMessage(
-    string ChatId,
-    string? SenderId,
-    string Text,
-    bool FromMe,
-    string? InstanceName,
-    string? MessageId,
-    bool HasMedia,
-    string? MediaUrl,
-    string? MediaBase64,
-    string? MediaMimeType,
-    string? MediaFileName,
-    string? RawPayloadJson);
 internal sealed record WhatsAppHelpCommand(string Scope);
 internal sealed record InstagramWhatsAppCommand(string Action, string? Argument);
 internal sealed record InstagramDraftBuildResult(InstagramPublishDraft? Draft, string? Error);

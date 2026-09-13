@@ -4,13 +4,18 @@ using AchadinhosBot.Next.Domain.Logs;
 
 namespace AchadinhosBot.Next.Infrastructure.Storage;
 
-public sealed class InstagramAiLogStore : IInstagramAiLogStore
+public sealed class InstagramAiLogStore : IInstagramAiLogStore, ILogMaintenanceScope
 {
+    private readonly ILogMaintenanceLockCoordinator _maintenanceLock;
     private readonly string _path = Path.Combine(AppContext.BaseDirectory, "data", "instagram-ai-log.jsonl");
+    public InstagramAiLogStore(ILogMaintenanceLockCoordinator maintenanceLock) => _maintenanceLock = maintenanceLock;
+    public string ScopeId => "instagram-ai-logs";
+    public IReadOnlyList<string> RelativePaths => ["instagram-ai-log.jsonl"];
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
     public async Task AppendAsync(InstagramAiLogEntry entry, CancellationToken ct)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("instagram-ai-logs", ct);
         await _mutex.WaitAsync(ct);
         try
         {
@@ -26,6 +31,7 @@ public sealed class InstagramAiLogStore : IInstagramAiLogStore
 
     public async Task<IReadOnlyList<InstagramAiLogEntry>> ListAsync(int take, CancellationToken ct)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("instagram-ai-logs", ct);
         await _mutex.WaitAsync(ct);
         try
         {
@@ -52,6 +58,7 @@ public sealed class InstagramAiLogStore : IInstagramAiLogStore
 
     public async Task ClearAsync(CancellationToken ct)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("instagram-ai-logs", ct);
         await _mutex.WaitAsync(ct);
         try
         {

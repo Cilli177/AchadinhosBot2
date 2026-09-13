@@ -3,6 +3,7 @@ using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Configuration;
 using AchadinhosBot.Next.Domain.Requests;
 using AchadinhosBot.Next.Infrastructure.Security;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Options;
@@ -84,6 +85,18 @@ public static class AuthEndpointsExtensions
                 username = context.User.Identity.Name,
                 role = context.User.FindFirst(ClaimTypes.Role)?.Value
             });
+        });
+
+        app.MapGet("/auth/csrf", (HttpContext context, IAntiforgery antiforgery) =>
+        {
+            if (context.User.Identity?.IsAuthenticated != true ||
+                !string.Equals(context.User.Identity.AuthenticationType, AdminAuthenticationSchemes.Cookie, StringComparison.Ordinal))
+            {
+                return Results.Unauthorized();
+            }
+
+            var tokens = antiforgery.GetAndStoreTokens(context);
+            return Results.Ok(new { token = tokens.RequestToken });
         });
     }
 }

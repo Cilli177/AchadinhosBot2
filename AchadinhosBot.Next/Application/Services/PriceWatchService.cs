@@ -260,7 +260,7 @@ public sealed partial class PriceWatchService
             var conversion = await _affiliateLinkService.ConvertAsync(candidate.OfferUrl, ct, "price_watch", forceResolution: true);
             if (!conversion.Success || !conversion.IsAffiliated || string.IsNullOrWhiteSpace(conversion.ConvertedUrl))
             {
-                var error = FirstNonEmpty(conversion.ValidationError, conversion.Error, "Falha ao validar afiliado.");
+                var error = FirstNonEmpty(conversion.ValidationError, conversion.Error) ?? "Falha ao validar afiliado.";
                 await MarkFailureAsync(item, error, ct);
                 return new(false, item.Id, false, false, "Conversao afiliada invalida.", CurrentPrice: candidate.Price, Error: error);
             }

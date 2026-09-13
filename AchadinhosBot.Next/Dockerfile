@@ -8,11 +8,12 @@ RUN dotnet publish AchadinhosBot.Next/AchadinhosBot.Next.csproj -c Release -o /a
 # Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
-COPY --from=build /app/publish .
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app/publish .
 
 ENV ASPNETCORE_URLS=http://0.0.0.0:8081
 EXPOSE 8081

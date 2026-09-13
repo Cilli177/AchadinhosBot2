@@ -4,18 +4,24 @@ using AchadinhosBot.Next.Domain.Logs;
 
 namespace AchadinhosBot.Next.Infrastructure.Storage;
 
-public sealed class OfficialWhatsAppBlockedOfferStore : IOfficialWhatsAppBlockedOfferStore
+public sealed class OfficialWhatsAppBlockedOfferStore : IOfficialWhatsAppBlockedOfferStore, ILogMaintenanceScope
 {
+    private readonly ILogMaintenanceLockCoordinator _maintenanceLock;
     private readonly string _path;
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
-    public OfficialWhatsAppBlockedOfferStore()
+    public OfficialWhatsAppBlockedOfferStore(ILogMaintenanceLockCoordinator maintenanceLock)
     {
+        _maintenanceLock = maintenanceLock;
         _path = Path.Combine(AppContext.BaseDirectory, "data", "whatsapp-official-blocked.jsonl");
     }
 
+    public string ScopeId => "whatsapp-official-blocked-logs";
+    public IReadOnlyList<string> RelativePaths => ["whatsapp-official-blocked.jsonl"];
+
     public async Task AppendAsync(OfficialWhatsAppBlockedOfferEntry entry, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("whatsapp-official-blocked-logs", cancellationToken);
         await _mutex.WaitAsync(cancellationToken);
         try
         {
@@ -34,6 +40,7 @@ public sealed class OfficialWhatsAppBlockedOfferStore : IOfficialWhatsAppBlocked
 
     public async Task<IReadOnlyList<OfficialWhatsAppBlockedOfferEntry>> ListAsync(int limit, CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("whatsapp-official-blocked-logs", cancellationToken);
         var entries = new List<OfficialWhatsAppBlockedOfferEntry>();
         if (!File.Exists(_path))
         {
@@ -80,6 +87,7 @@ public sealed class OfficialWhatsAppBlockedOfferStore : IOfficialWhatsAppBlocked
 
     public async Task ClearAsync(CancellationToken cancellationToken)
     {
+        await using var scope = await _maintenanceLock.AcquireAsync("whatsapp-official-blocked-logs", cancellationToken);
         await _mutex.WaitAsync(cancellationToken);
         try
         {

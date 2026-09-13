@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using AchadinhosBot.Next.Application.Abstractions;
 using AchadinhosBot.Next.Domain.Content;
@@ -21,7 +20,7 @@ public sealed class ContentCalendarAutomationService
     private readonly IInstagramPostComposer _instagramComposer;
     private readonly IInstagramPublishStore _publishStore;
     private readonly IInstagramPublishLogStore _publishLogStore;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IInstagramPublishService _instagramPublishService;
     private readonly InstagramLinkMetaService _instagramMetaService;
     private readonly ILogger<ContentCalendarAutomationService> _logger;
 
@@ -31,8 +30,8 @@ public sealed class ContentCalendarAutomationService
         IInstagramPostComposer instagramComposer,
         IInstagramPublishStore publishStore,
         IInstagramPublishLogStore publishLogStore,
-        IHttpClientFactory httpClientFactory,
         InstagramLinkMetaService instagramMetaService,
+        IInstagramPublishService instagramPublishService,
         ILogger<ContentCalendarAutomationService> logger)
     {
         _calendarStore = calendarStore;
@@ -40,8 +39,8 @@ public sealed class ContentCalendarAutomationService
         _instagramComposer = instagramComposer;
         _publishStore = publishStore;
         _publishLogStore = publishLogStore;
-        _httpClientFactory = httpClientFactory;
         _instagramMetaService = instagramMetaService;
+        _instagramPublishService = instagramPublishService;
         _logger = logger;
     }
 
@@ -101,7 +100,6 @@ public sealed class ContentCalendarAutomationService
         var now = DateTimeOffset.UtcNow;
         var settings = await _settingsStore.GetAsync(ct);
         var instaSettings = settings.InstagramPosts ?? new InstagramPostSettings();
-        var publishSettings = settings.InstagramPublish ?? new InstagramPublishSettings();
         var calendarSettings = settings.ContentCalendar ?? new ContentCalendarSettings();
         var maxAttempts = Math.Clamp(calendarSettings.MaxAttempts, 1, 10);
 
@@ -119,12 +117,15 @@ public sealed class ContentCalendarAutomationService
         var draftsCreated = 0;
         var failed = 0;
 
-        foreach (var item in due)
+        var executionId = Guid.NewGuid().ToString("N");
+        foreach (var candidate in due)
         {
             ct.ThrowIfCancellationRequested();
-            item.Attempts++;
-            item.LastAttemptAt = now;
-            item.UpdatedAt = DateTimeOffset.UtcNow;
+            var item = await _calendarStore.TryClaimDueAsync(candidate.Id, executionId, now, maxAttempts, ct);
+            if (item is null)
+            {
+                continue;
+            }
 
             try
             {
@@ -156,33 +157,28 @@ public sealed class ContentCalendarAutomationService
 
                 if (item.AutoPublish)
                 {
-                    var publishResult = await PublishDraftSimpleAsync(draft, publishSettings, ct);
-                    draft.Status = publishResult.Success ? "published" : "failed";
-                    draft.MediaId = publishResult.MediaId;
-                    draft.Error = publishResult.Success ? null : publishResult.Error;
-                    await _publishStore.UpdateAsync(draft, ct);
+                    var dispatch = await _instagramPublishService.QueuePublishAsync(draft.Id, "content_calendar", ct);
                     await _publishLogStore.AppendAsync(new InstagramPublishLogEntry
                     {
-                        Action = "calendar_publish",
-                        Success = publishResult.Success,
+                        Action = "calendar_publish_queued",
+                        Success = dispatch.Accepted,
                         DraftId = draft.Id,
-                        MediaId = publishResult.MediaId,
-                        Error = publishResult.Error,
-                        Details = $"calendarItem={item.Id}"
+                        Error = dispatch.Error,
+                        Details = $"calendarItem={item.Id};mode={dispatch.Mode};messageId={dispatch.MessageId}"
                     }, ct);
 
-                    if (publishResult.Success)
+                    if (dispatch.Accepted)
                     {
-                        published++;
-                        item.Status = "published";
-                        item.PublishedMediaId = publishResult.MediaId;
+                        draft.Status = "publish_queued";
+                        await _publishStore.UpdateAsync(draft, ct);
+                        item.Status = "publish_queued";
                         item.Error = null;
                     }
                     else
                     {
                         failed++;
                         item.Status = "failed";
-                        item.Error = publishResult.Error;
+                        item.Error = dispatch.Error;
                     }
                 }
 
@@ -197,6 +193,8 @@ public sealed class ContentCalendarAutomationService
             }
             finally
             {
+                item.ProcessingExecutionId = null;
+                item.ProcessingClaimedAt = null;
                 item.UpdatedAt = DateTimeOffset.UtcNow;
                 await _calendarStore.SaveAsync(item, ct);
             }
@@ -376,150 +374,6 @@ public sealed class ContentCalendarAutomationService
         };
     }
 
-    private async Task<(bool Success, string? MediaId, string? Error)> PublishDraftSimpleAsync(
-        InstagramPublishDraft draft,
-        InstagramPublishSettings settings,
-        CancellationToken ct)
-    {
-        if (!settings.Enabled)
-        {
-            return (false, null, "Publicacao Instagram desativada.");
-        }
-
-        if (string.IsNullOrWhiteSpace(settings.AccessToken) || settings.AccessToken == "********")
-        {
-            return (false, null, "Access token do Instagram nao configurado.");
-        }
-
-        if (string.IsNullOrWhiteSpace(settings.InstagramUserId))
-        {
-            return (false, null, "Instagram user id nao configurado.");
-        }
-
-        var mediaUrl = draft.ImageUrls.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
-        if (string.IsNullOrWhiteSpace(mediaUrl))
-        {
-            return (false, null, "Sem midia para publicacao.");
-        }
-
-        var baseUrl = string.IsNullOrWhiteSpace(settings.GraphBaseUrl)
-            ? "https://graph.facebook.com/v19.0"
-            : settings.GraphBaseUrl.TrimEnd('/');
-        var client = _httpClientFactory.CreateClient("default");
-        var createUrl = $"{baseUrl}/{settings.InstagramUserId}/media";
-        var postType = NormalizePostType(draft.PostType);
-        var isVideo = await IsVideoUrlAsync(client, mediaUrl, ct);
-        var createParams = new Dictionary<string, string>
-        {
-            ["access_token"] = settings.AccessToken!
-        };
-        if (isVideo)
-        {
-            createParams["video_url"] = mediaUrl;
-        }
-        else
-        {
-            createParams["image_url"] = mediaUrl;
-        }
-
-        if (postType == "story")
-        {
-            createParams["media_type"] = "STORIES";
-        }
-        else if (postType == "reel")
-        {
-            if (!isVideo)
-            {
-                return (false, null, "Reel requer URL de video.");
-            }
-
-            createParams["media_type"] = "REELS";
-            var captionForReel = BuildCaptionWithHashtags(draft.Caption, draft.Hashtags);
-            if (!string.IsNullOrWhiteSpace(captionForReel))
-            {
-                createParams["caption"] = captionForReel;
-            }
-        }
-        else
-        {
-            if (isVideo)
-            {
-                createParams["media_type"] = "VIDEO";
-            }
-
-            var caption = BuildCaptionWithHashtags(draft.Caption, draft.Hashtags);
-            if (!string.IsNullOrWhiteSpace(caption))
-            {
-                createParams["caption"] = caption;
-            }
-        }
-
-        using var createResp = await client.PostAsync(createUrl, new FormUrlEncodedContent(createParams), ct);
-        var createBody = await createResp.Content.ReadAsStringAsync(ct);
-        if (!createResp.IsSuccessStatusCode)
-        {
-            return (false, null, $"Falha ao criar container: {TrimError(createBody)}");
-        }
-
-        var creationId = ExtractIdFromGraphJson(createBody);
-        if (string.IsNullOrWhiteSpace(creationId))
-        {
-            return (false, null, "Falha ao obter creation_id do Instagram.");
-        }
-
-        var publishUrl = $"{baseUrl}/{settings.InstagramUserId}/media_publish";
-        var publishParams = new Dictionary<string, string>
-        {
-            ["access_token"] = settings.AccessToken!,
-            ["creation_id"] = creationId
-        };
-        var retryDelays = new[] { 0, 4, 8, 12, 16, 22 };
-        string? lastPublishBody = null;
-        foreach (var delay in retryDelays)
-        {
-            if (delay > 0)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(delay), ct);
-            }
-
-            using var publishResp = await client.PostAsync(
-                publishUrl,
-                new FormUrlEncodedContent(publishParams),
-                ct);
-            var publishBody = await publishResp.Content.ReadAsStringAsync(ct);
-            lastPublishBody = publishBody;
-            if (publishResp.IsSuccessStatusCode)
-            {
-                var mediaId = ExtractIdFromGraphJson(publishBody);
-                return (true, mediaId, null);
-            }
-
-            if (!IsGraphMediaNotReadyError(publishBody))
-            {
-                return (false, null, $"Falha ao publicar: {TrimError(publishBody)}");
-            }
-        }
-
-        return (false, null, $"Falha ao publicar: {TrimError(lastPublishBody)}");
-    }
-
-    private static string BuildCaptionWithHashtags(string? caption, string? hashtags)
-    {
-        var c = (caption ?? string.Empty).Trim();
-        var h = (hashtags ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(h))
-        {
-            return c;
-        }
-
-        if (string.IsNullOrWhiteSpace(c))
-        {
-            return h;
-        }
-
-        return $"{c}\n\n{h}";
-    }
-
     private static string NormalizePostType(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -648,94 +502,6 @@ public sealed class ContentCalendarAutomationService
         return match.Success ? match.Value.Trim() : null;
     }
 
-    private static string ExtractIdFromGraphJson(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("id", out var idNode) && idNode.ValueKind == JsonValueKind.String)
-            {
-                return idNode.GetString() ?? string.Empty;
-            }
-        }
-        catch
-        {
-            return string.Empty;
-        }
-
-        return string.Empty;
-    }
-
-    private static string TrimError(string? text)
-    {
-        var value = (text ?? string.Empty).Trim();
-        if (value.Length <= 240)
-        {
-            return value;
-        }
-
-        return value[..240] + "...";
-    }
-
-    private static bool IsVideoUrl(string url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return false;
-        }
-
-        var clean = url.ToLowerInvariant();
-        return clean.Contains(".mp4", StringComparison.Ordinal) ||
-               clean.Contains(".mov", StringComparison.Ordinal) ||
-               clean.Contains(".m4v", StringComparison.Ordinal) ||
-               clean.Contains(".webm", StringComparison.Ordinal) ||
-               clean.Contains(".m3u8", StringComparison.Ordinal);
-    }
-
-    private static async Task<bool> IsVideoUrlAsync(HttpClient client, string url, CancellationToken ct)
-    {
-        if (IsVideoUrl(url))
-        {
-            return true;
-        }
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out _))
-        {
-            return false;
-        }
-
-        try
-        {
-            using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
-            using var headResponse = await client.SendAsync(headRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (headResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                return true;
-            }
-        }
-        catch
-        {
-            // ignored
-        }
-
-        try
-        {
-            using var getRequest = new HttpRequestMessage(HttpMethod.Get, url);
-            getRequest.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, 0);
-            using var getResponse = await client.SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-            return getResponse.Content.Headers.ContentType?.MediaType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private static string? SelectBestMediaForPostType(string postType, LinkMetaResult meta)
     {
         if (meta is null)
@@ -763,39 +529,4 @@ public sealed class ContentCalendarAutomationService
         return meta.Images.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
     }
 
-    private static bool IsGraphMediaNotReadyError(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return false;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("error", out var err))
-            {
-                return false;
-            }
-
-            var code = err.TryGetProperty("code", out var codeNode) ? codeNode.ToString() : string.Empty;
-            var sub = err.TryGetProperty("error_subcode", out var subNode) ? subNode.ToString() : string.Empty;
-            if (string.Equals(code, "9007", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(sub, "2207027", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            var message = err.TryGetProperty("message", out var messageNode) ? messageNode.GetString() : string.Empty;
-            var userMessage = err.TryGetProperty("error_user_msg", out var userMessageNode) ? userMessageNode.GetString() : string.Empty;
-            return (message ?? string.Empty).Contains("not available", StringComparison.OrdinalIgnoreCase)
-                   || (message ?? string.Empty).Contains("not ready", StringComparison.OrdinalIgnoreCase)
-                   || (userMessage ?? string.Empty).Contains("nao esta pronta", StringComparison.OrdinalIgnoreCase)
-                   || (userMessage ?? string.Empty).Contains("aguarde", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
 }

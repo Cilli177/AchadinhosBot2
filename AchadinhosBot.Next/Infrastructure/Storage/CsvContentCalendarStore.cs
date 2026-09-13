@@ -30,15 +30,19 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
         "Attempts",
         "LastAttemptAt",
         "CreatedAt",
-        "UpdatedAt"
+        "UpdatedAt",
+        "ProcessingExecutionId",
+        "ProcessingClaimedAt"
     ];
 
     private readonly string _path;
     private readonly SemaphoreSlim _mutex = new(1, 1);
+    private readonly InterprocessFileLock _interprocessLock;
 
-    public CsvContentCalendarStore()
+    public CsvContentCalendarStore(string? path = null)
     {
-        _path = Path.Combine(AppContext.BaseDirectory, "data", "content-calendar.csv");
+        _path = string.IsNullOrWhiteSpace(path) ? Path.Combine(AppContext.BaseDirectory, "data", "content-calendar.csv") : path;
+        _interprocessLock = new InterprocessFileLock(_path);
     }
 
     public async Task<IReadOnlyList<ContentCalendarItem>> ListAsync(CancellationToken ct)
@@ -46,6 +50,7 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
         await _mutex.WaitAsync(ct);
         try
         {
+            await using var fileLock = await _interprocessLock.AcquireAsync(ct);
             return await ReadAllAsync(ct);
         }
         finally
@@ -59,6 +64,7 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
         await _mutex.WaitAsync(ct);
         try
         {
+            await using var fileLock = await _interprocessLock.AcquireAsync(ct);
             var items = await ReadAllAsync(ct);
             return items.FirstOrDefault(x => x.Id == id);
         }
@@ -73,6 +79,7 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
         await _mutex.WaitAsync(ct);
         try
         {
+            await using var fileLock = await _interprocessLock.AcquireAsync(ct);
             var items = await ReadAllAsync(ct);
             var idx = items.FindIndex(x => x.Id == item.Id);
             if (idx >= 0)
@@ -92,11 +99,41 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
         }
     }
 
+    public async Task<ContentCalendarItem?> TryClaimDueAsync(string id, string executionId, DateTimeOffset now, int maxAttempts, CancellationToken ct)
+    {
+        await _mutex.WaitAsync(ct);
+        try
+        {
+            await using var fileLock = await _interprocessLock.AcquireAsync(ct);
+            var items = await ReadAllAsync(ct);
+            var item = items.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.Ordinal));
+            if (item is null || item.ScheduledAt > now || item.Attempts >= maxAttempts ||
+                !string.Equals(item.Status, "planned", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            item.Status = "processing";
+            item.ProcessingExecutionId = executionId;
+            item.ProcessingClaimedAt = now;
+            item.Attempts++;
+            item.LastAttemptAt = now;
+            item.UpdatedAt = now;
+            await WriteAllAsync(items, ct);
+            return item;
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
     public async Task DeleteAsync(string id, CancellationToken ct)
     {
         await _mutex.WaitAsync(ct);
         try
         {
+            await using var fileLock = await _interprocessLock.AcquireAsync(ct);
             var items = await ReadAllAsync(ct);
             items.RemoveAll(x => x.Id == id);
             await WriteAllAsync(items, ct);
@@ -112,6 +149,7 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
         await _mutex.WaitAsync(ct);
         try
         {
+            await using var fileLock = await _interprocessLock.AcquireAsync(ct);
             await EnsureFileAsync(ct);
             return await File.ReadAllTextAsync(_path, ct);
         }
@@ -124,14 +162,14 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
     private async Task<List<ContentCalendarItem>> ReadAllAsync(CancellationToken ct)
     {
         await EnsureFileAsync(ct);
-        var lines = await File.ReadAllLinesAsync(_path, ct);
-        if (lines.Length <= 1)
+        var lines = await ReadCsvRecordsAsync(ct);
+        if (lines.Count <= 1)
         {
             return [];
         }
 
-        var list = new List<ContentCalendarItem>(lines.Length - 1);
-        for (var i = 1; i < lines.Length; i++)
+        var list = new List<ContentCalendarItem>(lines.Count - 1);
+        for (var i = 1; i < lines.Count; i++)
         {
             var line = lines[i];
             if (string.IsNullOrWhiteSpace(line))
@@ -168,7 +206,9 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
                 Attempts = ParseInt(cols[18]),
                 LastAttemptAt = ParseNullableDate(cols[19]),
                 CreatedAt = ParseDate(cols[20], DateTimeOffset.UtcNow),
-                UpdatedAt = ParseDate(cols[21], DateTimeOffset.UtcNow)
+                UpdatedAt = ParseDate(cols[21], DateTimeOffset.UtcNow),
+                ProcessingExecutionId = NullIfEmpty(cols[22]),
+                ProcessingClaimedAt = ParseNullableDate(cols[23])
             });
         }
 
@@ -176,6 +216,60 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
             .OrderBy(x => x.ScheduledAt)
             .ThenBy(x => x.CreatedAt)
             .ToList();
+    }
+
+    // A calendar caption may legitimately contain line breaks. Read logical CSV records rather
+    // than physical lines so an export can always be imported without silently losing an item.
+    private async Task<List<string>> ReadCsvRecordsAsync(CancellationToken ct)
+    {
+        var records = new List<string>();
+        await using var stream = File.OpenRead(_path);
+        using var reader = new StreamReader(stream);
+        var record = new StringBuilder();
+        var inQuotes = false;
+
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (record.Length > 0)
+            {
+                record.Append('\n');
+            }
+
+            record.Append(line);
+            for (var index = 0; index < line.Length; index++)
+            {
+                if (line[index] != '"')
+                {
+                    continue;
+                }
+
+                if (inQuotes && index + 1 < line.Length && line[index + 1] == '"')
+                {
+                    index++;
+                    continue;
+                }
+
+                inQuotes = !inQuotes;
+            }
+
+            if (!inQuotes)
+            {
+                records.Add(record.ToString());
+                record.Clear();
+            }
+        }
+
+        if (inQuotes)
+        {
+            throw new InvalidDataException("content-calendar.csv possui um campo CSV sem aspas de fechamento.");
+        }
+
+        if (record.Length > 0)
+        {
+            records.Add(record.ToString());
+        }
+
+        return records;
     }
 
     private async Task WriteAllAsync(List<ContentCalendarItem> items, CancellationToken ct)
@@ -211,13 +305,17 @@ public sealed class CsvContentCalendarStore : IContentCalendarStore
                 item.Attempts.ToString(CultureInfo.InvariantCulture),
                 FormatNullableDate(item.LastAttemptAt),
                 FormatDate(item.CreatedAt),
-                FormatDate(item.UpdatedAt)
+                FormatDate(item.UpdatedAt),
+                item.ProcessingExecutionId ?? string.Empty,
+                FormatNullableDate(item.ProcessingClaimedAt)
             };
 
             sb.AppendLine(string.Join(',', cols.Select(EscapeCsv)));
         }
 
-        await File.WriteAllTextAsync(_path, sb.ToString(), ct);
+        var tempPath = $"{_path}.{Guid.NewGuid():N}.tmp";
+        await File.WriteAllTextAsync(tempPath, sb.ToString(), ct);
+        File.Move(tempPath, _path, true);
     }
 
     private async Task EnsureFileAsync(CancellationToken ct)
