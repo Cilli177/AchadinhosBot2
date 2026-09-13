@@ -1417,7 +1417,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
         return Results.Ok(new { success = true, ignored = false, membershipEvents = registeredCount });
     }
 
-    var messages = ExtractEvolutionMessages(body);
+    var messages = EvolutionIncomingMessageExtractor.Extract(body);
     if (messages.Count == 0)
     {
         return Results.Ok(new { success = true, ignored = true });
