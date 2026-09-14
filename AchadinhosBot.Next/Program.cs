@@ -1533,7 +1533,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
                 normalizedText.Length > 140 ? normalizedText[..140] : normalizedText);
         }
 
-        if (TryParseInstagramCaptionChoiceCommand(normalizedText, out var captionChoice))
+        if (InstagramWhatsAppCommandParser.TryParseCaptionChoice(normalizedText, out var captionChoice))
         {
             if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
             {
@@ -1618,7 +1618,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
 
         if (instagramMenuStore.TryResolveSelection(msg.ChatId, msg.Text, out var menuCommandText))
         {
-            if (TryParseInstagramWhatsAppCommand(menuCommandText, out var menuCommand))
+            if (InstagramWhatsAppCommandParser.TryParse(menuCommandText, out var menuCommand))
             {
                 if (!instaSettings.Enabled || !instaSettings.AllowWhatsApp || !IsInstagramAllowed(instaSettings, msg.ChatId))
                 {
@@ -1652,7 +1652,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             }
         }
 
-        if (TryParseInstagramWhatsAppCommand(normalizedText, out var igCommand))
+        if (InstagramWhatsAppCommandParser.TryParse(normalizedText, out var igCommand))
         {
             if (string.Equals(igCommand.Action, "menu", StringComparison.OrdinalIgnoreCase))
             {
@@ -6973,122 +6973,7 @@ static bool IsInstagramTrigger(string text, List<string> triggers)
     return false;
 }
 
-static bool TryParseInstagramWhatsAppCommand(string text, out InstagramWhatsAppCommand command)
-{
-    command = new InstagramWhatsAppCommand("unknown", null);
-    if (string.IsNullOrWhiteSpace(text))
-    {
-        return false;
-    }
 
-    var trimmed = text.Trim();
-    string payload;
-    if (trimmed.StartsWith("/ig", StringComparison.OrdinalIgnoreCase))
-    {
-        payload = trimmed[3..].Trim();
-    }
-    else if (trimmed.StartsWith("ig ", StringComparison.OrdinalIgnoreCase))
-    {
-        payload = trimmed[2..].Trim();
-    }
-    else
-    {
-        return false;
-    }
-
-    if (string.IsNullOrWhiteSpace(payload))
-    {
-        command = new InstagramWhatsAppCommand("help", null);
-        return true;
-    }
-
-    var parts = payload.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    var action = parts[0].Trim().ToLowerInvariant();
-    var argument = parts.Length > 1 ? parts[1].Trim() : null;
-
-    command = action switch
-    {
-        "criar" => new InstagramWhatsAppCommand("create", argument),
-        "novo" => new InstagramWhatsAppCommand("create", argument),
-        "rapido" => new InstagramWhatsAppCommand("create_fast", argument),
-        "fluxo" => new InstagramWhatsAppCommand("create_fast", argument),
-        "turbo" => new InstagramWhatsAppCommand("create_fast", argument),
-        "imagem" => new InstagramWhatsAppCommand("add_images", argument),
-        "img" => new InstagramWhatsAppCommand("add_images", argument),
-        "midia" => new InstagramWhatsAppCommand("add_images", argument),
-        "imagens" => new InstagramWhatsAppCommand("manage_images", argument),
-        "fotos" => new InstagramWhatsAppCommand("manage_images", argument),
-        "galeria" => new InstagramWhatsAppCommand("manage_images", argument),
-        "limpar-imagens" => new InstagramWhatsAppCommand("clear_images", argument),
-        "limparimagens" => new InstagramWhatsAppCommand("clear_images", argument),
-        "limpar-midias" => new InstagramWhatsAppCommand("clear_images", argument),
-        "limparmidias" => new InstagramWhatsAppCommand("clear_images", argument),
-        "tipo" => new InstagramWhatsAppCommand("set_type", argument),
-        "modo" => new InstagramWhatsAppCommand("set_type", argument),
-        "formatar" => new InstagramWhatsAppCommand("format_caption", argument),
-        "format" => new InstagramWhatsAppCommand("format_caption", argument),
-        "leg" => new InstagramWhatsAppCommand("pick_caption", argument),
-        "cta" => new InstagramWhatsAppCommand("set_cta", argument),
-        "anunciar" => new InstagramWhatsAppCommand("boost_post", argument),
-        "boost" => new InstagramWhatsAppCommand("boost_post", argument),
-        "promover" => new InstagramWhatsAppCommand("boost_post", argument),
-        "templates" => new InstagramWhatsAppCommand("list_templates", argument),
-        "template" => new InstagramWhatsAppCommand("apply_template", argument),
-        "modelo" => new InstagramWhatsAppCommand("apply_template", argument),
-        "menu" => new InstagramWhatsAppCommand("menu", argument),
-        "opcoes" => new InstagramWhatsAppCommand("menu", argument),
-        "atalhos" => new InstagramWhatsAppCommand("menu", argument),
-        "legenda" => new InstagramWhatsAppCommand("set_caption", argument),
-        "caption" => new InstagramWhatsAppCommand("set_caption", argument),
-        "texto" => new InstagramWhatsAppCommand("set_caption", argument),
-        "revisar" => new InstagramWhatsAppCommand("review", argument),
-        "status" => new InstagramWhatsAppCommand("review", argument),
-        "confirmar" => new InstagramWhatsAppCommand("confirm", argument),
-        "publicar" => new InstagramWhatsAppCommand("confirm", argument),
-        "reset" => new InstagramWhatsAppCommand("reset", argument),
-        "zerar" => new InstagramWhatsAppCommand("reset", argument),
-        "reiniciar" => new InstagramWhatsAppCommand("reset", argument),
-        "ajuda" => new InstagramWhatsAppCommand("help", argument),
-        "help" => new InstagramWhatsAppCommand("help", argument),
-        _ => new InstagramWhatsAppCommand("unknown", payload)
-    };
-
-    return true;
-}
-
-static bool TryParseInstagramCaptionChoiceCommand(string text, out InstagramCaptionChoiceCommand command)
-{
-    command = new InstagramCaptionChoiceCommand(0, "ultimo");
-    if (string.IsNullOrWhiteSpace(text))
-    {
-        return false;
-    }
-
-    var normalized = text.Trim();
-    var parts = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    if (parts.Length < 2)
-    {
-        return false;
-    }
-
-    var token = parts[0];
-    var isLegToken = string.Equals(token, "/leg", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(token, "\\leg", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(token, "leg", StringComparison.OrdinalIgnoreCase);
-    if (!isLegToken)
-    {
-        return false;
-    }
-
-    if (!int.TryParse(parts[1], out var option) || option <= 0)
-    {
-        return false;
-    }
-
-    var draftRef = parts.Length >= 3 ? parts[2] : "ultimo";
-    command = new InstagramCaptionChoiceCommand(option, draftRef);
-    return true;
-}
 
 static IEnumerable<string> SplitInstagramMessages(string text)
 {
@@ -14125,7 +14010,6 @@ internal sealed record CouponExtractRequest(
     string? Source);
 internal sealed record CouponOfficialSyncRequest(string? Store);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
-internal sealed record InstagramWhatsAppCommand(string Action, string? Argument);
 internal sealed record InstagramDraftBuildResult(InstagramPublishDraft? Draft, string? Error);
 internal sealed record InstagramCreateInput(string Input, List<string> CtaKeywords, List<string> ImageUrls, string PostType);
 internal sealed record InstagramImageCommandInput(string DraftRef, List<string> ImageUrls, string? Error);
@@ -14134,7 +14018,6 @@ internal sealed record InstagramTypeCommandInput(string DraftRef, string PostTyp
 internal sealed record InstagramCaptionCommandInput(string DraftRef, string Caption, string? Error);
 internal sealed record InstagramCaptionChoiceInput(int OptionNumber, string DraftRef, string? Error);
 internal sealed record InstagramCaptionTemplateInput(string DraftRef, int TemplateNumber, string? Error);
-internal sealed record InstagramCaptionChoiceCommand(int OptionNumber, string DraftRef);
 internal sealed record InstagramCtaCommandInput(string DraftRef, List<string> Keywords, string? Error);
 internal sealed record InstagramBoostCommandInput(
     string DraftRef,
