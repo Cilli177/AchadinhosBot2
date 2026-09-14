@@ -1592,7 +1592,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             continue;
         }
 
-        if (TryParseWhatsAppHelpCommand(normalizedText, out var helpCommand))
+        if (WhatsAppHelpCommandParser.TryParse(normalizedText, out var parsedHelpScope))
         {
             var senderKey = string.IsNullOrWhiteSpace(msg.SenderId) ? "unknown" : msg.SenderId;
             var helpKey = $"wa-help:{msg.InstanceName ?? "default"}:{msg.ChatId}:{senderKey}:{msg.FromMe}:{ComputeStableHash(normalizedText)}";
@@ -1605,7 +1605,7 @@ app.MapPost("/internal/webhook/bot-conversor", async (
             instagramMenuStore.Disarm(msg.ChatId);
             helpMenuStore.Arm(msg.ChatId);
 
-            var helpMessage = BuildWhatsAppHelpMessageForScope(helpCommand.Scope);
+            var helpMessage = BuildWhatsAppHelpMessageForScope(parsedHelpScope);
             await SendReplyAsync(responderInstance, msg.ChatId, helpMessage);
             continue;
         }
@@ -7053,63 +7053,6 @@ static bool TryParseInstagramWhatsAppCommand(string text, out InstagramWhatsAppC
         _ => new InstagramWhatsAppCommand("unknown", payload)
     };
 
-    return true;
-}
-
-static bool TryParseWhatsAppHelpCommand(string text, out WhatsAppHelpCommand command)
-{
-    command = new WhatsAppHelpCommand("general");
-    if (string.IsNullOrWhiteSpace(text))
-    {
-        return false;
-    }
-
-    var normalized = text.Trim();
-    var firstToken = normalized
-        .Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .FirstOrDefault() ?? string.Empty;
-
-    var isHelp = string.Equals(firstToken, @"\help", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(firstToken, "/help", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(firstToken, "/ajuda", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(normalized, "help", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(normalized, "ajuda", StringComparison.OrdinalIgnoreCase);
-    if (!isHelp)
-    {
-        return false;
-    }
-
-    var scopeToken = normalized
-        .Split(' ', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Skip(1)
-        .FirstOrDefault() ?? "general";
-
-    var scope = scopeToken.ToLowerInvariant() switch
-    {
-        "1" => "instagram",
-        "ig" => "instagram",
-        "insta" => "instagram",
-        "instagram" => "instagram",
-        "2" => "cta",
-        "cta" => "cta",
-        "comentarios" => "cta",
-        "3" => "links",
-        "link" => "links",
-        "links" => "links",
-        "bio" => "links",
-        "4" => "ads",
-        "ad" => "ads",
-        "ads" => "ads",
-        "anuncio" => "ads",
-        "anuncios" => "ads",
-        "5" => "quick",
-        "rapido" => "quick",
-        "atalhos" => "quick",
-        "menu" => "general",
-        _ => "general"
-    };
-
-    command = new WhatsAppHelpCommand(scope);
     return true;
 }
 
@@ -14364,7 +14307,6 @@ internal sealed record CouponExtractRequest(
     string? Source);
 internal sealed record CouponOfficialSyncRequest(string? Store);
 internal sealed record WhatsAppForwardSendOutcome(WhatsAppSendResult Result, string Mode, string? Diagnostic = null);
-internal sealed record WhatsAppHelpCommand(string Scope);
 internal sealed record InstagramWhatsAppCommand(string Action, string? Argument);
 internal sealed record InstagramDraftBuildResult(InstagramPublishDraft? Draft, string? Error);
 internal sealed record InstagramCreateInput(string Input, List<string> CtaKeywords, List<string> ImageUrls, string PostType);
